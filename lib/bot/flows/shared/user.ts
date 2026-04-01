@@ -1,0 +1,108 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export async function createWhatsAppUser(
+  supabase: SupabaseClient,
+  phone: string,
+  firstName: string,
+  lastName: string,
+  email?: string,
+): Promise<string | null> {
+  const fullPhone = phone.startsWith('+') ? phone : `+${phone}`;
+
+  try {
+    const createPayload: Record<string, unknown> = {
+      phone: fullPhone,
+      phone_confirm: true,
+      user_metadata: { first_name: firstName, last_name: lastName },
+    };
+    if (email) {
+      createPayload.email = email;
+      createPayload.email_confirm = true;
+    }
+
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser(createPayload);
+
+    if (authError) {
+      // Try lookup by phone
+      const { data: byPhone } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', fullPhone)
+        .single();
+
+      if (byPhone?.id) {
+        const updates: Record<string, string> = { first_name: firstName, last_name: lastName };
+        if (email) updates.email = email;
+        await supabase.from('profiles').update(updates).eq('id', byPhone.id);
+        return byPhone.id;
+      }
+
+      // Try lookup by email
+      if (email) {
+        const { data: byEmail } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('email', email)
+          .single();
+
+        if (byEmail?.id) {
+          await supabase
+            .from('profiles')
+            .update({ phone: fullPhone, first_name: firstName, last_name: lastName })
+            .eq('id', byEmail.id);
+          return byEmail.id;
+        }
+
+        // Retry without email
+        const { data: retryData, error: retryError } = await supabase.auth.admin.createUser({
+          phone: fullPhone,
+          phone_confirm: true,
+          user_metadata: { first_name: firstName, last_name: lastName },
+        });
+
+        if (!retryError && retryData?.user) {
+          await supabase
+            .from('profiles')
+            .update({ first_name: firstName, last_name: lastName })
+            .eq('id', retryData.user.id);
+          return retryData.user.id;
+        }
+      }
+
+      return null;
+    }
+
+    const userId = authData.user.id;
+    const profileUpdate: Record<string, string> = { first_name: firstName, last_name: lastName };
+    if (email) profileUpdate.email = email;
+    await supabase.from('profiles').update(profileUpdate).eq('id', userId);
+
+    return userId;
+  } catch (error) {
+    console.error('createWhatsAppUser error:', (error as Error).message);
+
+    try {
+      const { data: fallback } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', fullPhone)
+        .single();
+      if (fallback?.id) return fallback.id;
+    } catch { /* ignore */ }
+
+    return null;
+  }
+}
+
+export async function findUserByPhone(
+  supabase: SupabaseClient,
+  phone: string,
+): Promise<{ id: string; first_name: string; last_name: string; email: string | null } | null> {
+  const fullPhone = phone.startsWith('+') ? phone : `+${phone}`;
+  const { data } = await supabase
+    .from('profiles')
+    .select('id, first_name, last_name, email')
+    .eq('phone', fullPhone)
+    .single();
+  return data || null;
+}

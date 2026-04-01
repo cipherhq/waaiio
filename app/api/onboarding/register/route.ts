@@ -1,0 +1,209 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import {
+  generateSlug,
+  generateBotCode,
+  COUNTRIES,
+  getCitiesForCountry,
+  BUSINESS_CATEGORIES,
+  CATEGORY_FLOW_MAP,
+  DEFAULT_SERVICES,
+  type BusinessCategoryKey,
+  type CountryCode,
+} from '@/lib/constants';
+
+const VALID_CATEGORIES = BUSINESS_CATEGORIES.map(c => c.key);
+const VALID_COUNTRIES = Object.keys(COUNTRIES) as CountryCode[];
+
+export async function POST(request: NextRequest) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body = await request.json();
+    const { name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting } = body;
+    const countryCode: CountryCode = VALID_COUNTRIES.includes(country) ? country : 'NG';
+
+    if (!name || !city || !neighborhood || !address || !phone || !category) {
+      return NextResponse.json(
+        { message: 'Missing required fields: name, city, neighborhood, address, phone, category' },
+        { status: 400 },
+      );
+    }
+
+    if (!VALID_CATEGORIES.includes(category)) {
+      return NextResponse.json(
+        { message: 'Invalid category' },
+        { status: 400 },
+      );
+    }
+
+    const validCities = Object.keys(getCitiesForCountry(countryCode));
+    if (!validCities.includes(city)) {
+      return NextResponse.json(
+        { message: 'Invalid city for selected country' },
+        { status: 400 },
+      );
+    }
+
+    const service = createServiceClient();
+
+    const slug = generateSlug(name);
+    let botCode = generateBotCode(name);
+    const flowType = CATEGORY_FLOW_MAP[category as BusinessCategoryKey];
+
+    // Handle bot_code collision
+    const { data: existing } = await service
+      .from('businesses')
+      .select('bot_code')
+      .eq('bot_code', botCode)
+      .maybeSingle();
+
+    if (existing) {
+      for (let i = 1; i <= 99; i++) {
+        const candidate = `${botCode}-${String(i).padStart(2, '0')}`.slice(0, 30);
+        const { data: collision } = await service
+          .from('businesses')
+          .select('bot_code')
+          .eq('bot_code', candidate)
+          .maybeSingle();
+        if (!collision) {
+          botCode = candidate;
+          break;
+        }
+      }
+    }
+
+    // Handle slug collision
+    let finalSlug = slug;
+    const { data: slugExists } = await service
+      .from('businesses')
+      .select('slug')
+      .eq('slug', slug)
+      .maybeSingle();
+
+    if (slugExists) {
+      for (let i = 1; i <= 99; i++) {
+        const candidate = `${slug}-${i}`;
+        const { data: collision } = await service
+          .from('businesses')
+          .select('slug')
+          .eq('slug', candidate)
+          .maybeSingle();
+        if (!collision) {
+          finalSlug = candidate;
+          break;
+        }
+      }
+    }
+
+    const { data: business, error: insertError } = await service
+      .from('businesses')
+      .insert({
+        owner_id: user.id,
+        name,
+        slug: finalSlug,
+        bot_code: botCode,
+        city,
+        neighborhood,
+        address,
+        phone,
+        category,
+        flow_type: flowType,
+        country_code: countryCode,
+        subscription_tier: 'free',
+        status: 'pending',
+        trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      })
+      .select('id, bot_code, slug')
+      .single();
+
+    if (insertError || !business) {
+      return NextResponse.json(
+        { message: 'Failed to create business', error: insertError?.message },
+        { status: 500 },
+      );
+    }
+
+    // Create WhatsApp config
+    const defaultGreeting = bot_greeting || getDefaultGreeting(name, category as BusinessCategoryKey);
+    await service.from('whatsapp_config').insert({
+      business_id: business.id,
+      bot_greeting: defaultGreeting,
+      bot_alias: bot_alias || null,
+      auto_confirm: true,
+    });
+
+    // Auto-create default services
+    const defaultServices = DEFAULT_SERVICES[category as BusinessCategoryKey] || [];
+    if (defaultServices.length > 0) {
+      await service.from('services').insert(
+        defaultServices.map((s, i) => ({
+          business_id: business.id,
+          name: s.name,
+          price: s.price,
+          price_is_variable: s.price_is_variable,
+          duration_minutes: s.duration_minutes,
+          deposit_amount: s.deposit_amount,
+          sort_order: i,
+        })),
+      );
+    }
+
+    // Update profile role
+    const { data: profile } = await service
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (!profile?.role || profile.role === 'diner') {
+      await service
+        .from('profiles')
+        .update({ role: 'restaurant_owner' })
+        .eq('id', user.id);
+    }
+
+    return NextResponse.json({
+      business_id: business.id,
+      bot_code: business.bot_code,
+      slug: business.slug,
+      category,
+      flow_type: flowType,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { message: 'Internal server error', error: (error as Error).message },
+      { status: 500 },
+    );
+  }
+}
+
+function getDefaultGreeting(name: string, category: BusinessCategoryKey): string {
+  switch (category) {
+    case 'restaurant':
+      return `Welcome to ${name}! I can help you book a table. When would you like to dine?`;
+    case 'barber':
+      return `Welcome to ${name}! 💈 I can help you book an appointment. What service would you like?`;
+    case 'spa':
+    case 'salon':
+      return `Welcome to ${name}! ✨ I can help you book a session. What would you like?`;
+    case 'church':
+    case 'mosque':
+      return `Welcome to ${name}! 🙏 I can help you make payments. What would you like to pay for?`;
+    case 'school':
+      return `Welcome to ${name}! 🎓 I can help you make payments. Select a category to proceed.`;
+    case 'shop':
+    case 'food_delivery':
+      return `Welcome to ${name}! 🛍️ Browse our products and place an order.`;
+    case 'events':
+      return `Welcome to ${name}! 🎪 Check out our upcoming events and get your tickets!`;
+    default:
+      return `Welcome to ${name}! How can I help you today?`;
+  }
+}
