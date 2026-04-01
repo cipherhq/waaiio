@@ -352,7 +352,7 @@ export class BotService {
         .from('businesses')
         .select('id')
         .eq('bot_code', normalizedText)
-        .in('status', ['active', 'approved'])
+        .eq('status', 'active')
         .maybeSingle();
       if (data) return data.id;
     }
@@ -365,7 +365,7 @@ export class BotService {
         .from('businesses')
         .select('id')
         .eq('bot_code', candidate)
-        .in('status', ['active', 'approved'])
+        .eq('status', 'active')
         .maybeSingle();
       if (data) return data.id;
     }
@@ -379,7 +379,7 @@ export class BotService {
           .from('businesses')
           .select('id')
           .eq('bot_code', candidate)
-          .in('status', ['active', 'approved'])
+          .eq('status', 'active')
           .maybeSingle();
         if (data) return data.id;
       }
