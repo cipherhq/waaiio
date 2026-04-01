@@ -16,7 +16,7 @@ function LoginForm() {
   const rawRedirect = searchParams.get('redirect') || '/';
   const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
 
-  const [authMode, setAuthMode] = useState<AuthMode>('phone');
+  const [authMode, setAuthMode] = useState<AuthMode>('email');
   const [step, setStep] = useState<Step>('phone');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');

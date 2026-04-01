@@ -44,7 +44,7 @@ function OnboardingWizard() {
   const [error, setError] = useState('');
 
   // Auth state
-  const [authMode, setAuthMode] = useState<AuthMode>('phone');
+  const [authMode, setAuthMode] = useState<AuthMode>('email');
   const [authStep, setAuthStep] = useState<AuthSubStep>('phone');
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
