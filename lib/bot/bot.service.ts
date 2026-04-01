@@ -47,6 +47,7 @@ export class BotService {
     destinationPhone?: string,
     preResolvedBusinessId?: string,
   ): Promise<void> {
+    try {
     const text = messageText.trim();
     console.log('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
 
@@ -325,6 +326,10 @@ export class BotService {
     }
 
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business);
+    } catch (err) {
+      console.error('[BOT] handleMessage CRASH:', err);
+      try { await this.sendText(from, 'Sorry, something went wrong. Please try again.'); } catch (_) { /* ignore */ }
+    }
   }
 
   // ── Bot code detection ────────────────────────────────
