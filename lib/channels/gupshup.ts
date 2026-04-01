@@ -46,7 +46,7 @@ export class GupshupService {
   constructor(credentials?: GupshupCredentials) {
     this.apiKey = credentials?.apiKey || process.env.GUPSHUP_API_KEY || '';
     this.phoneNumber = credentials?.phoneNumber || process.env.GUPSHUP_PHONE_NUMBER || '';
-    this.appName = credentials?.appName || this.phoneNumber;
+    this.appName = credentials?.appName || process.env.GUPSHUP_APP_NAME || this.phoneNumber;
   }
 
   /** Create from a whatsapp_channels DB record */
@@ -77,7 +77,7 @@ export class GupshupService {
         channel: 'whatsapp',
         source: this.phoneNumber,
         destination: message.to.replace('+', ''),
-        'src.name': this.phoneNumber,
+        'src.name': this.appName,
         template: JSON.stringify({
           id: message.templateId,
           params: message.templateParams || [],
@@ -116,7 +116,7 @@ export class GupshupService {
         channel: 'whatsapp',
         source: this.phoneNumber,
         destination: message.to.replace('+', ''),
-        'src.name': this.phoneNumber,
+        'src.name': this.appName,
         message: JSON.stringify({ type: 'text', text: message.text }),
       });
 
@@ -172,7 +172,7 @@ export class GupshupService {
         channel: 'whatsapp',
         source: this.phoneNumber,
         destination: message.to.replace('+', ''),
-        'src.name': this.phoneNumber,
+        'src.name': this.appName,
         message: JSON.stringify(interactive),
       });
 
@@ -219,7 +219,7 @@ export class GupshupService {
         channel: 'whatsapp',
         source: this.phoneNumber,
         destination: message.to.replace('+', ''),
-        'src.name': this.phoneNumber,
+        'src.name': this.appName,
         message: JSON.stringify(interactive),
       });
 
@@ -255,7 +255,7 @@ export class GupshupService {
         channel: 'whatsapp',
         source: this.phoneNumber,
         destination: message.to.replace('+', ''),
-        'src.name': this.phoneNumber,
+        'src.name': this.appName,
         message: JSON.stringify({
           type: 'image',
           originalUrl: message.imageUrl,
