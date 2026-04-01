@@ -48,6 +48,7 @@ export class BotService {
     preResolvedBusinessId?: string,
   ): Promise<void> {
     const text = messageText.trim();
+    console.log('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
@@ -128,12 +129,14 @@ export class BotService {
     );
 
     if (!session || isRestart) {
+      console.log('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
 
       // Determine standalone business
       let businessId: string | null = preResolvedBusinessId || null;
+      console.log('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
 
       // Fallback: lookup by destination phone
       if (!businessId && destinationPhone) {
@@ -143,11 +146,13 @@ export class BotService {
           .eq('whatsapp_phone_number_id', destinationPhone)
           .single();
         businessId = biz?.id || null;
+        console.log('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
       }
 
       // Bot code routing
       if (!businessId) {
         businessId = await this.detectBotCode(text);
+        console.log('[BOT] detectBotCode("' + text + '") →', businessId);
       }
 
       // Link to existing user
@@ -529,6 +534,8 @@ export class BotService {
   }
 
   private async sendText(to: string, text: string): Promise<void> {
-    await this.gupshupService.sendText({ to, text });
+    console.log('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
+    const result = await this.gupshupService.sendText({ to, text });
+    console.log('[BOT] sendText result:', JSON.stringify(result));
   }
 }
