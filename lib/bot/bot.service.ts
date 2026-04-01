@@ -92,6 +92,33 @@ export class BotService {
       return;
     }
 
+    // Check for "switch <keyword>" command — lets testers swap between businesses
+    const switchMatch = text.match(/^switch\s+(.+)$/i);
+    if (switchMatch) {
+      const keyword = switchMatch[1].trim().toLowerCase();
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+
+      // Search by category, name, or bot_code
+      const { data: matches } = await this.supabase
+        .from('businesses')
+        .select('id, name, bot_code, category, flow_type')
+        .or(`category.ilike.%${keyword}%,name.ilike.%${keyword}%,bot_code.ilike.%${keyword}%`)
+        .eq('status', 'active')
+        .limit(1);
+
+      if (matches && matches.length > 0) {
+        const biz = matches[0];
+        // Treat as if user sent the bot_code — trigger a fresh session
+        await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id);
+        return;
+      }
+
+      await this.sendText(from, `No business found matching "${keyword}". Try: switch restaurant, switch spa, switch church, switch shop, etc.`);
+      return;
+    }
+
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address'].includes(currentStep);
