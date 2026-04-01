@@ -325,31 +325,31 @@ export class BotService {
   // ── Bot code detection ────────────────────────────────
 
   private async detectBotCode(text: string): Promise<string | null> {
-    const upperText = text.toUpperCase().trim();
+    const normalizedText = text.toLowerCase().trim();
 
     const FILLER_WORDS = new Set([
-      'HI', 'HELLO', 'HEY', 'YO', 'SUP', 'HIYA', 'HOWDY',
-      'GOOD', 'MORNING', 'AFTERNOON', 'EVENING', 'NIGHT',
-      'BOOK', 'BOOKING', 'RESERVE', 'RESERVATION', 'TABLE', 'ORDER',
-      'I', 'WANT', 'NEED', 'WOULD', 'LIKE', 'TO', 'A', 'AT', 'THE', 'FOR',
-      'PLEASE', 'PLS', 'PLZ', 'THANKS', 'THANK', 'YOU',
-      'CAN', 'ME', 'MY', 'GET', 'MAKE', 'HELP', 'PAY', 'BUY', 'TICKET',
+      'hi', 'hello', 'hey', 'yo', 'sup', 'hiya', 'howdy',
+      'good', 'morning', 'afternoon', 'evening', 'night',
+      'book', 'booking', 'reserve', 'reservation', 'table', 'order',
+      'i', 'want', 'need', 'would', 'like', 'to', 'a', 'at', 'the', 'for',
+      'please', 'pls', 'plz', 'thanks', 'thank', 'you',
+      'can', 'me', 'my', 'get', 'make', 'help', 'pay', 'buy', 'ticket',
     ]);
 
     // Exact match
-    if (/^[A-Z0-9-]{2,30}$/.test(upperText)) {
+    if (/^[a-z0-9-]{2,30}$/.test(normalizedText)) {
       const { data } = await this.supabase
         .from('businesses')
         .select('id')
-        .eq('bot_code', upperText)
+        .eq('bot_code', normalizedText)
         .in('status', ['active', 'approved'])
         .maybeSingle();
       if (data) return data.id;
     }
 
     // Hyphenated token match
-    const tokens = upperText.split(/\s+/);
-    const hyphenated = tokens.filter(t => t.includes('-') && /^[A-Z0-9-]{2,30}$/.test(t));
+    const tokens = normalizedText.split(/\s+/);
+    const hyphenated = tokens.filter(t => t.includes('-') && /^[a-z0-9-]{2,30}$/.test(t));
     for (const candidate of hyphenated) {
       const { data } = await this.supabase
         .from('businesses')
@@ -364,7 +364,7 @@ export class BotService {
     const meaningful = tokens.filter(t => !FILLER_WORDS.has(t) && t.length > 0);
     if (meaningful.length > 0 && meaningful.length <= 5) {
       const candidate = meaningful.join('-').replace(/-+/g, '-').slice(0, 30);
-      if (/^[A-Z0-9-]{2,30}$/.test(candidate)) {
+      if (/^[a-z0-9-]{2,30}$/.test(candidate)) {
         const { data } = await this.supabase
           .from('businesses')
           .select('id')
