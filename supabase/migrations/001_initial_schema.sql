@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- Blowded Database Schema
+-- SmrtRply Database Schema
 -- Single migration for fresh Supabase project
 -- ═══════════════════════════════════════════════════════
 

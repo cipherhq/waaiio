@@ -533,7 +533,7 @@ export const schedulingFlow: FlowDefinition = {
             reference_code: booking.reference_code,
           });
           if (!tierInfo.isWhitelabel) {
-            message += '\n\n_Powered by Blowded_';
+            message += '\n\n_Powered by SmrtRply_';
           }
         } else {
           message = getConfirmationMessage({

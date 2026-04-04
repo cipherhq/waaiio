@@ -1,8 +1,8 @@
 // ═══════════════════════════════════════════════════════
-// Blowded Shared Constants — Multi-Industry Platform
+// SmrtRply Shared Constants — Multi-Industry Platform
 // ═══════════════════════════════════════════════════════
 
-export const APP_NAME = 'Blowded';
+export const APP_NAME = 'SmrtRply';
 export const APP_TAGLINE = 'WhatsApp Automation for Every Business';
 export const BOOKING_REF_PREFIX = 'BW';
 export const TRIAL_DAYS = 7;

@@ -12,9 +12,9 @@ export default function Navbar() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-sm font-bold text-white">
-            B
+            S
           </span>
-          <span className="text-lg font-bold text-gray-900">Blowded</span>
+          <span className="text-lg font-bold text-gray-900">SmrtRply</span>
         </Link>
 
         {/* Desktop links */}

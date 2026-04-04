@@ -13,3 +13,29 @@ body {
     text-wrap: balance;
   }
 }
+
+/* CMS page content styles */
+.prose-pages {
+  @apply space-y-6 text-sm leading-relaxed text-gray-600;
+}
+.prose-pages h2 {
+  @apply text-lg font-semibold text-gray-900 mt-8;
+}
+.prose-pages h3 {
+  @apply text-base font-medium text-gray-900 mt-6;
+}
+.prose-pages p {
+  @apply mt-3;
+}
+.prose-pages ul {
+  @apply mt-3 list-disc space-y-2 pl-5;
+}
+.prose-pages li {
+  @apply text-gray-600;
+}
+.prose-pages strong {
+  @apply font-semibold text-gray-700;
+}
+.prose-pages a {
+  @apply text-brand hover:underline;
+}

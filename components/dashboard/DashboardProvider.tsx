@@ -1,0 +1,70 @@
+'use client';
+
+import { createContext, useContext, type ReactNode } from 'react';
+
+export interface Business {
+  id: string;
+  owner_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  category: string;
+  flow_type: string;
+  subscription_tier: string;
+  address: string;
+  city: string;
+  neighborhood: string;
+  phone: string;
+  email: string | null;
+  status: string;
+  operating_hours: Record<string, { open: string; close: string }> | null;
+  deposit_per_guest: number;
+  rating_avg: number;
+  rating_count: number;
+  total_bookings: number;
+  logo_url: string | null;
+  cover_photo_url: string | null;
+  bot_code: string | null;
+  gupshup_app_id: string | null;
+  is_whitelabel: boolean;
+  timezone: string;
+  trial_ends_at: string;
+  country_code: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+interface DashboardContextType {
+  business: Business;
+  userId: string;
+}
+
+const DashboardContext = createContext<DashboardContextType | null>(null);
+
+export function DashboardProvider({
+  business,
+  userId,
+  children,
+}: {
+  business: Business;
+  userId: string;
+  children: ReactNode;
+}) {
+  return (
+    <DashboardContext.Provider value={{ business, userId }}>
+      {children}
+    </DashboardContext.Provider>
+  );
+}
+
+export function useBusiness() {
+  const ctx = useContext(DashboardContext);
+  if (!ctx) throw new Error('useBusiness must be used within DashboardProvider');
+  return ctx.business;
+}
+
+export function useDashboard() {
+  const ctx = useContext(DashboardContext);
+  if (!ctx) throw new Error('useDashboard must be used within DashboardProvider');
+  return ctx;
+}

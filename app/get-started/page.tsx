@@ -362,7 +362,7 @@ function OnboardingWizard() {
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-4">
           <Link href="/" className="text-lg font-bold text-brand">
-            Blowded
+            SmrtRply
           </Link>
           <span className="text-sm text-gray-500">Setup</span>
         </div>
@@ -751,7 +751,7 @@ function OnboardingWizard() {
                       {(botAlias || name || 'BW').charAt(0)}
                     </div>
                     <div>
-                      <p className="text-xs font-semibold text-white">{botAlias || name || 'Blowded'}</p>
+                      <p className="text-xs font-semibold text-white">{botAlias || name || 'SmrtRply'}</p>
                       <p className="text-[10px] text-green-200">online</p>
                     </div>
                   </div>

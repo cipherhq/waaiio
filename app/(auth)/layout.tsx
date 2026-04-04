@@ -6,7 +6,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-md items-center justify-between px-4 py-4">
           <Link href="/" className="text-lg font-bold text-brand">
-            Blowded
+            SmrtRply
           </Link>
         </div>
       </header>

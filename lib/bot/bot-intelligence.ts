@@ -379,7 +379,7 @@ export class BotIntelligenceService {
   }
 
   getHelpText(isStandalone: boolean, restaurantName?: string, alias?: string): string {
-    const name = alias || 'Blowded Bot';
+    const name = alias || 'SmrtRply Bot';
     const lines = [
       `*${name}* can help you with:`,
       '',

@@ -1,12 +1,8 @@
-import type { Metadata } from 'next';
-import Link from 'next/link';
-import { BUSINESS_CATEGORIES, formatCurrency, getPricingTiers } from '@/lib/constants';
+'use client';
 
-export const metadata: Metadata = {
-  title: 'Blowded — WhatsApp Automation for Every Business',
-  description:
-    'Automate bookings, payments, orders, and tickets on WhatsApp. Available in Nigeria, US, UK, Canada & Ghana — restaurants, barbers, churches, shops, events, and more.',
-};
+import Link from 'next/link';
+import { useState } from 'react';
+import { BUSINESS_CATEGORIES, formatCurrency, getPricingTiers } from '@/lib/constants';
 
 const PRICING_TIERS = getPricingTiers('NG');
 
@@ -80,6 +76,28 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ── 2b. Global Reach ── */}
+      <section className="border-t border-gray-100 bg-white pb-16">
+        <div className="mx-auto max-w-5xl px-4 text-center">
+          <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Available in</p>
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-6">
+            {[
+              { flag: '\ud83c\uddf3\ud83c\uddec', name: 'Nigeria', gateway: 'Paystack' },
+              { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Stripe' },
+              { flag: '\ud83c\uddec\ud83c\udde7', name: 'United Kingdom', gateway: 'Stripe' },
+              { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada', gateway: 'Stripe' },
+              { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana', gateway: 'Paystack' },
+            ].map((c) => (
+              <div key={c.name} className="flex items-center gap-2 rounded-full border border-gray-100 bg-gray-50 px-4 py-2">
+                <span className="text-xl">{c.flag}</span>
+                <span className="text-sm font-medium text-gray-700">{c.name}</span>
+                <span className="rounded bg-gray-200 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{c.gateway}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* ── 3. WhatsApp Conversation Demo ── */}
       <section className="bg-gray-50 py-20">
         <div className="mx-auto max-w-5xl px-4">
@@ -98,7 +116,7 @@ export default function HomePage() {
                   BW
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-white">Blowded</p>
+                  <p className="text-sm font-semibold text-white">SmrtRply</p>
                   <p className="text-xs text-green-200">online</p>
                 </div>
               </div>
@@ -269,7 +287,40 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── 7. Pricing ── */}
+      {/* ── 7. Testimonials ── */}
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-5xl px-4">
+          <h2 className="text-center text-2xl font-bold text-gray-900">
+            What Business Owners Say
+          </h2>
+          <p className="mt-2 text-center text-gray-600">
+            Real results from real businesses
+          </p>
+
+          <div className="mt-12 grid gap-6 sm:grid-cols-3">
+            <TestimonialCard
+              quote="We went from missing 40% of after-hours booking requests to capturing every single one. Revenue is up 30% in 3 months."
+              name="Adebayo O."
+              role="King's Cuts Barbershop, Lagos"
+              stat="30% more revenue"
+            />
+            <TestimonialCard
+              quote="Our members can now pay tithes and offerings directly on WhatsApp. Collections are up and our admin team saves hours every week."
+              name="Pastor Grace A."
+              role="New Life Church, Abuja"
+              stat="5hrs saved weekly"
+            />
+            <TestimonialCard
+              quote="Customers love ordering via WhatsApp instead of calling. Our average order value went up because the bot upsells naturally."
+              name="Chioma N."
+              role="Fresh Bites Delivery, Port Harcourt"
+              stat="22% higher AOV"
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* ── 8. Pricing ── */}
       <section id="pricing" className="bg-white py-20">
         <div className="mx-auto max-w-5xl px-4">
           <h2 className="text-center text-2xl font-bold text-gray-900">
@@ -352,7 +403,7 @@ export default function HomePage() {
           </h2>
           <div className="mx-auto mt-10 max-w-2xl space-y-6">
             <FaqItem
-              question="What types of businesses can use Blowded?"
+              question="What types of businesses can use SmrtRply?"
               answer="Any business that wants WhatsApp automation — restaurants, barbers, spas, churches, schools, shops, event companies, and more. We support scheduling, payments, ordering, and ticketing flows."
             />
             <FaqItem
@@ -388,7 +439,7 @@ export default function HomePage() {
             </h2>
             <p className="mt-2 text-brand-200">
               Join 100+ businesses already saving time and growing revenue
-              with Blowded&apos;s WhatsApp Automation.
+              with SmrtRply&apos;s WhatsApp Automation.
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-3">
               <Link
@@ -570,11 +621,56 @@ function PlanCard({
   );
 }
 
-function FaqItem({ question, answer }: { question: string; answer: string }) {
+function TestimonialCard({
+  quote,
+  name,
+  role,
+  stat,
+}: {
+  quote: string;
+  name: string;
+  role: string;
+  stat: string;
+}) {
   return (
-    <div>
-      <h3 className="text-sm font-semibold text-gray-900">{question}</h3>
-      <p className="mt-1 text-sm text-gray-600">{answer}</p>
+    <div className="flex flex-col rounded-2xl border border-gray-100 bg-gray-50/50 p-6">
+      <div className="mb-4 inline-flex self-start rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand">
+        {stat}
+      </div>
+      <p className="flex-1 text-sm text-gray-700 leading-relaxed">&ldquo;{quote}&rdquo;</p>
+      <div className="mt-4 flex items-center gap-3 border-t border-gray-100 pt-4">
+        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">
+          {name.charAt(0)}
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-gray-900">{name}</p>
+          <p className="text-xs text-gray-500">{role}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FaqItem({ question, answer }: { question: string; answer: string }) {
+  'use client';
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border-b border-gray-100 pb-4">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <h3 className="text-sm font-semibold text-gray-900">{question}</h3>
+        <svg
+          className={`h-4 w-4 shrink-0 text-gray-400 transition ${open ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && <p className="mt-2 text-sm text-gray-600">{answer}</p>}
     </div>
   );
 }

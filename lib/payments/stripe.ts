@@ -42,12 +42,12 @@ export class StripeGateway implements PaymentGateway {
           status: 'pending',
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `https://blowded.com/pay?ref=${mockRef}`, reference: mockRef };
+        return { url: `https://smrtrply.com/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       // Convert amount to cents (Stripe uses smallest currency unit)
       const amountInCents = Math.round(opts.amount * 100);
-      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://blowded.com';
+      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com';
 
       const sessionData = await stripeRequest('/checkout/sessions', {
         'payment_method_types[0]': 'card',

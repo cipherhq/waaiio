@@ -10,7 +10,7 @@ export class PaystackGateway implements PaymentGateway {
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     const idempotencyKey = randomUUID();
     const amountInKobo = Math.round(opts.amount * 100);
-    const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.blowded.com`;
+    const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.smrtrply.com`;
 
     try {
       if (!paystackSecretKey) {
@@ -25,7 +25,7 @@ export class PaystackGateway implements PaymentGateway {
           status: 'pending',
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `https://blowded.com/pay?ref=${mockRef}`, reference: mockRef };
+        return { url: `https://smrtrply.com/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       const response = await fetch('https://api.paystack.co/transaction/initialize', {

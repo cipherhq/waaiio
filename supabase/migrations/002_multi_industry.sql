@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- Blowded Multi-Industry Migration
+-- SmrtRply Multi-Industry Migration
 -- Transforms restaurant-only platform into multi-industry
 -- ═══════════════════════════════════════════════════════
 

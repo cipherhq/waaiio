@@ -59,8 +59,8 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single();
 
-    const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.blowded.com`;
-    const callbackUrl = `${(process.env.NEXT_PUBLIC_APP_URL || 'https://blowded.com').trim()}/get-started?step=success&business_id=${business_id}`;
+    const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.smrtrply.com`;
+    const callbackUrl = `${(process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com').trim()}/get-started?step=success&business_id=${business_id}`;
 
     // Paystack path (NG, GH)
     if (gateway === 'paystack') {
@@ -128,12 +128,12 @@ export async function POST(request: NextRequest) {
     const stripeBody = new URLSearchParams({
       'payment_method_types[0]': 'card',
       'line_items[0][price_data][currency]': country.currencyCode.toLowerCase(),
-      'line_items[0][price_data][product_data][name]': `Blowded ${tier.name} Plan`,
+      'line_items[0][price_data][product_data][name]': `SmrtRply ${tier.name} Plan`,
       'line_items[0][price_data][unit_amount]': String(amountInCents),
       'line_items[0][quantity]': '1',
       mode: 'payment',
       success_url: callbackUrl,
-      cancel_url: `${(process.env.NEXT_PUBLIC_APP_URL || 'https://blowded.com').trim()}/get-started`,
+      cancel_url: `${(process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com').trim()}/get-started`,
       customer_email: email,
       'metadata[business_id]': business_id,
       'metadata[plan]': plan,

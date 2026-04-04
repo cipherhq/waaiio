@@ -213,7 +213,7 @@ export class BotService {
           });
         }
 
-        if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Blowded_';
+        if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by SmrtRply_';
 
         if (!tierInfo.allowed) {
           await this.sendText(from, `Thank you for contacting ${business.name}! We're currently unable to accept new bookings via WhatsApp. Please contact us directly.`);
@@ -239,7 +239,7 @@ export class BotService {
       if (returningProfile?.first_name) {
         await this.sendText(from, `Welcome back, ${returningProfile.first_name}! 🍽️\n\nLet's find you a table!`);
       } else {
-        await this.sendText(from, `Welcome to Blowded! 🍽️\n\nDiscover and book the best businesses in Nigeria.\n\nLet's get started!`);
+        await this.sendText(from, `Welcome to SmrtRply! 🍽️\n\nDiscover and book the best businesses in Nigeria.\n\nLet's get started!`);
       }
 
       // For marketplace, show city selection (scheduling flow first step isn't applicable without a business)
