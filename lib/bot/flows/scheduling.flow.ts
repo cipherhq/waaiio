@@ -235,12 +235,14 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         const prefLabel = pref ? ` ${pref}` : '';
+        // WhatsApp list messages support max 10 items per section
+        const displaySlots = allSlots.slice(0, 10);
         return [{
           type: 'list',
           title: 'Select Time',
           body: `Available${prefLabel} times for ${dateLabel}:`,
           buttonLabel: 'Choose Time',
-          items: allSlots.map(t => ({ title: t, postbackText: t })),
+          items: displaySlots.map(t => ({ title: t, postbackText: t })),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
