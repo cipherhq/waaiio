@@ -516,6 +516,39 @@ export const BOOKING_DEFAULTS = {
   reminderHours: [24, 2],
 } as const;
 
+/** Category-specific max party/quantity size */
+export function getMaxQuantity(category: BusinessCategoryKey): number {
+  switch (category) {
+    case 'barber':
+    case 'salon':
+    case 'tattoo':
+    case 'photographer':
+      return 5;
+    case 'clinic':
+    case 'dental':
+    case 'veterinary':
+    case 'consultant':
+      return 3;
+    case 'spa':
+    case 'tutor':
+      return 6;
+    case 'gym':
+    case 'coworking':
+      return 10;
+    case 'hotel':
+      return 10;
+    case 'restaurant':
+    case 'catering':
+      return 20;
+    case 'events':
+    case 'cinema':
+    case 'transport':
+      return 50;
+    default:
+      return BOOKING_DEFAULTS.maxPartySize;
+  }
+}
+
 // ── Time Slots ──
 export function generateTimeSlots(
   openTime: string = '12:00',

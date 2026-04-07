@@ -69,14 +69,16 @@ const INTENT_RULES: IntentRule[] = [
   },
   {
     intent: 'cancel',
-    patterns: [/\bcancel\s*(my\s*)?(booking|reservation)\b/i],
+    patterns: [/\bcancel\s*(my\s*)?(booking|reservation|appointment|appt|order|session)\b/i],
     action: 'bookings',
     response: null,
   },
   {
     intent: 'status',
     patterns: [
-      /\b(my\s+booking|check\s+booking|booking\s+status|where'?s?\s+my\s+booking)\b/i,
+      /\b(my\s+)?(booking|reservation|appointment|appt)\s*(status)?\b/i,
+      /\b(check|view|show)\s+(my\s+)?(booking|reservation|appointment|appt|order)\b/i,
+      /\bwhere'?s?\s+my\s+(booking|reservation|appointment)\b/i,
       /^status$/i,
     ],
     action: 'bookings',

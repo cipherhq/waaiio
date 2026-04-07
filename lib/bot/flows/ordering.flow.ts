@@ -1,9 +1,24 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePaystackPayment, verifyPaystackPayment, recordPlatformFee } from './shared/payment';
+import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
-import type { SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+
+/** Category-specific labels for ordering flow */
+function getOrderingLabels(category: string): { noun: string; emoji: string; browseLabel: string } {
+  switch (category) {
+    case 'restaurant':
+    case 'food_delivery':
+      return { noun: 'menu', emoji: '🍽️', browseLabel: 'View Menu' };
+    case 'pharmacy':
+      return { noun: 'medicines', emoji: '💊', browseLabel: 'Browse' };
+    case 'logistics':
+      return { noun: 'services', emoji: '📦', browseLabel: 'Browse' };
+    default:
+      return { noun: 'products', emoji: '🛍️', browseLabel: 'Browse' };
+  }
+}
 
 interface CartItem {
   product_id: string;
@@ -35,7 +50,7 @@ export const orderingFlow: FlowDefinition = {
         );
 
         if (!products || products.length === 0) {
-          return [{ type: 'text', text: 'No products available right now. Check back later!' }];
+          return [{ type: 'text', text: 'Nothing available right now. Check back later!' }];
         }
 
         // Initialize cart
@@ -43,13 +58,15 @@ export const orderingFlow: FlowDefinition = {
           ctx.session.session_data.cart = [];
         }
 
+        const cc = (ctx.business.country_code || 'NG') as CountryCode;
+        const labels = getOrderingLabels(ctx.business.category);
         return [{
           type: 'list',
-          title: 'Our Products',
-          body: `Welcome to ${ctx.business.name}! 🛍️\n\nBrowse our products:`,
-          buttonLabel: 'Browse',
+          title: `Our ${labels.noun.charAt(0).toUpperCase() + labels.noun.slice(1)}`,
+          body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nBrowse our ${labels.noun}:`,
+          buttonLabel: labels.browseLabel,
           items: products.map(p => {
-            let desc = `₦${p.price.toLocaleString()}`;
+            let desc = formatCurrency(p.price, cc);
             if (p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
               desc += ` (${p.stock_quantity} left)`;
             }
@@ -88,10 +105,11 @@ export const orderingFlow: FlowDefinition = {
       id: 'select_quantity',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         return [
           {
             type: 'text',
-            text: `*${d.current_product_name}* — ₦${(d.current_product_price as number).toLocaleString()}\n\nHow many would you like?`,
+            text: `*${d.current_product_name}* — ${formatCurrency(d.current_product_price as number, cc)}\n\nHow many would you like?`,
           },
           {
             type: 'buttons',
@@ -130,18 +148,19 @@ export const orderingFlow: FlowDefinition = {
 
         d.cart = cart;
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         await ctx.supabase
           .from('bot_sessions')
           .update({ session_data: d, current_step: 'continue_or_checkout' })
           .eq('id', ctx.session.id);
 
-        const itemSummary = cart.map(i => `  • ${i.name} x${i.quantity} — ₦${(i.price * i.quantity).toLocaleString()}`).join('\n');
+        const itemSummary = cart.map(i => `  • ${i.name} x${i.quantity} — ${formatCurrency(i.price * i.quantity, cc)}`).join('\n');
 
         return [
           {
             type: 'text',
-            text: `✅ Added! Your cart:\n\n${itemSummary}\n\n*Total: ₦${total.toLocaleString()}*`,
+            text: `✅ Added! Your cart:\n\n${itemSummary}\n\n*Total: ${formatCurrency(total, cc)}*`,
           },
           {
             type: 'buttons',
@@ -163,9 +182,10 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cart = (ctx.session.session_data.cart as CartItem[]) || [];
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         return [{
           type: 'buttons',
-          body: `Cart total: ₦${total.toLocaleString()}\n\nCheckout or add more items?`,
+          body: `Cart total: ${formatCurrency(total, cc)}\n\nCheckout or add more items?`,
           buttons: [
             { id: 'checkout', title: 'Checkout 💳' },
             { id: 'add_more', title: 'Add More' },
@@ -224,7 +244,8 @@ export const orderingFlow: FlowDefinition = {
           const cart = (ctx.session.session_data.cart as CartItem[]) || [];
           const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
           if (promo.min_order_amount && total < promo.min_order_amount) {
-            return { valid: false, errorMessage: `Minimum order of ₦${promo.min_order_amount.toLocaleString()} required for this code.` };
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            return { valid: false, errorMessage: `Minimum order of ${formatCurrency(promo.min_order_amount, cc)} required for this code.` };
           }
 
           const discount = promo.discount_type === 'percentage'
@@ -263,7 +284,8 @@ export const orderingFlow: FlowDefinition = {
         const cart = (ctx.session.session_data.cart as CartItem[]) || [];
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
         if (promo.min_order_amount && total < promo.min_order_amount) {
-          return { valid: false, errorMessage: `Minimum order ₦${promo.min_order_amount.toLocaleString()} required.` };
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          return { valid: false, errorMessage: `Minimum order ${formatCurrency(promo.min_order_amount, cc)} required.` };
         }
 
         const discount = promo.discount_type === 'percentage'
@@ -435,14 +457,17 @@ export const orderingFlow: FlowDefinition = {
         }
 
         if (total > 0) {
-          // Initialize payment
-          const paymentResult = await initializePaystackPayment(ctx.supabase, {
+          // Initialize payment (uses correct gateway per country: Paystack, Stripe, Square, etc.)
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const paymentResult = await initializePayment(ctx.supabase, {
             orderId: order.id,
             userId,
             amount: total,
             referenceCode: order.reference_code,
             businessName: ctx.business?.name || 'Shop',
             phone: ctx.from,
+            countryCode: cc,
+            businessId: ctx.business?.id,
           });
 
           if (paymentResult) {
@@ -538,7 +563,8 @@ export const orderingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const verified = await verifyPaystackPayment(ctx.supabase, ref);
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const verified = await verifyPayment(ctx.supabase, ref, cc);
           if (verified) {
             await ctx.sender.sendText({
               to: ctx.from,

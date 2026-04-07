@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { BOOKING_DEFAULTS, CATEGORY_LABELS, generateTimeSlots, formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
+import { BOOKING_DEFAULTS, CATEGORY_LABELS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/lib/constants';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { createNotification } from './shared/notifications';
@@ -7,6 +7,59 @@ import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import type { BusinessCategoryKey } from '@/lib/constants';
+
+/** Category-specific quick-reply buttons for special requests */
+function getSpecialRequestButtons(category: string): Array<{ id: string; title: string }> {
+  switch (category as BusinessCategoryKey) {
+    case 'restaurant':
+      return [
+        { id: 'req_birthday', title: 'Birthday 🎂' },
+        { id: 'req_window', title: 'Window seat' },
+      ];
+    case 'barber':
+      return [
+        { id: 'req_fade', title: 'Fade / Taper' },
+        { id: 'req_lineup', title: 'Line-up' },
+      ];
+    case 'spa':
+      return [
+        { id: 'req_deep_tissue', title: 'Deep tissue' },
+        { id: 'req_aroma', title: 'Aromatherapy' },
+      ];
+    case 'salon':
+      return [
+        { id: 'req_gentle', title: 'Sensitive scalp' },
+        { id: 'req_kids', title: 'Kids haircut' },
+      ];
+    case 'clinic':
+    case 'veterinary':
+      return [
+        { id: 'req_morning', title: 'Morning slot' },
+        { id: 'req_followup', title: 'Follow-up visit' },
+      ];
+    case 'gym':
+      return [
+        { id: 'req_morning', title: 'Morning slot' },
+        { id: 'req_quiet', title: 'Quiet area' },
+      ];
+    case 'hotel':
+      return [
+        { id: 'req_quiet', title: 'Quiet room' },
+        { id: 'req_highchair', title: 'High chair' },
+      ];
+    case 'tattoo':
+      return [
+        { id: 'req_gentle', title: 'First timer' },
+        { id: 'req_followup', title: 'Touch-up' },
+      ];
+    default:
+      return [
+        { id: 'req_birthday', title: 'Birthday 🎂' },
+        { id: 'req_urgent', title: 'Urgent' },
+      ];
+  }
+}
 
 export const schedulingFlow: FlowDefinition = {
   type: 'scheduling',
@@ -265,24 +318,35 @@ export const schedulingFlow: FlowDefinition = {
         return !!ctx.session.session_data.party_size;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        const labels = CATEGORY_LABELS[ctx.business?.category || 'restaurant'];
+        const category = ctx.business?.category || 'restaurant';
+        const labels = CATEGORY_LABELS[category];
+        const maxQty = getMaxQuantity(category);
+        // Adapt button options to sensible values per category
+        const singularLabel = labels.quantityLabel === 'guests' ? 'guest' : '';
+        const buttons = maxQty <= 3
+          ? [
+              { id: '1', title: `1 ${singularLabel}`.trim() },
+              { id: '2', title: `2 ${labels.quantityLabel}` },
+            ]
+          : [
+              { id: '1', title: `1 ${singularLabel}`.trim() },
+              { id: '2', title: `2 ${labels.quantityLabel}` },
+              { id: '4', title: `4 ${labels.quantityLabel}` },
+            ];
         return [
           {
             type: 'buttons',
             body: `How many ${labels.quantityLabel}?`,
-            buttons: [
-              { id: '1', title: `1 ${labels.quantityLabel === 'guests' ? 'guest' : ''}`.trim() },
-              { id: '2', title: `2 ${labels.quantityLabel}` },
-              { id: '4', title: `4 ${labels.quantityLabel}` },
-            ],
+            buttons,
           },
-          { type: 'text', text: `Or type a number (1-${BOOKING_DEFAULTS.maxPartySize}).` },
+          { type: 'text', text: `Or type a number (1-${maxQty}).` },
         ];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const maxQty = getMaxQuantity(ctx.business?.category || 'restaurant');
         const size = parseInt(input, 10);
-        if (isNaN(size) || size < 1 || size > BOOKING_DEFAULTS.maxPartySize) {
-          return { valid: false, errorMessage: `Please enter a number between 1 and ${BOOKING_DEFAULTS.maxPartySize}.` };
+        if (isNaN(size) || size < 1 || size > maxQty) {
+          return { valid: false, errorMessage: `Please enter a number between 1 and ${maxQty}.` };
         }
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { party_size: size } };
@@ -293,15 +357,16 @@ export const schedulingFlow: FlowDefinition = {
     // ── Special Requests ──
     {
       id: 'special_requests',
-      async prompt(): Promise<PromptMessage[]> {
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const category = ctx.business?.category || 'restaurant';
+        const quickReplies = getSpecialRequestButtons(category);
         return [
           {
             type: 'buttons',
             body: 'Any special requests?',
             buttons: [
               { id: 'req_none', title: "No, I'm good" },
-              { id: 'req_birthday', title: 'Birthday 🎂' },
-              { id: 'req_window', title: 'Window seat' },
+              ...quickReplies,
             ],
           },
           { type: 'text', text: 'Or type your own request:' },
@@ -310,9 +375,30 @@ export const schedulingFlow: FlowDefinition = {
       async validate(input: string): Promise<ValidationResult> {
         const response = input.toLowerCase();
         let request: string | undefined;
-        if (response === 'req_birthday') request = 'Birthday celebration 🎂';
-        else if (response === 'req_window') request = 'Window seat preferred';
-        else if (response !== 'req_none') request = input;
+        // Map all quick-reply IDs to human-readable text
+        const requestMap: Record<string, string> = {
+          req_birthday: 'Birthday celebration 🎂',
+          req_window: 'Window seat preferred',
+          req_outdoor: 'Outdoor seating preferred',
+          req_fade: 'Fade / taper requested',
+          req_lineup: 'Line-up / edge-up requested',
+          req_hot_towel: 'Hot towel service',
+          req_deep_tissue: 'Deep tissue preferred',
+          req_aroma: 'Aromatherapy add-on',
+          req_gentle: 'Gentle / sensitive treatment',
+          req_morning: 'Morning slot preferred',
+          req_urgent: 'Urgent / same-day if possible',
+          req_followup: 'Follow-up visit',
+          req_wheelchair: 'Wheelchair accessible',
+          req_highchair: 'High chair needed',
+          req_quiet: 'Quiet area preferred',
+          req_kids: 'Kids haircut',
+        };
+        if (requestMap[response]) {
+          request = requestMap[response];
+        } else if (response !== 'req_none') {
+          request = input;
+        }
 
         return { valid: true, data: { special_requests: request || '' } };
       },
@@ -496,8 +582,9 @@ export const schedulingFlow: FlowDefinition = {
           return [{ type: 'text', text: "Something went wrong creating your account. Send *Hi* to try again." }];
         }
 
-        // Get deposit info
+        // Get payment amount
         const serviceDeposit = (d.service_deposit as number) || 0;
+        const servicePrice = (d.service_price as number) || 0;
         const partySize = (d.party_size as number) || 1;
 
         // For restaurants: check business deposit_per_guest
@@ -511,7 +598,27 @@ export const schedulingFlow: FlowDefinition = {
           depositPerGuest = biz?.deposit_per_guest || 0;
         }
 
-        const totalDeposit = serviceDeposit > 0 ? serviceDeposit : (depositPerGuest * partySize);
+        // Categories that collect full service price upfront (no deposit model)
+        const prepayCategories = new Set([
+          'barber', 'spa', 'salon', 'tattoo', 'gym', 'clinic', 'dental',
+          'veterinary', 'consultant', 'tutor', 'photographer', 'car_wash',
+          'laundry', 'coworking',
+        ]);
+        const isPrepay = prepayCategories.has(ctx.business?.category || '');
+
+        let totalDeposit: number;
+        if (serviceDeposit > 0) {
+          // Explicit deposit set on the service
+          totalDeposit = serviceDeposit;
+        } else if (depositPerGuest > 0) {
+          // Per-guest deposit (restaurants)
+          totalDeposit = depositPerGuest * partySize;
+        } else if (isPrepay && servicePrice > 0) {
+          // Service-based businesses: charge full service price
+          totalDeposit = servicePrice * partySize;
+        } else {
+          totalDeposit = 0;
+        }
 
         const insertPayload: Record<string, unknown> = {
           business_id: ctx.business!.id,
@@ -615,7 +722,7 @@ export const schedulingFlow: FlowDefinition = {
               {
                 type: 'text',
                 text: [
-                  `📋 *Booking Created!*`,
+                  `📋 *${labels.receiptTitle}!*`,
                   '',
                   `${labels.confirmationEmoji} ${ctx.business?.name}`,
                   `📅 ${dateLabel}`,
@@ -623,7 +730,7 @@ export const schedulingFlow: FlowDefinition = {
                   `👥 ${partySize} ${labels.quantityLabel}`,
                   `🔑 Ref: *${booking.reference_code}*`,
                   '',
-                  `\ud83d\udcb3 *Deposit Required: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
+                  `\ud83d\udcb3 *${isPrepay ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
                   '',
                   `Pay here 👇`,
                   paymentResult.url,

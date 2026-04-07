@@ -72,8 +72,9 @@ export class BotService {
       return;
     }
 
-    // Detect "my bookings" keyword
-    const isBookingsQuery = /^(my bookings|bookings|reservations|my reservations|my orders|orders)$/i.test(text);
+    // Detect "my bookings" keyword — covers industry-specific terminology
+    const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|sessions?|upcoming|schedule)$/i.test(text)
+      || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|schedule)$/i.test(text);
 
     let session = await this.getActiveSession(from);
 
