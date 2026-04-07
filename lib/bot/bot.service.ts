@@ -135,10 +135,25 @@ export class BotService {
     const currentStep = session?.current_step || '';
     const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address'].includes(currentStep);
     const detectedRestart = !isFreeTextStep ? this.intelligence.detectIntent(text, currentStep) : null;
+
+    // Also treat bot codes as restarts so users can switch businesses mid-session
+    let isBotCodeRestart = false;
+    if (!isFreeTextStep && session && /^[a-z0-9-]{2,30}$/i.test(text.trim())) {
+      const potentialCode = text.trim().toLowerCase();
+      const { data: codeMatch } = await this.supabase
+        .from('businesses')
+        .select('id')
+        .ilike('bot_code', potentialCode)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (codeMatch) isBotCodeRestart = true;
+    }
+
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
       detectedRestart?.intent === 'greeting' ||
-      detectedRestart?.intent === 'booking'  // "tithe", "book", "order", "pay" etc. also restart
+      detectedRestart?.intent === 'booking' ||
+      isBotCodeRestart
     );
 
     if (!session || isRestart) {
@@ -540,12 +555,12 @@ export class BotService {
       'can', 'me', 'my', 'get', 'make', 'help', 'pay', 'buy', 'ticket',
     ]);
 
-    // Exact match
+    // Exact match (case-insensitive)
     if (/^[a-z0-9-]{2,30}$/.test(normalizedText)) {
       const { data } = await this.supabase
         .from('businesses')
         .select('id')
-        .eq('bot_code', normalizedText)
+        .ilike('bot_code', normalizedText)
         .eq('status', 'active')
         .maybeSingle();
       if (data) return data.id;
@@ -558,7 +573,7 @@ export class BotService {
       const { data } = await this.supabase
         .from('businesses')
         .select('id')
-        .eq('bot_code', candidate)
+        .ilike('bot_code', candidate)
         .eq('status', 'active')
         .maybeSingle();
       if (data) return data.id;
@@ -572,7 +587,7 @@ export class BotService {
         const { data } = await this.supabase
           .from('businesses')
           .select('id')
-          .eq('bot_code', candidate)
+          .ilike('bot_code', candidate)
           .eq('status', 'active')
           .maybeSingle();
         if (data) return data.id;
