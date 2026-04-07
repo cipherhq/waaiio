@@ -12,6 +12,12 @@ export interface InitPaymentOpts {
   phone: string;
   userEmail?: string;
   callbackUrl?: string;
+  /** Paystack/Flutterwave subaccount code for split payments */
+  subaccountCode?: string;
+  /** Stripe Connect account ID for split payments */
+  stripeAccountId?: string;
+  /** Platform fee in base currency units (e.g. naira, dollars — NOT kobo/cents) */
+  platformFeeAmount?: number;
 }
 
 export interface InitPaymentResult {
@@ -24,7 +30,7 @@ export interface VerifyResult {
 }
 
 export interface PaymentGateway {
-  name: 'paystack' | 'stripe';
+  name: 'paystack' | 'stripe' | 'flutterwave' | 'square';
   initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null>;
   verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean>;
 }

@@ -1,8 +1,8 @@
 // ═══════════════════════════════════════════════════════
-// SmrtRply Shared Constants — Multi-Industry Platform
+// Waaiio Shared Constants — Multi-Industry Platform
 // ═══════════════════════════════════════════════════════
 
-export const APP_NAME = 'SmrtRply';
+export const APP_NAME = 'Waaiio';
 export const APP_TAGLINE = 'WhatsApp Automation for Every Business';
 export const BOOKING_REF_PREFIX = 'BW';
 export const TRIAL_DAYS = 7;
@@ -12,10 +12,19 @@ export type FlowType = 'scheduling' | 'payment' | 'ordering' | 'ticketing';
 export type BusinessCategoryKey =
   | 'restaurant' | 'barber' | 'spa' | 'salon' | 'gym' | 'clinic'
   | 'consultant' | 'church' | 'mosque' | 'school' | 'ngo'
-  | 'shop' | 'food_delivery' | 'events' | 'transport' | 'cinema' | 'other';
+  | 'shop' | 'food_delivery' | 'events' | 'transport' | 'cinema'
+  | 'car_park' | 'tattoo' | 'real_estate' | 'travel_agency'
+  | 'logistics' | 'taxi' | 'government' | 'instagram_vendor'
+  | 'crowdfunding_org' | 'laundry' | 'veterinary' | 'dental'
+  | 'coworking' | 'tutor' | 'photographer' | 'mall_vendor'
+  | 'pharmacy' | 'hotel' | 'car_wash' | 'catering'
+  | 'funeral' | 'tailor' | 'other';
 export type SubscriptionTier = 'free' | 'growth' | 'business';
-export type CountryCode = 'NG' | 'US' | 'GB' | 'CA' | 'GH';
-export type PaymentGatewayName = 'paystack' | 'stripe';
+export type CountryCode = string;
+export type PaymentGatewayName = 'paystack' | 'stripe' | 'flutterwave' | 'square';
+
+// Re-export capability types for convenience
+export type { CapabilityId } from '@/lib/capabilities/types';
 
 // ── Country Configuration ──
 
@@ -67,7 +76,7 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
     currencyCode: 'USD',
     currencySymbol: '$',
     currencyLocale: 'en-US',
-    paymentGateway: 'stripe',
+    paymentGateway: 'square',
     phoneDigits: 10,
     phonePattern: /^[2-9]\d{9}$/,
     phonePlaceholder: '2025551234',
@@ -203,7 +212,30 @@ export const BUSINESS_CATEGORIES: Array<{
   { key: 'events', label: 'Events', icon: '🎪', flow: 'ticketing' },
   { key: 'transport', label: 'Transport', icon: '🚌', flow: 'ticketing' },
   { key: 'cinema', label: 'Cinema', icon: '🎬', flow: 'ticketing' },
-  { key: 'other', label: 'Other', icon: '🔧', flow: 'scheduling' },
+  // ── New Categories ──
+  { key: 'car_park', label: 'Parking', icon: '🅿️', flow: 'payment' },
+  { key: 'tattoo', label: 'Tattoo Shop', icon: '🎨', flow: 'scheduling' },
+  { key: 'real_estate', label: 'Real Estate', icon: '🏠', flow: 'scheduling' },
+  { key: 'travel_agency', label: 'Travel Agency', icon: '✈️', flow: 'scheduling' },
+  { key: 'logistics', label: 'Logistics & Shipping', icon: '🚚', flow: 'ordering' },
+  { key: 'taxi', label: 'Taxi & Ride-Hailing', icon: '🚕', flow: 'payment' },
+  { key: 'government', label: 'Government & Utilities', icon: '🏛️', flow: 'payment' },
+  { key: 'instagram_vendor', label: 'Online Vendor', icon: '🛒', flow: 'ordering' },
+  { key: 'crowdfunding_org', label: 'Crowdfunding', icon: '❤️', flow: 'payment' },
+  { key: 'laundry', label: 'Laundry & Dry Cleaning', icon: '👔', flow: 'scheduling' },
+  { key: 'veterinary', label: 'Veterinary', icon: '🐾', flow: 'scheduling' },
+  { key: 'dental', label: 'Dental Clinic', icon: '🦷', flow: 'scheduling' },
+  { key: 'coworking', label: 'Coworking Space', icon: '🏢', flow: 'scheduling' },
+  { key: 'tutor', label: 'Tutor & Coaching', icon: '📚', flow: 'scheduling' },
+  { key: 'photographer', label: 'Photographer', icon: '📷', flow: 'scheduling' },
+  { key: 'mall_vendor', label: 'Mall Vendor', icon: '🏪', flow: 'ordering' },
+  { key: 'pharmacy', label: 'Pharmacy', icon: '💊', flow: 'ordering' },
+  { key: 'hotel', label: 'Hotel & Lodge', icon: '🛏️', flow: 'scheduling' },
+  { key: 'car_wash', label: 'Car Wash', icon: '🚿', flow: 'scheduling' },
+  { key: 'catering', label: 'Catering', icon: '🍳', flow: 'ordering' },
+  { key: 'funeral', label: 'Funeral Services', icon: '🌺', flow: 'payment' },
+  { key: 'tailor', label: 'Tailor & Fashion', icon: '✂️', flow: 'ordering' },
+  { key: 'other', label: 'Other (Custom)', icon: '🔧', flow: 'scheduling' },
 ];
 
 // ── Category → Flow Map ──
@@ -219,24 +251,50 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   confirmationEmoji: string;
   receiptTitle: string;
   quantityLabel: string;
+  personLabel: string;
+  personLabelPlural: string;
+  hiddenStatuses: string[];
 }> = {
-  restaurant: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🍽️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests' },
-  barber: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💈', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people' },
-  spa: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🧖', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people' },
-  salon: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💇', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people' },
-  gym: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🏋️', receiptTitle: 'Session Confirmed', quantityLabel: 'people' },
-  clinic: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🏥', receiptTitle: 'Appointment Confirmed', quantityLabel: 'patients' },
-  consultant: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '💼', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees' },
-  church: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '⛪', receiptTitle: 'Payment Received', quantityLabel: 'amount' },
-  mosque: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🕌', receiptTitle: 'Payment Received', quantityLabel: 'amount' },
-  school: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🎓', receiptTitle: 'Payment Received', quantityLabel: 'amount' },
-  ngo: { entityName: 'donation', entityNamePlural: 'donations', actionVerb: 'Donate', confirmationEmoji: '🤝', receiptTitle: 'Donation Received', quantityLabel: 'amount' },
-  shop: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛍️', receiptTitle: 'Order Confirmed', quantityLabel: 'items' },
-  food_delivery: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛵', receiptTitle: 'Order Confirmed', quantityLabel: 'items' },
-  events: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🎪', receiptTitle: 'Tickets Confirmed', quantityLabel: 'tickets' },
-  transport: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🚌', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats' },
-  cinema: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🎬', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats' },
-  other: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '✅', receiptTitle: 'Booking Confirmed', quantityLabel: 'slots' },
+  restaurant: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🍽️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [] },
+  barber: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💈', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  spa: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🧖', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  salon: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💇', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  gym: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🏋️', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [] },
+  clinic: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🏥', receiptTitle: 'Appointment Confirmed', quantityLabel: 'patients', personLabel: 'Patient', personLabelPlural: 'Patients', hiddenStatuses: [] },
+  consultant: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '💼', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  church: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '⛪', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  mosque: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🕌', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  school: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🎓', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  ngo: { entityName: 'donation', entityNamePlural: 'donations', actionVerb: 'Donate', confirmationEmoji: '🤝', receiptTitle: 'Donation Received', quantityLabel: 'amount', personLabel: 'Donor', personLabelPlural: 'Donors', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  shop: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛍️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  food_delivery: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛵', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  events: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🎪', receiptTitle: 'Tickets Confirmed', quantityLabel: 'tickets', personLabel: 'Attendee', personLabelPlural: 'Attendees', hiddenStatuses: ['no_show', 'in_progress'] },
+  transport: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🚌', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats', personLabel: 'Attendee', personLabelPlural: 'Attendees', hiddenStatuses: ['no_show', 'in_progress'] },
+  cinema: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🎬', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats', personLabel: 'Attendee', personLabelPlural: 'Attendees', hiddenStatuses: ['no_show', 'in_progress'] },
+  // ── New Categories ──
+  car_park: { entityName: 'parking', entityNamePlural: 'parking passes', actionVerb: 'Pay', confirmationEmoji: '🅿️', receiptTitle: 'Parking Paid', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  tattoo: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🎨', receiptTitle: 'Appointment Confirmed', quantityLabel: 'sessions', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  real_estate: { entityName: 'viewing', entityNamePlural: 'viewings', actionVerb: 'Book', confirmationEmoji: '🏠', receiptTitle: 'Viewing Confirmed', quantityLabel: 'viewings', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  travel_agency: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '✈️', receiptTitle: 'Booking Confirmed', quantityLabel: 'travelers', personLabel: 'Traveler', personLabelPlural: 'Travelers', hiddenStatuses: [] },
+  logistics: { entityName: 'shipment', entityNamePlural: 'shipments', actionVerb: 'Order', confirmationEmoji: '🚚', receiptTitle: 'Shipment Confirmed', quantityLabel: 'packages', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  taxi: { entityName: 'ride', entityNamePlural: 'rides', actionVerb: 'Pay', confirmationEmoji: '🚕', receiptTitle: 'Ride Payment', quantityLabel: 'rides', personLabel: 'Rider', personLabelPlural: 'Riders', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  government: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🏛️', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Citizen', personLabelPlural: 'Citizens', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  instagram_vendor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛒', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  crowdfunding_org: { entityName: 'donation', entityNamePlural: 'donations', actionVerb: 'Donate', confirmationEmoji: '❤️', receiptTitle: 'Donation Received', quantityLabel: 'amount', personLabel: 'Donor', personLabelPlural: 'Donors', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  laundry: { entityName: 'pickup', entityNamePlural: 'pickups', actionVerb: 'Book', confirmationEmoji: '👔', receiptTitle: 'Pickup Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  veterinary: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🐾', receiptTitle: 'Appointment Confirmed', quantityLabel: 'pets', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  dental: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🦷', receiptTitle: 'Appointment Confirmed', quantityLabel: 'patients', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  coworking: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🏢', receiptTitle: 'Space Booked', quantityLabel: 'desks', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [] },
+  tutor: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '📚', receiptTitle: 'Session Confirmed', quantityLabel: 'students', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: [] },
+  photographer: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '📷', receiptTitle: 'Session Confirmed', quantityLabel: 'sessions', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [] },
+  mall_vendor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🏪', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  pharmacy: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '💊', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  hotel: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🛏️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'nights', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [] },
+  car_wash: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🚿', receiptTitle: 'Booking Confirmed', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  catering: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🍳', receiptTitle: 'Order Confirmed', quantityLabel: 'servings', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  funeral: { entityName: 'service', entityNamePlural: 'services', actionVerb: 'Pay', confirmationEmoji: '🌺', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Family', personLabelPlural: 'Families', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'] },
+  tailor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '✂️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
+  other: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '✅', receiptTitle: 'Booking Confirmed', quantityLabel: 'slots', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [] },
 };
 
 // ── Pricing Tiers ──
@@ -367,6 +425,79 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   events: [],
   transport: [],
   cinema: [],
+  // ── New Categories ──
+  car_park: [
+    { name: 'Hourly Parking', price: 500, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Daily Parking', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Monthly Pass', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  tattoo: [
+    { name: 'Small Tattoo', price: 15000, price_is_variable: false, duration_minutes: 60, deposit_amount: 5000 },
+    { name: 'Medium Tattoo', price: 35000, price_is_variable: false, duration_minutes: 120, deposit_amount: 10000 },
+    { name: 'Consultation', price: 0, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
+  ],
+  real_estate: [
+    { name: 'Property Viewing', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Consultation', price: 10000, price_is_variable: false, duration_minutes: 45, deposit_amount: 0 },
+  ],
+  travel_agency: [
+    { name: 'Travel Consultation', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+  ],
+  logistics: [],
+  taxi: [
+    { name: 'Ride Payment', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  government: [
+    { name: 'Utility Bill', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Application Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  instagram_vendor: [],
+  crowdfunding_org: [],
+  laundry: [
+    { name: 'Wash & Fold', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Dry Cleaning', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Ironing Only', price: 1500, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  veterinary: [
+    { name: 'Consultation', price: 10000, price_is_variable: false, duration_minutes: 30, deposit_amount: 3000 },
+    { name: 'Vaccination', price: 8000, price_is_variable: false, duration_minutes: 15, deposit_amount: 0 },
+    { name: 'Grooming', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+  ],
+  dental: [
+    { name: 'Check-up', price: 10000, price_is_variable: false, duration_minutes: 30, deposit_amount: 5000 },
+    { name: 'Cleaning', price: 15000, price_is_variable: false, duration_minutes: 45, deposit_amount: 5000 },
+    { name: 'Filling', price: 25000, price_is_variable: false, duration_minutes: 60, deposit_amount: 10000 },
+  ],
+  coworking: [
+    { name: 'Hot Desk (Day)', price: 3000, price_is_variable: false, duration_minutes: 480, deposit_amount: 0 },
+    { name: 'Private Office (Day)', price: 10000, price_is_variable: false, duration_minutes: 480, deposit_amount: 0 },
+    { name: 'Meeting Room (Hour)', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+  ],
+  tutor: [
+    { name: 'Private Lesson', price: 10000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Group Session', price: 5000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
+  ],
+  photographer: [
+    { name: 'Portrait Session', price: 30000, price_is_variable: false, duration_minutes: 60, deposit_amount: 10000 },
+    { name: 'Event Coverage', price: 100000, price_is_variable: false, duration_minutes: 240, deposit_amount: 30000 },
+  ],
+  mall_vendor: [],
+  pharmacy: [],
+  hotel: [
+    { name: 'Standard Room', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
+    { name: 'Deluxe Room', price: 45000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
+  ],
+  car_wash: [
+    { name: 'Basic Wash', price: 2000, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
+    { name: 'Full Wash & Polish', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Interior Detail', price: 8000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
+  ],
+  catering: [],
+  funeral: [
+    { name: 'Service Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Memorial Contribution', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  tailor: [],
   other: [
     { name: 'General Booking', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
   ],
@@ -459,15 +590,61 @@ export function calculatePlatformFee(
   };
 }
 
+// ── DB-backed Country Helpers ──
+// Registration pattern to avoid circular deps — lib/countries.ts calls registerCountryResolver() after import.
+
+type CountryResolverFn = (code: string) => {
+  name: string; flag: string; dialing_code: string; currency_code: string;
+  currency_symbol: string; currency_locale: string; payment_gateway: string;
+  phone_digits: number; phone_pattern: string; phone_placeholder: string;
+  cities: Record<string, { name: string; neighborhoods: string[] }>;
+  pricing?: Record<string, { price: number; feeFlat: number }>;
+  verification_tiers?: Record<string, { label: string; limit: number; requirements: string }>;
+  doc_types?: { key: string; label: string; desc: string }[];
+} | null;
+
+let _countryResolver: CountryResolverFn | null = null;
+
+/** Called by lib/countries.ts to register its getCountry function */
+export function registerCountryResolver(fn: CountryResolverFn): void {
+  _countryResolver = fn;
+}
+
+/** Get CountryRow from DB cache, or null if not loaded */
+function _getCountryFromDb(code: string) {
+  return _countryResolver?.(code) ?? null;
+}
+
+/** Get country config: DB cache first, then hardcoded COUNTRIES fallback */
+function _getCountryConfig(code: string): CountryConfig {
+  const db = _getCountryFromDb(code);
+  if (db) {
+    return {
+      name: db.name,
+      flag: db.flag,
+      dialingCode: db.dialing_code,
+      currencyCode: db.currency_code,
+      currencySymbol: db.currency_symbol,
+      currencyLocale: db.currency_locale,
+      paymentGateway: db.payment_gateway as PaymentGatewayName,
+      phoneDigits: db.phone_digits,
+      phonePattern: db.phone_pattern ? new RegExp(db.phone_pattern) : /./,
+      phonePlaceholder: db.phone_placeholder,
+      cities: db.cities,
+    };
+  }
+  return COUNTRIES[code as keyof typeof COUNTRIES] ?? COUNTRIES.NG;
+}
+
 // ── Multi-Country Helpers ──
 
 /** Format currency for a given country */
 export function formatCurrency(amount: number, countryCode: CountryCode = 'NG'): string {
-  const country = COUNTRIES[countryCode];
-  const fractionDigits = ['NGN', 'GHS'].includes(country.currencyCode) ? 0 : 2;
-  return new Intl.NumberFormat(country.currencyLocale, {
+  const c = _getCountryConfig(countryCode);
+  const fractionDigits = ['NGN', 'GHS'].includes(c.currencyCode) ? 0 : 2;
+  return new Intl.NumberFormat(c.currencyLocale, {
     style: 'currency',
-    currency: country.currencyCode,
+    currency: c.currencyCode,
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   }).format(amount);
@@ -483,8 +660,10 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
   whitelabel: boolean;
   features: string[];
 }> {
-  const cp = COUNTRY_PRICING[countryCode];
-  const country = COUNTRIES[countryCode];
+  const dbCountry = _getCountryFromDb(countryCode);
+  const cp = dbCountry?.pricing && Object.keys(dbCountry.pricing).length > 0
+    ? dbCountry.pricing as Record<string, { price: number; feeFlat: number }>
+    : COUNTRY_PRICING[countryCode as keyof typeof COUNTRY_PRICING] ?? COUNTRY_PRICING.NG;
   const fmt = (amt: number) => formatCurrency(amt, countryCode);
 
   return {
@@ -530,15 +709,139 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
 
 /** Get locale string for date formatting */
 export function getLocale(countryCode: CountryCode = 'NG'): string {
-  return COUNTRIES[countryCode].currencyLocale;
+  return _getCountryConfig(countryCode).currencyLocale;
 }
 
 /** Get cities for a country */
 export function getCitiesForCountry(countryCode: CountryCode = 'NG') {
-  return COUNTRIES[countryCode].cities;
+  const dbCountry = _getCountryFromDb(countryCode);
+  if (dbCountry?.cities && Object.keys(dbCountry.cities).length > 0) return dbCountry.cities;
+  return _getCountryConfig(countryCode).cities;
 }
 
 /** Get the payment gateway for a country */
 export function getPaymentGatewayForCountry(countryCode: CountryCode = 'NG'): PaymentGatewayName {
-  return COUNTRIES[countryCode].paymentGateway;
+  const dbCountry = _getCountryFromDb(countryCode);
+  if (dbCountry) return dbCountry.payment_gateway as PaymentGatewayName;
+  return _getCountryConfig(countryCode).paymentGateway;
+}
+
+// ── Verification / KYC Configuration ──
+
+export type VerificationLevel = 'unverified' | 'basic' | 'standard' | 'full';
+
+interface VerificationTier {
+  label: string;
+  limit: number; // monthly payout limit in local currency; 999999999 = unlimited
+  requirements: string;
+}
+
+const VERIFICATION_TIERS: Record<CountryCode, Record<VerificationLevel, VerificationTier>> = {
+  NG: {
+    unverified: { label: 'Unverified', limit: 0, requirements: 'Just signed up' },
+    basic: { label: 'Basic', limit: 500_000, requirements: 'Email + Phone + Bank verified' },
+    standard: { label: 'Standard', limit: 5_000_000, requirements: '+ Business document (CAC/license)' },
+    full: { label: 'Full', limit: 999_999_999, requirements: '+ Government ID + Address proof' },
+  },
+  US: {
+    unverified: { label: 'Unverified', limit: 0, requirements: 'Just signed up' },
+    basic: { label: 'Basic', limit: 5_000, requirements: 'Email + Phone + Bank verified' },
+    standard: { label: 'Standard', limit: 50_000, requirements: '+ Business document (EIN/license)' },
+    full: { label: 'Full', limit: 999_999_999, requirements: '+ Government ID + Address proof' },
+  },
+  GB: {
+    unverified: { label: 'Unverified', limit: 0, requirements: 'Just signed up' },
+    basic: { label: 'Basic', limit: 4_000, requirements: 'Email + Phone + Bank verified' },
+    standard: { label: 'Standard', limit: 40_000, requirements: '+ Business document (Companies House/license)' },
+    full: { label: 'Full', limit: 999_999_999, requirements: '+ Government ID + Address proof' },
+  },
+  CA: {
+    unverified: { label: 'Unverified', limit: 0, requirements: 'Just signed up' },
+    basic: { label: 'Basic', limit: 7_000, requirements: 'Email + Phone + Bank verified' },
+    standard: { label: 'Standard', limit: 70_000, requirements: '+ Business document (BN/license)' },
+    full: { label: 'Full', limit: 999_999_999, requirements: '+ Government ID + Address proof' },
+  },
+  GH: {
+    unverified: { label: 'Unverified', limit: 0, requirements: 'Just signed up' },
+    basic: { label: 'Basic', limit: 50_000, requirements: 'Email + Phone + Bank verified' },
+    standard: { label: 'Standard', limit: 500_000, requirements: '+ Business document (RGD certificate/license)' },
+    full: { label: 'Full', limit: 999_999_999, requirements: '+ Government ID + Address proof' },
+  },
+};
+
+export function getVerificationTiers(countryCode: CountryCode = 'NG') {
+  const dbCountry = _getCountryFromDb(countryCode);
+  if (dbCountry?.verification_tiers && Object.keys(dbCountry.verification_tiers).length > 0) {
+    return dbCountry.verification_tiers as Record<VerificationLevel, VerificationTier>;
+  }
+  return VERIFICATION_TIERS[countryCode as keyof typeof VERIFICATION_TIERS] ?? VERIFICATION_TIERS.NG;
+}
+
+export function getPayoutLimit(countryCode: CountryCode = 'NG', level: VerificationLevel = 'unverified'): number {
+  const tiers = getVerificationTiers(countryCode);
+  return tiers[level]?.limit ?? 0;
+}
+
+export function formatPayoutLimit(countryCode: CountryCode = 'NG', level: VerificationLevel = 'unverified'): string {
+  const limit = getPayoutLimit(countryCode, level);
+  if (limit === 0) return 'No payouts';
+  if (limit >= 999_999_999) return 'Unlimited';
+  return formatCurrency(limit, countryCode);
+}
+
+// Per-country document types for KYC verification
+export interface DocTypeConfig {
+  key: string;
+  label: string;
+  desc: string;
+}
+
+const COUNTRY_DOC_TYPES: Record<CountryCode, DocTypeConfig[]> = {
+  NG: [
+    { key: 'cac_certificate', label: 'CAC Certificate', desc: 'Certificate of incorporation from CAC' },
+    { key: 'business_license', label: 'Business License', desc: 'State or local business license' },
+    { key: 'government_id', label: 'Government ID', desc: 'National ID, voter\'s card, or driver\'s license' },
+    { key: 'utility_bill', label: 'Utility Bill', desc: 'Recent utility bill showing business address' },
+    { key: 'tin_certificate', label: 'TIN Certificate', desc: 'Tax Identification Number certificate' },
+  ],
+  US: [
+    { key: 'ein_letter', label: 'EIN Letter', desc: 'IRS EIN confirmation letter (CP 575)' },
+    { key: 'business_license', label: 'Business License', desc: 'State or local business license' },
+    { key: 'government_id', label: 'Government ID', desc: 'Driver\'s license, passport, or state ID' },
+    { key: 'utility_bill', label: 'Utility Bill', desc: 'Recent utility bill showing business address' },
+    { key: 'articles_of_incorporation', label: 'Articles of Incorporation', desc: 'State-filed articles of incorporation' },
+  ],
+  GB: [
+    { key: 'companies_house', label: 'Companies House Certificate', desc: 'Certificate of incorporation from Companies House' },
+    { key: 'business_license', label: 'Business License', desc: 'Local authority business license' },
+    { key: 'government_id', label: 'Government ID', desc: 'Passport or UK driving licence' },
+    { key: 'utility_bill', label: 'Utility Bill', desc: 'Recent utility bill showing business address' },
+    { key: 'hmrc_registration', label: 'HMRC Registration', desc: 'HMRC tax registration document' },
+  ],
+  CA: [
+    { key: 'bn_certificate', label: 'Business Number Certificate', desc: 'CRA Business Number registration' },
+    { key: 'business_license', label: 'Business License', desc: 'Provincial or municipal business license' },
+    { key: 'government_id', label: 'Government ID', desc: 'Driver\'s licence, passport, or provincial ID' },
+    { key: 'utility_bill', label: 'Utility Bill', desc: 'Recent utility bill showing business address' },
+    { key: 'articles_of_incorporation', label: 'Articles of Incorporation', desc: 'Federal or provincial incorporation docs' },
+  ],
+  GH: [
+    { key: 'rgd_certificate', label: 'RGD Certificate', desc: 'Registrar General\'s Department certificate' },
+    { key: 'business_license', label: 'Business License', desc: 'District assembly business license' },
+    { key: 'government_id', label: 'Government ID', desc: 'Ghana Card, passport, or voter\'s ID' },
+    { key: 'utility_bill', label: 'Utility Bill', desc: 'Recent utility bill showing business address' },
+    { key: 'tin_certificate', label: 'TIN Certificate', desc: 'GRA Tax Identification Number certificate' },
+  ],
+};
+
+export function getDocTypesForCountry(countryCode: CountryCode = 'NG'): DocTypeConfig[] {
+  const dbCountry = _getCountryFromDb(countryCode);
+  if (dbCountry?.doc_types && dbCountry.doc_types.length > 0) return dbCountry.doc_types;
+  return COUNTRY_DOC_TYPES[countryCode as keyof typeof COUNTRY_DOC_TYPES] ?? COUNTRY_DOC_TYPES.NG;
+}
+
+export function getDocTypeLabel(countryCode: CountryCode, key: string): string {
+  const docs = getDocTypesForCountry(countryCode);
+  const dt = docs.find(d => d.key === key);
+  return dt?.label || key.replace(/_/g, ' ');
 }
