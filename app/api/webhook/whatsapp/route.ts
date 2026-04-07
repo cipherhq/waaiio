@@ -120,8 +120,18 @@ export async function POST(request: NextRequest) {
     const standalone = new StandaloneService(supabase);
     const bot = new BotService(supabase, sender as MessageSender, standalone, intelligenceSvc);
 
+    // Capture console for debug
+    const debugLogs: string[] = [];
+    const origError = console.error;
+    const origLog = console.log;
+    console.error = (...args: unknown[]) => { debugLogs.push('[ERR] ' + args.map(String).join(' ')); origError(...args); };
+    console.log = (...args: unknown[]) => { debugLogs.push('[LOG] ' + args.map(String).join(' ')); origLog(...args); };
+
     // Process message
     await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId);
+
+    console.error = origError;
+    console.log = origLog;
 
     // Mark message as processed for replay protection
     try {
@@ -133,7 +143,7 @@ export async function POST(request: NextRequest) {
     } catch { /* Don't fail if insert fails */ }
 
     console.log('[WEBHOOK] Message processed successfully');
-    return NextResponse.json({ status: 'ok' });
+    return NextResponse.json({ status: 'ok', debug: debugLogs });
   } catch (error) {
     console.error('[WEBHOOK] Error:', error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });
