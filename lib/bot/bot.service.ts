@@ -216,6 +216,7 @@ export class BotService {
         .single();
 
       if (sessionError || !newSession) {
+        console.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
         await this.sendText(from, 'Sorry, something went wrong. Please try again.');
         return;
       }
@@ -502,7 +503,8 @@ export class BotService {
 
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business);
     } catch (err) {
-      console.error('[BOT] handleMessage CRASH:', err);
+      const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
+      console.error('[BOT] handleMessage CRASH:', errMsg);
       try { await this.sendText(from, 'Sorry, something went wrong. Please try again.'); } catch (_) { /* ignore */ }
     }
   }
