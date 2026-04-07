@@ -82,8 +82,9 @@ export class BotService {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
-      const phone = from.startsWith('+') ? from : `+${from}`;
-      const { data: profile } = await this.supabase.from('profiles').select('id').eq('phone', phone).single();
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to make your first booking!");
         return;
@@ -187,13 +188,15 @@ export class BotService {
         console.log('[BOT] detectBotCode("' + text + '") →', businessId);
       }
 
-      // Link to existing user
-      const phone = from.startsWith('+') ? from : `+${from}`;
+      // Link to existing user (check both +phone and phone formats)
+      const phoneWithPlus = from.startsWith('+') ? from : `+${from}`;
+      const phoneWithout = from.startsWith('+') ? from.slice(1) : from;
       const { data: profile } = await this.supabase
         .from('profiles')
         .select('id')
-        .eq('phone', phone)
-        .single();
+        .or(`phone.eq.${phoneWithPlus},phone.eq.${phoneWithout}`)
+        .limit(1)
+        .maybeSingle();
 
       // Returning customer: check past history if no business resolved yet
       if (!businessId) {
@@ -395,8 +398,9 @@ export class BotService {
 
       if (detectedIntent.action === 'bookings') {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-        const phone = from.startsWith('+') ? from : `+${from}`;
-        const { data: profile } = await this.supabase.from('profiles').select('id').eq('phone', phone).single();
+        const bkPhoneP = from.startsWith('+') ? from : `+${from}`;
+        const bkPhoneN = from.startsWith('+') ? from.slice(1) : from;
+        const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${bkPhoneP},phone.eq.${bkPhoneN}`).limit(1).maybeSingle();
         if (!profile?.id) {
           await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
           return;
@@ -492,12 +496,14 @@ export class BotService {
       const caps = await getEnabledCapabilities(this.supabase, session.business_id);
       if (caps.includes('chat')) {
         // Get customer name
-        const phone = from.startsWith('+') ? from : `+${from}`;
+        const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
+        const chatPhoneN = from.startsWith('+') ? from.slice(1) : from;
         let customerName: string | null = null;
         const { data: profile } = await this.supabase
           .from('profiles')
           .select('first_name, last_name')
-          .eq('phone', phone)
+          .or(`phone.eq.${chatPhoneP},phone.eq.${chatPhoneN}`)
+          .limit(1)
           .maybeSingle();
         if (profile?.first_name) {
           customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;

@@ -8,6 +8,7 @@ export async function createWhatsAppUser(
   email?: string,
 ): Promise<string | null> {
   const fullPhone = phone.startsWith('+') ? phone : `+${phone}`;
+  const phoneWithout = phone.startsWith('+') ? phone.slice(1) : phone;
 
   try {
     const createPayload: Record<string, unknown> = {
@@ -23,12 +24,13 @@ export async function createWhatsAppUser(
     const { data: authData, error: authError } = await supabase.auth.admin.createUser(createPayload);
 
     if (authError) {
-      // Try lookup by phone
+      // Try lookup by phone (check both +phone and phone formats)
       const { data: byPhone } = await supabase
         .from('profiles')
         .select('id')
-        .eq('phone', fullPhone)
-        .single();
+        .or(`phone.eq.${fullPhone},phone.eq.${phoneWithout}`)
+        .limit(1)
+        .maybeSingle();
 
       if (byPhone?.id) {
         const updates: Record<string, string> = { first_name: firstName, last_name: lastName };
@@ -85,8 +87,9 @@ export async function createWhatsAppUser(
       const { data: fallback } = await supabase
         .from('profiles')
         .select('id')
-        .eq('phone', fullPhone)
-        .single();
+        .or(`phone.eq.${fullPhone},phone.eq.${phoneWithout}`)
+        .limit(1)
+        .maybeSingle();
       if (fallback?.id) return fallback.id;
     } catch { /* ignore */ }
 
@@ -99,10 +102,12 @@ export async function findUserByPhone(
   phone: string,
 ): Promise<{ id: string; first_name: string; last_name: string; email: string | null } | null> {
   const fullPhone = phone.startsWith('+') ? phone : `+${phone}`;
+  const phoneWithout = phone.startsWith('+') ? phone.slice(1) : phone;
   const { data } = await supabase
     .from('profiles')
     .select('id, first_name, last_name, email')
-    .eq('phone', fullPhone)
-    .single();
+    .or(`phone.eq.${fullPhone},phone.eq.${phoneWithout}`)
+    .limit(1)
+    .maybeSingle();
   return data || null;
 }
