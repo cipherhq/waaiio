@@ -149,10 +149,13 @@ export class BotService {
       if (codeMatch) isBotCodeRestart = true;
     }
 
+    // Don't treat booking intent as a restart when user is already mid-flow
+    // (e.g. typing "Haircut" at select_service step — they're already booking)
+    const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability';
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
       detectedRestart?.intent === 'greeting' ||
-      detectedRestart?.intent === 'booking' ||
+      (!isMidFlow && detectedRestart?.intent === 'booking') ||
       isBotCodeRestart
     );
 
