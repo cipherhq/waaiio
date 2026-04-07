@@ -136,7 +136,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
     console.error('[WEBHOOK] Error:', error);
-    return NextResponse.json({ status: 'ok' }, { status: 200 });
+    const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack?.slice(0, 500) : '';
+    return NextResponse.json({ status: 'error', error: msg, stack }, { status: 200 });
   }
 }
 
