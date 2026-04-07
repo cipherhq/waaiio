@@ -28,12 +28,8 @@ export async function initializePayment(
       ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
       : getPaymentGateway(countryCode);
 
-    console.log('[PAYMENT] gateway:', gateway.name, 'country:', countryCode, 'amount:', opts.amount);
-
     const { getCountry } = await import('@/lib/countries');
     const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
-
-    console.log('[PAYMENT] currency:', currencyCode, 'userId:', opts.userId?.slice(0, 8));
 
     // Fetch payout account for split payments
     let subaccountCode: string | undefined;
@@ -80,10 +76,9 @@ export async function initializePayment(
       platformFeeAmount,
     });
 
-    console.log('[PAYMENT] result:', result ? `url=${result.url?.slice(0, 60)}` : 'NULL');
     return result;
   } catch (error) {
-    console.error('[PAYMENT] initializePayment error:', (error as Error).message, (error as Error).stack?.slice(0, 300));
+    console.error('[PAYMENT] initializePayment error:', (error as Error).message);
     return null;
   }
 }

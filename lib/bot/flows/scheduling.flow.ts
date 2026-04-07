@@ -697,41 +697,20 @@ export const schedulingFlow: FlowDefinition = {
           });
         }
 
-        console.log('[BOOKING] totalDeposit:', totalDeposit, 'isPrepay:', isPrepay, 'servicePrice:', servicePrice, 'country:', ctx.business?.country_code);
         if (totalDeposit > 0) {
           // Need payment
-          let paymentResult: { url: string; reference: string } | null = null;
-          let paymentError: string | null = null;
-          try {
-            paymentResult = await initializePayment(ctx.supabase, {
-              bookingId: booking.id,
-              userId,
-              amount: totalDeposit,
-              referenceCode: booking.reference_code,
-              businessName: ctx.business?.name || 'Business',
-              phone: ctx.from,
-              userEmail: (d.email as string) || undefined,
-              countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
-              businessId: ctx.business?.id,
-            });
-          } catch (err) {
-            paymentError = (err as Error).message;
-          }
+          const paymentResult = await initializePayment(ctx.supabase, {
+            bookingId: booking.id,
+            userId,
+            amount: totalDeposit,
+            referenceCode: booking.reference_code,
+            businessName: ctx.business?.name || 'Business',
+            phone: ctx.from,
+            userEmail: (d.email as string) || undefined,
+            countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+            businessId: ctx.business?.id,
+          });
 
-          // Save debug info into session for diagnostics
-          if (!paymentResult) {
-            d._payment_debug = {
-              totalDeposit,
-              isPrepay,
-              servicePrice,
-              country: ctx.business?.country_code || 'NG',
-              error: paymentError,
-              ts: new Date().toISOString(),
-            };
-            await ctx.supabase.from('bot_sessions').update({ session_data: d }).eq('id', ctx.session.id);
-          }
-
-          console.log('[BOOKING] paymentResult:', paymentResult ? `url=${paymentResult.url?.slice(0,50)}` : 'NULL', 'error:', paymentError);
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
             await ctx.supabase
