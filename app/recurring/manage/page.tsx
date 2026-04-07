@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 interface Subscription {
@@ -19,7 +19,7 @@ interface Subscription {
   total_charged: number;
 }
 
-export default function ManageRecurringPage() {
+function ManageRecurringContent() {
   const searchParams = useSearchParams();
   const initialPhone = searchParams.get('phone') || '';
 
@@ -231,5 +231,13 @@ export default function ManageRecurringPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ManageRecurringPage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen items-center justify-center"><p>Loading...</p></div>}>
+      <ManageRecurringContent />
+    </Suspense>
   );
 }
