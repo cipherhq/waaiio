@@ -41,8 +41,11 @@ export class SquareGateway implements PaymentGateway {
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     const idempotencyKey = randomUUID();
 
+    console.log('[SQUARE] initializePayment called — hasToken:', !!squareAccessToken, 'locationId:', squareLocationId?.slice(0, 6), 'env:', squareEnvironment, 'amount:', opts.amount, 'currency:', opts.currency);
+
     try {
       if (!squareAccessToken) {
+        console.log('[SQUARE] No access token — using mock mode');
         const mockRef = `mock_square_${idempotencyKey}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
@@ -60,6 +63,7 @@ export class SquareGateway implements PaymentGateway {
       // Square uses smallest currency unit (cents for USD)
       const amountInCents = Math.round(opts.amount * 100);
       const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+      console.log('[SQUARE] Creating payment link — amountInCents:', amountInCents, 'callbackUrl:', callbackUrl);
 
       const paymentLinkBody: Record<string, unknown> = {
         idempotency_key: idempotencyKey,
@@ -120,7 +124,7 @@ export class SquareGateway implements PaymentGateway {
 
       return { url: paymentLink.url as string, reference: squareRef };
     } catch (error) {
-      console.error('Square init error:', (error as Error).message);
+      console.error('[SQUARE] init error:', (error as Error).message, (error as Error).stack?.slice(0, 300));
       return null;
     }
   }

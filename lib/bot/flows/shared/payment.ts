@@ -20,60 +20,72 @@ export async function initializePayment(
     businessId?: string;
   },
 ): Promise<{ url: string; reference: string } | null> {
-  const countryCode = opts.countryCode || 'NG';
+  try {
+    const countryCode = opts.countryCode || 'NG';
 
-  // Per-business gateway override takes priority
-  const gateway = opts.gatewayOverride
-    ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
-    : getPaymentGateway(countryCode);
+    // Per-business gateway override takes priority
+    const gateway = opts.gatewayOverride
+      ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
+      : getPaymentGateway(countryCode);
 
-  const { getCountry } = await import('@/lib/countries');
-  const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+    console.log('[PAYMENT] gateway:', gateway.name, 'country:', countryCode, 'amount:', opts.amount);
 
-  // Fetch payout account for split payments
-  let subaccountCode: string | undefined;
-  let stripeAccountId: string | undefined;
-  let platformFeeAmount: number | undefined;
+    const { getCountry } = await import('@/lib/countries');
+    const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
 
-  if (opts.businessId) {
-    // Check business payout mode
-    const { data: biz } = await supabase
-      .from('businesses')
-      .select('payout_mode')
-      .eq('id', opts.businessId)
-      .single();
+    console.log('[PAYMENT] currency:', currencyCode, 'userId:', opts.userId?.slice(0, 8));
 
-    const { data: payout } = await supabase
-      .from('payout_accounts')
-      .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
-      .eq('business_id', opts.businessId)
-      .eq('is_active', true)
-      .maybeSingle();
+    // Fetch payout account for split payments
+    let subaccountCode: string | undefined;
+    let stripeAccountId: string | undefined;
+    let platformFeeAmount: number | undefined;
 
-    // Only add split params for direct_split mode with an active payout account
-    if (biz?.payout_mode === 'direct_split' && payout) {
-      subaccountCode = payout.subaccount_code || undefined;
-      stripeAccountId = payout.stripe_account_id || undefined;
-      platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+    if (opts.businessId) {
+      // Check business payout mode
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('payout_mode')
+        .eq('id', opts.businessId)
+        .single();
+
+      const { data: payout } = await supabase
+        .from('payout_accounts')
+        .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
+        .eq('business_id', opts.businessId)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      // Only add split params for direct_split mode with an active payout account
+      if (biz?.payout_mode === 'direct_split' && payout) {
+        subaccountCode = payout.subaccount_code || undefined;
+        stripeAccountId = payout.stripe_account_id || undefined;
+        platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+      }
+      // platform_managed: no split params, full amount goes to platform
     }
-    // platform_managed: no split params, full amount goes to platform
-  }
 
-  return gateway.initializePayment({
-    supabase,
-    bookingId: opts.bookingId,
-    orderId: opts.orderId,
-    userId: opts.userId,
-    amount: opts.amount,
-    currency: currencyCode,
-    referenceCode: opts.referenceCode,
-    businessName: opts.businessName,
-    phone: opts.phone,
-    userEmail: opts.userEmail,
-    subaccountCode,
-    stripeAccountId,
-    platformFeeAmount,
-  });
+    const result = await gateway.initializePayment({
+      supabase,
+      bookingId: opts.bookingId,
+      orderId: opts.orderId,
+      userId: opts.userId,
+      amount: opts.amount,
+      currency: currencyCode,
+      referenceCode: opts.referenceCode,
+      businessName: opts.businessName,
+      phone: opts.phone,
+      userEmail: opts.userEmail,
+      subaccountCode,
+      stripeAccountId,
+      platformFeeAmount,
+    });
+
+    console.log('[PAYMENT] result:', result ? `url=${result.url?.slice(0, 60)}` : 'NULL');
+    return result;
+  } catch (error) {
+    console.error('[PAYMENT] initializePayment error:', (error as Error).message, (error as Error).stack?.slice(0, 300));
+    return null;
+  }
 }
 
 export async function verifyPayment(
