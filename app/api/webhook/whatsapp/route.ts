@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { GupshupService } from '@/lib/channels/gupshup';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import type { MessageSender } from '@/lib/channels/message-sender';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
       : undefined;
 
     const standalone = new StandaloneService(supabase);
-    const bot = new BotService(supabase, sender, standalone, intelligenceSvc);
+    const bot = new BotService(supabase, sender as MessageSender, standalone, intelligenceSvc);
 
     // Process message
     await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId);
