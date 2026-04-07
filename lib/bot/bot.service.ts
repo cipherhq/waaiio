@@ -87,6 +87,12 @@ export class BotService {
         await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to make your first booking!");
         return;
       }
+      // Remove old inactive sessions for this phone (null business) to avoid unique constraint violation
+      await this.supabase.from('bot_sessions')
+        .delete()
+        .eq('whatsapp_number', from)
+        .is('business_id', null)
+        .eq('is_active', false);
       const { data: newSession } = await this.supabase.from('bot_sessions').insert({
         whatsapp_number: from, user_id: profile.id, business_id: null,
         current_step: 'my_bookings', session_data: {}, is_active: true,
@@ -200,6 +206,17 @@ export class BotService {
       const sessionData: Record<string, unknown> = businessId && business
         ? { business_id: businessId, business_name: business.name, capabilities }
         : {};
+
+      // Remove old inactive sessions for this phone+business to avoid unique constraint violation
+      const cleanupQuery = this.supabase.from('bot_sessions')
+        .delete()
+        .eq('whatsapp_number', from)
+        .eq('is_active', false);
+      if (businessId) {
+        await cleanupQuery.eq('business_id', businessId);
+      } else {
+        await cleanupQuery.is('business_id', null);
+      }
 
       const { data: newSession, error: sessionError } = await this.supabase
         .from('bot_sessions')
