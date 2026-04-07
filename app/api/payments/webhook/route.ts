@@ -309,7 +309,7 @@ export async function POST(request: NextRequest) {
       if (custCode && !isWhatsAppSub) {
         const { data: subs } = await supabase
           .from('customer_subscriptions')
-          .select('id, failure_count')
+          .select('id, failure_count, business_id, user_id')
           .eq('gateway_customer_code', custCode)
           .in('status', ['active', 'past_due']);
 
