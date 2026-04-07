@@ -146,11 +146,13 @@ export async function POST(request: NextRequest) {
           await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId);
 
           // Mark message as processed for replay protection
-          await supabase.from('processed_webhook_events').insert({
-            event_id: `meta-${metaMsgId}`,
-            event_type: 'meta_cloud_message',
-            processed_at: new Date().toISOString(),
-          }).catch(() => {}); // Don't fail if insert fails
+          try {
+            await supabase.from('processed_webhook_events').insert({
+              event_id: `meta-${metaMsgId}`,
+              event_type: 'meta_cloud_message',
+              processed_at: new Date().toISOString(),
+            });
+          } catch { /* Don't fail if insert fails */ }
         }
       }
     }
