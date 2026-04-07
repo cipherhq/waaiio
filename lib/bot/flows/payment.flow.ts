@@ -396,6 +396,45 @@ export const paymentFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data.recurring_frequency === 'none') return null;
+        return 'confirm_recurring';
+      },
+    },
+
+    // ── Confirm Recurring (consent) ──
+    {
+      id: 'confirm_recurring',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const frequency = d.recurring_frequency as string;
+        const label = frequency === 'weekly' ? 'every week' : 'every month';
+
+        return [{
+          type: 'buttons',
+          body: [
+            `Please review and accept the recurring payment terms:`,
+            '',
+            `*${d.service_name as string}* — *${formatCurrency(d.amount as number, cc)}* ${label}`,
+            `Business: ${ctx.business?.name || 'N/A'}`,
+            '',
+            `By accepting, you authorize *${ctx.business?.name}* to automatically charge *${formatCurrency(d.amount as number, cc)}* ${label} using your payment method on file.`,
+            '',
+            `You can cancel anytime by typing *subscriptions*.`,
+          ].join('\n'),
+          buttons: [
+            { id: 'i_accept', title: 'I Accept' },
+            { id: 'decline', title: 'Decline' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.toLowerCase();
+        if (text === 'i_accept' || text === 'accept' || text === 'yes') return { valid: true, data: { recurring_accepted: true } };
+        if (text === 'decline' || text === 'no' || text === 'cancel') return { valid: true, data: { recurring_accepted: false } };
+        return { valid: false, errorMessage: 'Please tap *I Accept* or *Decline*.' };
+      },
+      async next(ctx: FlowContext) {
+        if (!ctx.session.session_data.recurring_accepted) return null;
         return 'setup_recurring';
       },
     },
