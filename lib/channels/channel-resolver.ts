@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { GupshupService } from './gupshup';
+import { MetaCloudService } from './meta-cloud';
+import { MetaCloudSender, type MessageSender } from './message-sender';
 import type { CountryCode } from '@/lib/constants';
 
 interface ChannelRecord {
@@ -11,11 +13,15 @@ interface ChannelRecord {
   channel_type: 'shared' | 'dedicated';
   business_id: string | null;
   is_active: boolean;
+  provider: 'gupshup' | 'meta_cloud';
+  waba_id: string | null;
+  phone_number_id: string | null;
+  meta_access_token: string | null;
 }
 
-interface ResolvedChannel {
+export interface ResolvedChannel {
   channel: ChannelRecord;
-  gupshup: GupshupService;
+  sender: MessageSender;
 }
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -26,20 +32,35 @@ export class ChannelResolver {
   constructor(private readonly supabase: SupabaseClient) {}
 
   /**
-   * Resolve a channel by the destination phone number (the Gupshup number that received the message).
-   * Returns the channel record + a GupshupService configured with that channel's credentials.
-   * Falls back to null if no channel is found in DB (use default env-var GupshupService).
+   * Build the correct MessageSender for a channel based on its provider.
+   */
+  private buildSender(channel: ChannelRecord): MessageSender {
+    if (channel.provider === 'meta_cloud' && channel.meta_access_token && channel.phone_number_id) {
+      return new MetaCloudSender(
+        new MetaCloudService({
+          accessToken: channel.meta_access_token,
+          phoneNumberId: channel.phone_number_id,
+          wabaId: channel.waba_id || undefined,
+        })
+      );
+    }
+    // Default: Gupshup
+    return GupshupService.fromChannel(channel);
+  }
+
+  /**
+   * Resolve a channel by the destination phone number.
+   * Returns the channel record + a MessageSender configured with that channel's credentials.
    */
   async resolveByPhone(destinationPhone: string): Promise<ResolvedChannel | null> {
     if (!destinationPhone) return null;
 
-    // Normalize: strip leading +
     const normalized = destinationPhone.replace(/^\+/, '');
 
     const cached = this.cache.get(`phone:${normalized}`);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       if (!cached.data) return null;
-      return { channel: cached.data, gupshup: GupshupService.fromChannel(cached.data) };
+      return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
     const { data } = await this.supabase
@@ -53,7 +74,66 @@ export class ChannelResolver {
     this.cache.set(`phone:${normalized}`, { data: record, ts: Date.now() });
 
     if (!record) return null;
-    return { channel: record, gupshup: GupshupService.fromChannel(record) };
+    return { channel: record, sender: this.buildSender(record) };
+  }
+
+  /**
+   * Resolve a channel by Meta Cloud API phone_number_id.
+   * Used by the Meta Cloud webhook to find the channel.
+   */
+  async resolveByPhoneNumberId(phoneNumberId: string): Promise<ResolvedChannel | null> {
+    if (!phoneNumberId) return null;
+
+    const cacheKey = `pnid:${phoneNumberId}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      if (!cached.data) return null;
+      return { channel: cached.data, sender: this.buildSender(cached.data) };
+    }
+
+    const { data } = await this.supabase
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('phone_number_id', phoneNumberId)
+      .eq('provider', 'meta_cloud')
+      .eq('is_active', true)
+      .single();
+
+    const record = data as ChannelRecord | null;
+    this.cache.set(cacheKey, { data: record, ts: Date.now() });
+
+    if (!record) return null;
+    return { channel: record, sender: this.buildSender(record) };
+  }
+
+  /**
+   * Resolve a channel by business_id (for dedicated channels).
+   * Falls back to the shared channel for the business's country.
+   */
+  async resolveByBusinessId(businessId: string): Promise<ResolvedChannel | null> {
+    if (!businessId) return null;
+
+    const cacheKey = `biz:${businessId}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < CACHE_TTL) {
+      if (!cached.data) return null;
+      return { channel: cached.data, sender: this.buildSender(cached.data) };
+    }
+
+    // First try dedicated channel
+    const { data } = await this.supabase
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('business_id', businessId)
+      .eq('channel_type', 'dedicated')
+      .eq('is_active', true)
+      .maybeSingle();
+
+    const record = data as ChannelRecord | null;
+    this.cache.set(cacheKey, { data: record, ts: Date.now() });
+
+    if (!record) return null;
+    return { channel: record, sender: this.buildSender(record) };
   }
 
   /**
@@ -64,7 +144,7 @@ export class ChannelResolver {
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.ts < CACHE_TTL) {
       if (!cached.data) return null;
-      return { channel: cached.data, gupshup: GupshupService.fromChannel(cached.data) };
+      return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
     const { data } = await this.supabase
@@ -80,6 +160,6 @@ export class ChannelResolver {
     this.cache.set(cacheKey, { data: record, ts: Date.now() });
 
     if (!record) return null;
-    return { channel: record, gupshup: GupshupService.fromChannel(record) };
+    return { channel: record, sender: this.buildSender(record) };
   }
 }

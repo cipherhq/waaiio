@@ -17,16 +17,29 @@ interface Service {
   sort_order: number;
 }
 
+type ViewMode = 'list' | 'add' | 'edit';
+
 export default function ServicesPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
   const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
   const isScheduling = business.flow_type === 'scheduling';
+  const curr = formatCurrency(0, country).charAt(0);
 
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Service | null>(null);
-  const [isNew, setIsNew] = useState(false);
+  const [view, setView] = useState<ViewMode>('list');
+  const [form, setForm] = useState<Service>({
+    id: '',
+    name: '',
+    description: null,
+    price: 0,
+    price_is_variable: false,
+    duration_minutes: isScheduling ? 30 : null,
+    deposit_amount: 0,
+    is_active: true,
+    sort_order: 0,
+  });
   const [saving, setSaving] = useState(false);
 
   async function fetchServices() {
@@ -42,9 +55,8 @@ export default function ServicesPage() {
 
   useEffect(() => { fetchServices(); }, [business.id]);
 
-  function handleAdd() {
-    setIsNew(true);
-    setEditing({
+  function openAdd() {
+    setForm({
       id: '',
       name: '',
       description: null,
@@ -55,49 +67,47 @@ export default function ServicesPage() {
       is_active: true,
       sort_order: services.length,
     });
+    setView('add');
+  }
+
+  function openEdit(service: Service) {
+    setForm({ ...service });
+    setView('edit');
   }
 
   async function handleSave() {
-    if (!editing) return;
+    if (!form.name.trim()) return;
     setSaving(true);
     const supabase = createClient();
 
     const payload = {
       business_id: business.id,
-      name: editing.name,
-      description: editing.description || null,
-      price: editing.price,
-      price_is_variable: editing.price_is_variable,
-      duration_minutes: editing.duration_minutes,
-      deposit_amount: editing.deposit_amount,
-      is_active: editing.is_active,
-      sort_order: editing.sort_order,
+      name: form.name.trim(),
+      description: form.description?.trim() || null,
+      price: form.price,
+      price_is_variable: form.price_is_variable,
+      duration_minutes: form.duration_minutes,
+      deposit_amount: form.deposit_amount,
+      is_active: form.is_active,
+      sort_order: form.sort_order,
     };
 
-    if (isNew) {
+    if (view === 'add') {
       await supabase.from('services').insert(payload);
     } else {
-      await supabase.from('services').update(payload).eq('id', editing.id);
+      await supabase.from('services').update(payload).eq('id', form.id);
     }
 
     setSaving(false);
-    setEditing(null);
-    setIsNew(false);
+    setView('list');
     fetchServices();
   }
 
-  async function handleDelete(id: string) {
+  async function handleDelete() {
+    if (!form.id || !confirm('Delete this service?')) return;
     const supabase = createClient();
-    await supabase.from('services').delete().eq('id', id);
-    fetchServices();
-  }
-
-  async function toggleActive(service: Service) {
-    const supabase = createClient();
-    await supabase
-      .from('services')
-      .update({ is_active: !service.is_active })
-      .eq('id', service.id);
+    await supabase.from('services').delete().eq('id', form.id);
+    setView('list');
     fetchServices();
   }
 
@@ -109,119 +119,152 @@ export default function ServicesPage() {
     );
   }
 
-  if (editing) {
-    const curr = formatCurrency(0, country).charAt(0);
+  // ═══════════════════════════════════════════
+  // ADD / EDIT — Full-page two-column form
+  // ═══════════════════════════════════════════
+  if (view === 'add' || view === 'edit') {
     return (
       <div>
-        <div className="flex items-center gap-4">
+        {/* Header */}
+        <div className="flex items-center gap-3">
           <button
-            onClick={() => { setEditing(null); setIsNew(false); }}
+            onClick={() => setView('list')}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-2xl font-bold text-gray-900">{isNew ? 'Add Service' : 'Edit Service'}</h1>
+          <h1 className="text-xl font-bold text-gray-900">
+            {view === 'add' ? 'Add Service' : 'Edit Service'}
+          </h1>
         </div>
 
-        <div className="mt-6 max-w-xl space-y-4">
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Name</label>
-            <input
-              type="text"
-              value={editing.name}
-              onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-              placeholder="e.g. Haircut, Full Body Massage"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+        <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
+          {/* Left column: Main fields */}
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Name <span className="text-red-400">*</span>
+              </label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Haircut, Full Body Massage"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
+              <textarea
+                value={form.description || ''}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                rows={2}
+                placeholder="Brief description (optional)"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+              />
+            </div>
+
+            {/* Price + Deposit — side by side */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Price ({curr})
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.price || ''}
+                  onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
+                  placeholder="0"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Deposit ({curr})
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.deposit_amount || ''}
+                  onChange={(e) => setForm({ ...form, deposit_amount: Number(e.target.value) })}
+                  placeholder="0"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-0.5 text-xs text-gray-400">0 = no deposit required</p>
+              </div>
+            </div>
+
+            {isScheduling && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Duration (minutes)</label>
+                <input
+                  type="number"
+                  min={5}
+                  step={5}
+                  value={form.duration_minutes || ''}
+                  onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Right column: Settings */}
+          <div className="space-y-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Settings</p>
+
+            <ToggleRow
+              label="Variable Pricing"
+              description="Price may vary (show 'from' prefix)"
+              checked={form.price_is_variable}
+              onChange={(v) => setForm({ ...form, price_is_variable: v })}
+            />
+
+            <ToggleRow
+              label="Active"
+              description="Visible to customers"
+              checked={form.is_active}
+              onChange={(v) => setForm({ ...form, is_active: v })}
             />
           </div>
+        </div>
 
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
-            <textarea
-              value={editing.description || ''}
-              onChange={(e) => setEditing({ ...editing, description: e.target.value })}
-              rows={2}
-              placeholder="Brief description (optional)"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Price ({curr})</label>
-              <input
-                type="number"
-                min={0}
-                value={editing.price}
-                onChange={(e) => setEditing({ ...editing, price: Number(e.target.value) })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Deposit ({curr})</label>
-              <input
-                type="number"
-                min={0}
-                value={editing.deposit_amount}
-                onChange={(e) => setEditing({ ...editing, deposit_amount: Number(e.target.value) })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-              />
-              <p className="mt-1 text-xs text-gray-400">0 = no deposit required</p>
-            </div>
-          </div>
-
-          {isScheduling && (
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Duration (minutes)</label>
-              <input
-                type="number"
-                min={5}
-                step={5}
-                value={editing.duration_minutes || ''}
-                onChange={(e) => setEditing({ ...editing, duration_minutes: Number(e.target.value) || null })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-              />
-            </div>
+        {/* Save / Cancel / Delete footer */}
+        <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
+          <button
+            onClick={handleSave}
+            disabled={saving || !form.name.trim()}
+            className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : view === 'add' ? 'Add Service' : 'Save Changes'}
+          </button>
+          <button
+            onClick={() => setView('list')}
+            className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          {view === 'edit' && form.id && (
+            <button
+              onClick={handleDelete}
+              className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50"
+            >
+              Delete Service
+            </button>
           )}
-
-          <div className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-gray-700">Variable pricing</p>
-              <p className="text-xs text-gray-400">Price may vary (show "from" prefix)</p>
-            </div>
-            <button
-              onClick={() => setEditing({ ...editing, price_is_variable: !editing.price_is_variable })}
-              className={`relative h-6 w-11 rounded-full transition ${editing.price_is_variable ? 'bg-brand' : 'bg-gray-200'}`}
-            >
-              <div
-                className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
-                style={{ left: editing.price_is_variable ? '22px' : '2px' }}
-              />
-            </button>
-          </div>
-
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={handleSave}
-              disabled={saving || !editing.name.trim()}
-              className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : isNew ? 'Add Service' : 'Save Changes'}
-            </button>
-            <button
-              onClick={() => { setEditing(null); setIsNew(false); }}
-              className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-          </div>
         </div>
       </div>
     );
   }
 
+  // ═══════════════════════════════════════════
+  // SERVICE LIST
+  // ═══════════════════════════════════════════
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -232,7 +275,7 @@ export default function ServicesPage() {
           </p>
         </div>
         <button
-          onClick={handleAdd}
+          onClick={openAdd}
           className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600"
         >
           + Add Service
@@ -249,7 +292,7 @@ export default function ServicesPage() {
           <h3 className="mt-4 text-sm font-semibold text-gray-900">No services yet</h3>
           <p className="mt-1 text-sm text-gray-500">Add your first service so customers know what you offer.</p>
           <button
-            onClick={handleAdd}
+            onClick={openAdd}
             className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
           >
             + Add Service
@@ -260,66 +303,68 @@ export default function ServicesPage() {
           {services.map((service) => (
             <div
               key={service.id}
-              className={`flex items-center justify-between rounded-xl border bg-white p-4 ${
-                service.is_active ? 'border-gray-100' : 'border-gray-100 opacity-60'
+              onClick={() => openEdit(service)}
+              className={`cursor-pointer rounded-xl border bg-white p-4 transition hover:shadow-sm ${
+                service.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
               }`}
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-semibold text-gray-900">{service.name}</h3>
-                  {!service.is_active && (
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Inactive</span>
+              <div className="flex items-center justify-between">
+                <div className="min-w-0 flex-1 pr-4">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-gray-900">{service.name}</h3>
+                    {!service.is_active && (
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Inactive</span>
+                    )}
+                  </div>
+                  {service.description && (
+                    <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{service.description}</p>
                   )}
+                  <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-500">
+                    <span className="font-medium text-gray-900">
+                      {service.price_is_variable && 'From '}
+                      {formatCurrency(service.price, country)}
+                    </span>
+                    {service.duration_minutes && (
+                      <span>{service.duration_minutes} min</span>
+                    )}
+                    {service.deposit_amount > 0 && (
+                      <span>Deposit: {formatCurrency(service.deposit_amount, country)}</span>
+                    )}
+                  </div>
                 </div>
-                {service.description && (
-                  <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{service.description}</p>
-                )}
-                <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-500">
-                  <span className="font-medium text-gray-900">
-                    {service.price_is_variable && 'From '}
-                    {formatCurrency(service.price, country)}
-                  </span>
-                  {service.duration_minutes && (
-                    <span>{service.duration_minutes} min</span>
-                  )}
-                  {service.deposit_amount > 0 && (
-                    <span>Deposit: {formatCurrency(service.deposit_amount, country)}</span>
-                  )}
-                </div>
-              </div>
 
-              <div className="flex items-center gap-2 pl-4">
-                <button
-                  onClick={() => toggleActive(service)}
-                  className={`relative h-6 w-11 rounded-full transition ${service.is_active ? 'bg-brand' : 'bg-gray-200'}`}
-                  title={service.is_active ? 'Deactivate' : 'Activate'}
-                >
-                  <div
-                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
-                    style={{ left: service.is_active ? '22px' : '2px' }}
-                  />
-                </button>
-                <button
-                  onClick={() => { setEditing(service); setIsNew(false); }}
-                  className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => handleDelete(service.id)}
-                  className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
-                >
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                  </svg>
-                </button>
+                <svg className="h-4 w-4 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </div>
             </div>
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Reusable toggle row ──
+function ToggleRow({ label, description, checked, onChange }: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+      <div className="mr-3">
+        <p className="text-sm font-medium text-gray-800">{label}</p>
+        <p className="text-xs text-gray-400">{description}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => onChange(!checked)}
+        className={`relative h-6 w-11 shrink-0 rounded-full transition ${checked ? 'bg-brand' : 'bg-gray-200'}`}
+      >
+        <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: checked ? '22px' : '2px' }} />
+      </button>
     </div>
   );
 }

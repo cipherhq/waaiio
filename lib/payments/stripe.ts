@@ -42,14 +42,14 @@ export class StripeGateway implements PaymentGateway {
           status: 'pending',
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `https://smrtrply.com/pay?ref=${mockRef}`, reference: mockRef };
+        return { url: `https://waaiio.com/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       // Convert amount to cents (Stripe uses smallest currency unit)
       const amountInCents = Math.round(opts.amount * 100);
-      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com';
+      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
-      const sessionData = await stripeRequest('/checkout/sessions', {
+      const sessionParams: Record<string, string> = {
         'payment_method_types[0]': 'card',
         'line_items[0][price_data][currency]': opts.currency.toLowerCase(),
         'line_items[0][price_data][product_data][name]': `${opts.businessName} - ${opts.referenceCode}`,
@@ -64,7 +64,17 @@ export class StripeGateway implements PaymentGateway {
         'metadata[reference_code]': opts.referenceCode,
         'metadata[channel]': 'whatsapp',
         customer_email: opts.userEmail || '',
-      });
+      };
+
+      // Stripe Connect split payment
+      if (opts.stripeAccountId) {
+        sessionParams['payment_intent_data[application_fee_amount]'] = String(
+          opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : 0,
+        );
+        sessionParams['payment_intent_data[transfer_data][destination]'] = opts.stripeAccountId;
+      }
+
+      const sessionData = await stripeRequest('/checkout/sessions', sessionParams);
 
       if (!sessionData.id || !sessionData.url) {
         console.error('Stripe session creation failed', sessionData);

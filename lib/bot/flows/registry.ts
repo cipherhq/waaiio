@@ -1,15 +1,32 @@
 import type { FlowType } from '@/lib/constants';
-import type { FlowDefinition } from './types';
+import type { FlowDefinition, FlowStepConfig } from './types';
 import { schedulingFlow } from './scheduling.flow';
 import { paymentFlow } from './payment.flow';
 import { orderingFlow } from './ordering.flow';
 import { ticketingFlow } from './ticketing.flow';
+import { capabilitySelectionFlow } from './capability-selection.flow';
+import { crowdfundingFlow } from './crowdfunding.flow';
+import { recurringManageFlow } from './recurring-manage.flow';
+import { queueCheckinFlow } from './queue-checkin.flow';
+import { feedbackFlow } from './feedback.flow';
+import { waitlistFlow } from './waitlist.flow';
 
 const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   scheduling: schedulingFlow,
   payment: paymentFlow,
   ordering: orderingFlow,
   ticketing: ticketingFlow,
+};
+
+/** Extended registry including pseudo-flows */
+const EXTENDED_REGISTRY: Record<string, FlowDefinition> = {
+  ...FLOW_REGISTRY,
+  'capability-selection': capabilitySelectionFlow,
+  crowdfunding: crowdfundingFlow,
+  'recurring-manage': recurringManageFlow,
+  'queue-checkin': queueCheckinFlow,
+  feedback: feedbackFlow,
+  waitlist: waitlistFlow,
 };
 
 export function getFlowDefinition(type: FlowType): FlowDefinition {
@@ -19,4 +36,22 @@ export function getFlowDefinition(type: FlowType): FlowDefinition {
 export function getFlowStep(type: FlowType, stepId: string) {
   const flow = FLOW_REGISTRY[type];
   return flow.steps.find(s => s.id === stepId) || null;
+}
+
+/**
+ * Search ALL flows (including extended) for a step by ID.
+ * Used for capability selection → flow handoff where the next step
+ * may be in a different flow than the current one.
+ */
+export function getFlowStepAcrossFlows(stepId: string): { step: FlowStepConfig; flowType: string } | null {
+  for (const [flowType, flow] of Object.entries(EXTENDED_REGISTRY)) {
+    const step = flow.steps.find(s => s.id === stepId);
+    if (step) return { step, flowType };
+  }
+  return null;
+}
+
+/** Get the extended flow definition (includes pseudo-flows) */
+export function getExtendedFlowDefinition(type: string): FlowDefinition | null {
+  return EXTENDED_REGISTRY[type] || null;
 }

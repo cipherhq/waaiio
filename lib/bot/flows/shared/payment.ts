@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { calculatePlatformFee, type SubscriptionTier, type CountryCode } from '@/lib/constants';
-import { getPaymentGateway } from '@/lib/payments/factory';
+import { calculatePlatformFee, type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 
 export async function initializePayment(
   supabase: SupabaseClient,
@@ -14,13 +14,50 @@ export async function initializePayment(
     phone: string;
     userEmail?: string;
     countryCode?: CountryCode;
+    /** Per-business gateway override (from businesses.payment_gateway) */
+    gatewayOverride?: string | null;
+    /** Business ID for split payment lookup */
+    businessId?: string;
   },
 ): Promise<{ url: string; reference: string } | null> {
   const countryCode = opts.countryCode || 'NG';
-  const gateway = getPaymentGateway(countryCode);
-  const { currencyCode } = await import('@/lib/constants').then(m => ({
-    currencyCode: m.COUNTRIES[countryCode].currencyCode,
-  }));
+
+  // Per-business gateway override takes priority
+  const gateway = opts.gatewayOverride
+    ? getPaymentGatewayByName(opts.gatewayOverride as PaymentGatewayName)
+    : getPaymentGateway(countryCode);
+
+  const { getCountry } = await import('@/lib/countries');
+  const currencyCode = getCountry(countryCode)?.currency_code ?? 'NGN';
+
+  // Fetch payout account for split payments
+  let subaccountCode: string | undefined;
+  let stripeAccountId: string | undefined;
+  let platformFeeAmount: number | undefined;
+
+  if (opts.businessId) {
+    // Check business payout mode
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('payout_mode')
+      .eq('id', opts.businessId)
+      .single();
+
+    const { data: payout } = await supabase
+      .from('payout_accounts')
+      .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
+      .eq('business_id', opts.businessId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    // Only add split params for direct_split mode with an active payout account
+    if (biz?.payout_mode === 'direct_split' && payout) {
+      subaccountCode = payout.subaccount_code || undefined;
+      stripeAccountId = payout.stripe_account_id || undefined;
+      platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+    }
+    // platform_managed: no split params, full amount goes to platform
+  }
 
   return gateway.initializePayment({
     supabase,
@@ -33,6 +70,9 @@ export async function initializePayment(
     businessName: opts.businessName,
     phone: opts.phone,
     userEmail: opts.userEmail,
+    subaccountCode,
+    stripeAccountId,
+    platformFeeAmount,
   });
 }
 

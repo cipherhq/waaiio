@@ -4,7 +4,6 @@ import { createServiceClient } from '@/lib/supabase/service';
 import {
   generateSlug,
   generateBotCode,
-  COUNTRIES,
   getCitiesForCountry,
   BUSINESS_CATEGORIES,
   CATEGORY_FLOW_MAP,
@@ -12,9 +11,13 @@ import {
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
+import { loadCountries, isValidCountryCode } from '@/lib/countries';
+import { initCapabilities } from '@/lib/capabilities/service';
+import type { CapabilityId } from '@/lib/capabilities/types';
+import { sendEmail } from '@/lib/email/client';
+import { welcomeEmail, businessRegisteredEmail } from '@/lib/email/templates';
 
 const VALID_CATEGORIES = BUSINESS_CATEGORIES.map(c => c.key);
-const VALID_COUNTRIES = Object.keys(COUNTRIES) as CountryCode[];
 
 export async function POST(request: NextRequest) {
   try {
@@ -25,9 +28,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
+    await loadCountries();
     const body = await request.json();
-    const { name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting } = body;
-    const countryCode: CountryCode = VALID_COUNTRIES.includes(country) ? country : 'NG';
+    const { name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities } = body;
+    const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
     if (!name || !city || !neighborhood || !address || !phone || !category) {
       return NextResponse.json(
@@ -55,7 +59,16 @@ export async function POST(request: NextRequest) {
 
     const slug = generateSlug(name);
     let botCode = generateBotCode(name);
-    const flowType = CATEGORY_FLOW_MAP[category as BusinessCategoryKey];
+
+    // Fetch template from DB (with fallback to hardcoded constants)
+    const { data: template } = await service
+      .from('category_templates')
+      .select('flow_type, default_services, default_greeting')
+      .eq('key', category)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    const flowType = template?.flow_type || CATEGORY_FLOW_MAP[category as BusinessCategoryKey];
 
     // Handle bot_code collision
     const { data: existing } = await service
@@ -116,6 +129,7 @@ export async function POST(request: NextRequest) {
         category,
         flow_type: flowType,
         country_code: countryCode,
+        wa_method: wa_method || 'shared',
         subscription_tier: 'free',
         status: 'pending',
         trial_ends_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -130,8 +144,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create WhatsApp config
-    const defaultGreeting = bot_greeting || getDefaultGreeting(name, category as BusinessCategoryKey);
+    // Create WhatsApp config — prefer DB template greeting, then user-provided, then hardcoded
+    const templateGreeting = template?.default_greeting
+      ? (template.default_greeting as string).replace(/\{\{name\}\}/g, name)
+      : null;
+    const defaultGreeting = bot_greeting || templateGreeting || getDefaultGreeting(name, category as BusinessCategoryKey);
     await service.from('whatsapp_config').insert({
       business_id: business.id,
       bot_greeting: defaultGreeting,
@@ -139,8 +156,8 @@ export async function POST(request: NextRequest) {
       auto_confirm: true,
     });
 
-    // Auto-create default services
-    const defaultServices = DEFAULT_SERVICES[category as BusinessCategoryKey] || [];
+    // Auto-create default services — prefer DB template, fall back to constants
+    const defaultServices = (template?.default_services as typeof DEFAULT_SERVICES[BusinessCategoryKey]) || DEFAULT_SERVICES[category as BusinessCategoryKey] || [];
     if (defaultServices.length > 0) {
       await service.from('services').insert(
         defaultServices.map((s, i) => ({
@@ -155,6 +172,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Auto-create capabilities
+    await initCapabilities(
+      service,
+      business.id,
+      category,
+      capabilities as CapabilityId[] | undefined,
+    );
+
     // Update profile role
     const { data: profile } = await service
       .from('profiles')
@@ -162,11 +187,24 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single();
 
-    if (!profile?.role || profile.role === 'diner') {
+    const isFirstBusiness = !profile?.role || profile.role === 'diner';
+    if (isFirstBusiness) {
       await service
         .from('profiles')
         .update({ role: 'restaurant_owner' })
         .eq('id', user.id);
+    }
+
+    // Send emails (non-blocking)
+    const userEmail = user.email;
+    if (userEmail) {
+      const categoryLabel = (category as string).replace(/_/g, ' ');
+      if (isFirstBusiness) {
+        const welcome = welcomeEmail(name);
+        sendEmail({ to: userEmail, ...welcome }).catch(() => {});
+      }
+      const registered = businessRegisteredEmail(name, business.bot_code, categoryLabel);
+      sendEmail({ to: userEmail, ...registered }).catch(() => {});
     }
 
     return NextResponse.json({

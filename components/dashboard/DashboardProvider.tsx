@@ -1,6 +1,8 @@
 'use client';
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, useEffect, type ReactNode } from 'react';
+import type { CapabilityId } from '@/lib/capabilities/types';
+import { loadCountries } from '@/lib/countries';
 
 export interface Business {
   id: string;
@@ -30,8 +32,11 @@ export interface Business {
   timezone: string;
   trial_ends_at: string;
   country_code: string | null;
+  payment_gateway: string | null;
+  payout_mode: string;
   metadata: Record<string, unknown>;
   created_at: string;
+  capabilities: CapabilityId[];
 }
 
 interface DashboardContextType {
@@ -50,6 +55,10 @@ export function DashboardProvider({
   userId: string;
   children: ReactNode;
 }) {
+  useEffect(() => {
+    loadCountries();
+  }, []);
+
   return (
     <DashboardContext.Provider value={{ business, userId }}>
       {children}
@@ -67,4 +76,14 @@ export function useDashboard() {
   const ctx = useContext(DashboardContext);
   if (!ctx) throw new Error('useDashboard must be used within DashboardProvider');
   return ctx;
+}
+
+/** Check if the business has a specific capability enabled */
+export function useCapabilities() {
+  const business = useBusiness();
+  const hasCapability = useCallback(
+    (cap: CapabilityId) => business.capabilities.includes(cap),
+    [business.capabilities],
+  );
+  return { capabilities: business.capabilities, hasCapability };
 }

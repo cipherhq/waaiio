@@ -1,0 +1,26 @@
+{
+  "name": "waaiio-admin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 8083",
+    "build": "vite build",
+    "preview": "vite preview --port 8083"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.97.0",
+    "lucide-react": "^0.487.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router": "*",
+    "recharts": "^2.15.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react-swc": "^3.10.2",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "vite": "6.3.5"
+  }
+}

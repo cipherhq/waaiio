@@ -1,15 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { GupshupService } from '@/lib/channels/gupshup';
+import type { MessageSender } from '@/lib/channels/message-sender';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
-import { getFlowDefinition, getFlowStep } from './registry';
+import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
+import type { CapabilityId } from '@/lib/capabilities/types';
 
 export class FlowExecutor {
   constructor(
     private readonly supabase: SupabaseClient,
-    private readonly gupshup: GupshupService,
+    private readonly sender: MessageSender,
     private readonly standalone: StandaloneService,
     private readonly intelligence: BotIntelligenceService,
   ) {}
@@ -41,10 +42,25 @@ export class FlowExecutor {
       country_code?: CountryCode;
     } | null,
   ): Promise<void> {
-    const flowType = business?.flow_type || 'scheduling';
-    const flow = getFlowDefinition(flowType);
+    // Determine which flow to use: active_capability takes priority
+    const activeCap = session.session_data.active_capability as CapabilityId | undefined;
+    const flowType = activeCap
+      ? this.capabilityToFlowType(activeCap)
+      : (business?.flow_type || 'scheduling');
     const stepId = session.current_step;
-    const step = getFlowStep(flowType, stepId);
+
+    // Try the primary flow first, then search across all flows
+    let step = getFlowStep(flowType as FlowType, stepId);
+    let resolvedFlowType: string = flowType;
+
+    if (!step) {
+      // Cross-flow lookup (handles capability-selection → flow handoff)
+      const crossResult = getFlowStepAcrossFlows(stepId);
+      if (crossResult) {
+        step = crossResult.step;
+        resolvedFlowType = crossResult.flowType;
+      }
+    }
 
     if (!step) {
       await this.sendText(from, 'Something went wrong. Send "Hi" to start again.');
@@ -54,7 +70,7 @@ export class FlowExecutor {
 
     const ctx: FlowContext = {
       supabase: this.supabase,
-      gupshup: this.gupshup,
+      sender: this.sender,
       standalone: this.standalone,
       intelligence: this.intelligence,
       from,
@@ -77,6 +93,19 @@ export class FlowExecutor {
     if (!input) {
       const messages = await step.prompt(ctx);
       await this.sendMessages(from, messages);
+      return;
+    }
+
+    // Global escape hatch: cancel / start over at any step
+    const lowerInput = input.toLowerCase().trim();
+    if (lowerInput === 'cancel' || lowerInput === 'stop' || lowerInput === 'quit') {
+      await this.deactivateSession(session.id);
+      await this.sendText(from, 'Cancelled. Send *Hi* to start again.');
+      return;
+    }
+    if (lowerInput === 'start over' || lowerInput === 'restart' || lowerInput === 'reset') {
+      await this.deactivateSession(session.id);
+      await this.sendText(from, 'No problem! Send *Hi* to start fresh.');
       return;
     }
 
@@ -118,11 +147,25 @@ export class FlowExecutor {
     session.current_step = nextStepId;
     await this.supabase
       .from('bot_sessions')
-      .update({ current_step: nextStepId, session_data: session.session_data })
+      .update({
+        current_step: nextStepId,
+        session_data: session.session_data,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      })
       .eq('id', session.id);
 
-    const flow = getFlowDefinition(ctx.business?.flow_type || 'scheduling');
-    const nextStep = flow.steps.find(s => s.id === nextStepId);
+    // Try primary flow, then cross-flow lookup
+    const activeCap = session.session_data.active_capability as CapabilityId | undefined;
+    const primaryFlowType = activeCap
+      ? this.capabilityToFlowType(activeCap)
+      : (ctx.business?.flow_type || 'scheduling');
+    const flow = getFlowDefinition(primaryFlowType as FlowType);
+    let nextStep = flow?.steps.find(s => s.id === nextStepId) || null;
+
+    if (!nextStep) {
+      const crossResult = getFlowStepAcrossFlows(nextStepId);
+      nextStep = crossResult?.step || null;
+    }
 
     if (!nextStep) {
       await this.deactivateSession(session.id);
@@ -149,23 +192,26 @@ export class FlowExecutor {
     for (const msg of messages) {
       switch (msg.type) {
         case 'text':
-          await this.gupshup.sendText({ to, text: msg.text });
+          await this.sender.sendText({ to, text: msg.text });
           break;
         case 'list':
-          await this.gupshup.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items });
+          await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items });
           break;
         case 'buttons':
-          await this.gupshup.sendButtons({ to, body: msg.body, buttons: msg.buttons });
+          await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });
           break;
         case 'image':
-          await this.gupshup.sendImage({ to, imageUrl: msg.imageUrl, caption: msg.caption });
+          await this.sender.sendImage({ to, imageUrl: msg.imageUrl, caption: msg.caption });
+          break;
+        case 'document':
+          await this.sender.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
           break;
       }
     }
   }
 
   private async sendText(to: string, text: string): Promise<void> {
-    await this.gupshup.sendText({ to, text });
+    await this.sender.sendText({ to, text });
   }
 
   private async deactivateSession(sessionId: string): Promise<void> {
@@ -173,5 +219,25 @@ export class FlowExecutor {
       .from('bot_sessions')
       .update({ is_active: false })
       .eq('id', sessionId);
+  }
+
+  /** Map a capability to its corresponding FlowType */
+  private capabilityToFlowType(cap: CapabilityId): FlowType {
+    switch (cap) {
+      case 'scheduling': return 'scheduling';
+      case 'payment': return 'payment';
+      case 'ordering': return 'ordering';
+      case 'ticketing': return 'ticketing';
+      case 'crowdfunding': return 'payment'; // crowdfunding uses payment infrastructure
+      case 'reports': return 'scheduling'; // reports don't have their own flow
+      case 'queue': return 'scheduling'; // queue uses its own extended flow
+      case 'feedback': return 'scheduling'; // feedback uses its own extended flow
+      case 'loyalty': return 'scheduling'; // loyalty is post-completion, no dedicated flow
+      case 'chat': return 'scheduling'; // chat is handled in bot.service
+      case 'waitlist': return 'scheduling'; // waitlist uses its own extended flow
+      case 'referral': return 'scheduling'; // referral is post-completion
+      case 'staff': return 'scheduling'; // staff enhances scheduling
+      default: return 'scheduling';
+    }
   }
 }

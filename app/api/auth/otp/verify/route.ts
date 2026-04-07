@@ -1,9 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitResponse } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
     const { phone, otp } = await request.json();
+
+    // Rate limit: 5 verify attempts per phone per 15 minutes
+    if (phone) {
+      const blocked = rateLimitResponse(`otp-verify:${phone}`, 5, 15 * 60 * 1000);
+      if (blocked) return blocked;
+    }
 
     if (!phone || !otp || otp.length !== 6) {
       return NextResponse.json(

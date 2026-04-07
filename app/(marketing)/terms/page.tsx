@@ -12,8 +12,8 @@ export async function generateMetadata(): Promise<Metadata> {
     .single();
 
   return {
-    title: `${data?.title || 'Terms of Service'} — SmrtRply`,
-    description: data?.meta_description || 'SmrtRply terms of service.',
+    title: `${data?.title || 'Terms of Service'} — Waaiio`,
+    description: data?.meta_description || 'Waaiio terms of service.',
   };
 }
 

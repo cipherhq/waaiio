@@ -3,9 +3,9 @@ import Navbar from '@/components/marketing/Navbar';
 import Footer from '@/components/marketing/Footer';
 
 export const metadata: Metadata = {
-  title: 'SmrtRply — WhatsApp Automation for Every Business',
+  title: 'Waaiio — WhatsApp Automation for Every Business',
   description:
-    'Automate bookings, payments, orders, and tickets on WhatsApp. Available in Nigeria, US, UK, Canada & Ghana — restaurants, barbers, churches, shops, events, and more.',
+    'AI-powered WhatsApp automation for 35+ industries — churches, mosques, salons, clinics, restaurants, schools, NGOs, shops, events, and more. Bookings, payments, orders, donations, and ticketing. Available in Nigeria, US, UK, Canada & Ghana.',
 };
 
 export default function MarketingLayout({

@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { sendEmail } from '@/lib/email/client';
+import { bookingConfirmationEmail } from '@/lib/email/templates';
 
 export async function createNotification(
   supabase: SupabaseClient,
@@ -43,6 +45,6 @@ export async function sendBookingEmail(
     confirmationEmoji: string;
   },
 ): Promise<void> {
-  // TODO: Integrate email service (Resend, etc.)
-  console.log(`[EMAIL] Booking confirmation to ${to}: ${details.businessName} - ${details.date}`);
+  const { subject, html } = bookingConfirmationEmail(details);
+  await sendEmail({ to, subject, html });
 }

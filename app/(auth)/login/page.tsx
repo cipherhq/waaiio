@@ -13,8 +13,8 @@ type AuthMode = 'phone' | 'email';
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const rawRedirect = searchParams.get('redirect') || '/';
-  const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/';
+  const rawRedirect = searchParams.get('redirect') || '/dashboard';
+  const redirect = rawRedirect.startsWith('/') && !rawRedirect.startsWith('//') ? rawRedirect : '/dashboard';
 
   const [authMode, setAuthMode] = useState<AuthMode>('email');
   const [step, setStep] = useState<Step>('phone');

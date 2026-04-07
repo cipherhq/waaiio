@@ -1,0 +1,98 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { sendEmail } from '@/lib/email/client';
+import { payoutRejectedEmail } from '@/lib/email/templates';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  // Verify admin
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (!profile || profile.role !== 'admin') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const body = await request.json();
+  const { reason } = body;
+
+  if (!reason) {
+    return NextResponse.json({ error: 'Rejection reason is required' }, { status: 400 });
+  }
+
+  // Fetch the payout
+  const { data: payout } = await supabase
+    .from('business_payouts')
+    .select('id, business_id, net_amount, status')
+    .eq('id', id)
+    .single();
+
+  if (!payout) {
+    return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
+  }
+
+  if (!['pending', 'approved'].includes(payout.status)) {
+    return NextResponse.json({ error: 'Payout cannot be rejected in current status' }, { status: 400 });
+  }
+
+  const { error: updateError } = await supabase
+    .from('business_payouts')
+    .update({
+      status: 'rejected',
+      rejected_reason: reason,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id);
+
+  if (updateError) {
+    return NextResponse.json({ error: 'Failed to reject payout' }, { status: 500 });
+  }
+
+  // Audit log
+  await supabase.from('admin_audit_logs').insert({
+    actor_id: user.id,
+    action: 'reject_payout',
+    entity_type: 'business_payout',
+    entity_id: id,
+    details: {
+      business_id: payout.business_id,
+      amount: payout.net_amount,
+      reason,
+    },
+  });
+
+  // Send rejection email to business owner (non-blocking)
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('name, owner_id, country_code')
+    .eq('id', payout.business_id)
+    .single();
+  if (biz) {
+    const { data: ownerProfile } = await supabase
+      .from('profiles')
+      .select('email')
+      .eq('id', biz.owner_id)
+      .single();
+    if (ownerProfile?.email) {
+      const cc = (biz.country_code || 'NG') as CountryCode;
+      const amountStr = formatCurrency(Number(payout.net_amount), cc);
+      const email = payoutRejectedEmail(biz.name, amountStr, reason);
+      sendEmail({ to: ownerProfile.email, ...email }).catch(() => {});
+    }
+  }
+
+  return NextResponse.json({ success: true });
+}

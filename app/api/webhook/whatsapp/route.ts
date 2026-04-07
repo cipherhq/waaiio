@@ -28,6 +28,14 @@ function getChannelResolver() {
 
 export async function POST(request: NextRequest) {
   try {
+    // Webhook secret verification
+    const webhookSecret = request.headers.get('x-webhook-secret');
+    const expectedSecret = process.env.GUPSHUP_WEBHOOK_SECRET;
+    if (expectedSecret && webhookSecret !== expectedSecret) {
+      console.warn('[WEBHOOK] Invalid webhook secret');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const rawBody = await request.text();
     console.log('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
 
@@ -82,23 +90,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'ok', message: 'No source phone' });
     }
 
+    // Replay protection: check for duplicate message
+    const messageId = (body.messageId || (body.response as Record<string, unknown>)?.id || `${source}-${Date.now()}`) as string;
+    const supabaseForDedup = createServiceClient();
+    const { data: existing } = await supabaseForDedup
+      .from('processed_webhook_events')
+      .select('id')
+      .eq('event_id', `gupshup-${messageId}`)
+      .maybeSingle();
+
+    if (existing) {
+      console.log('[WEBHOOK] Duplicate message, skipping:', messageId);
+      return NextResponse.json({ success: true, duplicate: true });
+    }
+
     // Create service instances
     const supabase = createServiceClient();
     const intelligenceSvc = getIntelligence();
     const resolver = getChannelResolver();
 
-    // Resolve channel from destination phone
+    // Resolve channel from destination phone — returns the correct MessageSender (Gupshup or MetaCloud)
     const resolved = destination ? await resolver.resolveByPhone(destination) : null;
-    const gupshupSvc = resolved?.gupshup || getDefaultGupshup();
+    const sender = resolved?.sender || getDefaultGupshup();
     const preResolvedBusinessId = resolved?.channel.channel_type === 'dedicated'
       ? resolved.channel.business_id || undefined
       : undefined;
 
     const standalone = new StandaloneService(supabase);
-    const bot = new BotService(supabase, gupshupSvc, standalone, intelligenceSvc);
+    const bot = new BotService(supabase, sender, standalone, intelligenceSvc);
 
     // Process message
     await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId);
+
+    // Mark message as processed for replay protection
+    await supabase.from('processed_webhook_events').insert({
+      event_id: `gupshup-${messageId}`,
+      event_type: 'whatsapp_message',
+      processed_at: new Date().toISOString(),
+    }).catch(() => {}); // Don't fail if insert fails
 
     console.log('[WEBHOOK] Message processed successfully');
     return NextResponse.json({ status: 'ok' });

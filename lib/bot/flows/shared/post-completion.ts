@@ -1,0 +1,196 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { MessageSender } from '@/lib/channels/message-sender';
+import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import type { CapabilityId } from '@/lib/capabilities/types';
+
+interface PostCompletionParams {
+  supabase: SupabaseClient;
+  businessId: string;
+  customerPhone: string;
+  customerName: string | null;
+  serviceType?: string;
+  referenceId?: string;
+  sender: MessageSender;
+}
+
+function generateReferralCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+
+/**
+ * Called after any service is completed (queue, booking, order).
+ * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
+ */
+export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender } = params;
+
+  let capabilities: CapabilityId[];
+  try {
+    capabilities = await getEnabledCapabilities(supabase, businessId);
+  } catch {
+    return;
+  }
+
+  const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+
+  // 1. Loyalty — award points
+  if (capabilities.includes('loyalty')) {
+    try {
+      // Get loyalty config from business metadata
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('metadata, name')
+        .eq('id', businessId)
+        .single();
+
+      const meta = (biz?.metadata || {}) as Record<string, unknown>;
+      const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
+
+      // Upsert loyalty_points
+      const { data: existing } = await supabase
+        .from('loyalty_points')
+        .select('id, points_balance, total_earned, visit_count')
+        .eq('business_id', businessId)
+        .eq('customer_phone', customerPhone)
+        .maybeSingle();
+
+      if (existing) {
+        await supabase
+          .from('loyalty_points')
+          .update({
+            points_balance: existing.points_balance + pointsPerVisit,
+            total_earned: existing.total_earned + pointsPerVisit,
+            visit_count: existing.visit_count + 1,
+            customer_name: customerName || undefined,
+          })
+          .eq('id', existing.id);
+      } else {
+        await supabase
+          .from('loyalty_points')
+          .insert({
+            business_id: businessId,
+            customer_phone: customerPhone,
+            customer_name: customerName,
+            points_balance: pointsPerVisit,
+            total_earned: pointsPerVisit,
+            visit_count: 1,
+          });
+      }
+
+      // Insert transaction
+      await supabase.from('loyalty_transactions').insert({
+        business_id: businessId,
+        customer_phone: customerPhone,
+        points_change: pointsPerVisit,
+        reason: 'visit',
+        reference_id: referenceId || null,
+        reference_type: serviceType || null,
+      });
+
+      const newBalance = (existing?.points_balance || 0) + pointsPerVisit;
+      const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
+      const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
+
+      let pointsMsg = `You earned *${pointsPerVisit} loyalty points*! Your balance: *${newBalance} points*.`;
+      if (newBalance >= rewardThreshold) {
+        pointsMsg += `\n\nYou've reached *${rewardThreshold} points* — you qualify for ${rewardDesc}! Ask staff to redeem.`;
+      }
+
+      await sender.sendText({ to: phone, text: pointsMsg });
+    } catch (err) {
+      console.error('[POST-COMPLETION] Loyalty error:', err);
+    }
+  }
+
+  // 2. Feedback — start feedback session
+  if (capabilities.includes('feedback')) {
+    try {
+      // Create a new bot session at feedback_rating step
+      await supabase.from('bot_sessions').insert({
+        whatsapp_number: customerPhone,
+        business_id: businessId,
+        current_step: 'feedback_rating',
+        session_data: {
+          active_capability: 'feedback',
+          business_id: businessId,
+          customer_name: customerName,
+          service_type: serviceType || null,
+          reference_id: referenceId || null,
+        },
+        is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      });
+
+      // Send the rating prompt
+      const { data: bizData } = await supabase
+        .from('businesses')
+        .select('name')
+        .eq('id', businessId)
+        .single();
+
+      const bizName = bizData?.name || 'us';
+      await sender.sendButtons({
+        to: phone,
+        body: `How was your experience at ${bizName}? Rate us:`,
+        buttons: [
+          { id: 'rate_5', title: '5 - Excellent' },
+          { id: 'rate_4', title: '4 - Good' },
+          { id: 'rate_3', title: '3 - Average' },
+        ],
+      });
+    } catch (err) {
+      console.error('[POST-COMPLETION] Feedback error:', err);
+    }
+  }
+
+  // 3. Referral — generate code and send share link
+  if (capabilities.includes('referral')) {
+    try {
+      // Check if customer already has a referral code for this business
+      const { data: existingRef } = await supabase
+        .from('referrals')
+        .select('referral_code')
+        .eq('business_id', businessId)
+        .eq('referrer_phone', customerPhone)
+        .eq('status', 'pending')
+        .maybeSingle();
+
+      if (!existingRef) {
+        const code = generateReferralCode();
+
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('name, metadata')
+          .eq('id', businessId)
+          .single();
+
+        const meta = (biz?.metadata || {}) as Record<string, unknown>;
+        const rewardType = (meta.referral_reward_type as string) || 'points';
+        const rewardAmount = (meta.referral_reward_amount as number) || 50;
+
+        await supabase.from('referrals').insert({
+          business_id: businessId,
+          referrer_phone: customerPhone,
+          referrer_name: customerName,
+          referral_code: code,
+          status: 'pending',
+          reward_type: rewardType,
+          reward_amount: rewardAmount,
+        });
+
+        const bizName = biz?.name || 'us';
+        await sender.sendText({
+          to: phone,
+          text: `Share ${bizName} with friends! Your referral code: *${code}*\n\nWhen a friend uses your code, you both earn rewards.`,
+        });
+      }
+    } catch (err) {
+      console.error('[POST-COMPLETION] Referral error:', err);
+    }
+  }
+}

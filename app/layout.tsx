@@ -6,14 +6,14 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: {
-    default: 'SmrtRply — WhatsApp Booking Assistant for Restaurants',
-    template: '%s | SmrtRply',
+    default: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
+    template: '%s | Waaiio',
   },
   description:
-    'Give your restaurant its own AI-powered WhatsApp booking assistant. Accept reservations 24/7, reduce no-shows, and delight guests.',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com'),
+    'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 35+ industries — churches, salons, clinics, restaurants, schools, shops, and more.',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'),
   openGraph: {
-    siteName: 'SmrtRply',
+    siteName: 'Waaiio',
     type: 'website',
   },
 };

@@ -27,7 +27,7 @@ interface Booking {
   cancelled_at: string | null;
 }
 
-const statuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
+const allStatuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
 
 const statusColors: Record<string, string> = {
   confirmed: 'bg-green-100 text-green-800',
@@ -57,6 +57,7 @@ const nextActions: Record<string, { label: string; next: string; color: string }
 export default function BookingsPage() {
   const business = useBusiness();
   const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const statuses = allStatuses.filter(s => !labels.hiddenStatuses.includes(s));
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
@@ -179,7 +180,7 @@ export default function BookingsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
@@ -213,7 +214,7 @@ export default function BookingsPage() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.reference_code}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                      {(nextActions[r.status] || []).map((action) => (
+                      {(nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
                         <button
                           key={action.next}
                           onClick={() => updateStatus(r.id, action.next)}
@@ -249,7 +250,7 @@ export default function BookingsPage() {
             </div>
             <div className="space-y-6 px-6 py-5">
               <div>
-                <h3 className="text-sm font-medium text-gray-500">Guest</h3>
+                <h3 className="text-sm font-medium text-gray-500">{labels.personLabel}</h3>
                 <p className="mt-1 text-sm font-medium text-gray-900">{selected.guest_name || '\u2014'}</p>
                 {selected.guest_phone && <p className="text-sm text-gray-500">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-500">{selected.guest_email}</p>}
@@ -283,11 +284,11 @@ export default function BookingsPage() {
                   <p className="mt-1 text-sm text-yellow-700">{selected.special_requests}</p>
                 </div>
               )}
-              {nextActions[selected.status] && (
+              {nextActions[selected.status] && nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-500">Actions</h3>
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {nextActions[selected.status].map((action) => (
+                    {nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
                       <button
                         key={action.next}
                         onClick={() => { updateStatus(selected.id, action.next); setSelectedId(null); }}

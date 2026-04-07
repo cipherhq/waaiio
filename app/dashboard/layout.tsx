@@ -2,6 +2,10 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { DashboardProvider } from '@/components/dashboard/DashboardProvider';
 import { Sidebar } from '@/components/dashboard/Sidebar';
+import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
+import type { CapabilityId } from '@/lib/capabilities/types';
+
+export const dynamic = 'force-dynamic';
 
 export const metadata = {
   title: 'Dashboard',
@@ -19,17 +23,41 @@ export default async function DashboardLayout({
 
   if (!user) redirect('/login?redirect=/dashboard');
 
-  const { data: business } = await supabase
+  const { data: business, error: bizError } = await supabase
     .from('businesses')
     .select('*')
     .eq('owner_id', user.id)
     .in('status', ['active', 'pending'])
-    .single();
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  if (!business) redirect('/get-started');
+  if (!business) {
+    console.error('Dashboard: no business found for user', user.id, bizError?.message);
+    redirect('/get-started');
+  }
+
+  // Load capabilities from DB
+  const { data: capRows } = await supabase
+    .from('business_capabilities')
+    .select('capability')
+    .eq('business_id', business.id)
+    .eq('is_enabled', true);
+
+  let capabilities: CapabilityId[];
+  if (capRows && capRows.length > 0) {
+    capabilities = capRows.map(r => r.capability as CapabilityId);
+  } else {
+    // Fallback: derive from category or flow_type
+    capabilities = CATEGORY_DEFAULT_CAPABILITIES[business.category] ||
+      [business.flow_type as CapabilityId] ||
+      ['scheduling'];
+  }
+
+  const businessWithCaps = { ...business, capabilities };
 
   return (
-    <DashboardProvider business={business} userId={user.id}>
+    <DashboardProvider business={businessWithCaps} userId={user.id}>
       <div className="min-h-screen bg-gray-50">
         <Sidebar />
         <main className="lg:pl-64">

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { PRICING_TIERS, getPricingTiers, formatCurrency, COUNTRIES, type SubscriptionTier, type CountryCode } from '@/lib/constants';
+import { PRICING_TIERS, getPricingTiers, formatCurrency, type SubscriptionTier, type CountryCode } from '@/lib/constants';
+import { getCountry } from '@/lib/countries';
 
 const PLAN_PAGE_SLUGS: Record<string, string | undefined> = {
   growth: process.env.PAYSTACK_GROWTH_PLAN_CODE,
@@ -48,10 +49,10 @@ export async function POST(request: NextRequest) {
     }
 
     const countryCode = (business.country_code || 'NG') as CountryCode;
-    const country = COUNTRIES[countryCode];
+    const country = getCountry(countryCode);
     const tiers = getPricingTiers(countryCode);
     const tier = tiers[plan as SubscriptionTier];
-    const gateway = country.paymentGateway;
+    const gateway = country?.payment_gateway ?? 'paystack';
 
     const { data: profile } = await supabase
       .from('profiles')
@@ -59,8 +60,8 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .single();
 
-    const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.smrtrply.com`;
-    const callbackUrl = `${(process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com').trim()}/get-started?step=success&business_id=${business_id}`;
+    const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.waaiio.com`;
+    const callbackUrl = `${(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com').trim()}/get-started?step=success&business_id=${business_id}`;
 
     // Paystack path (NG, GH)
     if (gateway === 'paystack') {
@@ -81,7 +82,7 @@ export async function POST(request: NextRequest) {
       const payload: Record<string, unknown> = {
         email,
         amount,
-        currency: country.currencyCode,
+        currency: country?.currency_code ?? 'NGN',
         callback_url: callbackUrl,
         metadata: {
           business_id,
@@ -127,13 +128,13 @@ export async function POST(request: NextRequest) {
 
     const stripeBody = new URLSearchParams({
       'payment_method_types[0]': 'card',
-      'line_items[0][price_data][currency]': country.currencyCode.toLowerCase(),
-      'line_items[0][price_data][product_data][name]': `SmrtRply ${tier.name} Plan`,
+      'line_items[0][price_data][currency]': country?.currency_code ?? 'NGN'.toLowerCase(),
+      'line_items[0][price_data][product_data][name]': `Waaiio ${tier.name} Plan`,
       'line_items[0][price_data][unit_amount]': String(amountInCents),
       'line_items[0][quantity]': '1',
       mode: 'payment',
       success_url: callbackUrl,
-      cancel_url: `${(process.env.NEXT_PUBLIC_APP_URL || 'https://smrtrply.com').trim()}/get-started`,
+      cancel_url: `${(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com').trim()}/get-started`,
       customer_email: email,
       'metadata[business_id]': business_id,
       'metadata[plan]': plan,

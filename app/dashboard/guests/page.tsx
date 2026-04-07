@@ -91,7 +91,7 @@ export default function GuestsPage() {
 
   function exportCSV() {
     const rows = [
-      ['Name', 'Phone', 'Email', 'Bookings', 'Total Spent', 'First Visit', 'Last Visit'],
+      ['Name', 'Phone', 'Email', labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1), 'Total Spent', 'First Visit', 'Last Visit'],
       ...sorted.map((g) => [
         g.guest_name || '',
         g.guest_phone,
@@ -107,7 +107,7 @@ export default function GuestsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${business.name}-guests.csv`;
+    a.download = `${business.name}-${labels.personLabelPlural.toLowerCase()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -120,9 +120,9 @@ export default function GuestsPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Guests</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{labels.personLabelPlural}</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {guests.length} unique guests from WhatsApp {labels.entityNamePlural}
+            {guests.length} unique {labels.personLabelPlural.toLowerCase()} from WhatsApp {labels.entityNamePlural}
           </p>
         </div>
         {guests.length > 0 && (
@@ -138,18 +138,18 @@ export default function GuestsPage() {
       {/* Stats Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Total Guests</p>
+          <p className="text-xs font-medium text-gray-500">Total {labels.personLabelPlural}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{guests.length}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Repeat Guests</p>
+          <p className="text-xs font-medium text-gray-500">Repeat {labels.personLabelPlural}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{repeatGuests}</p>
           <p className="mt-1 text-xs text-gray-400">
             {guests.length > 0 ? Math.round((repeatGuests / guests.length) * 100) : 0}% return rate
           </p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Avg {labels.entityNamePlural}/Guest</p>
+          <p className="text-xs font-medium text-gray-500">Avg {labels.entityNamePlural}/{labels.personLabel}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{avgBookings}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
@@ -174,7 +174,7 @@ export default function GuestsPage() {
           onChange={(e) => setSortBy(e.target.value as SortKey)}
           className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
         >
-          <option value="booking_count">Most bookings</option>
+          <option value="booking_count">Most {labels.entityNamePlural}</option>
           <option value="total_spent">Highest spend</option>
           <option value="last_visit">Most recent</option>
           <option value="guest_name">Name A-Z</option>
@@ -191,7 +191,7 @@ export default function GuestsPage() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
           <p className="mt-3 text-sm text-gray-400">
-            {search ? 'No guests match your search' : 'No guests yet. They\'ll appear here after their first WhatsApp booking.'}
+            {search ? `No ${labels.personLabelPlural.toLowerCase()} match your search` : `No ${labels.personLabelPlural.toLowerCase()} yet. They'll appear here after their first WhatsApp ${labels.entityName}.`}
           </p>
         </div>
       ) : (
@@ -199,7 +199,7 @@ export default function GuestsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.entityNamePlural}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Spent</th>
@@ -251,7 +251,7 @@ export default function GuestsPage() {
           <div className="fixed inset-0 bg-black/20" onClick={() => setSelectedGuest(null)} />
           <div className="relative ml-auto w-full max-w-md bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-              <h2 className="text-lg font-bold text-gray-900">Guest Details</h2>
+              <h2 className="text-lg font-bold text-gray-900">{labels.personLabel} Details</h2>
               <button onClick={() => setSelectedGuest(null)} className="text-gray-400 hover:text-gray-600">
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

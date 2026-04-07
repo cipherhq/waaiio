@@ -1,9 +1,12 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { GupshupService } from '@/lib/channels/gupshup';
+import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
-import type { BusinessCategoryKey, FlowType, CountryCode } from '@/lib/constants';
+import { getLocale, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
+import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import type { CapabilityId } from '@/lib/capabilities/types';
+import { parseSmartIntent, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 
 interface BotSession {
   id: string;
@@ -33,11 +36,11 @@ export class BotService {
 
   constructor(
     private readonly supabase: SupabaseClient,
-    private readonly gupshupService: GupshupService,
+    private readonly messageSender: MessageSender,
     private readonly standaloneService: StandaloneService,
     private readonly intelligence: BotIntelligenceService,
   ) {
-    this.flowExecutor = new FlowExecutor(supabase, gupshupService, standaloneService, intelligence);
+    this.flowExecutor = new FlowExecutor(supabase, messageSender, standaloneService, intelligence);
   }
 
   async handleMessage(
@@ -87,6 +90,7 @@ export class BotService {
       const { data: newSession } = await this.supabase.from('bot_sessions').insert({
         whatsapp_number: from, user_id: profile.id, business_id: null,
         current_step: 'my_bookings', session_data: {}, is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       }).select().single();
       if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
       session = newSession as BotSession;
@@ -124,9 +128,11 @@ export class BotService {
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address'].includes(currentStep);
+    const detectedRestart = !isFreeTextStep ? this.intelligence.detectIntent(text, currentStep) : null;
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
-      (this.intelligence.detectIntent(text, 'greeting')?.intent === 'greeting')
+      detectedRestart?.intent === 'greeting' ||
+      detectedRestart?.intent === 'booking'  // "tithe", "book", "order", "pay" etc. also restart
     );
 
     if (!session || isRestart) {
@@ -164,6 +170,12 @@ export class BotService {
         .eq('phone', phone)
         .single();
 
+      // Returning customer: check past history if no business resolved yet
+      if (!businessId) {
+        businessId = await this.findReturningCustomerBusiness(from, profile?.id || null);
+        if (businessId) console.log('[BOT] returning customer → business:', businessId);
+      }
+
       // Load business info
       let business: BusinessRecord | null = null;
       if (businessId) {
@@ -175,7 +187,19 @@ export class BotService {
         business = biz as BusinessRecord | null;
       }
 
-      const firstStep = business ? this.getFirstStep(business.flow_type) : 'greeting';
+      // Load capabilities for this business
+      let capabilities: CapabilityId[] = [];
+      if (business) {
+        capabilities = await getEnabledCapabilities(this.supabase, business.id, business.category);
+      }
+
+      const firstStep = business
+        ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
+        : 'greeting';
+
+      const sessionData: Record<string, unknown> = businessId && business
+        ? { business_id: businessId, business_name: business.name, capabilities }
+        : {};
 
       const { data: newSession, error: sessionError } = await this.supabase
         .from('bot_sessions')
@@ -184,8 +208,9 @@ export class BotService {
           user_id: profile?.id || null,
           business_id: businessId,
           current_step: firstStep,
-          session_data: businessId && business ? { business_id: businessId, business_name: business.name } : {},
+          session_data: sessionData,
           is_active: true,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         })
         .select()
         .single();
@@ -213,7 +238,7 @@ export class BotService {
           });
         }
 
-        if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by SmrtRply_';
+        if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Waaiio_';
 
         if (!tierInfo.allowed) {
           await this.sendText(from, `Thank you for contacting ${business.name}! We're currently unable to accept new bookings via WhatsApp. Please contact us directly.`);
@@ -223,35 +248,105 @@ export class BotService {
 
         await this.sendText(from, greeting);
 
+        // ── Smart Intent: parse first message for entities ──
+        // If user said something rich like "I wan barb tomorrow morning",
+        // extract service, date, time, quantity and pre-fill session data
+        // so the flow can skip already-answered steps.
+        if (text && text.length > 2 && !isRestart) {
+          try {
+            const parsed = parseSmartIntent(text);
+            if (parsed.understood && business) {
+              // Match service keywords against business services
+              if (parsed.serviceKeywords.length > 0) {
+                const matched = await matchServiceFromKeywords(this.supabase, business.id, parsed.serviceKeywords);
+                if (matched) {
+                  session.session_data.service_id = matched.id;
+                  session.session_data.service_name = matched.name;
+                  session.session_data.service_price = matched.price;
+                  session.session_data.service_duration = matched.duration_minutes;
+                  session.session_data.service_deposit = matched.deposit_amount || 0;
+                  session.session_data.skip_service = true;
+                }
+              }
+
+              // Pre-fill date
+              if (parsed.date) {
+                // Validate: must be future, max 90 days
+                const selected = new Date(parsed.date + 'T00:00');
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate());
+                tomorrow.setHours(0, 0, 0, 0);
+                const maxDate = new Date();
+                maxDate.setDate(maxDate.getDate() + 90);
+                if (selected >= tomorrow && selected <= maxDate) {
+                  session.session_data.date = parsed.date;
+                }
+              }
+
+              // Pre-fill time
+              if (parsed.specificTime) {
+                session.session_data.time = parsed.specificTime;
+              }
+              if (parsed.timePreference) {
+                session.session_data._time_preference = parsed.timePreference;
+              }
+
+              // Pre-fill quantity
+              if (parsed.quantity && parsed.quantity >= 1 && parsed.quantity <= 20) {
+                session.session_data.party_size = parsed.quantity;
+              }
+
+              // Persist pre-filled data
+              await this.supabase.from('bot_sessions').update({
+                session_data: session.session_data,
+              }).eq('id', session.id);
+
+              // Send smart acknowledgment
+              const locale = getLocale((business.country_code || 'NG') as CountryCode);
+              const ack = buildAcknowledgment(
+                parsed,
+                session.session_data.service_name as string | null,
+                locale,
+              );
+              if (ack) {
+                await this.sendText(from, ack);
+              }
+            }
+          } catch (err) {
+            console.error('[BOT] Smart intent parse error (non-fatal):', err);
+          }
+        }
+
         // Delegate to flow executor for the first step prompt
         await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
         return;
       }
 
-      // Marketplace greeting
-      const phoneForLookup = from.startsWith('+') ? from : `+${from}`;
-      const { data: returningProfile } = await this.supabase
-        .from('profiles')
-        .select('id, first_name')
-        .eq('phone', phoneForLookup)
-        .single();
-
-      if (returningProfile?.first_name) {
-        await this.sendText(from, `Welcome back, ${returningProfile.first_name}! 🍽️\n\nLet's find you a table!`);
+      // Marketplace greeting — no business found from bot code or past history
+      if (profile) {
+        const { data: returningProfile } = await this.supabase
+          .from('profiles')
+          .select('first_name')
+          .eq('id', profile.id)
+          .single();
+        if (returningProfile?.first_name) {
+          await this.sendText(from, `Welcome back, ${returningProfile.first_name}! 👋`);
+        } else {
+          await this.sendText(from, 'Welcome to Waaiio! 👋');
+        }
       } else {
-        await this.sendText(from, `Welcome to SmrtRply! 🍽️\n\nDiscover and book the best businesses in Nigeria.\n\nLet's get started!`);
+        await this.sendText(from, 'Welcome to Waaiio! 👋\n\nAutomate bookings, payments, orders & more via WhatsApp.');
       }
 
-      // For marketplace, show city selection (scheduling flow first step isn't applicable without a business)
-      await this.sendText(from, 'Send a business code to get started, or type *help* for options.');
+      await this.sendText(from, 'Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_\n_switch spa_');
       return;
     }
 
-    // Check session expiry
+    // Check session expiry — auto-restart instead of blocking
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-      await this.sendText(from, 'Your session has expired. Send "Hi" to start again.');
-      return;
+      // Re-process this message as a fresh session instead of asking for "Hi"
+      return this.handleMessage(from, messageText, messageType, destinationPhone, preResolvedBusinessId);
     }
 
     // Intent detection
@@ -272,9 +367,37 @@ export class BotService {
         const { data: newSession } = await this.supabase.from('bot_sessions').insert({
           whatsapp_number: from, user_id: profile.id, business_id: null,
           current_step: 'my_bookings', session_data: {}, is_active: true,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         }).select().single();
         if (!newSession) { await this.sendText(from, 'Something went wrong.'); return; }
         await this.handleMyBookings(newSession as BotSession, from, '');
+        return;
+      }
+
+      if (detectedIntent.action === 'queue_checkin') {
+        // Check if business has queue capability
+        if (session.business_id) {
+          const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+          if (caps.includes('queue')) {
+            await this.supabase.from('bot_sessions').update({
+              current_step: 'queue_start',
+              session_data: { ...session.session_data, active_capability: 'queue' },
+            }).eq('id', session.id);
+            session.current_step = 'queue_start';
+            session.session_data.active_capability = 'queue';
+            let business: BusinessRecord | null = null;
+            const { data: biz } = await this.supabase
+              .from('businesses')
+              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+              .eq('id', session.business_id)
+              .single();
+            business = biz as BusinessRecord | null;
+            await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
+            return;
+          }
+        }
+        // No queue capability — treat as regular message
+        await this.sendText(from, "This business doesn't have queue check-in enabled.");
         return;
       }
 
@@ -323,6 +446,58 @@ export class BotService {
         .eq('id', session.business_id)
         .single();
       business = biz as BusinessRecord | null;
+    }
+
+    // Chat fallback: if message doesn't match any flow step and chat is enabled,
+    // store as inbound chat message
+    if (session.business_id && step === 'chat_start') {
+      // This is a chat session — store message and acknowledge
+      const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+      if (caps.includes('chat')) {
+        // Get customer name
+        const phone = from.startsWith('+') ? from : `+${from}`;
+        let customerName: string | null = null;
+        const { data: profile } = await this.supabase
+          .from('profiles')
+          .select('first_name, last_name')
+          .eq('phone', phone)
+          .maybeSingle();
+        if (profile?.first_name) {
+          customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
+        }
+
+        await this.supabase.from('chat_messages').insert({
+          business_id: session.business_id,
+          customer_phone: from,
+          customer_name: customerName,
+          direction: 'inbound',
+          message_text: text,
+          is_read: false,
+        });
+
+        // Try FAQ auto-response first
+        if (text && session.business_id) {
+          try {
+            const { tryFaqResponse } = await import('@/lib/bot/faq-responder');
+            const { data: biz } = await this.supabase
+              .from('businesses')
+              .select('name, address, phone, operating_hours, metadata')
+              .eq('id', session.business_id)
+              .single();
+
+            if (biz) {
+              const faqAnswer = await tryFaqResponse(this.supabase, session.business_id, biz, text);
+              if (faqAnswer) {
+                await this.sendText(from, faqAnswer);
+                return;
+              }
+            }
+          } catch { /* FAQ lookup failed, fall through to human chat */ }
+        }
+
+        await this.sendText(from, "Thanks for your message! A team member will respond shortly.");
+        return;
+      }
     }
 
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business);
@@ -388,12 +563,126 @@ export class BotService {
     return null;
   }
 
+  /**
+   * Look up a returning customer's most recent business from past sessions, bookings, and orders.
+   * If they've only interacted with one business, auto-route there.
+   * If multiple, return the most recent one (they can always "switch" to another).
+   */
+  private async findReturningCustomerBusiness(phone: string, userId: string | null): Promise<string | null> {
+    // Check past bot_sessions (most reliable — covers all interaction types)
+    const { data: pastSessions } = await this.supabase
+      .from('bot_sessions')
+      .select('business_id')
+      .eq('whatsapp_number', phone)
+      .not('business_id', 'is', null)
+      .order('last_active_at', { ascending: false })
+      .limit(10);
+
+    if (pastSessions && pastSessions.length > 0) {
+      // Get unique business IDs, ordered by most recent
+      const seen = new Set<string>();
+      const uniqueBusinessIds: string[] = [];
+      for (const s of pastSessions) {
+        if (s.business_id && !seen.has(s.business_id)) {
+          seen.add(s.business_id);
+          uniqueBusinessIds.push(s.business_id);
+        }
+      }
+
+      if (uniqueBusinessIds.length === 1) {
+        // Single business — auto-route
+        const { data: biz } = await this.supabase
+          .from('businesses')
+          .select('id')
+          .eq('id', uniqueBusinessIds[0])
+          .eq('status', 'active')
+          .maybeSingle();
+        if (biz) return biz.id;
+      }
+
+      if (uniqueBusinessIds.length > 1) {
+        // Multiple businesses — return the most recent active one
+        for (const bid of uniqueBusinessIds) {
+          const { data: biz } = await this.supabase
+            .from('businesses')
+            .select('id')
+            .eq('id', bid)
+            .eq('status', 'active')
+            .maybeSingle();
+          if (biz) return biz.id;
+        }
+      }
+    }
+
+    // Fallback: check bookings if we have a user profile
+    if (userId) {
+      const { data: recentBooking } = await this.supabase
+        .from('bookings')
+        .select('business_id')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (recentBooking?.business_id) {
+        const { data: biz } = await this.supabase
+          .from('businesses')
+          .select('id')
+          .eq('id', recentBooking.business_id)
+          .eq('status', 'active')
+          .maybeSingle();
+        if (biz) return biz.id;
+      }
+    }
+
+    return null;
+  }
+
   private getFirstStep(flowType: FlowType): string {
     switch (flowType) {
       case 'scheduling': return 'select_service';
       case 'payment': return 'select_category';
       case 'ordering': return 'browse_catalog';
       case 'ticketing': return 'select_event';
+      default: return 'select_service';
+    }
+  }
+
+  /**
+   * Determine the first step based on capabilities.
+   * - Single capability → go directly to that flow's first step
+   * - Multiple capabilities → show capability selection menu
+   * - Fallback to flow_type if no capabilities loaded
+   */
+  private getFirstStepFromCapabilities(capabilities: CapabilityId[], flowType: FlowType): string {
+    if (capabilities.length === 0) {
+      return this.getFirstStep(flowType);
+    }
+
+    if (capabilities.length === 1) {
+      return this.capabilityToFirstStep(capabilities[0]);
+    }
+
+    // Multiple capabilities — route to capability selection
+    return 'select_capability';
+  }
+
+  private capabilityToFirstStep(cap: CapabilityId): string {
+    switch (cap) {
+      case 'scheduling': return 'select_service';
+      case 'payment': return 'select_category';
+      case 'ordering': return 'browse_catalog';
+      case 'ticketing': return 'select_event';
+      case 'crowdfunding': return 'select_campaign';
+      case 'reminders': return 'select_service'; // reminders piggyback on scheduling
+      case 'queue': return 'queue_start';
+      case 'reports': return 'select_service'; // reports are dashboard-only, no bot flow
+      case 'chat': return 'chat_start';
+      case 'waitlist': return 'waitlist_join';
+      case 'feedback': return 'select_service'; // feedback is post-completion
+      case 'loyalty': return 'select_service'; // loyalty is post-completion
+      case 'referral': return 'select_service'; // referral is post-completion
+      case 'staff': return 'select_service'; // staff enhances scheduling
       default: return 'select_service';
     }
   }
@@ -429,7 +718,7 @@ export class BotService {
         };
       });
 
-      await this.gupshupService.sendList({
+      await this.messageSender.sendList({
         to: from,
         title: 'Your Bookings',
         body: 'Select a booking to manage:',
@@ -484,7 +773,7 @@ export class BotService {
         `🔑 Ref: *${booking.reference_code}*`,
       ].join('\n'));
 
-      await this.gupshupService.sendButtons({
+      await this.messageSender.sendButtons({
         to: from,
         body: 'What would you like to do?',
         buttons: [
@@ -540,7 +829,7 @@ export class BotService {
 
   private async sendText(to: string, text: string): Promise<void> {
     console.log('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
-    const result = await this.gupshupService.sendText({ to, text });
+    const result = await this.messageSender.sendText({ to, text });
     console.log('[BOT] sendText result:', JSON.stringify(result));
   }
 }

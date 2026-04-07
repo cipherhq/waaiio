@@ -359,7 +359,7 @@ export const ticketingFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.gupshup.sendText({ to: ctx.from, text: 'Ticket purchase cancelled. Send *Hi* to start again.' });
+          await ctx.sender.sendText({ to: ctx.from, text: 'Ticket purchase cancelled. Send *Hi* to start again.' });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -373,7 +373,7 @@ export const ticketingFlow: FlowDefinition = {
             const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString('en-NG', {
               weekday: 'long', day: 'numeric', month: 'long',
             });
-            await ctx.gupshup.sendText({
+            await ctx.sender.sendText({
               to: ctx.from,
               text: getTicketConfirmationMessage({
                 eventName: d.event_name as string,

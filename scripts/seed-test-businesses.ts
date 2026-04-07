@@ -95,7 +95,7 @@ const DEFAULT_SERVICES: Record<string, Array<{ name: string; price: number; pric
 
 async function seed() {
   // Get or create a test owner
-  const testEmail = 'test@smrtrply.com';
+  const testEmail = 'test@waaiio.com';
   let ownerId: string;
 
   const { data: existingUsers } = await supabase.auth.admin.listUsers();
@@ -227,7 +227,7 @@ async function seed() {
   console.log('Ordering:   test-shop, test-food');
   console.log('Ticketing:  test-events, test-transport, test-cinema');
   console.log('\nOr use "switch <keyword>" in WhatsApp to swap between businesses!');
-  console.log('Test login: test@smrtrply.com / test1234');
+  console.log('Test login: test@waaiio.com / test1234');
 }
 
 seed().catch(console.error);

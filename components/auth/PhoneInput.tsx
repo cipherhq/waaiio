@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { COUNTRIES, type CountryCode } from '@/lib/constants';
+import { useState, useEffect } from 'react';
+import { type CountryCode } from '@/lib/constants';
+import { getCountry, loadCountries, type CountryRow } from '@/lib/countries';
 
 interface PhoneInputProps {
   value: string;
@@ -11,23 +12,22 @@ interface PhoneInputProps {
   onCountryChange?: (cc: CountryCode) => void;
 }
 
-const COUNTRY_OPTIONS: { code: CountryCode; label: string }[] = [
-  { code: 'NG', label: `${COUNTRIES.NG.flag} ${COUNTRIES.NG.dialingCode}` },
-  { code: 'US', label: `${COUNTRIES.US.flag} ${COUNTRIES.US.dialingCode}` },
-  { code: 'GB', label: `${COUNTRIES.GB.flag} ${COUNTRIES.GB.dialingCode}` },
-  { code: 'CA', label: `${COUNTRIES.CA.flag} ${COUNTRIES.CA.dialingCode}` },
-  { code: 'GH', label: `${COUNTRIES.GH.flag} ${COUNTRIES.GH.dialingCode}` },
-];
-
 export function PhoneInput({ value, onChange, disabled, countryCode = 'NG', onCountryChange }: PhoneInputProps) {
   const [cc, setCc] = useState<CountryCode>(countryCode);
-  const country = COUNTRIES[cc];
+  const [countryOptions, setCountryOptions] = useState<CountryRow[]>([]);
+  const country = getCountry(cc);
+  const dialingCode = country?.dialing_code ?? '+234';
+  const phoneDigits = country?.phone_digits ?? 10;
+  const phonePlaceholder = country?.phone_placeholder ?? '';
+
+  useEffect(() => {
+    loadCountries().then(list => setCountryOptions(list));
+  }, []);
+
   const [raw, setRaw] = useState(() => {
     if (!value) return '';
-    // Strip dialing code prefix
-    const prefix = country.dialingCode.replace('+', '');
-    if (value.startsWith('+') && value.startsWith(country.dialingCode)) {
-      return value.slice(country.dialingCode.length);
+    if (value.startsWith('+') && value.startsWith(dialingCode)) {
+      return value.slice(dialingCode.length);
     }
     return value.replace(/^\+/, '');
   });
@@ -40,10 +40,10 @@ export function PhoneInput({ value, onChange, disabled, countryCode = 'NG', onCo
   }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const digits = e.target.value.replace(/\D/g, '').slice(0, country.phoneDigits);
+    const digits = e.target.value.replace(/\D/g, '').slice(0, phoneDigits);
     setRaw(digits);
-    if (digits.length === country.phoneDigits) {
-      onChange(`${country.dialingCode}${digits}`);
+    if (digits.length === phoneDigits) {
+      onChange(`${dialingCode}${digits}`);
     } else {
       onChange('');
     }
@@ -58,19 +58,19 @@ export function PhoneInput({ value, onChange, disabled, countryCode = 'NG', onCo
         className="rounded-l-lg bg-gray-50 px-2 py-3 text-sm font-medium text-gray-600 border-r border-gray-300 outline-none"
         aria-label="Country code"
       >
-        {COUNTRY_OPTIONS.map(opt => (
-          <option key={opt.code} value={opt.code}>{opt.label}</option>
+        {countryOptions.map(opt => (
+          <option key={opt.code} value={opt.code}>{opt.flag} {opt.dialing_code}</option>
         ))}
       </select>
       <input
         type="tel"
         inputMode="numeric"
-        placeholder={country.phonePlaceholder}
+        placeholder={phonePlaceholder}
         value={raw}
         onChange={handleChange}
         disabled={disabled}
         className="w-full rounded-r-lg px-3 py-3 text-sm outline-none disabled:bg-gray-100"
-        maxLength={country.phoneDigits}
+        maxLength={phoneDigits}
         autoComplete="tel-national"
       />
     </div>

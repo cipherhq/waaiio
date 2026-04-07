@@ -10,7 +10,7 @@ export class PaystackGateway implements PaymentGateway {
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     const idempotencyKey = randomUUID();
     const amountInKobo = Math.round(opts.amount * 100);
-    const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.smrtrply.com`;
+    const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.waaiio.com`;
 
     try {
       if (!paystackSecretKey) {
@@ -25,7 +25,7 @@ export class PaystackGateway implements PaymentGateway {
           status: 'pending',
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `https://smrtrply.com/pay?ref=${mockRef}`, reference: mockRef };
+        return { url: `https://waaiio.com/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       const response = await fetch('https://api.paystack.co/transaction/initialize', {
@@ -38,6 +38,11 @@ export class PaystackGateway implements PaymentGateway {
           email,
           amount: amountInKobo,
           currency: opts.currency,
+          // Split to business subaccount
+          ...(opts.subaccountCode && {
+            subaccount: opts.subaccountCode,
+            transaction_charge: opts.platformFeeAmount ? Math.round(opts.platformFeeAmount * 100) : undefined,
+          }),
           metadata: {
             booking_id: opts.bookingId || null,
             order_id: opts.orderId || null,

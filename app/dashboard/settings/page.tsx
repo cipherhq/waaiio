@@ -1,9 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import Link from 'next/link';
+import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { BUSINESS_CATEGORIES, PRICING_TIERS, formatCurrency, type CountryCode } from '@/lib/constants';
+import { BUSINESS_CATEGORIES, CATEGORY_LABELS, PRICING_TIERS, formatCurrency, type BusinessCategoryKey, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+import { getCountry } from '@/lib/countries';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 const DAY_LABELS: Record<string, string> = {
@@ -21,9 +23,19 @@ const DEFAULT_HOURS: WeekSchedule = Object.fromEntries(
 export default function SettingsPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
+  const { capabilities } = useCapabilities();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue'>('profile');
+  const [recurringEnabled, setRecurringEnabled] = useState(business.recurring_enabled ?? false);
+  const [selectedGateway, setSelectedGateway] = useState<string>(business.payment_gateway || 'auto');
+
+  // Queue settings from business.metadata
+  const meta = (business.metadata || {}) as Record<string, unknown>;
+  const [queueAvgMinutes, setQueueAvgMinutes] = useState<number>((meta.queue_avg_service_minutes as number) || 10);
+  const [queueNotifyStaff, setQueueNotifyStaff] = useState<boolean>(meta.queue_notify_staff !== false);
+  const [queuePaused, setQueuePaused] = useState<boolean>((meta.queue_paused as boolean) || false);
+
   const [form, setForm] = useState({
     name: business.name,
     description: business.description || '',
@@ -40,6 +52,7 @@ export default function SettingsPage() {
   });
 
   const category = BUSINESS_CATEGORIES.find((c) => c.key === business.category);
+  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
   const tier = PRICING_TIERS[business.subscription_tier as keyof typeof PRICING_TIERS];
 
   async function handleSave() {
@@ -102,6 +115,36 @@ export default function SettingsPage() {
         >
           Operating Hours
         </button>
+        {(capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding')) && (
+          <button
+            onClick={() => setActiveTab('gateway')}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              activeTab === 'gateway' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Payment Gateway
+          </button>
+        )}
+        {(capabilities.includes('payment') || capabilities.includes('crowdfunding')) && (
+          <button
+            onClick={() => setActiveTab('recurring')}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              activeTab === 'recurring' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Recurring
+          </button>
+        )}
+        {capabilities.includes('queue') && (
+          <button
+            onClick={() => setActiveTab('queue')}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              activeTab === 'queue' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Queue
+          </button>
+        )}
       </div>
 
       {activeTab === 'profile' ? (
@@ -160,7 +203,7 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Deposit per Guest ({formatCurrency(0, country).charAt(0)})</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Deposit per {labels.personLabel} ({formatCurrency(0, country).charAt(0)})</label>
                   <input
                     type="number"
                     min={0}
@@ -197,7 +240,7 @@ export default function SettingsPage() {
                   </p>
                 )}
                 <p className="mt-1 text-xs text-gray-400">
-                  {tier?.maxBookings === Infinity ? 'Unlimited' : `${tier?.maxBookings || 50} bookings/month`}
+                  {tier?.maxBookings === Infinity ? 'Unlimited' : `${tier?.maxBookings || 50} ${labels.entityNamePlural}/month`}
                 </p>
               </div>
             </div>
@@ -228,7 +271,7 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'hours' ? (
         /* Operating Hours Tab */
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
@@ -286,7 +329,256 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      )}
+      ) : activeTab === 'gateway' ? (
+        /* Payment Gateway Tab */
+        <div className="mt-6 max-w-xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Payment Gateway</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Choose which payment gateway to use. &quot;Auto&quot; selects the best gateway for your country.
+            </p>
+
+            <div className="mt-5 space-y-2">
+              {(['auto', 'paystack', 'stripe', 'flutterwave'] as const).map((gw) => {
+                const countryDefault = getCountry(country)?.payment_gateway;
+                const gwLabels: Record<string, { name: string; desc: string }> = {
+                  auto: { name: 'Auto (Recommended)', desc: `Uses ${countryDefault || 'paystack'} based on your country (${country})` },
+                  paystack: { name: 'Paystack', desc: 'Best for Nigeria and Ghana. Supports cards, bank transfer, USSD.' },
+                  stripe: { name: 'Stripe', desc: 'Best for US, UK, Canada. Supports cards and wallets.' },
+                  flutterwave: { name: 'Flutterwave', desc: 'Supports Africa-wide payments. Cards, mobile money, bank transfer.' },
+                };
+                const info = gwLabels[gw];
+                return (
+                  <button
+                    key={gw}
+                    type="button"
+                    onClick={() => setSelectedGateway(gw)}
+                    className={`flex w-full items-center gap-3 rounded-lg border-2 p-4 text-left transition ${
+                      selectedGateway === gw ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                      selectedGateway === gw ? 'border-brand bg-brand' : 'border-gray-300'
+                    }`}>
+                      {selectedGateway === gw && (
+                        <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                        </svg>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">{info.name}</p>
+                      <p className="text-xs text-gray-500">{info.desc}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({ payment_gateway: selectedGateway === 'auto' ? null : selectedGateway })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Gateway'}
+            </button>
+          </div>
+
+          {/* Capabilities link */}
+          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Capabilities</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Manage which features your business supports (scheduling, payments, ordering, etc.)
+            </p>
+            <Link
+              href="/dashboard/capabilities"
+              className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
+            >
+              Manage Capabilities
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </Link>
+          </div>
+        </div>
+      ) : activeTab === 'recurring' ? (
+        /* Recurring Payments Tab */
+        <div className="mt-6 max-w-xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Recurring Payments</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Enable automatic recurring payments so customers can set up weekly or monthly charges (e.g. tithes, memberships, subscriptions).
+            </p>
+
+            <div className="mt-5 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Enable Recurring Payments</p>
+                <p className="text-xs text-gray-400">
+                  {recurringEnabled
+                    ? 'Customers will be offered recurring payment setup after each payment.'
+                    : 'Recurring payments are currently disabled for this business.'}
+                </p>
+              </div>
+              <button
+                onClick={() => setRecurringEnabled(!recurringEnabled)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${recurringEnabled ? 'bg-brand' : 'bg-gray-200'}`}
+              >
+                <div
+                  className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                  style={{ left: recurringEnabled ? '22px' : '2px' }}
+                />
+              </button>
+            </div>
+
+            {recurringEnabled && (
+              <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
+                <p className="text-xs text-blue-700">
+                  When enabled, customers paying via WhatsApp will be asked if they want to make their payment recurring.
+                  You can also share your recurring payment link: <code className="font-mono">/recurring/{business.slug}</code>
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({ recurring_enabled: recurringEnabled })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Setting'}
+            </button>
+          </div>
+
+          {/* Link to recurring dashboard */}
+          {recurringEnabled && (
+            <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
+              <h2 className="text-sm font-semibold text-gray-900">Manage Subscribers</h2>
+              <p className="mt-1 text-xs text-gray-500">View and manage your recurring payment subscribers.</p>
+              <Link
+                href="/dashboard/recurring"
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
+              >
+                View Recurring Dashboard
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </Link>
+            </div>
+          )}
+        </div>
+      ) : activeTab === 'queue' ? (
+        /* Queue Settings Tab */
+        <div className="mt-6 max-w-xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Queue Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Configure how your queue behaves, including wait-time estimates and notifications.
+            </p>
+
+            <div className="mt-5 space-y-5">
+              {/* Average service time */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Average service time (minutes)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={queueAvgMinutes}
+                  onChange={(e) => setQueueAvgMinutes(Math.max(1, Math.min(120, Number(e.target.value))))}
+                  className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-1 text-xs text-gray-400">Used to estimate wait times for customers. Default is 10 minutes.</p>
+              </div>
+
+              {/* Notify staff on check-in */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Notify staff on check-in</p>
+                  <p className="text-xs text-gray-400">
+                    {queueNotifyStaff
+                      ? 'Audio chime and browser notification when a customer checks in.'
+                      : 'Notifications are disabled — check-ins happen silently.'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setQueueNotifyStaff(!queueNotifyStaff)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${queueNotifyStaff ? 'bg-brand' : 'bg-gray-200'}`}
+                >
+                  <div
+                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                    style={{ left: queueNotifyStaff ? '22px' : '2px' }}
+                  />
+                </button>
+              </div>
+
+              {/* Queue paused */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Pause queue</p>
+                  <p className="text-xs text-gray-400">
+                    {queuePaused
+                      ? 'Queue is paused — customers cannot check in via WhatsApp.'
+                      : 'Queue is active — customers can check in normally.'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setQueuePaused(!queuePaused)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${queuePaused ? 'bg-yellow-500' : 'bg-gray-200'}`}
+                >
+                  <div
+                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                    style={{ left: queuePaused ? '22px' : '2px' }}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({
+                    metadata: {
+                      ...meta,
+                      queue_avg_service_minutes: queueAvgMinutes,
+                      queue_notify_staff: queueNotifyStaff,
+                      queue_paused: queuePaused,
+                    },
+                  })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Queue Settings'}
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

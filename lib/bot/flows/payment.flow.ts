@@ -4,6 +4,8 @@ import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getPaymentReceiptMessage } from './shared/templates';
 import type { SubscriptionTier } from '@/lib/constants';
+import { getAuthorization, createPlan, createSubscription } from '@/lib/payments/paystack-recurring';
+import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -234,6 +236,7 @@ export const paymentFlow: FlowDefinition = {
           businessName: ctx.business?.name || 'Business',
           phone: ctx.from,
           countryCode: cc,
+          businessId: ctx.business?.id,
         });
 
         if (paymentResult) {
@@ -299,7 +302,7 @@ export const paymentFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.gupshup.sendText({ to: ctx.from, text: 'Payment cancelled. Send *Hi* to start again.' });
+          await ctx.sender.sendText({ to: ctx.from, text: 'Payment cancelled. Send *Hi* to start again.' });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -312,7 +315,7 @@ export const paymentFlow: FlowDefinition = {
           if (verified) {
             const d = ctx.session.session_data;
             const labels = CATEGORY_LABELS[ctx.business?.category || 'church'];
-            await ctx.gupshup.sendText({
+            await ctx.sender.sendText({
               to: ctx.from,
               text: getPaymentReceiptMessage({
                 emoji: labels.confirmationEmoji,
@@ -331,6 +334,213 @@ export const paymentFlow: FlowDefinition = {
 
         return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
       },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'payment_confirmed') return 'offer_recurring';
+        return null;
+      },
+    },
+
+    // ── Offer Recurring ──
+    {
+      id: 'offer_recurring',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        if (!ctx.business) return true;
+
+        // Check if business has recurring enabled
+        const { data: biz } = await ctx.supabase
+          .from('businesses')
+          .select('recurring_enabled')
+          .eq('id', ctx.business.id)
+          .single();
+
+        if (!biz?.recurring_enabled) return true;
+
+        // Check if customer already has active sub for this service
+        const userId = ctx.session.user_id;
+        const serviceId = ctx.session.session_data.service_id as string;
+        if (userId && serviceId) {
+          const { data: existing } = await ctx.supabase
+            .from('customer_subscriptions')
+            .select('id')
+            .eq('user_id', userId)
+            .eq('business_id', ctx.business.id)
+            .eq('service_id', serviceId)
+            .eq('status', 'active')
+            .maybeSingle();
+
+          if (existing) return true;
+        }
+
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        return [{
+          type: 'buttons',
+          body: `Would you like to set up automatic *${d.service_name as string}* payments of *${formatCurrency(d.amount as number, cc)}*?`,
+          buttons: [
+            { id: 'monthly', title: 'Monthly \u2713' },
+            { id: 'weekly', title: 'Weekly \u2713' },
+            { id: 'no_thanks', title: 'No thanks' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.toLowerCase();
+        if (text === 'monthly') return { valid: true, data: { recurring_frequency: 'monthly' } };
+        if (text === 'weekly') return { valid: true, data: { recurring_frequency: 'weekly' } };
+        if (text === 'no_thanks' || text === 'no') return { valid: true, data: { recurring_frequency: 'none' } };
+        return { valid: false, errorMessage: 'Please choose *Monthly*, *Weekly*, or *No thanks*.' };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data.recurring_frequency === 'none') return null;
+        return 'setup_recurring';
+      },
+    },
+
+    // ── Setup Recurring ──
+    {
+      id: 'setup_recurring',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const frequency = d.recurring_frequency as 'weekly' | 'monthly';
+        const amount = d.amount as number;
+        const ref = d.payment_reference as string;
+        const serviceName = d.service_name as string;
+        const userId = ctx.session.user_id;
+
+        if (!ctx.business || !userId) {
+          return [{ type: 'text', text: 'Something went wrong setting up recurring payments. Send *Hi* to try again.' }];
+        }
+
+        // Determine gateway based on country
+        const isPaystack = ['NG', 'GH'].includes(cc);
+
+        let subscriptionCode = '';
+        let planCode = '';
+        let customerCode = '';
+        let authCode = '';
+        let cardLast4 = '';
+        let cardBrand = '';
+        let gatewayName: 'paystack' | 'stripe' = isPaystack ? 'paystack' : 'stripe';
+
+        if (isPaystack) {
+          // Extract authorization from the payment just made
+          const authData = await getAuthorization(ref);
+          if (!authData) {
+            return [{ type: 'text', text: 'Unable to set up automatic payments with this payment method. You can still pay manually each time.' }];
+          }
+
+          authCode = authData.authorizationCode;
+          cardLast4 = authData.last4;
+          cardBrand = authData.brand;
+          customerCode = authData.customerCode;
+
+          // Create plan
+          const plan = await createPlan({
+            name: `${ctx.business.name} - ${serviceName} (${frequency})`,
+            interval: frequency,
+            amount,
+          });
+          if (!plan) {
+            return [{ type: 'text', text: 'Failed to set up recurring plan. Please try again later.' }];
+          }
+          planCode = plan.planCode;
+
+          // Create subscription
+          const sub = await createSubscription({
+            customer: authData.email || authData.customerCode,
+            planCode: plan.planCode,
+            authorizationCode: authCode,
+          });
+          if (!sub) {
+            return [{ type: 'text', text: 'Failed to activate recurring payments. Please try again later.' }];
+          }
+          subscriptionCode = sub.subscriptionCode;
+          d._recurring_email_token = sub.emailToken;
+        } else {
+          // Stripe: create subscription checkout
+          const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          const email = (d.customer_email as string) || `${phone.replace('+', '')}@whatsapp.waaiio.com`;
+
+          const checkout = await createRecurringCheckout({
+            businessName: ctx.business.name,
+            serviceName,
+            amount,
+            currency: cc === 'GB' ? 'GBP' : cc === 'CA' ? 'CAD' : 'USD',
+            interval: frequency === 'weekly' ? 'week' : 'month',
+            customerEmail: email,
+            metadata: {
+              business_id: ctx.business.id,
+              user_id: userId,
+              service_id: (d.service_id as string) || '',
+              type: 'customer_recurring',
+            },
+          });
+
+          if (!checkout) {
+            return [{ type: 'text', text: 'Failed to set up recurring payments. Please try again later.' }];
+          }
+
+          subscriptionCode = checkout.sessionId;
+
+          // For Stripe, send the checkout link and save subscription as pending
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: `Complete your recurring payment setup here:\n${checkout.url}`,
+          });
+        }
+
+        // Calculate next charge date
+        const nextCharge = new Date();
+        if (frequency === 'weekly') {
+          nextCharge.setDate(nextCharge.getDate() + 7);
+        } else {
+          nextCharge.setMonth(nextCharge.getMonth() + 1);
+        }
+
+        // Save customer subscription
+        await ctx.supabase.from('customer_subscriptions').insert({
+          business_id: ctx.business.id,
+          user_id: userId,
+          service_id: (d.service_id as string) || null,
+          amount,
+          currency: cc === 'NG' ? 'NGN' : cc === 'GH' ? 'GHS' : cc === 'GB' ? 'GBP' : cc === 'CA' ? 'CAD' : 'USD',
+          frequency,
+          status: 'active',
+          gateway: gatewayName,
+          gateway_subscription_code: subscriptionCode,
+          gateway_plan_code: planCode || null,
+          gateway_customer_code: customerCode || null,
+          authorization_code: authCode || null,
+          card_last_four: cardLast4 || null,
+          card_brand: cardBrand || null,
+          next_charge_at: nextCharge.toISOString(),
+          last_charged_at: new Date().toISOString(),
+          charge_count: 1,
+          total_charged: amount,
+          customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+          customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+          customer_email: (d.customer_email as string) || null,
+          setup_channel: 'whatsapp',
+        });
+
+        const label = frequency === 'weekly' ? 'weekly' : 'monthly';
+        return [{
+          type: 'text',
+          text: [
+            `\u2705 *Recurring Payment Set Up!*`,
+            '',
+            `Your ${label} payment of *${formatCurrency(amount, cc)}* for *${serviceName}* is now active.`,
+            '',
+            `You'll be charged automatically. To manage your recurring payments, type *subscriptions* anytime.`,
+          ].join('\n'),
+        }];
+      },
+      async validate(): Promise<ValidationResult> { return { valid: true }; },
       async next() { return null; },
     },
   ],

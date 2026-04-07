@@ -10,7 +10,8 @@ export type BotIntent =
   | 'pricing'
   | 'hours'
   | 'location'
-  | 'thanks';
+  | 'thanks'
+  | 'checkin';
 
 interface IntentRule {
   intent: BotIntent;
@@ -50,11 +51,22 @@ const FREE_TEXT_STEPS = new Set([
   'review_text',
   'enter_amount',
   'collect_address',
+  'queue_collect_name',
 ]);
 
 // ── Intent rules (scored by specificity) ───────────────
 
 const INTENT_RULES: IntentRule[] = [
+  {
+    intent: 'checkin',
+    patterns: [
+      /^check\s*in$/i,
+      /^queue$/i,
+      /^(i'm here|i am here|arrived|i'm waiting|im here|im waiting)$/i,
+    ],
+    action: 'queue_checkin',
+    response: null,
+  },
   {
     intent: 'cancel',
     patterns: [/\bcancel\s*(my\s*)?(booking|reservation)\b/i],
@@ -72,7 +84,18 @@ const INTENT_RULES: IntentRule[] = [
   },
   {
     intent: 'booking',
-    patterns: [/\b(book|reserve|table|reservation|appointment|order|buy|ticket|pay|donate)\b/i],
+    patterns: [
+      // Core actions
+      /\b(book|reserve|table|reservation|appointment|order|buy|ticket|pay|donate)\b/i,
+      // Service words (standalone triggers)
+      /\b(tithe|offering|zakat|sadaqah|haircut|barb|massage|facial|manicure|pedicure)\b/i,
+      /\b(seed|first\s*fruit|building\s*fund|welfare|fitrah)\b/i,
+      /\b(school\s*fee|tuition|laundry|car\s*wash|grooming|tattoo)\b/i,
+      /\b(delivery|pickup|ride|parking|hotel|lodge|room|gym|workout)\b/i,
+      // Pidgin
+      /\b(i\s*wan|abeg|make\s*i|biko|jowo)\b.*\b(book|barb|cut|buy|pay|order|chop|come|lodge|wash|give|sow)\b/i,
+      /\b(wan|want|need)\s+(barb|haircut|trim|shave|braid|massage|ticket|food|room|chop)\b/i,
+    ],
     action: 'city_selection',
     response: "Let's get you started! 🎉",
   },
@@ -88,8 +111,18 @@ const INTENT_RULES: IntentRule[] = [
   {
     intent: 'greeting',
     patterns: [
-      /^(hello|hi|hey|yo|howdy)$/i,
+      /^(hello|hi|hey|yo|howdy|hiya|sup)$/i,
       /^good\s+(morning|afternoon|evening)$/i,
+      // Pidgin / Nigerian
+      /^(how\s*far|howfar|wetin\s*dey|bros|oga|madam)$/i,
+      // Yoruba
+      /^(e\s*kaaro|e\s*kaasan|e\s*kale|bawo\s*ni|pele\s*o?)$/i,
+      // Hausa
+      /^(sannu|ina\s*kwana|ina\s*wuni|barka\s*dai?)$/i,
+      // Igbo
+      /^(kedu|ndewo|nno)$/i,
+      // Twi / Ghanaian
+      /^(maakye|maaha|maadwo|akwaaba)$/i,
     ],
     action: 'restart',
     response: null,
@@ -205,6 +238,10 @@ const STEP_HELP: Record<string, string> = {
   await_payment: "Tap *I've Paid* after paying. 💳",
   await_order_payment: "Tap *I've Paid* after paying. 💳",
   await_ticket_payment: "Tap *I've Paid* after paying. 💳",
+  queue_start: 'Tap *Check In* to join the queue, or *Queue Status* to check your position.',
+  queue_collect_name: 'Type your name for the queue entry.',
+  queue_confirm_checkin: 'Your check-in is being processed...',
+  queue_check_status: 'Checking your queue position...',
 };
 
 // ── Service ─────────────────────────────────────────────
@@ -379,7 +416,7 @@ export class BotIntelligenceService {
   }
 
   getHelpText(isStandalone: boolean, restaurantName?: string, alias?: string): string {
-    const name = alias || 'SmrtRply Bot';
+    const name = alias || 'Waaiio Bot';
     const lines = [
       `*${name}* can help you with:`,
       '',

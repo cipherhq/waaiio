@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- SmrtRply Database Schema
+-- Waaiio Database Schema
 -- Single migration for fresh Supabase project
 -- ═══════════════════════════════════════════════════════
 

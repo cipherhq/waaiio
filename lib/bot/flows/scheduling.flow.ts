@@ -4,7 +4,9 @@ import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
+import { handlePostCompletion } from './shared/post-completion';
 import type { SubscriptionTier } from '@/lib/constants';
+import { getEnabledCapabilities } from '@/lib/capabilities/service';
 
 export const schedulingFlow: FlowDefinition = {
   type: 'scheduling',
@@ -75,13 +77,97 @@ export const schedulingFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_date'; },
+      async next() { return 'select_staff'; },
       async skipIf(ctx: FlowContext) { return !!ctx.session.session_data.skip_service; },
+    },
+
+    // ── Select Staff ──
+    {
+      id: 'select_staff',
+      async skipIf(ctx: FlowContext) {
+        if (!ctx.business) return true;
+        // Skip if staff capability not enabled
+        const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id);
+        if (!caps.includes('staff')) return true;
+
+        // Get active staff for this service
+        const serviceId = ctx.session.session_data.service_id as string | undefined;
+        let query = ctx.supabase
+          .from('business_staff')
+          .select('id, name')
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true);
+
+        const { data: staff } = await query;
+        if (!staff || staff.length === 0) return true;
+
+        // If service selected, filter to staff who handle that service
+        let filtered = staff;
+        if (serviceId) {
+          const { data: serviceData } = await ctx.supabase
+            .from('services')
+            .select('name')
+            .eq('id', serviceId)
+            .single();
+          if (serviceData) {
+            filtered = staff.filter(s => {
+              const services = (s as unknown as { services: string[] }).services;
+              return !services || services.length === 0 || services.includes(serviceData.name);
+            });
+          }
+        }
+
+        // Skip if 0 or 1 staff
+        if (filtered.length <= 1) {
+          if (filtered.length === 1) {
+            ctx.session.session_data.staff_id = filtered[0].id;
+            ctx.session.session_data.staff_name = filtered[0].name;
+          }
+          return true;
+        }
+
+        ctx.session.session_data._available_staff = filtered.map(s => ({ id: s.id, name: s.name }));
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
+        const buttons = staff.slice(0, 2).map(s => ({
+          id: `staff_${s.id}`,
+          title: s.name,
+        }));
+        buttons.push({ id: 'staff_any', title: 'Any available' });
+
+        return [{
+          type: 'buttons',
+          body: 'Who would you like to see?',
+          buttons,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'staff_any') {
+          return { valid: true };
+        }
+        const match = input.match(/^staff_(.+)$/);
+        if (match) {
+          const staffId = match[1];
+          const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
+          const found = staff?.find(s => s.id === staffId);
+          if (found) {
+            return { valid: true, data: { staff_id: found.id, staff_name: found.name } };
+          }
+        }
+        return { valid: false, errorMessage: 'Please select a staff member or tap *Any available*.' };
+      },
+      async next() { return 'select_date'; },
     },
 
     // ── Select Date ──
     {
       id: 'select_date',
+      async skipIf(ctx: FlowContext) {
+        // Skip if smart intent already extracted a date
+        return !!ctx.session.session_data.date;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const dates: Array<{ title: string; postbackText: string }> = [];
         for (let i = 1; i <= 7; i++) {
@@ -129,16 +215,32 @@ export const schedulingFlow: FlowDefinition = {
     // ── Select Time ──
     {
       id: 'select_time',
+      async skipIf(ctx: FlowContext) {
+        // Skip if smart intent already extracted a specific time
+        return !!ctx.session.session_data.time;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const dateStr = ctx.session.session_data.date as string;
         const dateLabel = new Date(dateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'short' });
-        const slots = generateTimeSlots('08:00', '22:00', 60);
+        let allSlots = generateTimeSlots('08:00', '22:00', 60);
+
+        // Filter by time preference if smart intent set one
+        const pref = ctx.session.session_data._time_preference as string | undefined;
+        if (pref === 'morning') {
+          allSlots = generateTimeSlots('08:00', '11:00', 60);
+        } else if (pref === 'afternoon') {
+          allSlots = generateTimeSlots('12:00', '16:00', 60);
+        } else if (pref === 'evening') {
+          allSlots = generateTimeSlots('17:00', '22:00', 60);
+        }
+
+        const prefLabel = pref ? ` ${pref}` : '';
         return [{
           type: 'list',
           title: 'Select Time',
-          body: `Available times for ${dateLabel}:`,
+          body: `Available${prefLabel} times for ${dateLabel}:`,
           buttonLabel: 'Choose Time',
-          items: slots.map(t => ({ title: t, postbackText: t })),
+          items: allSlots.map(t => ({ title: t, postbackText: t })),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -156,6 +258,10 @@ export const schedulingFlow: FlowDefinition = {
     // ── Select Quantity ──
     {
       id: 'select_quantity',
+      async skipIf(ctx: FlowContext) {
+        // Skip if smart intent already extracted quantity
+        return !!ctx.session.session_data.party_size;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const labels = CATEGORY_LABELS[ctx.business?.category || 'restaurant'];
         return [
@@ -440,6 +546,26 @@ export const schedulingFlow: FlowDefinition = {
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
 
+        // Reserve booking slot (overbooking prevention)
+        if (ctx.business) {
+          await ctx.supabase.rpc('reserve_booking_slot', {
+            p_business_id: ctx.business.id,
+            p_date: d.date as string,
+            p_start_time: d.time as string,
+            p_end_time: d.time as string, // end_time is auto-calculated
+            p_staff_id: (d.staff_id as string) || null,
+          });
+        }
+
+        // Upsert customer profile
+        await ctx.supabase.rpc('upsert_customer_profile', {
+          p_business_id: ctx.business!.id,
+          p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+          p_name: insertPayload.guest_name as string || null,
+          p_booking_amount: totalDeposit,
+          p_is_booking: true,
+        });
+
         await ctx.supabase
           .from('bot_sessions')
           .update({ session_data: d })
@@ -473,6 +599,7 @@ export const schedulingFlow: FlowDefinition = {
             phone: ctx.from,
             userEmail: (d.email as string) || undefined,
             countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+            businessId: ctx.business?.id,
           });
 
           if (paymentResult) {
@@ -533,7 +660,7 @@ export const schedulingFlow: FlowDefinition = {
             reference_code: booking.reference_code,
           });
           if (!tierInfo.isWhitelabel) {
-            message += '\n\n_Powered by SmrtRply_';
+            message += '\n\n_Powered by Waaiio_';
           }
         } else {
           message = getConfirmationMessage({
@@ -556,6 +683,17 @@ export const schedulingFlow: FlowDefinition = {
             channel: 'whatsapp',
             body: `Booking at ${ctx.business.name} on ${dateLabel} at ${d.time} confirmed. Ref: ${booking.reference_code}`,
           });
+
+          // Post-completion: loyalty, feedback, referral
+          handlePostCompletion({
+            supabase: ctx.supabase,
+            businessId: ctx.business.id,
+            customerPhone: ctx.from,
+            customerName: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+            serviceType: 'booking',
+            referenceId: booking.id,
+            sender: ctx.sender,
+          }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
         }
 
         return [{ type: 'text', text: message }];
@@ -605,7 +743,7 @@ export const schedulingFlow: FlowDefinition = {
               weekday: 'long', day: 'numeric', month: 'long',
             });
 
-            await ctx.gupshup.sendText({
+            await ctx.sender.sendText({
               to: ctx.from,
               text: [
                 `✅ *Payment Confirmed!*`,
@@ -618,6 +756,19 @@ export const schedulingFlow: FlowDefinition = {
                 'See you there! 🎉',
               ].join('\n'),
             });
+
+            // Post-completion: loyalty, feedback, referral
+            if (ctx.business) {
+              handlePostCompletion({
+                supabase: ctx.supabase,
+                businessId: ctx.business.id,
+                customerPhone: ctx.from,
+                customerName: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+                serviceType: 'booking',
+                referenceId: d.booking_id as string,
+                sender: ctx.sender,
+              }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
+            }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }

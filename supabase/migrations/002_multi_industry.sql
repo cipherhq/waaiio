@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════
--- SmrtRply Multi-Industry Migration
+-- Waaiio Multi-Industry Migration
 -- Transforms restaurant-only platform into multi-industry
 -- ═══════════════════════════════════════════════════════
 

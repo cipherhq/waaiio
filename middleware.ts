@@ -3,6 +3,19 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
+/** Apply common security headers to any response */
+function applySecurityHeaders(response: NextResponse): NextResponse {
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-XSS-Protection', '1; mode=block');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=()'
+  );
+  return response;
+}
+
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
 
@@ -45,10 +58,15 @@ export async function middleware(request: NextRequest) {
     if (redirect.startsWith('/') && !redirect.startsWith('//')) {
       url.searchParams.set('redirect', redirect);
     }
-    return NextResponse.redirect(url);
+    return applySecurityHeaders(NextResponse.redirect(url));
   }
 
-  return supabaseResponse;
+  // Add no-store cache header for API routes
+  if (request.nextUrl.pathname.startsWith('/api/')) {
+    supabaseResponse.headers.set('Cache-Control', 'no-store');
+  }
+
+  return applySecurityHeaders(supabaseResponse);
 }
 
 export const config = {

@@ -172,14 +172,16 @@ export default function AnalyticsPage() {
         <StatCard label={`Total ${labels.entityNamePlural}`} value={totalBookings} />
         <StatCard label="Revenue" value={formatCurrency(totalRevenue, country)} />
         <StatCard label="Completion Rate" value={`${completionRate}%`} sub={`${completedBookings} completed`} />
-        <StatCard label="Unique Guests" value={uniqueGuests} sub={`${newGuests} new, ${repeatGuests} returning`} />
+        <StatCard label={`Unique ${labels.personLabelPlural}`} value={uniqueGuests} sub={`${newGuests} new, ${repeatGuests} returning`} />
       </div>
 
       {/* Status Breakdown */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+      <div className={`mt-6 grid gap-4 ${labels.hiddenStatuses.includes('no_show') ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
         <MiniStat label="Completed" value={completedBookings} rate={completionRate} color="bg-green-500" />
         <MiniStat label="Cancelled" value={cancelledBookings} rate={cancellationRate} color="bg-yellow-500" />
-        <MiniStat label="No Shows" value={noShows} rate={noShowRate} color="bg-red-500" />
+        {!labels.hiddenStatuses.includes('no_show') && (
+          <MiniStat label="No Shows" value={noShows} rate={noShowRate} color="bg-red-500" />
+        )}
       </div>
 
       {/* Charts Row */}

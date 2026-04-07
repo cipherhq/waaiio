@@ -134,6 +134,157 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── Recurring customer subscription events ──
+
+    // Stripe recurring invoice paid
+    if (event === 'invoice.paid') {
+      const subscriptionId = data.subscription as string;
+      const amountPaid = (data.amount_paid as number) / 100; // cents to dollars
+      const currency = (data.currency as string)?.toUpperCase() || 'USD';
+
+      if (subscriptionId) {
+        const { data: subs } = await supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('gateway_subscription_code', subscriptionId)
+          .eq('status', 'active');
+
+        const sub = subs?.[0];
+        if (sub) {
+          const now = new Date().toISOString();
+
+          // Create booking record
+          const { data: booking } = await supabase
+            .from('bookings')
+            .insert({
+              business_id: sub.business_id,
+              user_id: sub.user_id,
+              service_id: sub.service_id,
+              date: new Date().toISOString().split('T')[0],
+              time: new Date().toTimeString().split(' ')[0].slice(0, 5),
+              party_size: 1,
+              flow_type: 'payment',
+              channel: 'recurring',
+              deposit_amount: amountPaid,
+              deposit_status: 'paid',
+              status: 'confirmed',
+              total_amount: amountPaid,
+              quantity: 1,
+              guest_name: sub.customer_name || '',
+              guest_phone: sub.customer_phone || '',
+              confirmed_at: now,
+              notes: `Recurring ${sub.frequency} charge`,
+            })
+            .select('id, reference_code')
+            .single();
+
+          // Create payment record
+          const { data: payment } = await supabase
+            .from('payments')
+            .insert({
+              business_id: sub.business_id,
+              user_id: sub.user_id,
+              booking_id: booking?.id || null,
+              amount: amountPaid,
+              currency,
+              gateway: 'stripe',
+              gateway_reference: (data.payment_intent as string) || (data.id as string),
+              status: 'success',
+              gateway_status: 'paid',
+              payment_method: 'card',
+              paid_at: now,
+              metadata: { recurring: true, subscription_id: sub.id },
+            })
+            .select('id')
+            .single();
+
+          // Log subscription charge
+          await supabase.from('subscription_charges').insert({
+            subscription_id: sub.id,
+            business_id: sub.business_id,
+            user_id: sub.user_id,
+            amount: amountPaid,
+            currency,
+            status: 'success',
+            gateway: 'stripe',
+            gateway_reference: (data.payment_intent as string) || (data.id as string),
+            payment_id: payment?.id || null,
+            booking_id: booking?.id || null,
+            charged_at: now,
+          });
+
+          // Update subscription totals
+          const nextCharge = new Date();
+          if (sub.frequency === 'weekly') {
+            nextCharge.setDate(nextCharge.getDate() + 7);
+          } else {
+            nextCharge.setMonth(nextCharge.getMonth() + 1);
+          }
+
+          await supabase
+            .from('customer_subscriptions')
+            .update({
+              charge_count: (sub.charge_count || 0) + 1,
+              total_charged: parseFloat(sub.total_charged || '0') + amountPaid,
+              last_charged_at: now,
+              next_charge_at: nextCharge.toISOString(),
+              failure_count: 0,
+            })
+            .eq('id', sub.id);
+        }
+      }
+    }
+
+    // Stripe recurring invoice payment failed
+    if (event === 'invoice.payment_failed') {
+      const subscriptionId = data.subscription as string;
+      if (subscriptionId) {
+        const { data: subs } = await supabase
+          .from('customer_subscriptions')
+          .select('id, failure_count, business_id, user_id')
+          .eq('gateway_subscription_code', subscriptionId)
+          .in('status', ['active', 'past_due']);
+
+        for (const sub of subs || []) {
+          const newFailCount = (sub.failure_count || 0) + 1;
+          await supabase
+            .from('customer_subscriptions')
+            .update({
+              failure_count: newFailCount,
+              status: newFailCount >= 3 ? 'past_due' : 'active',
+            })
+            .eq('id', sub.id);
+
+          await supabase.from('subscription_charges').insert({
+            subscription_id: sub.id,
+            business_id: sub.business_id,
+            user_id: sub.user_id,
+            amount: 0,
+            currency: 'USD',
+            status: 'failed',
+            gateway: 'stripe',
+            failure_reason: 'Payment failed',
+            created_at: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    // Stripe subscription cancelled
+    if (event === 'customer.subscription.deleted') {
+      const subscriptionId = data.id as string;
+      if (subscriptionId) {
+        await supabase
+          .from('customer_subscriptions')
+          .update({
+            status: 'cancelled',
+            cancelled_at: new Date().toISOString(),
+          })
+          .eq('gateway_subscription_code', subscriptionId)
+          .in('status', ['active', 'paused', 'past_due']);
+      }
+    }
+
     return NextResponse.json({ received: true });
   } catch {
     return NextResponse.json({ received: true }, { status: 200 });

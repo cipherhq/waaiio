@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { GupshupService } from '@/lib/channels/gupshup';
+import type { MessageSender } from '@/lib/channels/message-sender';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
@@ -31,7 +31,14 @@ export interface PromptImage {
   caption?: string;
 }
 
-export type PromptMessage = PromptText | PromptList | PromptButtons | PromptImage;
+export interface PromptDocument {
+  type: 'document';
+  url: string;
+  filename: string;
+  caption?: string;
+}
+
+export type PromptMessage = PromptText | PromptList | PromptButtons | PromptImage | PromptDocument;
 
 // ── Validation result ──
 
@@ -46,7 +53,7 @@ export interface ValidationResult {
 
 export interface FlowContext {
   supabase: SupabaseClient;
-  gupshup: GupshupService;
+  sender: MessageSender;
   standalone: StandaloneService;
   intelligence: BotIntelligenceService;
   from: string;

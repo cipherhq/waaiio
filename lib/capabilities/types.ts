@@ -1,0 +1,76 @@
+// ═══════════════════════════════════════════════════════
+// Capability Type Definitions
+// ═══════════════════════════════════════════════════════
+
+export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff';
+
+export interface CapabilityDefinition {
+  id: CapabilityId;
+  label: string;
+  description: string;
+  icon: string;
+}
+
+export const CAPABILITIES: CapabilityDefinition[] = [
+  { id: 'scheduling', label: 'Scheduling', description: 'Accept appointments, bookings, and reservations', icon: '📅' },
+  { id: 'payment', label: 'Payments', description: 'Collect payments, tithes, fees, and donations', icon: '💳' },
+  { id: 'ordering', label: 'Ordering', description: 'Product catalog, cart, and order management', icon: '🛒' },
+  { id: 'ticketing', label: 'Ticketing', description: 'Sell event tickets and manage attendance', icon: '🎟️' },
+  { id: 'reminders', label: 'Reminders', description: 'Automated appointment and payment reminders', icon: '🔔' },
+  { id: 'crowdfunding', label: 'Crowdfunding', description: 'Run campaigns with goals and donor tracking', icon: '❤️' },
+  { id: 'reports', label: 'Reports', description: 'Upload and send PDF reports to customers via WhatsApp', icon: '📄' },
+  { id: 'queue', label: 'Queue', description: 'Customer check-in, queue management, and turn notifications', icon: '📋' },
+  { id: 'feedback', label: 'Feedback', description: 'Collect customer ratings and reviews after service', icon: '⭐' },
+  { id: 'loyalty', label: 'Loyalty', description: 'Points-based loyalty program for repeat customers', icon: '🏆' },
+  { id: 'chat', label: 'Chat', description: 'Two-way messaging between staff and customers', icon: '💬' },
+  { id: 'waitlist', label: 'Waitlist', description: 'Waitlist management for fully-booked services or events', icon: '📝' },
+  { id: 'referral', label: 'Referral', description: 'Customer referral program with reward tracking', icon: '🤝' },
+  { id: 'staff', label: 'Staff', description: 'Staff management with service assignments and scheduling', icon: '👥' },
+];
+
+export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
+  CAPABILITIES.map(c => [c.id, c])
+) as Record<CapabilityId, CapabilityDefinition>;
+
+/** Default capabilities for each business category */
+export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
+  restaurant: ['scheduling', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
+  barber: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],
+  spa: ['scheduling', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
+  salon: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],
+  gym: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral'],
+  clinic: ['scheduling', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff'],
+  consultant: ['scheduling', 'feedback', 'chat', 'referral'],
+  church: ['payment', 'feedback', 'chat'],
+  mosque: ['payment', 'feedback', 'chat'],
+  school: ['payment', 'feedback', 'chat'],
+  ngo: ['payment', 'feedback', 'chat', 'referral'],
+  shop: ['ordering', 'feedback', 'loyalty', 'chat', 'referral'],
+  food_delivery: ['ordering', 'feedback', 'loyalty', 'referral'],
+  events: ['ticketing', 'feedback', 'waitlist', 'referral'],
+  transport: ['ticketing', 'feedback'],
+  cinema: ['ticketing', 'feedback', 'waitlist', 'loyalty'],
+  car_park: ['payment', 'feedback'],
+  tattoo: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'staff'],
+  real_estate: ['scheduling', 'payment', 'feedback', 'chat', 'referral'],
+  travel_agency: ['scheduling', 'payment', 'ticketing', 'feedback', 'chat', 'referral'],
+  logistics: ['ordering', 'payment', 'feedback', 'chat'],
+  taxi: ['payment', 'feedback', 'referral'],
+  government: ['payment', 'feedback'],
+  instagram_vendor: ['ordering', 'feedback', 'loyalty', 'chat', 'referral'],
+  crowdfunding_org: ['crowdfunding', 'payment', 'referral'],
+  laundry: ['scheduling', 'ordering', 'feedback', 'loyalty', 'chat', 'referral'],
+  veterinary: ['scheduling', 'payment', 'reports', 'feedback', 'chat', 'waitlist', 'staff'],
+  dental: ['scheduling', 'payment', 'reminders', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff'],
+  coworking: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'referral'],
+  tutor: ['scheduling', 'payment', 'feedback', 'chat', 'referral'],
+  photographer: ['scheduling', 'payment', 'feedback', 'chat', 'referral', 'staff'],
+  mall_vendor: ['payment', 'ordering', 'feedback', 'loyalty', 'chat'],
+  pharmacy: ['ordering', 'payment', 'feedback', 'loyalty', 'chat'],
+  hotel: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
+  car_wash: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'referral'],
+  catering: ['ordering', 'payment', 'feedback', 'chat', 'referral'],
+  funeral: ['payment', 'scheduling', 'feedback', 'chat'],
+  tailor: ['ordering', 'scheduling', 'payment', 'feedback', 'loyalty', 'chat'],
+  other: ['scheduling', 'feedback', 'chat'],
+};

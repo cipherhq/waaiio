@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePaystackPayment, verifyPaystackPayment, recordPlatformFee } from './shared/payment';
 import { getOrderConfirmationMessage } from './shared/templates';
+import { handlePostCompletion } from './shared/post-completion';
 import type { SubscriptionTier } from '@/lib/constants';
 
 interface CartItem {
@@ -20,13 +21,18 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
-        const { data: products } = await ctx.supabase
+        const { data: rawProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .order('sort_order')
           .limit(10);
+
+        // Filter out out-of-stock items that track inventory
+        const products = (rawProducts || []).filter(p =>
+          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
+        );
 
         if (!products || products.length === 0) {
           return [{ type: 'text', text: 'No products available right now. Check back later!' }];
@@ -42,11 +48,13 @@ export const orderingFlow: FlowDefinition = {
           title: 'Our Products',
           body: `Welcome to ${ctx.business.name}! 🛍️\n\nBrowse our products:`,
           buttonLabel: 'Browse',
-          items: products.map(p => ({
-            title: p.name,
-            description: `₦${p.price.toLocaleString()}`,
-            postbackText: p.id,
-          })),
+          items: products.map(p => {
+            let desc = `₦${p.price.toLocaleString()}`;
+            if (p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
+              desc += ` (${p.stock_quantity} left)`;
+            }
+            return { title: p.name, description: desc, postbackText: p.id };
+          }),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -174,8 +182,97 @@ export const orderingFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap *Checkout* or *Add More*.' };
       },
       async next(ctx: FlowContext) {
-        return ctx.session.session_data._action === 'add_more' ? 'browse_catalog' : 'delivery_details';
+        return ctx.session.session_data._action === 'add_more' ? 'browse_catalog' : 'apply_promo';
       },
+    },
+
+    // ── Apply Promo Code ──
+    {
+      id: 'apply_promo',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: 'Do you have a promo code?',
+          buttons: [
+            { id: 'enter_promo', title: 'Yes, enter code' },
+            { id: 'skip_promo', title: 'No, continue' },
+          ],
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input.toLowerCase() === 'skip_promo' || input.toLowerCase() === 'no') {
+          return { valid: true, data: { _promo_action: 'skip' } };
+        }
+        if (input.toLowerCase() === 'enter_promo' || input.toLowerCase() === 'yes') {
+          return { valid: true, data: { _promo_action: 'enter' } };
+        }
+        // Direct code entry
+        const code = input.trim().toUpperCase();
+        if (code.length >= 3) {
+          const { data: promo } = await ctx.supabase
+            .from('promo_codes')
+            .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
+            .eq('business_id', ctx.business!.id)
+            .eq('code', code)
+            .eq('is_active', true)
+            .maybeSingle();
+
+          if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or tap *No, continue*.' };
+          if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
+          if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
+
+          const cart = (ctx.session.session_data.cart as CartItem[]) || [];
+          const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+          if (promo.min_order_amount && total < promo.min_order_amount) {
+            return { valid: false, errorMessage: `Minimum order of ₦${promo.min_order_amount.toLocaleString()} required for this code.` };
+          }
+
+          const discount = promo.discount_type === 'percentage'
+            ? Math.round(total * promo.discount_value / 100)
+            : Math.min(promo.discount_value, total);
+
+          return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code, _promo_action: 'applied' } };
+        }
+        return { valid: false, errorMessage: 'Please tap an option or enter a promo code.' };
+      },
+      async next(ctx: FlowContext) {
+        return ctx.session.session_data._promo_action === 'enter' ? 'enter_promo_code' : 'delivery_details';
+      },
+    },
+
+    // ── Enter Promo Code ──
+    {
+      id: 'enter_promo_code',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: 'Type your promo code:' }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const code = input.trim().toUpperCase();
+        const { data: promo } = await ctx.supabase
+          .from('promo_codes')
+          .select('id, code, discount_type, discount_value, min_order_amount, max_uses, current_uses, valid_until, is_active')
+          .eq('business_id', ctx.business!.id)
+          .eq('code', code)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (!promo) return { valid: false, errorMessage: 'Invalid code. Check and try again:' };
+        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This code has been fully redeemed.' };
+        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This code has expired.' };
+
+        const cart = (ctx.session.session_data.cart as CartItem[]) || [];
+        const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        if (promo.min_order_amount && total < promo.min_order_amount) {
+          return { valid: false, errorMessage: `Minimum order ₦${promo.min_order_amount.toLocaleString()} required.` };
+        }
+
+        const discount = promo.discount_type === 'percentage'
+          ? Math.round(total * promo.discount_value / 100)
+          : Math.min(promo.discount_value, total);
+
+        return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code } };
+      },
+      async next() { return 'delivery_details'; },
     },
 
     // ── Delivery Details ──
@@ -255,7 +352,9 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cart = (d.cart as CartItem[]) || [];
-        const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        const discount = (d.discount_amount as number) || 0;
+        const total = Math.max(0, subtotal - discount);
 
         // Ensure user exists
         let userId = ctx.session.user_id;
@@ -278,6 +377,8 @@ export const orderingFlow: FlowDefinition = {
             delivery_address: (d.delivery_address as string) || null,
             delivery_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
             total_amount: total,
+            discount_amount: discount,
+            promo_code_id: (d.promo_code_id as string) || null,
             channel: 'whatsapp',
             notes: d.delivery_type === 'pickup' ? 'Pickup order' : null,
           })
@@ -288,7 +389,7 @@ export const orderingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong creating your order. Send *Hi* to try again.' }];
         }
 
-        // Create order items
+        // Create order items and decrement stock
         for (const item of cart) {
           await ctx.supabase.from('order_items').insert({
             order_id: order.id,
@@ -296,11 +397,30 @@ export const orderingFlow: FlowDefinition = {
             quantity: item.quantity,
             unit_price: item.price,
           });
+          // Decrement stock for inventory-tracked products
+          await ctx.supabase.rpc('decrement_stock', {
+            p_product_id: item.product_id,
+            qty: item.quantity,
+          });
         }
 
         d.order_id = order.id;
         d.reference_code = order.reference_code;
         d.total_amount = total;
+
+        // Increment promo code usage
+        if (d.promo_code_id) {
+          await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d.promo_code_id as string });
+        }
+
+        // Upsert customer profile
+        await ctx.supabase.rpc('upsert_customer_profile', {
+          p_business_id: ctx.business!.id,
+          p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+          p_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+          p_booking_amount: total,
+          p_is_order: true,
+        });
 
         // Record platform fee
         if (ctx.business && total > 0) {
@@ -361,6 +481,19 @@ export const orderingFlow: FlowDefinition = {
           .update({ current_step: 'complete', is_active: false })
           .eq('id', ctx.session.id);
 
+        // Post-completion: loyalty, feedback, referral
+        if (ctx.business) {
+          handlePostCompletion({
+            supabase: ctx.supabase,
+            businessId: ctx.business.id,
+            customerPhone: ctx.from,
+            customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+            serviceType: 'order',
+            referenceId: order.id,
+            sender: ctx.sender,
+          }).catch(err => console.error('[ORDERING] Post-completion error:', err));
+        }
+
         return [{
           type: 'text',
           text: getOrderConfirmationMessage({
@@ -397,7 +530,7 @@ export const orderingFlow: FlowDefinition = {
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
           }
-          await ctx.gupshup.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start again.' });
+          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start again.' });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -407,10 +540,25 @@ export const orderingFlow: FlowDefinition = {
 
           const verified = await verifyPaystackPayment(ctx.supabase, ref);
           if (verified) {
-            await ctx.gupshup.sendText({
+            await ctx.sender.sendText({
               to: ctx.from,
               text: `✅ *Payment Confirmed!*\n\nYour order *${ctx.session.session_data.reference_code}* has been confirmed.\n\nThank you! 🎉`,
             });
+
+            // Post-completion: loyalty, feedback, referral
+            if (ctx.business) {
+              const sd = ctx.session.session_data;
+              handlePostCompletion({
+                supabase: ctx.supabase,
+                businessId: ctx.business.id,
+                customerPhone: ctx.from,
+                customerName: `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || null,
+                serviceType: 'order',
+                referenceId: sd.order_id as string,
+                sender: ctx.sender,
+              }).catch(err => console.error('[ORDERING] Post-completion error:', err));
+            }
+
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 
