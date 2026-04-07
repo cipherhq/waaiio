@@ -697,6 +697,7 @@ export const schedulingFlow: FlowDefinition = {
           });
         }
 
+        console.log('[BOOKING] totalDeposit:', totalDeposit, 'isPrepay:', isPrepay, 'servicePrice:', servicePrice, 'country:', ctx.business?.country_code);
         if (totalDeposit > 0) {
           // Need payment
           const paymentResult = await initializePayment(ctx.supabase, {
@@ -711,6 +712,7 @@ export const schedulingFlow: FlowDefinition = {
             businessId: ctx.business?.id,
           });
 
+          console.log('[BOOKING] paymentResult:', paymentResult ? `url=${paymentResult.url?.slice(0,50)}` : 'NULL');
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
             await ctx.supabase

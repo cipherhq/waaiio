@@ -87,9 +87,10 @@ export class SquareGateway implements PaymentGateway {
 
       const result = await squareRequest('/v2/online-checkout/payment-links', paymentLinkBody);
 
+      console.log('[SQUARE] API response:', JSON.stringify(result).slice(0, 500));
       const paymentLink = result.payment_link as Record<string, unknown> | undefined;
       if (!paymentLink?.id || !paymentLink?.url) {
-        console.error('Square payment link creation failed', result);
+        console.error('[SQUARE] Payment link creation failed:', JSON.stringify(result).slice(0, 500));
         return null;
       }
 
