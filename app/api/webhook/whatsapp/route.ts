@@ -124,11 +124,13 @@ export async function POST(request: NextRequest) {
     await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId);
 
     // Mark message as processed for replay protection
-    await supabase.from('processed_webhook_events').insert({
-      event_id: `gupshup-${messageId}`,
-      event_type: 'whatsapp_message',
-      processed_at: new Date().toISOString(),
-    }).catch(() => {}); // Don't fail if insert fails
+    try {
+      await supabase.from('processed_webhook_events').insert({
+        event_id: `gupshup-${messageId}`,
+        event_type: 'whatsapp_message',
+        processed_at: new Date().toISOString(),
+      });
+    } catch { /* Don't fail if insert fails */ }
 
     console.log('[WEBHOOK] Message processed successfully');
     return NextResponse.json({ status: 'ok' });
