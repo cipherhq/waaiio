@@ -54,6 +54,7 @@ export default function ServicesPage() {
   });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [showPrice, setShowPrice] = useState(labels.defaultHasPrice);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchServices() {
@@ -87,11 +88,13 @@ export default function ServicesPage() {
       image_url: null,
       cancellation_policy: null,
     });
+    setShowPrice(labels.defaultHasPrice);
     setView('add');
   }
 
   function openEdit(service: Service) {
     setForm({ ...service });
+    setShowPrice(labels.defaultHasPrice || service.price > 0 || service.deposit_amount > 0);
     setView('edit');
   }
 
@@ -261,39 +264,62 @@ export default function ServicesPage() {
               />
             </div>
 
+            {/* Price toggle for categories that don't require pricing */}
+            {!labels.defaultHasPrice && (
+              <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Set a fixed amount</p>
+                  <p className="text-xs text-gray-400">Enable if this {labels.serviceName.toLowerCase()} has a set price</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !showPrice;
+                    setShowPrice(next);
+                    if (!next) setForm({ ...form, price: 0, deposit_amount: 0, price_is_variable: true });
+                  }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${showPrice ? 'bg-brand' : 'bg-gray-200'}`}
+                >
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: showPrice ? '22px' : '2px' }} />
+                </button>
+              </div>
+            )}
+
             {/* Price + Deposit — side by side */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Price ({curr})
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.price || ''}
-                  onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
-                  placeholder="0"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-                />
+            {showPrice && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Price ({curr})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.price || ''}
+                    onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Deposit ({curr})
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={form.deposit_amount || ''}
+                    onChange={(e) => setForm({ ...form, deposit_amount: Number(e.target.value) })}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  />
+                  <p className="mt-0.5 text-xs text-gray-400">0 = no deposit required</p>
+                </div>
               </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Deposit ({curr})
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.deposit_amount || ''}
-                  onChange={(e) => setForm({ ...form, deposit_amount: Number(e.target.value) })}
-                  placeholder="0"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-                />
-                <p className="mt-0.5 text-xs text-gray-400">0 = no deposit required</p>
-              </div>
-            </div>
+            )}
 
             {/* Billing Type + Recurring Interval */}
-            {!isScheduling && (
+            {showPrice && !isScheduling && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Billing Type</label>
@@ -343,8 +369,8 @@ export default function ServicesPage() {
               </div>
             )}
 
-            {/* Cancellation Policy */}
-            <div>
+            {/* Cancellation Policy — hidden for free-giving categories */}
+            {labels.defaultHasPrice && <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Cancellation Policy</label>
               <textarea
                 value={form.cancellation_policy || ''}
@@ -353,7 +379,7 @@ export default function ServicesPage() {
                 placeholder="e.g. Full refund if cancelled 24 hours before (optional)"
                 className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
               />
-            </div>
+            </div>}
           </div>
 
           {/* Right column: Settings */}
