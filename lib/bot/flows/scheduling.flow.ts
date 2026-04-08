@@ -72,7 +72,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes')
+          .select('id, name, price, duration_minutes, billing_type, recurring_interval')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .order('sort_order');
@@ -89,6 +89,8 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data.service_name = services[0].name;
           ctx.session.session_data.service_price = services[0].price;
           ctx.session.session_data.service_duration = services[0].duration_minutes;
+          ctx.session.session_data.service_billing_type = services[0].billing_type || 'one_time';
+          ctx.session.session_data.service_recurring_interval = services[0].recurring_interval || null;
           ctx.session.session_data.skip_service = true;
           return [];
         }
@@ -101,18 +103,27 @@ export const schedulingFlow: FlowDefinition = {
           buttonLabel: 'Choose',
           items: services.map(s => {
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-            return {
-              title: s.name,
-              description: s.price > 0 ? `${formatCurrency(s.price, cc)}${s.duration_minutes ? ` \u2022 ${s.duration_minutes}min` : ''}` : (s.duration_minutes ? `${s.duration_minutes}min` : ''),
-              postbackText: s.id,
-            };
+            let desc = '';
+            if (s.price > 0) {
+              const priceStr = formatCurrency(s.price, cc);
+              if (s.billing_type === 'recurring' && s.recurring_interval) {
+                const suffix = s.recurring_interval === 'weekly' ? '/week' : '/month';
+                desc = `${priceStr}${suffix}`;
+              } else {
+                desc = priceStr;
+              }
+              if (s.duration_minutes) desc += ` \u2022 ${s.duration_minutes}min`;
+            } else if (s.duration_minutes) {
+              desc = `${s.duration_minutes}min`;
+            }
+            return { title: s.name, description: desc, postbackText: s.id };
           }),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, deposit_amount')
+          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
@@ -127,6 +138,8 @@ export const schedulingFlow: FlowDefinition = {
             service_price: service.price,
             service_duration: service.duration_minutes,
             service_deposit: service.deposit_amount,
+            service_billing_type: service.billing_type || 'one_time',
+            service_recurring_interval: service.recurring_interval || null,
           },
         };
       },

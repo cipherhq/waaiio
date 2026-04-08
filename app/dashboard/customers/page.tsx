@@ -120,6 +120,7 @@ export default function CustomersPage() {
   const business = useBusiness();
   const supabase = createClient();
   const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const isGiving = labels.quantityLabel === 'amount';
 
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,8 +284,8 @@ export default function CustomersPage() {
         { key: 'name', label: 'Name' },
         { key: 'phone', label: 'Phone' },
         { key: 'email', label: 'Email' },
-        { key: 'total_visits', label: 'Total Visits' },
-        { key: 'total_spent', label: 'Total Spent' },
+        { key: 'total_visits', label: isGiving ? 'Total Givings' : 'Total Visits' },
+        { key: 'total_spent', label: isGiving ? 'Total Given' : 'Total Spent' },
         { key: 'avg_rating', label: 'Avg Rating' },
         { key: 'first_seen', label: 'First Seen' },
         { key: 'last_seen', label: 'Last Seen' },
@@ -336,11 +337,11 @@ export default function CustomersPage() {
           </p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Total Revenue</p>
+          <p className="text-xs font-medium text-gray-500">{isGiving ? 'Total Received' : 'Total Revenue'}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{formatNaira(totalRevenue)}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Avg Spend / {labels.personLabel}</p>
+          <p className="text-xs font-medium text-gray-500">{isGiving ? `Avg Giving / ${labels.personLabel}` : `Avg Spend / ${labels.personLabel}`}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{formatNaira(Math.round(avgSpend))}</p>
         </div>
       </div>
@@ -378,8 +379,8 @@ export default function CustomersPage() {
           </svg>
           <p className="mt-3 text-sm text-gray-400">
             {search
-              ? 'No customers match your search.'
-              : 'No customer profiles yet. They will appear after their first interaction.'}
+              ? `No ${labels.personLabelPlural.toLowerCase()} match your search.`
+              : `No ${labels.personLabel.toLowerCase()} profiles yet. They will appear after their first interaction.`}
           </p>
         </div>
       ) : (
@@ -388,8 +389,8 @@ export default function CustomersPage() {
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Total Visits</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Total Spent</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Givings' : 'Total Visits'}</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Avg Rating</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Last Seen</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Tags</th>
@@ -548,13 +549,13 @@ export default function CustomersPage() {
                       </p>
                     </div>
                     <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">Total Visits</p>
+                      <p className="text-xs text-gray-500">{isGiving ? 'Total Givings' : 'Total Visits'}</p>
                       <p className="mt-1 text-xl font-bold text-gray-900">
                         {selected.total_visits}
                       </p>
                     </div>
                     <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">Total Spent</p>
+                      <p className="text-xs text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</p>
                       <p className="mt-1 text-xl font-bold text-gray-900">
                         {selected.total_spent > 0 ? formatNaira(selected.total_spent) : '\u2014'}
                       </p>
@@ -588,11 +589,11 @@ export default function CustomersPage() {
                     </div>
                   )}
 
-                  {/* Booking History */}
+                  {/* Booking / Giving History */}
                   <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900">Booking History</h3>
+                    <h3 className="text-sm font-semibold text-gray-900">{isGiving ? 'Giving History' : 'Booking History'}</h3>
                     {bookings.length === 0 ? (
-                      <p className="mt-2 text-xs text-gray-400">No bookings found.</p>
+                      <p className="mt-2 text-xs text-gray-400">{isGiving ? 'No givings found.' : 'No bookings found.'}</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {bookings.map((b) => (

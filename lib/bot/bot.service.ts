@@ -76,6 +76,18 @@ export class BotService {
     const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|sessions?|upcoming|schedule)$/i.test(text)
       || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|schedule)$/i.test(text);
 
+    const isHistoryQuery = /^(my\s+)?(transaction\s*|payment\s*)?history$/i.test(text)
+      || /^(show\s+)?(my\s+)?transaction\s*history$/i.test(text)
+      || /^(all|past)\s+(transactions?|payments?)$/i.test(text);
+
+    const isReceiptQuery = /^(my\s+)?receipt$/i.test(text)
+      || /^(last|latest|recent)\s+(receipt|transaction|payment)$/i.test(text)
+      || /^send\s+(my\s+)?receipt$/i.test(text);
+
+    const isSubscriptionsQuery = /^(my\s+)?subscriptions?$/i.test(text)
+      || /^(my\s+)?recurring(\s+payments?)?$/i.test(text)
+      || /^(manage|view|show|check)\s+(my\s+)?(subscriptions?|recurring)$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     if (isBookingsQuery) {
@@ -103,6 +115,80 @@ export class BotService {
       if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
       session = newSession as BotSession;
       await this.handleMyBookings(session, from, '');
+      return;
+    }
+
+    if (isHistoryQuery || isReceiptQuery) {
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number. Send *Hi* to make your first booking!");
+        return;
+      }
+      await this.handleTransactionDocument(from, profile.id, isHistoryQuery ? 'history' : 'receipt');
+      return;
+    }
+
+    if (isSubscriptionsQuery) {
+      // Need business context — use the current session's business, or find from recent payments
+      const businessId = session?.business_id || null;
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        return;
+      }
+
+      // If no business from session, find the most recent business they have subscriptions with
+      let resolvedBusinessId = businessId;
+      if (!resolvedBusinessId) {
+        const { data: recentSub } = await this.supabase
+          .from('customer_subscriptions')
+          .select('business_id')
+          .eq('customer_phone', phoneP)
+          .in('status', ['active', 'paused', 'past_due'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        resolvedBusinessId = recentSub?.business_id || null;
+      }
+
+      if (!resolvedBusinessId) {
+        await this.sendText(from, "You don't have any recurring payments set up. Send *Hi* to make a payment!");
+        return;
+      }
+
+      // Clean up old inactive sessions to avoid unique constraint
+      await this.supabase.from('bot_sessions')
+        .delete()
+        .eq('whatsapp_number', from)
+        .eq('is_active', false);
+
+      const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+        whatsapp_number: from, user_id: profile.id, business_id: resolvedBusinessId,
+        current_step: 'list_subscriptions', session_data: {}, is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+
+      if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
+
+      // Load business for the executor
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+        .eq('id', resolvedBusinessId)
+        .single();
+
+      await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
       return;
     }
 
@@ -305,6 +391,8 @@ export class BotService {
                   session.session_data.service_price = matched.price;
                   session.session_data.service_duration = matched.duration_minutes;
                   session.session_data.service_deposit = matched.deposit_amount || 0;
+                  session.session_data.service_billing_type = matched.billing_type || 'one_time';
+                  session.session_data.service_recurring_interval = matched.recurring_interval || null;
                   session.session_data.skip_service = true;
                 }
               }
@@ -415,6 +503,59 @@ export class BotService {
         return;
       }
 
+      if (detectedIntent.action === 'transaction_history' || detectedIntent.action === 'transaction_receipt') {
+        if (session) {
+          await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        }
+        const txPhoneP = from.startsWith('+') ? from : `+${from}`;
+        const txPhoneN = from.startsWith('+') ? from.slice(1) : from;
+        const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${txPhoneP},phone.eq.${txPhoneN}`).limit(1).maybeSingle();
+        if (!profile?.id) {
+          await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+          return;
+        }
+        const docType = detectedIntent.action === 'transaction_history' ? 'history' : 'receipt';
+        await this.handleTransactionDocument(from, profile.id, docType);
+        return;
+      }
+
+      if (detectedIntent.action === 'escalate') {
+        if (session.business_id) {
+          const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+          if (caps.includes('chat')) {
+            // Get customer name
+            const escPhoneP = from.startsWith('+') ? from : `+${from}`;
+            const escPhoneN = from.startsWith('+') ? from.slice(1) : from;
+            let escCustomerName: string | null = null;
+            const { data: escProfile } = await this.supabase
+              .from('profiles')
+              .select('first_name, last_name')
+              .or(`phone.eq.${escPhoneP},phone.eq.${escPhoneN}`)
+              .limit(1)
+              .maybeSingle();
+            if (escProfile?.first_name) {
+              escCustomerName = `${escProfile.first_name}${escProfile.last_name ? ' ' + escProfile.last_name : ''}`;
+            }
+            const businessName = (session.session_data.business_name as string) || 'the business';
+            const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+            await escalateToHuman({
+              supabase: this.supabase,
+              sender: this.messageSender,
+              from,
+              businessId: session.business_id,
+              businessName,
+              sessionId: session.id,
+              sessionData: session.session_data,
+              currentStep: step,
+              customerName: escCustomerName,
+            });
+            return;
+          }
+        }
+        await this.sendText(from, "Live chat isn't available for this business. Type *help* for other options.");
+        return;
+      }
+
       if (detectedIntent.action === 'queue_checkin') {
         // Check if business has queue capability
         if (session.business_id) {
@@ -489,6 +630,57 @@ export class BotService {
       business = biz as BusinessRecord | null;
     }
 
+    // Chat handoff: bot is paused, route messages to human agent
+    if (session.business_id && step === 'chat_handoff') {
+      const restartMatch = /^(restart|hi|start\s*over)$/i.test(text);
+      if (restartMatch) {
+        await this.deactivateSession(session.id);
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+      }
+      // Store message for human agent, update conversation
+      const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
+      const chatPhoneN = from.startsWith('+') ? from.slice(1) : from;
+      let handoffName: string | null = null;
+      const { data: hProfile } = await this.supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .or(`phone.eq.${chatPhoneP},phone.eq.${chatPhoneN}`)
+        .limit(1)
+        .maybeSingle();
+      if (hProfile?.first_name) {
+        handoffName = `${hProfile.first_name}${hProfile.last_name ? ' ' + hProfile.last_name : ''}`;
+      }
+
+      // Get conversation_id
+      const { data: conv } = await this.supabase
+        .from('chat_conversations')
+        .select('id')
+        .eq('business_id', session.business_id)
+        .eq('customer_phone', from)
+        .maybeSingle();
+
+      await this.supabase.from('chat_messages').insert({
+        business_id: session.business_id,
+        customer_phone: from,
+        customer_name: handoffName,
+        direction: 'inbound',
+        message_text: text,
+        is_read: false,
+        conversation_id: conv?.id || null,
+      });
+
+      // Update last_message_at on conversation
+      if (conv?.id) {
+        await this.supabase.from('chat_conversations').update({
+          last_message_at: new Date().toISOString(),
+        }).eq('id', conv.id);
+      }
+
+      // Forward message to business owner's phone
+      await this.forwardToBusinessOwner(session.business_id, from, handoffName, text);
+      return;
+    }
+
     // Chat fallback: if message doesn't match any flow step and chat is enabled,
     // store as inbound chat message
     if (session.business_id && step === 'chat_start') {
@@ -509,6 +701,23 @@ export class BotService {
           customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
         }
 
+        // Upsert conversation record
+        await this.supabase.from('chat_conversations').upsert({
+          business_id: session.business_id,
+          customer_phone: from,
+          customer_name: customerName,
+          status: 'open',
+          last_message_at: new Date().toISOString(),
+        }, { onConflict: 'business_id,customer_phone' });
+
+        // Get conversation_id for linking
+        const { data: chatConv } = await this.supabase
+          .from('chat_conversations')
+          .select('id')
+          .eq('business_id', session.business_id)
+          .eq('customer_phone', from)
+          .maybeSingle();
+
         await this.supabase.from('chat_messages').insert({
           business_id: session.business_id,
           customer_phone: from,
@@ -516,6 +725,7 @@ export class BotService {
           direction: 'inbound',
           message_text: text,
           is_read: false,
+          conversation_id: chatConv?.id || null,
         });
 
         // Try FAQ auto-response first
@@ -537,6 +747,9 @@ export class BotService {
             }
           } catch { /* FAQ lookup failed, fall through to human chat */ }
         }
+
+        // Forward message to business owner's phone
+        await this.forwardToBusinessOwner(session.business_id, from, customerName, text);
 
         await this.sendText(from, "Thanks for your message! A team member will respond shortly.");
         return;
@@ -850,6 +1063,53 @@ export class BotService {
     await this.sendText(from, 'Please tap one of the options above.');
   }
 
+  // ── Transaction Document Handler ──────────────────────────
+
+  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt'): Promise<void> {
+    const label = type === 'history' ? 'transaction history' : 'receipt';
+    await this.sendText(from, `Generating your ${label}... 📄`);
+
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : 'http://localhost:3000';
+
+      const response = await fetch(`${baseUrl}/api/receipts/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-internal-token': process.env.INTERNAL_API_TOKEN || '',
+        },
+        body: JSON.stringify({ userId, type, phone: from }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 404) {
+          await this.sendText(from, `No transactions found. Make a booking first, then come back for your ${label}!`);
+          return;
+        }
+        console.error('[BOT] Receipt API error:', response.status, body);
+        await this.sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
+        return;
+      }
+
+      const { url, filename } = await response.json();
+
+      await this.messageSender.sendDocument({
+        to: from,
+        documentUrl: url,
+        filename,
+        caption: type === 'history'
+          ? 'Your transaction history'
+          : 'Your latest receipt',
+      });
+    } catch (err) {
+      console.error('[BOT] handleTransactionDocument error:', err);
+      await this.sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
+    }
+  }
+
   // ── Helpers ──────────────────────────────────────────────
 
   private async getActiveSession(phone: string): Promise<BotSession | null> {
@@ -875,5 +1135,55 @@ export class BotService {
     console.log('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
     const result = await this.messageSender.sendText({ to, text });
     console.log('[BOT] sendText result:', JSON.stringify(result));
+  }
+
+  /**
+   * Forward an inbound chat message to the business owner's phone via WhatsApp.
+   * Checks: forwarding toggle is ON + business is on a paid tier.
+   * Tracks usage per month for billing.
+   * Non-critical — failures are silently ignored.
+   */
+  private async forwardToBusinessOwner(
+    businessId: string,
+    customerPhone: string,
+    customerName: string | null,
+    messageText: string,
+  ): Promise<void> {
+    try {
+      // Check if forwarding is enabled for this business
+      const { data: waConfig } = await this.supabase
+        .from('whatsapp_config')
+        .select('forward_chat_to_phone')
+        .eq('business_id', businessId)
+        .maybeSingle();
+
+      if (!waConfig?.forward_chat_to_phone) return;
+
+      // Check paid tier (free tier cannot use forwarding)
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('phone, name, subscription_tier')
+        .eq('id', businessId)
+        .single();
+
+      if (!biz?.phone) return;
+      if (biz.subscription_tier === 'free') return;
+
+      const ownerPhone = biz.phone.startsWith('+') ? biz.phone.slice(1) : biz.phone;
+      // Don't forward to the customer's own number
+      const normalizedCustomer = customerPhone.replace(/^\+/, '');
+      if (ownerPhone === normalizedCustomer) return;
+
+      const displayName = customerName || customerPhone;
+      await this.messageSender.sendText({
+        to: ownerPhone,
+        text: `💬 *${displayName}*:\n${messageText}\n\n_Reply from your dashboard → Chat_`,
+      });
+
+      // Track usage for billing
+      await this.supabase.rpc('increment_chat_forwards', { p_business_id: businessId });
+    } catch {
+      // Non-critical — don't break the flow
+    }
   }
 }

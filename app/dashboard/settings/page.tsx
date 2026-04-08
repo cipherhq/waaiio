@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { BUSINESS_CATEGORIES, CATEGORY_LABELS, PRICING_TIERS, formatCurrency, type BusinessCategoryKey, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
@@ -24,9 +25,17 @@ export default function SettingsPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
   const { capabilities } = useCapabilities();
+  const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'account'>('profile');
+
+  // Account tab state
+  const [downgrading, setDowngrading] = useState(false);
+  const [downgraded, setDowngraded] = useState(false);
+  const [deleteConfirmName, setDeleteConfirmName] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [recurringEnabled, setRecurringEnabled] = useState(business.recurring_enabled ?? false);
   const [selectedGateway, setSelectedGateway] = useState<string>(business.payment_gateway || 'auto');
 
@@ -35,6 +44,10 @@ export default function SettingsPage() {
   const [queueAvgMinutes, setQueueAvgMinutes] = useState<number>((meta.queue_avg_service_minutes as number) || 10);
   const [queueNotifyStaff, setQueueNotifyStaff] = useState<boolean>(meta.queue_notify_staff !== false);
   const [queuePaused, setQueuePaused] = useState<boolean>((meta.queue_paused as boolean) || false);
+
+  // Shipping settings from business.metadata
+  const [shippingMode, setShippingMode] = useState<'none' | 'flat' | 'per_product'>((meta.shipping_mode as 'none' | 'flat' | 'per_product') || 'none');
+  const [defaultShippingFee, setDefaultShippingFee] = useState<number>((meta.default_shipping_fee as number) || 0);
 
   const [form, setForm] = useState({
     name: business.name,
@@ -145,6 +158,24 @@ export default function SettingsPage() {
             Queue
           </button>
         )}
+        {capabilities.includes('ordering') && (
+          <button
+            onClick={() => setActiveTab('shipping')}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              activeTab === 'shipping' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Shipping
+          </button>
+        )}
+        <button
+          onClick={() => setActiveTab('account')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            activeTab === 'account' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Account
+        </button>
       </div>
 
       {activeTab === 'profile' ? (
@@ -575,6 +606,214 @@ export default function SettingsPage() {
               className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
             >
               {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Queue Settings'}
+            </button>
+          </div>
+        </div>
+      ) : activeTab === 'shipping' ? (
+        /* Shipping Settings Tab */
+        <div className="mt-6 max-w-xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Shipping Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Configure how shipping costs are calculated for delivery orders placed via WhatsApp.
+            </p>
+
+            <div className="mt-5 space-y-3">
+              {([
+                { value: 'none', label: 'No shipping cost', desc: 'Customers are not charged for shipping (pickup only, or free delivery).' },
+                { value: 'flat', label: 'Flat rate', desc: 'A single shipping fee is added to every delivery order.' },
+                { value: 'per_product', label: 'Per product', desc: 'Each product has its own shipping cost. Set it in the product form.' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setShippingMode(opt.value)}
+                  className={`flex w-full items-center gap-3 rounded-lg border-2 p-4 text-left transition ${
+                    shippingMode === opt.value ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                    shippingMode === opt.value ? 'border-brand bg-brand' : 'border-gray-300'
+                  }`}>
+                    {shippingMode === opt.value && (
+                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{opt.label}</p>
+                    <p className="text-xs text-gray-500">{opt.desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {(shippingMode === 'flat' || shippingMode === 'per_product') && (
+              <div className="mt-5">
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  {shippingMode === 'flat' ? 'Flat shipping fee' : 'Default shipping fee'}
+                  {' '}({formatCurrency(0, country).charAt(0)})
+                </label>
+                <div className="relative w-48">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">
+                    {formatCurrency(0, country).charAt(0)}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={defaultShippingFee || ''}
+                    onChange={(e) => setDefaultShippingFee(Number(e.target.value) || 0)}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-gray-200 py-2 pl-7 pr-3 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+                <p className="mt-1 text-xs text-gray-400">
+                  {shippingMode === 'flat'
+                    ? 'This fee is added to every delivery order.'
+                    : 'Used for products that don\u2019t have a per-product shipping cost set.'}
+                </p>
+              </div>
+            )}
+
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({
+                    metadata: {
+                      ...meta,
+                      shipping_mode: shippingMode,
+                      default_shipping_fee: defaultShippingFee,
+                    },
+                  })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Shipping Settings'}
+            </button>
+          </div>
+        </div>
+      ) : activeTab === 'account' ? (
+        /* Account Tab */
+        <div className="mt-6 max-w-xl space-y-6">
+          {/* Cancel Subscription Card */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Subscription</h2>
+
+            {business.subscription_tier === 'free' ? (
+              <div className="mt-3">
+                <p className="text-sm text-gray-600">
+                  You&apos;re on the <span className="font-semibold">Free</span> plan.
+                </p>
+                <Link
+                  href="/pricing"
+                  className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
+                >
+                  Upgrade from the pricing page
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </div>
+            ) : (
+              <div className="mt-3">
+                <p className="text-sm text-gray-600">
+                  Current plan:{' '}
+                  <span className="font-semibold">{tier?.name || business.subscription_tier}</span>
+                  {tier?.price != null && tier.price > 0 && (
+                    <span className="text-gray-400"> ({formatCurrency(tier.price, country)}/month)</span>
+                  )}
+                </p>
+                <p className="mt-2 text-xs text-gray-500">
+                  Downgrading removes paid-tier benefits and increases platform fees.
+                </p>
+
+                {downgraded ? (
+                  <p className="mt-4 text-sm font-medium text-green-600">
+                    Downgraded to Free plan successfully.
+                  </p>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits.')) return;
+                      setDowngrading(true);
+                      const supabase = createClient();
+                      await supabase
+                        .from('businesses')
+                        .update({ subscription_tier: 'free' })
+                        .eq('id', business.id);
+                      setDowngrading(false);
+                      setDowngraded(true);
+                    }}
+                    disabled={downgrading}
+                    className="mt-4 rounded-lg border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {downgrading ? 'Downgrading...' : 'Downgrade to Free'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Delete Account Card */}
+          <div className="rounded-xl border-2 border-red-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-red-600">Danger Zone</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Permanently delete your Waaiio account and all associated data. This action cannot be undone.
+            </p>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Type <span className="font-semibold">&quot;{business.name}&quot;</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmName}
+                onChange={(e) => {
+                  setDeleteConfirmName(e.target.value);
+                  setDeleteError('');
+                }}
+                placeholder={business.name}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-red-300"
+              />
+            </div>
+
+            {deleteError && (
+              <p className="mt-2 text-sm text-red-600">{deleteError}</p>
+            )}
+
+            <button
+              onClick={async () => {
+                setDeleting(true);
+                setDeleteError('');
+                try {
+                  const res = await fetch('/api/account', { method: 'DELETE' });
+                  if (!res.ok) {
+                    const data = await res.json();
+                    setDeleteError(data.error || 'Failed to delete account');
+                    setDeleting(false);
+                    return;
+                  }
+                  const supabase = createClient();
+                  await supabase.auth.signOut();
+                  router.push('/');
+                } catch {
+                  setDeleteError('Something went wrong. Please try again.');
+                  setDeleting(false);
+                }
+              }}
+              disabled={deleteConfirmName !== business.name || deleting}
+              className="mt-4 rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {deleting ? 'Deleting...' : 'Delete My Account'}
             </button>
           </div>
         </div>

@@ -10,6 +10,7 @@ interface OrderItem {
   quantity: number;
   unit_price: number;
   product: { name: string } | null;
+  variant_label: string | null;
 }
 
 interface Order {
@@ -17,21 +18,26 @@ interface Order {
   reference_code: string;
   status: string;
   total_amount: number;
+  shipping_cost: number;
   delivery_address: string | null;
   delivery_phone: string | null;
   notes: string | null;
   channel: string;
   created_at: string;
+  shipping_carrier: string | null;
+  tracking_number: string | null;
+  shipped_at: string | null;
   user: { first_name: string | null; last_name: string | null; phone: string | null } | null;
   items: OrderItem[];
 }
 
-const ORDER_STATUSES = ['confirmed', 'processing', 'ready', 'delivered', 'cancelled'] as const;
+const ORDER_STATUSES = ['confirmed', 'processing', 'shipped', 'ready', 'delivered', 'cancelled'] as const;
 
 const statusColors: Record<string, string> = {
   draft: 'bg-gray-100 text-gray-600',
   confirmed: 'bg-blue-100 text-blue-700',
   processing: 'bg-amber-100 text-amber-700',
+  shipped: 'bg-purple-100 text-purple-700',
   ready: 'bg-green-100 text-green-700',
   delivered: 'bg-green-100 text-green-800',
   cancelled: 'bg-red-100 text-red-700',
@@ -46,14 +52,20 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  // Tracking form state
+  const [trackingCarrier, setTrackingCarrier] = useState('');
+  const [trackingNumber, setTrackingNumber] = useState('');
+  const [savingTracking, setSavingTracking] = useState(false);
+
   async function fetchOrders() {
     const supabase = createClient();
 
     let query = supabase
       .from('orders')
       .select(`
-        id, reference_code, status, total_amount, delivery_address,
+        id, reference_code, status, total_amount, shipping_cost, delivery_address,
         delivery_phone, notes, channel, created_at,
+        shipping_carrier, tracking_number, shipped_at,
         user:profiles!orders_user_id_fkey(first_name, last_name, phone)
       `)
       .eq('business_id', business.id)
@@ -70,7 +82,7 @@ export default function OrdersPage() {
     for (const order of (data || [])) {
       const { data: items } = await supabase
         .from('order_items')
-        .select('id, quantity, unit_price, product:products!order_items_product_id_fkey(name)')
+        .select('id, quantity, unit_price, variant_label, product:products!order_items_product_id_fkey(name)')
         .eq('order_id', order.id);
 
       ordersWithItems.push({
@@ -152,6 +164,9 @@ export default function OrdersPage() {
                       <p className="text-sm font-medium text-gray-900">
                         {(item.product as { name: string } | null)?.name || 'Unknown Product'}
                       </p>
+                      {item.variant_label && (
+                        <p className="text-xs text-purple-600">{item.variant_label}</p>
+                      )}
                       <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
                     </div>
                     <p className="text-sm font-medium text-gray-900">
@@ -160,11 +175,21 @@ export default function OrdersPage() {
                   </div>
                 ))}
               </div>
-              <div className="mt-3 flex justify-between border-t border-gray-100 pt-3">
-                <span className="text-sm font-semibold text-gray-900">Total</span>
-                <span className="text-sm font-bold text-gray-900">
-                  {formatCurrency(selectedOrder.total_amount, country)}
-                </span>
+              <div className="mt-3 space-y-1.5 border-t border-gray-100 pt-3">
+                {selectedOrder.shipping_cost > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-500">Shipping</span>
+                    <span className="text-sm text-gray-700">
+                      {formatCurrency(selectedOrder.shipping_cost, country)}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span className="text-sm font-semibold text-gray-900">Total</span>
+                  <span className="text-sm font-bold text-gray-900">
+                    {formatCurrency(selectedOrder.total_amount, country)}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -200,8 +225,8 @@ export default function OrdersPage() {
             </div>
           </div>
 
-          {/* Status & Actions */}
-          <div>
+          {/* Status, Tracking & Actions */}
+          <div className="space-y-4">
             <div className="rounded-xl border border-gray-100 bg-white p-6">
               <h2 className="text-sm font-semibold text-gray-900">Status</h2>
               <div className="mt-3">
@@ -230,11 +255,99 @@ export default function OrdersPage() {
             </div>
 
             {selectedOrder.notes && (
-              <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
+              <div className="rounded-xl border border-gray-100 bg-white p-6">
                 <h2 className="text-sm font-semibold text-gray-900">Notes</h2>
                 <p className="mt-2 text-sm text-gray-600">{selectedOrder.notes}</p>
               </div>
             )}
+
+            {/* Shipping & Tracking */}
+            <div className="rounded-xl border border-gray-100 bg-white p-6">
+              <h2 className="text-sm font-semibold text-gray-900">Shipping & Tracking</h2>
+              {selectedOrder.shipped_at ? (
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Carrier</span>
+                    <span className="font-medium text-gray-900">{selectedOrder.shipping_carrier || '\u2014'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Tracking #</span>
+                    <span className="font-medium text-gray-900">{selectedOrder.tracking_number || '\u2014'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Shipped</span>
+                    <span className="font-medium text-gray-900">
+                      {new Date(selectedOrder.shipped_at).toLocaleDateString('en-NG', {
+                        day: 'numeric', month: 'short', year: 'numeric',
+                      })}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">Carrier Name</label>
+                    <input
+                      type="text"
+                      value={trackingCarrier}
+                      onChange={(e) => setTrackingCarrier(e.target.value)}
+                      placeholder="e.g. DHL, FedEx, GIG"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600">Tracking Number</label>
+                    <input
+                      type="text"
+                      value={trackingNumber}
+                      onChange={(e) => setTrackingNumber(e.target.value)}
+                      placeholder="Enter tracking number"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <button
+                    onClick={async () => {
+                      if (!trackingCarrier.trim() && !trackingNumber.trim()) return;
+                      setSavingTracking(true);
+                      try {
+                        const res = await fetch('/api/orders/tracking', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            orderId: selectedOrder.id,
+                            businessId: business.id,
+                            shippingCarrier: trackingCarrier.trim(),
+                            trackingNumber: trackingNumber.trim(),
+                          }),
+                        });
+                        if (res.ok) {
+                          await fetchOrders();
+                          setSelectedOrder(prev => prev ? {
+                            ...prev,
+                            status: 'shipped',
+                            shipping_carrier: trackingCarrier.trim(),
+                            tracking_number: trackingNumber.trim(),
+                            shipped_at: new Date().toISOString(),
+                          } : null);
+                          setTrackingCarrier('');
+                          setTrackingNumber('');
+                        }
+                      } catch {
+                        // ignore
+                      }
+                      setSavingTracking(false);
+                    }}
+                    disabled={savingTracking || (!trackingCarrier.trim() && !trackingNumber.trim())}
+                    className="w-full rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+                  >
+                    {savingTracking ? 'Saving...' : 'Save & Notify Customer'}
+                  </button>
+                  <p className="text-xs text-gray-400">
+                    Customer will receive a WhatsApp message with tracking info.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

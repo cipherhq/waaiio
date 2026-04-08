@@ -419,12 +419,12 @@ export async function matchServiceFromKeywords(
   supabase: SupabaseClient,
   businessId: string,
   keywords: string[],
-): Promise<{ id: string; name: string; price: number; duration_minutes: number | null; deposit_amount: number | null } | null> {
+): Promise<{ id: string; name: string; price: number; duration_minutes: number | null; deposit_amount: number | null; billing_type: string | null; recurring_interval: string | null } | null> {
   if (keywords.length === 0) return null;
 
   const { data: services } = await supabase
     .from('services')
-    .select('id, name, price, duration_minutes, deposit_amount')
+    .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
     .eq('business_id', businessId)
     .eq('is_active', true)
     .order('sort_order');

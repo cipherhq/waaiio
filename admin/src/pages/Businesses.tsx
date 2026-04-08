@@ -5,8 +5,43 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
-import { Building2, CheckCircle, Clock, Ban, Search, FlaskConical } from 'lucide-react';
+import { Building2, CheckCircle, Clock, Ban, Search, FlaskConical, Shield } from 'lucide-react';
 import { getCurrencyCode, type CountryCode } from '@/lib/verification';
+import { logAudit } from '@/lib/auditLog';
+
+// ── Capability definitions (mirrors lib/capabilities/types.ts) ──
+const ALL_CAPABILITIES = [
+  { id: 'scheduling', label: 'Scheduling', icon: '📅' },
+  { id: 'payment', label: 'Payments', icon: '💳' },
+  { id: 'ordering', label: 'Online Store', icon: '🛒' },
+  { id: 'ticketing', label: 'Ticketing', icon: '🎟️' },
+  { id: 'feedback', label: 'Feedback', icon: '⭐' },
+  { id: 'chat', label: 'Chat', icon: '💬' },
+  { id: 'reminders', label: 'Reminders', icon: '🔔' },
+  { id: 'loyalty', label: 'Loyalty', icon: '🏆' },
+  { id: 'referral', label: 'Referral', icon: '🤝' },
+  { id: 'queue', label: 'Queue', icon: '📋' },
+  { id: 'waitlist', label: 'Waitlist', icon: '📝' },
+  { id: 'reports', label: 'Reports', icon: '📄' },
+  { id: 'staff', label: 'Staff', icon: '👥' },
+  { id: 'crowdfunding', label: 'Crowdfunding', icon: '❤️' },
+] as const;
+
+const TIER_REQUIREMENTS: Record<string, string> = {
+  scheduling: 'free', payment: 'free', ordering: 'free', ticketing: 'free',
+  feedback: 'free', chat: 'free',
+  reminders: 'growth', loyalty: 'growth', referral: 'growth',
+  queue: 'business', waitlist: 'business', reports: 'business',
+  staff: 'business', crowdfunding: 'business',
+};
+
+const TIER_RANK: Record<string, number> = { free: 0, growth: 1, business: 2 };
+
+const TIER_BADGE_STYLE: Record<string, string> = {
+  free: 'bg-gray-100 text-gray-600',
+  growth: 'bg-amber-100 text-amber-700',
+  business: 'bg-purple-100 text-purple-700',
+};
 
 interface Business {
   id: string;
@@ -37,6 +72,12 @@ interface PayoutAccount {
   is_active: boolean;
 }
 
+interface ServiceStats {
+  total: number;
+  recurring: number;
+  featured: number;
+}
+
 function isDemo(b: Business): boolean {
   return (b.bot_code || '').startsWith('test-') || (b.name || '').startsWith('Test ');
 }
@@ -52,6 +93,14 @@ export default function Businesses() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Business | null>(null);
   const [selectedPayout, setSelectedPayout] = useState<PayoutAccount | null>(null);
+  const [selectedServiceStats, setSelectedServiceStats] = useState<ServiceStats | null>(null);
+  const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
+  const [selectedOverrides, setSelectedOverrides] = useState<string[]>([]);
+  const [capSaving, setCapSaving] = useState<string | null>(null);
+  const [selectedTier, setSelectedTier] = useState('');
+  const [tierSaving, setTierSaving] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState('');
+  const [statusSaving, setStatusSaving] = useState(false);
   const perPage = 20;
 
   useEffect(() => {
@@ -67,12 +116,19 @@ export default function Businesses() {
     load();
   }, []);
 
-  // Load payout account when business is selected
+  // Load payout account and service stats when business is selected
   useEffect(() => {
     if (!selected) {
       setSelectedPayout(null);
+      setSelectedServiceStats(null);
+      setSelectedCaps([]);
+      setSelectedOverrides([]);
+      setSelectedTier('');
+      setSelectedStatus('');
       return;
     }
+    setSelectedTier(selected.subscription_tier);
+    setSelectedStatus(selected.status);
     supabase
       .from('payout_accounts')
       .select('id, gateway, bank_name, account_name, account_number, is_active')
@@ -80,7 +136,137 @@ export default function Businesses() {
       .eq('is_active', true)
       .maybeSingle()
       .then(({ data }) => setSelectedPayout(data));
+
+    supabase
+      .from('services')
+      .select('id, billing_type, is_featured')
+      .eq('business_id', selected.id)
+      .then(({ data }) => {
+        const svcs = data || [];
+        setSelectedServiceStats({
+          total: svcs.length,
+          recurring: svcs.filter(s => s.billing_type === 'recurring').length,
+          featured: svcs.filter(s => s.is_featured).length,
+        });
+      });
+
+    // Load capabilities + overrides
+    supabase
+      .from('business_capabilities')
+      .select('capability')
+      .eq('business_id', selected.id)
+      .eq('is_enabled', true)
+      .then(({ data }) => setSelectedCaps((data || []).map(r => r.capability)));
+
+    supabase
+      .from('capability_overrides')
+      .select('capability')
+      .eq('business_id', selected.id)
+      .then(({ data }) => setSelectedOverrides((data || []).map(r => r.capability)));
   }, [selected]);
+
+  async function handleTierChange() {
+    if (!selected || selectedTier === selected.subscription_tier) return;
+    setTierSaving(true);
+    try {
+      const { error } = await supabase
+        .from('businesses')
+        .update({ subscription_tier: selectedTier })
+        .eq('id', selected.id);
+
+      if (error) throw error;
+
+      await logAudit({
+        action: 'change_tier',
+        entity_type: 'business',
+        entity_id: selected.id,
+        details: { previous_tier: selected.subscription_tier, new_tier: selectedTier, business_name: selected.name },
+      });
+
+      // Update local state
+      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, subscription_tier: selectedTier } : b));
+      setSelected(prev => prev ? { ...prev, subscription_tier: selectedTier } : prev);
+    } catch (err) {
+      console.error('Tier change error:', err);
+      alert('Failed to change tier');
+    } finally {
+      setTierSaving(false);
+    }
+  }
+
+  async function handleStatusChange() {
+    if (!selected || selectedStatus === selected.status) return;
+    setStatusSaving(true);
+    try {
+      const { error } = await supabase
+        .from('businesses')
+        .update({ status: selectedStatus })
+        .eq('id', selected.id);
+
+      if (error) throw error;
+
+      await logAudit({
+        action: 'change_business_status',
+        entity_type: 'business',
+        entity_id: selected.id,
+        details: { previous_status: selected.status, new_status: selectedStatus, business_name: selected.name },
+      });
+
+      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, status: selectedStatus } : b));
+      setSelected(prev => prev ? { ...prev, status: selectedStatus } : prev);
+    } catch (err) {
+      console.error('Status change error:', err);
+      alert('Failed to change status');
+    } finally {
+      setStatusSaving(false);
+    }
+  }
+
+  async function handleCapToggle(bizId: string, bizTier: string, capId: string, isCurrentlyEnabled: boolean) {
+    setCapSaving(capId);
+    const requiredTier = TIER_REQUIREMENTS[capId] || 'free';
+    const withinTier = TIER_RANK[bizTier] >= TIER_RANK[requiredTier];
+
+    if (!isCurrentlyEnabled) {
+      // Enabling
+      if (!withinTier) {
+        // Above tier — create override
+        await supabase
+          .from('capability_overrides')
+          .upsert(
+            { business_id: bizId, capability: capId, granted_by: (await supabase.auth.getSession()).data.session?.user?.id, reason: 'Admin granted' },
+            { onConflict: 'business_id,capability' },
+          );
+        setSelectedOverrides(prev => [...prev.filter(c => c !== capId), capId]);
+      }
+      await supabase
+        .from('business_capabilities')
+        .upsert(
+          { business_id: bizId, capability: capId, is_enabled: true },
+          { onConflict: 'business_id,capability' },
+        );
+      setSelectedCaps(prev => [...prev.filter(c => c !== capId), capId]);
+      logAudit({ action: 'grant_capability', entity_type: 'business', entity_id: bizId, details: { capability: capId } });
+    } else {
+      // Disabling
+      if (selectedOverrides.includes(capId)) {
+        await supabase
+          .from('capability_overrides')
+          .delete()
+          .eq('business_id', bizId)
+          .eq('capability', capId);
+        setSelectedOverrides(prev => prev.filter(c => c !== capId));
+      }
+      await supabase
+        .from('business_capabilities')
+        .update({ is_enabled: false })
+        .eq('business_id', bizId)
+        .eq('capability', capId);
+      setSelectedCaps(prev => prev.filter(c => c !== capId));
+      logAudit({ action: 'revoke_capability', entity_type: 'business', entity_id: bizId, details: { capability: capId } });
+    }
+    setCapSaving(null);
+  }
 
   // Separate real vs demo
   const realBusinesses = businesses.filter(b => !isDemo(b));
@@ -282,10 +468,57 @@ export default function Businesses() {
             <DetailRow label="City" value={selected.city} />
             <DetailRow label="Neighborhood" value={selected.neighborhood} />
             <DetailRow label="Phone" value={selected.phone} />
-            <DetailRow label="Tier" value={selected.subscription_tier} />
             <DetailRow label="Payout Mode" value={selected.payout_mode === 'direct_split' ? 'Direct Split' : 'Platform Managed'} />
-            <DetailRow label="Status" value={selected.status} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
+
+            {/* Tier + Status Actions */}
+            <div className="mt-4 rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Admin Actions</p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Subscription Tier</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedTier}
+                      onChange={e => setSelectedTier(e.target.value)}
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                    >
+                      <option value="free">Free</option>
+                      <option value="growth">Growth</option>
+                      <option value="business">Business</option>
+                    </select>
+                    <button
+                      onClick={handleTierChange}
+                      disabled={tierSaving || selectedTier === selected.subscription_tier}
+                      className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {tierSaving ? '...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedStatus}
+                      onChange={e => setSelectedStatus(e.target.value)}
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                    >
+                      <option value="active">Active</option>
+                      <option value="pending">Pending</option>
+                      <option value="suspended">Suspended</option>
+                    </select>
+                    <button
+                      onClick={handleStatusChange}
+                      disabled={statusSaving || selectedStatus === selected.status}
+                      className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {statusSaving ? '...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
 
             {/* Verification */}
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
@@ -316,6 +549,72 @@ export default function Businesses() {
                 </div>
               </div>
             )}
+
+            {selectedServiceStats && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Services</p>
+                <div className="space-y-2">
+                  <DetailRow label="Total Services" value={String(selectedServiceStats.total)} />
+                  <DetailRow label="Recurring Services" value={String(selectedServiceStats.recurring)} />
+                  <DetailRow label="Featured Services" value={String(selectedServiceStats.featured)} />
+                </div>
+              </div>
+            )}
+
+            {/* Capabilities */}
+            <div className="mt-4 rounded-lg bg-gray-50 p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Shield className="h-4 w-4 text-gray-500" />
+                <p className="text-xs font-semibold text-gray-500 uppercase">Capabilities</p>
+                <span className="rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-600 capitalize">
+                  {selected.subscription_tier} tier
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {ALL_CAPABILITIES.map(cap => {
+                  const isEnabled = selectedCaps.includes(cap.id);
+                  const isOverridden = selectedOverrides.includes(cap.id);
+                  const requiredTier = TIER_REQUIREMENTS[cap.id] || 'free';
+                  const isSaving = capSaving === cap.id;
+
+                  return (
+                    <div
+                      key={cap.id}
+                      className={`flex items-center gap-3 rounded-lg border p-3 ${
+                        isEnabled ? 'border-brand/30 bg-white' : 'border-gray-200 bg-white'
+                      }`}
+                    >
+                      <span className="text-lg flex-shrink-0">{cap.icon}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-semibold text-gray-900">{cap.label}</span>
+                          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold capitalize ${TIER_BADGE_STYLE[requiredTier]}`}>
+                            {requiredTier}
+                          </span>
+                          {isOverridden && (
+                            <span className="rounded-full bg-green-100 px-1.5 py-0.5 text-[9px] font-bold text-green-700">
+                              Admin
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={() => handleCapToggle(selected.id, selected.subscription_tier, cap.id, isEnabled)}
+                        className={`flex h-5 w-9 flex-shrink-0 items-center rounded-full transition ${
+                          isEnabled ? 'bg-brand' : 'bg-gray-200'
+                        } ${isSaving ? 'opacity-50' : 'cursor-pointer'}`}
+                      >
+                        <div className={`h-4 w-4 rounded-full bg-white shadow transition ${
+                          isEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                        }`} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           </div>
         )}
       </DetailModal>

@@ -5,6 +5,16 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
+interface ProductVariant {
+  id?: string;
+  label: string;
+  price: number;
+  stock_quantity: number | null;
+  sku: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
 interface Product {
   id: string;
   name: string;
@@ -19,6 +29,8 @@ interface Product {
   low_stock_threshold: number;
   refundable: boolean;
   allow_promo: boolean;
+  has_variants: boolean;
+  shipping_cost: number | null;
 }
 
 const EMPTY_PRODUCT: Omit<Product, 'id'> = {
@@ -34,6 +46,17 @@ const EMPTY_PRODUCT: Omit<Product, 'id'> = {
   low_stock_threshold: 5,
   refundable: false,
   allow_promo: true,
+  has_variants: false,
+  shipping_cost: null,
+};
+
+const EMPTY_VARIANT: ProductVariant = {
+  label: '',
+  price: 0,
+  stock_quantity: null,
+  sku: '',
+  is_active: true,
+  sort_order: 0,
 };
 
 type ViewMode = 'list' | 'add' | 'edit' | 'bulk';
@@ -79,6 +102,10 @@ export default function ProductsPage() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  // Variants
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [deletedVariantIds, setDeletedVariantIds] = useState<string[]>([]);
+
   // Bulk
   const [bulkText, setBulkText] = useState('');
   const [bulkPreview, setBulkPreview] = useState<ReturnType<typeof mapCSVRow>[]>([]);
@@ -94,7 +121,40 @@ export default function ProductsPage() {
       .eq('business_id', business.id)
       .is('deleted_at', null)
       .order('sort_order', { ascending: true });
-    setProducts((data as Product[]) || []);
+
+    const productList = (data as Product[]) || [];
+
+    // Fetch variant price ranges for products with variants
+    const variantProductIds = productList.filter(p => p.has_variants).map(p => p.id);
+    if (variantProductIds.length > 0) {
+      const { data: variantData } = await supabase
+        .from('product_variants')
+        .select('product_id, price')
+        .in('product_id', variantProductIds)
+        .eq('is_active', true);
+
+      if (variantData) {
+        const priceMap: Record<string, { min: number; max: number; count: number }> = {};
+        for (const v of variantData) {
+          if (!priceMap[v.product_id]) {
+            priceMap[v.product_id] = { min: v.price, max: v.price, count: 1 };
+          } else {
+            priceMap[v.product_id].min = Math.min(priceMap[v.product_id].min, v.price);
+            priceMap[v.product_id].max = Math.max(priceMap[v.product_id].max, v.price);
+            priceMap[v.product_id].count++;
+          }
+        }
+        for (const p of productList) {
+          if (priceMap[p.id]) {
+            (p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number })._price_min = priceMap[p.id].min;
+            (p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number })._price_max = priceMap[p.id].max;
+            (p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number })._variant_count = priceMap[p.id].count;
+          }
+        }
+      }
+    }
+
+    setProducts(productList);
     setLoading(false);
   }, [business.id]);
 
@@ -108,13 +168,30 @@ export default function ProductsPage() {
     setForm({ ...EMPTY_PRODUCT, sort_order: products.length });
     setImageFile(null);
     setImagePreview(null);
+    setVariants([]);
+    setDeletedVariantIds([]);
     setView('add');
   }
 
-  function openEdit(product: Product) {
+  async function openEdit(product: Product) {
     setForm({ ...product });
     setImageFile(null);
     setImagePreview(product.image_url);
+    setDeletedVariantIds([]);
+
+    // Fetch variants if product has them
+    if (product.has_variants) {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('product_variants')
+        .select('id, label, price, stock_quantity, sku, is_active, sort_order')
+        .eq('product_id', product.id)
+        .order('sort_order', { ascending: true });
+      setVariants((data as ProductVariant[]) || []);
+    } else {
+      setVariants([]);
+    }
+
     setView('edit');
   }
 
@@ -157,23 +234,61 @@ export default function ProductsPage() {
       business_id: business.id,
       name: form.name.trim(),
       description: form.description?.trim() || null,
-      price: form.price || 0,
+      price: form.has_variants ? 0 : (form.price || 0),
       image_url: imageUrl,
       category: form.category?.trim() || null,
-      stock_quantity: form.stock_quantity,
+      stock_quantity: form.has_variants ? null : form.stock_quantity,
       is_active: form.is_active,
       sort_order: form.sort_order,
       track_inventory: form.track_inventory,
       low_stock_threshold: form.low_stock_threshold,
       refundable: form.refundable,
       allow_promo: form.allow_promo,
+      has_variants: form.has_variants,
+      shipping_cost: form.shipping_cost,
     };
 
     const supabase = createClient();
+    let productId = form.id;
+
     if (view === 'add') {
-      await supabase.from('products').insert(payload);
+      const { data } = await supabase.from('products').insert(payload).select('id').single();
+      productId = data?.id;
     } else {
       await supabase.from('products').update(payload).eq('id', form.id);
+    }
+
+    // Upsert variants
+    if (productId && form.has_variants) {
+      // Delete removed variants
+      if (deletedVariantIds.length > 0) {
+        await supabase.from('product_variants').delete().in('id', deletedVariantIds);
+      }
+
+      // Upsert each variant
+      for (let i = 0; i < variants.length; i++) {
+        const v = variants[i];
+        const variantPayload = {
+          product_id: productId,
+          label: v.label.trim(),
+          price: v.price || 0,
+          stock_quantity: v.stock_quantity,
+          sku: v.sku?.trim() || null,
+          is_active: v.is_active,
+          sort_order: i,
+        };
+
+        if (v.id) {
+          await supabase.from('product_variants').update(variantPayload).eq('id', v.id);
+        } else {
+          await supabase.from('product_variants').insert(variantPayload);
+        }
+      }
+    }
+
+    // If variants were disabled, clean up any existing variants
+    if (productId && !form.has_variants && view === 'edit') {
+      await supabase.from('product_variants').delete().eq('product_id', productId);
     }
 
     setSaving(false);
@@ -320,37 +435,46 @@ export default function ProductsPage() {
               />
             </div>
 
-            {/* Price + Stock — side by side */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Price ({curr}) <span className="text-red-400">*</span>
-                </label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
+            {/* Price + Stock — side by side (hidden when variants enabled) */}
+            {!form.has_variants && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Price ({curr}) <span className="text-red-400">*</span>
+                  </label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
+                    <input
+                      type="number"
+                      min={0}
+                      value={form.price || ''}
+                      onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
+                      placeholder="0"
+                      className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Stock Quantity</label>
                   <input
                     type="number"
                     min={0}
-                    value={form.price || ''}
-                    onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
-                    placeholder="0"
-                    className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
+                    value={form.stock_quantity ?? ''}
+                    onChange={(e) => setForm({ ...form, stock_quantity: e.target.value ? Number(e.target.value) : null })}
+                    placeholder="Unlimited"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
                   />
+                  <p className="mt-0.5 text-xs text-gray-400">Leave empty = unlimited</p>
                 </div>
               </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Stock Quantity</label>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.stock_quantity ?? ''}
-                  onChange={(e) => setForm({ ...form, stock_quantity: e.target.value ? Number(e.target.value) : null })}
-                  placeholder="Unlimited"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-                />
-                <p className="mt-0.5 text-xs text-gray-400">Leave empty = unlimited</p>
+            )}
+            {form.has_variants && (
+              <div className="rounded-lg bg-blue-50 p-3">
+                <p className="text-xs text-blue-700">
+                  Price and stock are set per variant below.
+                </p>
               </div>
-            </div>
+            )}
 
             {/* Description */}
             <div>
@@ -379,6 +503,123 @@ export default function ProductsPage() {
                 <datalist id="product-categories">
                   {categories.map(c => <option key={c} value={c!} />)}
                 </datalist>
+              )}
+            </div>
+
+            {/* Shipping Cost */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Shipping Cost ({curr})</label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.shipping_cost ?? ''}
+                  onChange={(e) => setForm({ ...form, shipping_cost: e.target.value ? Number(e.target.value) : null })}
+                  placeholder="0"
+                  className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
+                />
+              </div>
+              <p className="mt-0.5 text-xs text-gray-400">Per-product shipping cost (optional)</p>
+            </div>
+
+            {/* Variants */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Product Variants</p>
+                  <p className="text-xs text-gray-400">E.g. different sizes, lengths, colors with different prices</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newHasVariants = !form.has_variants;
+                    setForm({ ...form, has_variants: newHasVariants });
+                    if (newHasVariants && variants.length === 0) {
+                      setVariants([{ ...EMPTY_VARIANT }]);
+                    }
+                  }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.has_variants ? 'bg-brand' : 'bg-gray-200'}`}
+                >
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.has_variants ? '22px' : '2px' }} />
+                </button>
+              </div>
+
+              {form.has_variants && (
+                <div className="mt-4 space-y-2">
+                  {variants.map((v, idx) => (
+                    <div key={idx} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-2">
+                      <input
+                        type="text"
+                        value={v.label}
+                        onChange={(e) => {
+                          const updated = [...variants];
+                          updated[idx] = { ...updated[idx], label: e.target.value };
+                          setVariants(updated);
+                        }}
+                        placeholder="Label (e.g. 8 inches)"
+                        className="min-w-0 flex-1 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                      />
+                      <div className="relative w-24 shrink-0">
+                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{curr}</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={v.price || ''}
+                          onChange={(e) => {
+                            const updated = [...variants];
+                            updated[idx] = { ...updated[idx], price: Number(e.target.value) };
+                            setVariants(updated);
+                          }}
+                          placeholder="Price"
+                          className="w-full rounded border border-gray-100 py-1.5 pl-6 pr-1 text-sm outline-none focus:border-brand"
+                        />
+                      </div>
+                      <input
+                        type="number"
+                        min={0}
+                        value={v.stock_quantity ?? ''}
+                        onChange={(e) => {
+                          const updated = [...variants];
+                          updated[idx] = { ...updated[idx], stock_quantity: e.target.value ? Number(e.target.value) : null };
+                          setVariants(updated);
+                        }}
+                        placeholder="Stock"
+                        className="w-16 shrink-0 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                      />
+                      <input
+                        type="text"
+                        value={v.sku}
+                        onChange={(e) => {
+                          const updated = [...variants];
+                          updated[idx] = { ...updated[idx], sku: e.target.value };
+                          setVariants(updated);
+                        }}
+                        placeholder="SKU"
+                        className="w-20 shrink-0 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (v.id) setDeletedVariantIds(prev => [...prev, v.id!]);
+                          setVariants(variants.filter((_, i) => i !== idx));
+                        }}
+                        className="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                      >
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setVariants([...variants, { ...EMPTY_VARIANT, sort_order: variants.length }])}
+                    className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
+                  >
+                    + Add Variant
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -690,12 +931,21 @@ export default function ProductsPage() {
                 )}
 
                 <div className="mt-3 flex items-center justify-between">
-                  <span className="text-sm font-bold text-gray-900">{formatCurrency(product.price, country)}</span>
+                  <span className="text-sm font-bold text-gray-900">
+                    {product.has_variants
+                      ? (product as Product & { _variant_count?: number; _price_min?: number; _price_max?: number })._price_min !== undefined
+                        ? `${formatCurrency((product as Product & { _price_min?: number })._price_min!, country)} – ${formatCurrency((product as Product & { _price_max?: number })._price_max!, country)}`
+                        : 'Variants'
+                      : formatCurrency(product.price, country)}
+                  </span>
                   <div className="flex items-center gap-2">
+                    {product.has_variants && (
+                      <span className="rounded bg-purple-50 px-1.5 py-0.5 text-xs text-purple-600">Variants</span>
+                    )}
                     {product.allow_promo && (
                       <span className="text-xs text-brand">Promo</span>
                     )}
-                    {product.track_inventory && product.stock_quantity !== null ? (
+                    {!product.has_variants && product.track_inventory && product.stock_quantity !== null ? (
                       <span className={`text-xs ${
                         product.stock_quantity <= 0 ? 'font-medium text-red-500'
                           : product.stock_quantity <= product.low_stock_threshold ? 'font-medium text-amber-600'
@@ -705,7 +955,7 @@ export default function ProductsPage() {
                           : product.stock_quantity <= product.low_stock_threshold ? `Low (${product.stock_quantity})`
                           : `${product.stock_quantity} in stock`}
                       </span>
-                    ) : product.stock_quantity !== null ? (
+                    ) : !product.has_variants && product.stock_quantity !== null ? (
                       <span className="text-xs text-gray-500">{product.stock_quantity} in stock</span>
                     ) : null}
                   </div>

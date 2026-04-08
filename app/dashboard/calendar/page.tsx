@@ -127,6 +127,7 @@ export default function CalendarPage() {
       .from('bookings')
       .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, special_requests, staff_name')
       .eq('business_id', business.id)
+      .neq('flow_type', 'payment')
       .gte('date', startStr)
       .lte('date', endStr)
       .order('time', { ascending: true });

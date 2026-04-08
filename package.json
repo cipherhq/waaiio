@@ -15,6 +15,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^18",
     "react-dom": "^18",
+    "pdfkit": "^0.15.0",
     "resend": "^6.10.0"
   },
   "devDependencies": {

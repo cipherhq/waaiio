@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     // Fetch template from DB (with fallback to hardcoded constants)
     const { data: template } = await service
       .from('category_templates')
-      .select('flow_type, default_services, default_greeting')
+      .select('flow_type, default_services, default_greeting, metadata')
       .eq('key', category)
       .eq('is_active', true)
       .maybeSingle();
@@ -173,12 +173,33 @@ export async function POST(request: NextRequest) {
     }
 
     // Auto-create capabilities
+    // Priority: user-selected > template metadata > hardcoded defaults
+    const templateCaps = (template?.metadata as Record<string, unknown>)?.default_capabilities as CapabilityId[] | undefined;
+    const capsToInit = (capabilities as CapabilityId[] | undefined) || (templateCaps?.length ? templateCaps : undefined);
     await initCapabilities(
       service,
       business.id,
       category,
-      capabilities as CapabilityId[] | undefined,
+      capsToInit,
     );
+
+    // Create default canned responses if chat capability is enabled
+    const enabledCaps = capabilities as CapabilityId[] | undefined;
+    if (enabledCaps?.includes('chat')) {
+      const defaultCanned = [
+        { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
+        { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm. We\'re closed on Sundays.', sort_order: 1 },
+        { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! Which service are you interested in?', sort_order: 2 },
+        { title: 'Booking help', message_text: 'I can help you book an appointment. Would you like to proceed?', sort_order: 3 },
+        { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
+      ];
+      await service.from('canned_responses').insert(
+        defaultCanned.map((cr) => ({
+          business_id: business.id,
+          ...cr,
+        })),
+      );
+    }
 
     // Update profile role
     const { data: profile } = await service

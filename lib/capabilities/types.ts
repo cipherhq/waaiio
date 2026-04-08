@@ -14,7 +14,7 @@ export interface CapabilityDefinition {
 export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'scheduling', label: 'Scheduling', description: 'Accept appointments, bookings, and reservations', icon: '📅' },
   { id: 'payment', label: 'Payments', description: 'Collect payments, tithes, fees, and donations', icon: '💳' },
-  { id: 'ordering', label: 'Ordering', description: 'Product catalog, cart, and order management', icon: '🛒' },
+  { id: 'ordering', label: 'Online Store', description: 'Product catalog, cart, and order management', icon: '🛒' },
   { id: 'ticketing', label: 'Ticketing', description: 'Sell event tickets and manage attendance', icon: '🎟️' },
   { id: 'reminders', label: 'Reminders', description: 'Automated appointment and payment reminders', icon: '🔔' },
   { id: 'crowdfunding', label: 'Crowdfunding', description: 'Run campaigns with goals and donor tracking', icon: '❤️' },
@@ -31,6 +31,57 @@ export const CAPABILITIES: CapabilityDefinition[] = [
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
   CAPABILITIES.map(c => [c.id, c])
 ) as Record<CapabilityId, CapabilityDefinition>;
+
+// ── Tier Gating ──
+// Minimum tier required to enable each capability.
+// Admin-granted overrides can bypass tier requirements for individual businesses.
+
+type SubscriptionTier = 'free' | 'growth' | 'business';
+
+export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier> = {
+  scheduling: 'free',
+  payment: 'free',
+  ordering: 'free',
+  ticketing: 'free',
+  feedback: 'free',
+  chat: 'free',
+  reminders: 'growth',
+  loyalty: 'growth',
+  referral: 'growth',
+  queue: 'business',
+  waitlist: 'business',
+  reports: 'business',
+  staff: 'business',
+  crowdfunding: 'business',
+};
+
+const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };
+
+/**
+ * Get the minimum tier required for a capability.
+ */
+export function getRequiredTier(capId: CapabilityId): SubscriptionTier {
+  return CAPABILITY_TIER_REQUIREMENTS[capId];
+}
+
+/**
+ * Check if a business's current tier (or admin overrides) allow enabling a capability.
+ */
+export function canEnableCapability(
+  capId: CapabilityId,
+  currentTier: SubscriptionTier,
+  overrides?: CapabilityId[],
+): boolean {
+  if (overrides?.includes(capId)) return true;
+  return TIER_RANK[currentTier] >= TIER_RANK[CAPABILITY_TIER_REQUIREMENTS[capId]];
+}
+
+/** Human-readable tier label */
+export const TIER_LABELS: Record<SubscriptionTier, string> = {
+  free: 'Free',
+  growth: 'Growth',
+  business: 'Business',
+};
 
 /** Default capabilities for each business category */
 export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {

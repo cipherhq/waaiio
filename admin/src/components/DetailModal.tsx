@@ -34,7 +34,7 @@ export function DetailModal({ open, onClose, title, children, wide }: DetailModa
   );
 }
 
-export function DetailRow({ label, value }: { label: string; value: string | number | null | undefined }) {
+export function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex justify-between">
       <span className="text-gray-500">{label}</span>

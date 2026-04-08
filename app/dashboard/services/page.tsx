@@ -159,6 +159,9 @@ export default function ServicesPage() {
 
   /** Format price with recurring suffix */
   function priceLabel(service: Service) {
+    if (service.price_is_variable && service.price === 0) {
+      return 'Any amount';
+    }
     const prefix = service.price_is_variable ? 'From ' : '';
     const base = formatCurrency(service.price, country);
     if (service.billing_type === 'recurring' && service.recurring_interval) {

@@ -37,6 +37,7 @@ export interface Business {
   metadata: Record<string, unknown>;
   created_at: string;
   capabilities: CapabilityId[];
+  capabilityOverrides: CapabilityId[];
 }
 
 interface DashboardContextType {

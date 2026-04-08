@@ -3,17 +3,30 @@
 import { useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CAPABILITIES, CATEGORY_DEFAULT_CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
+import {
+  CAPABILITIES,
+  CATEGORY_DEFAULT_CAPABILITIES,
+  type CapabilityId,
+  canEnableCapability,
+  getRequiredTier,
+  TIER_LABELS,
+} from '@/lib/capabilities/types';
+import type { SubscriptionTier } from '@/lib/constants';
 
 export default function CapabilitiesPage() {
   const business = useBusiness();
+  const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+  const overrides = business.capabilityOverrides || [];
   const [enabled, setEnabled] = useState<CapabilityId[]>(business.capabilities);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const defaults = CATEGORY_DEFAULT_CAPABILITIES[business.category] || ['scheduling'];
 
-  async function handleToggle(capId: CapabilityId) {
+  function handleToggle(capId: CapabilityId) {
+    // Block if tier is too low and no admin override
+    if (!canEnableCapability(capId, tier, overrides)) return;
+
     const next = enabled.includes(capId)
       ? enabled.filter(c => c !== capId)
       : [...enabled, capId];
@@ -53,6 +66,17 @@ export default function CapabilitiesPage() {
     setEnabled([...defaults]);
   }
 
+  // Group capabilities: available vs locked
+  const available: CapabilityId[] = [];
+  const locked: CapabilityId[] = [];
+  for (const cap of CAPABILITIES) {
+    if (canEnableCapability(cap.id, tier, overrides)) {
+      available.push(cap.id);
+    } else {
+      locked.push(cap.id);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-start justify-between">
@@ -64,10 +88,18 @@ export default function CapabilitiesPage() {
         </div>
       </div>
 
-      <div className="mt-8 max-w-2xl space-y-3">
-        {CAPABILITIES.map((cap) => {
+      {/* Current plan badge */}
+      <div className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-1.5 text-sm">
+        <span className="text-gray-500">Current plan:</span>
+        <span className="font-semibold text-gray-900">{TIER_LABELS[tier]}</span>
+      </div>
+
+      {/* Available capabilities */}
+      <div className="mt-6 max-w-2xl space-y-3">
+        {CAPABILITIES.filter(cap => available.includes(cap.id)).map((cap) => {
           const isEnabled = enabled.includes(cap.id);
           const isDefault = defaults.includes(cap.id);
+          const isOverridden = overrides.includes(cap.id);
 
           return (
             <button
@@ -89,6 +121,11 @@ export default function CapabilitiesPage() {
                       Default
                     </span>
                   )}
+                  {isOverridden && (
+                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700">
+                      Granted
+                    </span>
+                  )}
                 </div>
                 <p className="mt-0.5 text-xs text-gray-500">{cap.description}</p>
               </div>
@@ -103,6 +140,58 @@ export default function CapabilitiesPage() {
           );
         })}
       </div>
+
+      {/* Locked capabilities */}
+      {locked.length > 0 && (
+        <div className="mt-10 max-w-2xl">
+          <h2 className="mb-3 text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Upgrade to Unlock
+          </h2>
+          <div className="space-y-3">
+            {CAPABILITIES.filter(cap => locked.includes(cap.id)).map((cap) => {
+              const requiredTier = getRequiredTier(cap.id);
+
+              return (
+                <div
+                  key={cap.id}
+                  className="flex w-full items-center gap-4 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 p-5 opacity-70"
+                >
+                  <span className="text-2xl grayscale">{cap.icon}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-gray-600">{cap.label}</h3>
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        requiredTier === 'business'
+                          ? 'bg-purple-100 text-purple-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {TIER_LABELS[requiredTier]}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-400">{cap.description}</p>
+                  </div>
+                  <div className="flex h-6 w-11 flex-shrink-0 items-center justify-center">
+                    <svg className="h-5 w-5 text-gray-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+                    </svg>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Upgrade CTA */}
+            <a
+              href="/dashboard/settings"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:from-amber-600 hover:to-orange-600 transition"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+              </svg>
+              Upgrade Plan
+            </a>
+          </div>
+        </div>
+      )}
 
       <div className="mt-8 flex items-center gap-3">
         <button

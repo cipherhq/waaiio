@@ -25,6 +25,8 @@ interface CartItem {
   name: string;
   quantity: number;
   price: number;
+  variant_id?: string;
+  variant_label?: string;
 }
 
 export const orderingFlow: FlowDefinition = {
@@ -38,7 +40,7 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: rawProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .order('sort_order')
@@ -66,8 +68,8 @@ export const orderingFlow: FlowDefinition = {
           body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nBrowse our ${labels.noun}:`,
           buttonLabel: labels.browseLabel,
           items: products.map(p => {
-            let desc = formatCurrency(p.price, cc);
-            if (p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
+            let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
+            if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
               desc += ` (${p.stock_quantity} left)`;
             }
             return { title: p.name, description: desc, postbackText: p.id };
@@ -77,14 +79,14 @@ export const orderingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity')
+          .select('id, name, price, stock_quantity, has_variants')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
 
         if (!product) return { valid: false, errorMessage: 'Please select a valid product.' };
 
-        if (product.stock_quantity !== null && product.stock_quantity <= 0) {
+        if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
         }
 
@@ -94,6 +96,67 @@ export const orderingFlow: FlowDefinition = {
             current_product_id: product.id,
             current_product_name: product.name,
             current_product_price: product.price,
+            current_product_has_variants: product.has_variants,
+          },
+        };
+      },
+      async next(ctx: FlowContext) {
+        return ctx.session.session_data.current_product_has_variants ? 'select_variant' : 'select_quantity';
+      },
+    },
+
+    // ── Select Variant ──
+    {
+      id: 'select_variant',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const productId = d.current_product_id as string;
+
+        const { data: variants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, label, price, stock_quantity')
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .order('sort_order');
+
+        const available = (variants || []).filter(v => v.stock_quantity === null || v.stock_quantity > 0);
+
+        if (available.length === 0) {
+          return [{ type: 'text', text: `Sorry, all options for *${d.current_product_name}* are out of stock.` }];
+        }
+
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        return [{
+          type: 'list',
+          title: `${d.current_product_name}`,
+          body: `Choose an option for *${d.current_product_name}*:`,
+          buttonLabel: 'Select Option',
+          items: available.map(v => ({
+            title: v.label,
+            description: formatCurrency(v.price, cc) + (v.stock_quantity !== null && v.stock_quantity <= 3 ? ` (${v.stock_quantity} left)` : ''),
+            postbackText: v.id,
+          })),
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const { data: variant } = await ctx.supabase
+          .from('product_variants')
+          .select('id, label, price, stock_quantity')
+          .eq('id', input)
+          .single();
+
+        if (!variant) return { valid: false, errorMessage: 'Please select a valid option.' };
+
+        if (variant.stock_quantity !== null && variant.stock_quantity <= 0) {
+          return { valid: false, errorMessage: `Sorry, ${variant.label} is out of stock.` };
+        }
+
+        return {
+          valid: true,
+          data: {
+            current_variant_id: variant.id,
+            current_variant_label: variant.label,
+            current_product_price: variant.price,
           },
         };
       },
@@ -106,10 +169,11 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const variantInfo = d.current_variant_label ? ` (${d.current_variant_label})` : '';
         return [
           {
             type: 'text',
-            text: `*${d.current_product_name}* — ${formatCurrency(d.current_product_price as number, cc)}\n\nHow many would you like?`,
+            text: `*${d.current_product_name}*${variantInfo} — ${formatCurrency(d.current_product_price as number, cc)}\n\nHow many would you like?`,
           },
           {
             type: 'buttons',
@@ -139,12 +203,24 @@ export const orderingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const cart = (d.cart as CartItem[]) || [];
 
-        cart.push({
+        const cartItem: CartItem = {
           product_id: d.current_product_id as string,
           name: d.current_product_name as string,
           quantity: d.current_quantity as number,
           price: d.current_product_price as number,
-        });
+        };
+
+        if (d.current_variant_id) {
+          cartItem.variant_id = d.current_variant_id as string;
+          cartItem.variant_label = d.current_variant_label as string;
+        }
+
+        cart.push(cartItem);
+
+        // Clean up variant session data
+        delete d.current_variant_id;
+        delete d.current_variant_label;
+        delete d.current_product_has_variants;
 
         d.cart = cart;
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -155,7 +231,10 @@ export const orderingFlow: FlowDefinition = {
           .update({ session_data: d, current_step: 'continue_or_checkout' })
           .eq('id', ctx.session.id);
 
-        const itemSummary = cart.map(i => `  • ${i.name} x${i.quantity} — ${formatCurrency(i.price * i.quantity, cc)}`).join('\n');
+        const itemSummary = cart.map(i => {
+          const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
+          return `  • ${label} x${i.quantity} — ${formatCurrency(i.price * i.quantity, cc)}`;
+        }).join('\n');
 
         return [
           {
@@ -376,7 +455,35 @@ export const orderingFlow: FlowDefinition = {
         const cart = (d.cart as CartItem[]) || [];
         const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const discount = (d.discount_amount as number) || 0;
-        const total = Math.max(0, subtotal - discount);
+
+        // Calculate shipping cost
+        let shippingCost = 0;
+        if (d.delivery_type === 'delivery' && ctx.business) {
+          const shippingMode = (ctx.business.metadata?.shipping_mode as string) || 'none';
+          const defaultFee = (ctx.business.metadata?.default_shipping_fee as number) || 0;
+
+          if (shippingMode === 'flat') {
+            shippingCost = defaultFee;
+          } else if (shippingMode === 'per_product') {
+            // Fetch per-product shipping costs
+            const productIds = [...new Set(cart.map(i => i.product_id))];
+            const { data: productsData } = await ctx.supabase
+              .from('products')
+              .select('id, shipping_cost')
+              .in('id', productIds);
+
+            const shippingMap: Record<string, number> = {};
+            for (const p of productsData || []) {
+              shippingMap[p.id] = p.shipping_cost ?? defaultFee;
+            }
+
+            for (const item of cart) {
+              shippingCost += (shippingMap[item.product_id] || defaultFee) * item.quantity;
+            }
+          }
+        }
+
+        const total = Math.max(0, subtotal - discount + shippingCost);
 
         // Ensure user exists
         let userId = ctx.session.user_id;
@@ -400,6 +507,7 @@ export const orderingFlow: FlowDefinition = {
             delivery_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
             total_amount: total,
             discount_amount: discount,
+            shipping_cost: shippingCost,
             promo_code_id: (d.promo_code_id as string) || null,
             channel: 'whatsapp',
             notes: d.delivery_type === 'pickup' ? 'Pickup order' : null,
@@ -418,17 +526,28 @@ export const orderingFlow: FlowDefinition = {
             product_id: item.product_id,
             quantity: item.quantity,
             unit_price: item.price,
+            variant_id: item.variant_id || null,
+            variant_label: item.variant_label || null,
           });
-          // Decrement stock for inventory-tracked products
-          await ctx.supabase.rpc('decrement_stock', {
-            p_product_id: item.product_id,
-            qty: item.quantity,
-          });
+
+          // Decrement stock: use variant stock if applicable, otherwise product stock
+          if (item.variant_id) {
+            await ctx.supabase.rpc('decrement_variant_stock', {
+              p_variant_id: item.variant_id,
+              qty: item.quantity,
+            });
+          } else {
+            await ctx.supabase.rpc('decrement_stock', {
+              p_product_id: item.product_id,
+              qty: item.quantity,
+            });
+          }
         }
 
         d.order_id = order.id;
         d.reference_code = order.reference_code;
         d.total_amount = total;
+        d.shipping_cost = shippingCost;
 
         // Increment promo code usage
         if (d.promo_code_id) {
@@ -486,6 +605,8 @@ export const orderingFlow: FlowDefinition = {
                   totalAmount: total,
                   referenceCode: order.reference_code,
                   deliveryAddress: d.delivery_address as string | undefined,
+                  shippingCost: shippingCost || undefined,
+                  countryCode: cc,
                 }) + `\n\n💳 Pay here 👇\n${paymentResult.url}`,
               },
               {
@@ -527,6 +648,7 @@ export const orderingFlow: FlowDefinition = {
             totalAmount: total,
             referenceCode: order.reference_code,
             deliveryAddress: d.delivery_address as string | undefined,
+            shippingCost: shippingCost || undefined,
           }),
         }];
       },

@@ -164,66 +164,7 @@ export default function HomePage() {
       </section>
 
       {/* ── Industry Showcase ── */}
-      <section className="bg-gray-950 py-20">
-        <div className="mx-auto max-w-6xl px-4">
-          <div className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand-300">Built for every industry</p>
-            <h2 className="mt-3 text-3xl font-bold text-white">
-              One platform, {CATEGORY_COUNT}+ business types
-            </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-gray-400">
-              Four automation flows, each tailored for different industries. Pick your category and we auto-configure the right experience.
-            </p>
-          </div>
-
-          <div className="mt-14 space-y-8">
-            {([
-              { flow: 'scheduling' as const, label: 'Scheduling', icon: '\u{1F4C5}', accent: 'blue', description: 'Appointments & reservations' },
-              { flow: 'payment' as const, label: 'Payments', icon: '\u{1F4B3}', accent: 'green', description: 'Tithes, fees & donations' },
-              { flow: 'ordering' as const, label: 'Ordering', icon: '\u{1F6D2}', accent: 'amber', description: 'Products & delivery' },
-              { flow: 'ticketing' as const, label: 'Ticketing', icon: '\u{1F3AB}', accent: 'purple', description: 'Events & transport' },
-            ]).map((group) => {
-              const cats = BUSINESS_CATEGORIES.filter(c => c.key !== 'other' && c.flow === group.flow);
-              const accentMap: Record<string, { border: string; bg: string; dot: string; pill: string; pillHover: string; text: string }> = {
-                blue:   { border: 'border-blue-500/20', bg: 'bg-blue-500/5', dot: 'bg-blue-400', pill: 'bg-blue-500/10 text-blue-300', pillHover: 'hover:bg-blue-500/20', text: 'text-blue-400' },
-                green:  { border: 'border-green-500/20', bg: 'bg-green-500/5', dot: 'bg-green-400', pill: 'bg-green-500/10 text-green-300', pillHover: 'hover:bg-green-500/20', text: 'text-green-400' },
-                amber:  { border: 'border-amber-500/20', bg: 'bg-amber-500/5', dot: 'bg-amber-400', pill: 'bg-amber-500/10 text-amber-300', pillHover: 'hover:bg-amber-500/20', text: 'text-amber-400' },
-                purple: { border: 'border-purple-500/20', bg: 'bg-purple-500/5', dot: 'bg-purple-400', pill: 'bg-purple-500/10 text-purple-300', pillHover: 'hover:bg-purple-500/20', text: 'text-purple-400' },
-              };
-              const a = accentMap[group.accent];
-              return (
-                <div key={group.flow} className={`rounded-2xl border ${a.border} ${a.bg} p-5 sm:p-6`}>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xl">{group.icon}</span>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h3 className={`text-sm font-semibold ${a.text}`}>{group.label}</h3>
-                        <span className={`h-1.5 w-1.5 rounded-full ${a.dot}`} />
-                        <span className="text-xs text-gray-500">{cats.length} industries</span>
-                      </div>
-                      <p className="text-xs text-gray-500">{group.description}</p>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {cats.map((cat) => (
-                      <span
-                        key={cat.key}
-                        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition ${a.pill} ${a.pillHover}`}
-                      >
-                        <span className="text-sm leading-none">{cat.icon}</span>
-                        {cat.label}
-                      </span>
-                    ))}
-                    <span className="inline-flex items-center rounded-full px-3 py-1.5 text-xs font-medium text-gray-600">
-                      and more...
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </section>
+      <IndustryShowcase categoryCount={CATEGORY_COUNT} />
 
       {/* ── Four Flows ── */}
       <section className="bg-gray-50 py-20">
@@ -567,6 +508,149 @@ export default function HomePage() {
 }
 
 /* ─── Local Helper Components ─── */
+
+const FLOW_TABS = [
+  { flow: 'scheduling' as const, label: 'Scheduling', icon: '\u{1F4C5}', accent: 'blue', description: 'Appointments & reservations' },
+  { flow: 'payment' as const, label: 'Payments', icon: '\u{1F4B3}', accent: 'green', description: 'Tithes, fees & donations' },
+  { flow: 'ordering' as const, label: 'Ordering', icon: '\u{1F6D2}', accent: 'amber', description: 'Products & delivery' },
+  { flow: 'ticketing' as const, label: 'Ticketing', icon: '\u{1F3AB}', accent: 'purple', description: 'Events & transport' },
+] as const;
+
+const INDUSTRY_DESCRIPTIONS: Record<string, string> = {
+  restaurant: 'Table reservations, waitlists & dining reminders',
+  barber: 'Haircut & grooming appointments, walk-in queues',
+  spa: 'Treatment bookings with deposit collection',
+  salon: 'Styling sessions, braiding & beauty appointments',
+  gym: 'Class bookings, PT sessions & membership renewals',
+  clinic: 'Patient appointments, check-ups & consultations',
+  consultant: 'Client consultations & strategy sessions',
+  tattoo: 'Session bookings with portfolio showcase',
+  real_estate: 'Property viewings & buyer consultations',
+  travel_agency: 'Trip planning & itinerary bookings',
+  laundry: 'Pickup scheduling & delivery tracking',
+  veterinary: 'Pet check-ups, vaccinations & grooming',
+  dental: 'Check-ups, cleanings & dental procedures',
+  coworking: 'Desk & meeting room reservations',
+  tutor: 'Private lessons & group class scheduling',
+  photographer: 'Portrait & event session bookings',
+  hotel: 'Room reservations & guest check-in',
+  car_wash: 'Wash bookings with service selection',
+  church: 'Tithes, offerings & building fund contributions',
+  mosque: 'Zakat, Sadaqah & Fitrah payments',
+  school: 'School fees, PTA dues & exam payments',
+  ngo: 'Donations, memberships & fundraising',
+  car_park: 'Hourly, daily & monthly parking passes',
+  taxi: 'Ride payments & airport transfers',
+  government: 'Utility bills & application fees',
+  crowdfunding_org: 'Campaign donations & project funding',
+  funeral: 'Memorial contributions & service fees',
+  shop: 'Product catalog, cart & checkout',
+  food_delivery: 'Menu ordering with delivery tracking',
+  instagram_vendor: 'Custom orders & bundle deals',
+  logistics: 'Shipment booking & package tracking',
+  mall_vendor: 'In-store catalog & order ahead',
+  pharmacy: 'Prescription orders & OTC delivery',
+  catering: 'Event catering packages & party orders',
+  tailor: 'Custom measurements & fashion orders',
+  events: 'Event listings, ticket sales & QR codes',
+  transport: 'Route tickets & seat reservations',
+  cinema: 'Movie tickets & showtime selection',
+};
+
+const MAX_VISIBLE_CARDS = 9;
+
+const ACCENT_STYLES: Record<string, {
+  ring: string; shadow: string; bg: string; text: string;
+  cardBg: string; cardBorder: string; iconBg: string;
+}> = {
+  blue:   { ring: 'ring-blue-500', shadow: 'shadow-blue-500/25', bg: 'bg-blue-500/10', text: 'text-blue-400', cardBg: 'bg-blue-500/5', cardBorder: 'border-blue-500/10', iconBg: 'bg-blue-500/15' },
+  green:  { ring: 'ring-green-500', shadow: 'shadow-green-500/25', bg: 'bg-green-500/10', text: 'text-green-400', cardBg: 'bg-green-500/5', cardBorder: 'border-green-500/10', iconBg: 'bg-green-500/15' },
+  amber:  { ring: 'ring-amber-500', shadow: 'shadow-amber-500/25', bg: 'bg-amber-500/10', text: 'text-amber-400', cardBg: 'bg-amber-500/5', cardBorder: 'border-amber-500/10', iconBg: 'bg-amber-500/15' },
+  purple: { ring: 'ring-purple-500', shadow: 'shadow-purple-500/25', bg: 'bg-purple-500/10', text: 'text-purple-400', cardBg: 'bg-purple-500/5', cardBorder: 'border-purple-500/10', iconBg: 'bg-purple-500/15' },
+};
+
+function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
+  const [activeFlow, setActiveFlow] = useState<string>(FLOW_TABS[0].flow);
+  const activeTab = FLOW_TABS.find(t => t.flow === activeFlow) ?? FLOW_TABS[0];
+  const accent = ACCENT_STYLES[activeTab.accent];
+  const industries = BUSINESS_CATEGORIES.filter(c => c.key !== 'other' && c.flow === activeFlow);
+
+  return (
+    <section className="bg-gray-950 py-20">
+      <div className="mx-auto max-w-6xl px-4">
+        <div className="grid items-start gap-12 lg:grid-cols-[320px_1fr]">
+          {/* Left: Sticky heading + tab switcher */}
+          <div className="lg:sticky lg:top-24">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand-300">Built for every industry</p>
+            <h2 className="mt-3 text-3xl font-bold leading-tight text-white lg:text-4xl">
+              {categoryCount}+ Business Types
+            </h2>
+            <p className="mt-4 text-sm leading-relaxed text-gray-400">
+              Pick a flow and we auto-configure the right WhatsApp experience for your industry.
+            </p>
+
+            {/* Flow tabs — vertical on desktop, horizontal scroll on mobile */}
+            <div className="mt-8 flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
+              {FLOW_TABS.map((tab) => {
+                const isActive = tab.flow === activeFlow;
+                const s = ACCENT_STYLES[tab.accent];
+                return (
+                  <button
+                    key={tab.flow}
+                    onClick={() => setActiveFlow(tab.flow)}
+                    className={`flex shrink-0 items-center gap-3 rounded-xl border px-4 py-3 text-left transition-all ${
+                      isActive
+                        ? `border-transparent ring-2 ${s.ring} ${s.bg} shadow-lg ${s.shadow}`
+                        : 'border-white/10 bg-white/5 hover:bg-white/10'
+                    }`}
+                  >
+                    <span className="text-xl">{tab.icon}</span>
+                    <div>
+                      <p className={`text-sm font-semibold ${isActive ? s.text : 'text-gray-300'}`}>{tab.label}</p>
+                      <p className="text-xs text-gray-500">{tab.description}</p>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right: Industry cards grid */}
+          <div
+            key={activeFlow}
+            className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+          >
+            {industries.slice(0, MAX_VISIBLE_CARDS).map((cat, i) => (
+              <div
+                key={cat.key}
+                className={`group rounded-xl border ${accent.cardBorder} ${accent.cardBg} p-5 opacity-0 animate-fade-in-up transition-all hover:-translate-y-1 hover:shadow-lg hover:shadow-black/20`}
+                style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'forwards' }}
+              >
+                <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${accent.iconBg} text-xl transition-transform group-hover:scale-110`}>
+                  {cat.icon}
+                </div>
+                <h3 className="mt-3 text-sm font-semibold text-white">{cat.label}</h3>
+                <p className="mt-1 text-xs leading-relaxed text-gray-500">
+                  {INDUSTRY_DESCRIPTIONS[cat.key] ?? `${cat.label} automation via WhatsApp`}
+                </p>
+              </div>
+            ))}
+            {industries.length > MAX_VISIBLE_CARDS && (
+              <div
+                className={`flex items-center justify-center rounded-xl border ${accent.cardBorder} ${accent.cardBg} p-5 opacity-0 animate-fade-in-up`}
+                style={{ animationDelay: `${MAX_VISIBLE_CARDS * 60}ms`, animationFillMode: 'forwards' }}
+              >
+                <p className={`text-sm font-semibold ${accent.text}`}>
+                  +{industries.length - MAX_VISIBLE_CARDS} more
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function ChatBubble({
   from,

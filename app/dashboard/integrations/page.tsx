@@ -14,6 +14,7 @@ const EVENT_TYPES = [
   { id: 'order.completed', label: 'Order Completed' },
   { id: 'customer.checkin', label: 'Customer Check-in' },
   { id: 'feedback.received', label: 'Feedback Received' },
+  { id: 'chat.escalated', label: 'Chat Escalated' },
 ];
 
 interface WebhookDelivery {

@@ -23,7 +23,24 @@ export async function POST(request: NextRequest) {
       .eq('id', businessId)
       .single();
 
-    if (!business || !business.recurring_enabled) {
+    if (!business) {
+      return NextResponse.json({ error: 'Business not found' }, { status: 400 });
+    }
+
+    // Check if the service is configured as recurring, or fall back to business-level toggle
+    if (serviceId) {
+      const { data: service } = await supabase
+        .from('services')
+        .select('billing_type')
+        .eq('id', serviceId)
+        .eq('business_id', businessId)
+        .single();
+
+      const isServiceRecurring = service?.billing_type === 'recurring';
+      if (!isServiceRecurring && !business.recurring_enabled) {
+        return NextResponse.json({ error: 'Recurring payments not enabled for this service' }, { status: 400 });
+      }
+    } else if (!business.recurring_enabled) {
       return NextResponse.json({ error: 'Recurring payments not enabled for this business' }, { status: 400 });
     }
 

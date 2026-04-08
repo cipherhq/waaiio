@@ -109,6 +109,41 @@ export class FlowExecutor {
       return;
     }
 
+    // Global escalation escape hatch: "talk to human" works at any step
+    const escalationPattern = /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone)\b|\b(live\s+(agent|chat|support))\b|\b(customer\s+service)\b|\b(i\s+need\s+(a\s+)?(human|agent|help))\b/i;
+    if (escalationPattern.test(lowerInput) && business) {
+      const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+      const caps = await getEnabledCapabilities(this.supabase, business.id);
+      if (caps.includes('chat')) {
+        const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+        // Get customer name
+        const phoneP = from.startsWith('+') ? from : `+${from}`;
+        const phoneN = from.startsWith('+') ? from.slice(1) : from;
+        let customerName: string | null = null;
+        const { data: profile } = await this.supabase
+          .from('profiles')
+          .select('first_name, last_name')
+          .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+          .limit(1)
+          .maybeSingle();
+        if (profile?.first_name) {
+          customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
+        }
+        await escalateToHuman({
+          supabase: this.supabase,
+          sender: this.sender,
+          from,
+          businessId: business.id,
+          businessName: business.name,
+          sessionId: session.id,
+          sessionData: session.session_data,
+          currentStep: session.current_step,
+          customerName,
+        });
+        return;
+      }
+    }
+
     // Validate input
     const result = await step.validate(input, ctx);
 

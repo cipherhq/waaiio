@@ -28,13 +28,29 @@ export async function POST(request: NextRequest) {
       text: messageText,
     });
 
-    // Insert outbound chat message
+    // Upsert conversation and get conversation_id
+    await supabase.from('chat_conversations').upsert({
+      business_id: businessId,
+      customer_phone: customerPhone,
+      status: 'open',
+      last_message_at: new Date().toISOString(),
+    }, { onConflict: 'business_id,customer_phone' });
+
+    const { data: conv } = await supabase
+      .from('chat_conversations')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('customer_phone', customerPhone)
+      .maybeSingle();
+
+    // Insert outbound chat message linked to conversation
     await supabase.from('chat_messages').insert({
       business_id: businessId,
       customer_phone: customerPhone,
       direction: 'outbound',
       message_text: messageText,
       is_read: true,
+      conversation_id: conv?.id || null,
     });
 
     return NextResponse.json({ success: true });

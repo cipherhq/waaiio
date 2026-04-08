@@ -12,6 +12,7 @@ interface RecurringRecord {
   user_id: string;
   service_id: string | null;
   service_name?: string;
+  service_billing_type?: string;
   amount: number;
   currency: string;
   frequency: string;
@@ -65,18 +66,22 @@ export default function RecurringPayments() {
         : { data: [] };
 
       const { data: services } = svcIds.length > 0
-        ? await supabase.from('services').select('id, name').in('id', svcIds)
+        ? await supabase.from('services').select('id, name, billing_type').in('id', svcIds)
         : { data: [] };
 
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
-      const svcMap = new Map((services || []).map(s => [s.id, s.name]));
+      const svcMap = new Map((services || []).map(s => [s.id, { name: s.name, billing_type: s.billing_type }]));
 
       setRecords(
-        (data || []).map(r => ({
-          ...r,
-          business_name: bizMap.get(r.business_id) || 'Unknown',
-          service_name: svcMap.get(r.service_id) || 'Payment',
-        })),
+        (data || []).map(r => {
+          const svc = svcMap.get(r.service_id);
+          return {
+            ...r,
+            business_name: bizMap.get(r.business_id) || 'Unknown',
+            service_name: svc?.name || 'Payment',
+            service_billing_type: svc?.billing_type || 'one_time',
+          };
+        }),
       );
     } catch (error) {
       console.warn('Failed to load recurring payments:', error);
@@ -204,6 +209,7 @@ export default function RecurringPayments() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Source</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Freq</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Gateway</th>
@@ -225,6 +231,15 @@ export default function RecurringPayments() {
                     <div className="text-xs text-gray-400">{r.customer_phone}</div>
                   </td>
                   <td className="px-4 py-3 text-gray-700">{r.service_name}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      r.service_billing_type === 'recurring'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {r.service_billing_type === 'recurring' ? 'Service' : 'Opt-in'}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
                     {fmtCurrency(r.amount, r.currency || undefined)}
                   </td>
@@ -256,6 +271,7 @@ export default function RecurringPayments() {
             <DetailRow label="Phone" value={selected.customer_phone} />
             <DetailRow label="Email" value={selected.customer_email} />
             <DetailRow label="Service" value={selected.service_name} />
+            <DetailRow label="Source" value={selected.service_billing_type === 'recurring' ? 'Service-level recurring' : 'Customer opt-in'} />
 
             <div className="my-3 border-t border-gray-100" />
 

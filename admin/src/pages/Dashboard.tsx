@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { supabase } from '@/lib/supabase';
-import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag } from 'lucide-react';
+import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 interface StatCard {
@@ -33,7 +33,7 @@ export default function Dashboard() {
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-        const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes] = await Promise.all([
+        const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes, overridesRes] = await Promise.all([
           supabase.from('businesses').select('*', { count: 'exact', head: true }).eq('status', 'active'),
           supabase.from('platform_fees').select('fee_total').gte('created_at', monthStart).eq('waived', false),
           supabase.from('business_payouts').select('net_amount, status').eq('status', 'pending'),
@@ -46,6 +46,8 @@ export default function Dashboard() {
           supabase.from('businesses').select('id', { count: 'exact', head: true }).eq('verification_level', 'unverified').eq('status', 'active'),
           supabase.from('business_documents').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
           supabase.from('business_payouts').select('id', { count: 'exact', head: true }).neq('flags', '[]'),
+          // Count distinct businesses with capability overrides
+          supabase.from('capability_overrides').select('business_id'),
         ]);
 
         const monthlyFees = (feesRes.data || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
@@ -104,6 +106,12 @@ export default function Dashboard() {
             value: String(bookingsRes.count || 0),
             icon: CalendarDays,
             color: 'green',
+          },
+          {
+            label: 'Capability Overrides',
+            value: `${new Set((overridesRes.data || []).map(r => r.business_id)).size} businesses`,
+            icon: Zap,
+            color: 'purple',
           },
         ]);
 

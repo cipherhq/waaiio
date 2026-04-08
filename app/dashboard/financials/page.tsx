@@ -3,23 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 
-interface Payment {
-  id: string;
-  booking_id: string | null;
-  order_id: string | null;
-  amount: number;
-  status: string;
-  reference: string;
-  created_at: string;
-}
-
-interface Booking {
+interface BookingRow {
   id: string;
   flow_type: string;
   reference_code: string;
-  customer_name: string | null;
+  guest_name: string | null;
   total_amount: number;
+  deposit_amount: number;
   status: string;
   created_at: string;
 }
@@ -27,7 +19,7 @@ interface Booking {
 interface Transaction {
   id: string;
   date: string;
-  type: 'booking' | 'order' | 'donation' | 'ticket' | 'payment';
+  type: string;
   description: string;
   customer: string;
   amount: number;
@@ -35,19 +27,24 @@ interface Transaction {
   reference: string;
 }
 
-const typeStyles: Record<string, string> = {
+const flowTypeStyles: Record<string, string> = {
+  payment: 'bg-purple-100 text-purple-700',
   booking: 'bg-blue-100 text-blue-700',
   order: 'bg-green-100 text-green-700',
   donation: 'bg-purple-100 text-purple-700',
+  crowdfund: 'bg-orange-100 text-orange-700',
   ticket: 'bg-orange-100 text-orange-700',
-  payment: 'bg-gray-100 text-gray-600',
+  event: 'bg-orange-100 text-orange-700',
 };
 
 export default function FinancialsPage() {
   const business = useBusiness();
+  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const country = (business.country_code || 'NG') as CountryCode;
+  const isGiving = labels.quantityLabel === 'amount';
+
   const [loading, setLoading] = useState(true);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [platformFees, setPlatformFees] = useState(0);
   const [pendingPayouts, setPendingPayouts] = useState(0);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -60,17 +57,13 @@ export default function FinancialsPage() {
     async function load() {
       const supabase = createClient();
 
-      const [paymentsRes, bookingsRes, feesRes, payoutsRes] = await Promise.all([
-        supabase
-          .from('payments')
-          .select('id, booking_id, order_id, amount, status, reference, created_at')
-          .eq('business_id', business.id)
-          .order('created_at', { ascending: false }),
+      const [bookingsRes, feesRes, payoutsRes] = await Promise.all([
         supabase
           .from('bookings')
-          .select('id, flow_type, reference_code, customer_name, total_amount, status, created_at')
+          .select('id, flow_type, reference_code, guest_name, total_amount, deposit_amount, status, created_at')
           .eq('business_id', business.id)
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(500),
         supabase
           .from('platform_fees')
           .select('fee_total')
@@ -83,7 +76,6 @@ export default function FinancialsPage() {
           .in('status', ['pending', 'approved']),
       ]);
 
-      setPayments(paymentsRes.data || []);
       setBookings(bookingsRes.data || []);
       setPlatformFees((feesRes.data || []).reduce((s, f) => s + Number(f.fee_total || 0), 0));
       setPendingPayouts((payoutsRes.data || []).reduce((s, p) => s + Number(p.net_amount || 0), 0));
@@ -92,57 +84,33 @@ export default function FinancialsPage() {
     load();
   }, [business.id]);
 
-  // Calculate metrics
+  // Revenue from all non-cancelled bookings
   const totalRevenue = useMemo(() =>
-    payments.filter(p => p.status === 'success').reduce((s, p) => s + Number(p.amount || 0), 0),
-  [payments]);
+    bookings
+      .filter(b => b.status !== 'cancelled' && b.status !== 'no_show')
+      .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0),
+  [bookings]);
 
   const netEarnings = totalRevenue - platformFees;
 
-  // Build unified transactions
+  // Build unified transactions from bookings
+  const entityLabel = labels.entityName.charAt(0).toUpperCase() + labels.entityName.slice(1);
+
   const transactions = useMemo(() => {
-    const txns: Transaction[] = [];
-    const bookingMap = new Map(bookings.map(b => [b.id, b]));
-
-    for (const p of payments) {
-      const booking = p.booking_id ? bookingMap.get(p.booking_id) : null;
-      let type: Transaction['type'] = 'payment';
-      let description = `Payment ${p.reference}`;
-
-      if (booking) {
-        const flow = booking.flow_type || '';
-        if (flow.includes('donation') || flow.includes('crowdfund')) {
-          type = 'donation';
-          description = `Donation - ${booking.reference_code}`;
-        } else if (flow.includes('ticket') || flow.includes('event')) {
-          type = 'ticket';
-          description = `Ticket - ${booking.reference_code}`;
-        } else if (flow.includes('order')) {
-          type = 'order';
-          description = `Order - ${booking.reference_code}`;
-        } else {
-          type = 'booking';
-          description = `Booking - ${booking.reference_code}`;
-        }
-      } else if (p.order_id) {
-        type = 'order';
-        description = `Order payment - ${p.reference}`;
-      }
-
-      txns.push({
-        id: p.id,
-        date: p.created_at,
-        type,
-        description,
-        customer: booking?.customer_name || '—',
-        amount: Number(p.amount || 0),
-        status: p.status,
-        reference: p.reference,
-      });
-    }
-
-    return txns;
-  }, [payments, bookings]);
+    return bookings.map((b): Transaction => {
+      const ft = b.flow_type || 'booking';
+      return {
+        id: b.id,
+        date: b.created_at,
+        type: ft,
+        description: `${entityLabel} - ${b.reference_code}`,
+        customer: b.guest_name || '\u2014',
+        amount: Number(b.total_amount || b.deposit_amount || 0),
+        status: b.status,
+        reference: b.reference_code,
+      };
+    });
+  }, [bookings, entityLabel]);
 
   // Filtered transactions
   const filtered = useMemo(() => {
@@ -152,7 +120,7 @@ export default function FinancialsPage() {
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(t =>
-        t.reference.toLowerCase().includes(q) ||
+        t.reference?.toLowerCase().includes(q) ||
         t.customer.toLowerCase().includes(q) ||
         t.description.toLowerCase().includes(q)
       );
@@ -163,6 +131,12 @@ export default function FinancialsPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
 
+  // Unique flow types for dynamic filter options
+  const availableTypes = useMemo(() => {
+    const types = new Set(bookings.map(b => b.flow_type || 'booking'));
+    return Array.from(types);
+  }, [bookings]);
+
   // Monthly revenue for chart (last 6 months)
   const monthlyRevenue = useMemo(() => {
     const months: { label: string; amount: number }[] = [];
@@ -171,13 +145,13 @@ export default function FinancialsPage() {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleDateString('en-US', { month: 'short' });
-      const amount = payments
-        .filter(p => p.status === 'success' && p.created_at.startsWith(key))
-        .reduce((s, p) => s + Number(p.amount || 0), 0);
+      const amount = bookings
+        .filter(b => b.status !== 'cancelled' && b.status !== 'no_show' && b.created_at.startsWith(key))
+        .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0);
       months.push({ label, amount });
     }
     return months;
-  }, [payments]);
+  }, [bookings]);
 
   const maxMonthly = Math.max(...monthlyRevenue.map(m => m.amount), 1);
 
@@ -196,15 +170,15 @@ export default function FinancialsPage() {
 
       {/* Metric Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="Total Revenue" value={formatMoney(totalRevenue)} color="blue" />
-        <MetricCard label="Platform Fees" value={formatMoney(platformFees)} color="orange" />
-        <MetricCard label="Net Earnings" value={formatMoney(netEarnings)} color="green" />
-        <MetricCard label="Pending Payouts" value={formatMoney(pendingPayouts)} color="yellow" />
+        <MetricCard label={isGiving ? 'Total Received' : 'Total Revenue'} value={formatCurrency(totalRevenue, country)} color="blue" />
+        <MetricCard label="Platform Fees" value={formatCurrency(platformFees, country)} color="orange" />
+        <MetricCard label={isGiving ? 'Net Received' : 'Net Earnings'} value={formatCurrency(netEarnings, country)} color="green" />
+        <MetricCard label="Pending Payouts" value={formatCurrency(pendingPayouts, country)} color="yellow" />
       </div>
 
       {/* Monthly Revenue Chart */}
       <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-        <h3 className="text-sm font-semibold text-gray-900">Monthly Revenue</h3>
+        <h3 className="text-sm font-semibold text-gray-900">Monthly {isGiving ? 'Giving' : 'Revenue'}</h3>
         <div className="mt-4 flex items-end gap-3" style={{ height: 160 }}>
           {monthlyRevenue.map((m, i) => (
             <div key={i} className="flex flex-1 flex-col items-center gap-1">
@@ -221,33 +195,34 @@ export default function FinancialsPage() {
 
       {/* Filters */}
       <div className="mt-8 flex flex-wrap items-center gap-3">
-        <select
-          value={typeFilter}
-          onChange={e => { setTypeFilter(e.target.value); setPage(1); }}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
-        >
-          <option value="all">All Types</option>
-          <option value="booking">Bookings</option>
-          <option value="order">Orders</option>
-          <option value="donation">Donations</option>
-          <option value="ticket">Tickets</option>
-          <option value="payment">Payments</option>
-        </select>
+        {availableTypes.length > 1 && (
+          <select
+            value={typeFilter}
+            onChange={e => { setTypeFilter(e.target.value); setPage(1); }}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+          >
+            <option value="all">All Types</option>
+            {availableTypes.map(t => (
+              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            ))}
+          </select>
+        )}
         <select
           value={statusFilter}
           onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
           <option value="all">All Statuses</option>
-          <option value="success">Success</option>
+          <option value="completed">Completed</option>
+          <option value="confirmed">Confirmed</option>
           <option value="pending">Pending</option>
-          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
         </select>
         <input
           type="text"
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(1); }}
-          placeholder="Search reference or customer..."
+          placeholder={`Search reference or ${labels.personLabel.toLowerCase()}...`}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none sm:w-64"
         />
       </div>
@@ -261,9 +236,11 @@ export default function FinancialsPage() {
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
+                {availableTypes.length > 1 && (
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
+                )}
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Description</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
@@ -273,21 +250,24 @@ export default function FinancialsPage() {
               {pageItems.map(t => (
                 <tr key={t.id} className="transition hover:bg-gray-50">
                   <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{formatDate(t.date)}</td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${typeStyles[t.type]}`}>
-                      {t.type}
-                    </span>
-                  </td>
+                  {availableTypes.length > 1 && (
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${flowTypeStyles[t.type] || 'bg-gray-100 text-gray-600'}`}>
+                        {t.type}
+                      </span>
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-gray-700 max-w-[200px] truncate">{t.description}</td>
                   <td className="px-4 py-3 text-gray-600">{t.customer}</td>
-                  <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(t.amount)}</td>
+                  <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(t.amount, country)}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      t.status === 'success' ? 'bg-green-100 text-green-700' :
+                      t.status === 'completed' || t.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                      t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
                       t.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
                       'bg-red-100 text-red-700'
                     }`}>
-                      {t.status}
+                      {t.status.replace('_', ' ')}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500 font-mono text-xs">{t.reference}</td>
@@ -339,10 +319,6 @@ function MetricCard({ label, value, color }: { label: string; value: string; col
 
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
-function formatMoney(amount: number): string {
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount);
 }
 
 function formatCompact(n: number): string {

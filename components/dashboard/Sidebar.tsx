@@ -18,7 +18,12 @@ interface NavItem {
   /** @deprecated Use capabilities instead. Kept for backward compat. */
   flowTypes?: string[];
   section?: 'main' | 'commerce' | 'marketing' | 'settings';
+  /** Hide for these business categories */
+  hideForCategories?: string[];
 }
+
+// Categories where scheduling/commerce nav items aren't relevant
+const GIVING_CATEGORIES = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org', 'government'];
 
 const navItems: NavItem[] = [
   // Main
@@ -40,6 +45,7 @@ const navItems: NavItem[] = [
     label: 'Calendar',
     icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
     capabilities: ['scheduling'],
+    hideForCategories: GIVING_CATEGORIES,
     section: 'main',
   },
   {
@@ -144,6 +150,8 @@ const navItems: NavItem[] = [
     href: '/dashboard/promo-codes',
     label: 'Promo Codes',
     icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z',
+    capabilities: ['ordering', 'scheduling', 'ticketing'],
+    hideForCategories: GIVING_CATEGORIES,
     section: 'commerce',
   },
   // Marketing
@@ -259,8 +267,10 @@ export function Sidebar() {
   const categoryLabel =
     CATEGORY_LABELS[business.category as BusinessCategoryKey]?.entityName || 'business';
 
-  // Filter nav items based on capabilities
+  // Filter nav items based on capabilities and category
   const visibleItems = navItems.filter(item => {
+    // Hide if this item is excluded for the business category
+    if (item.hideForCategories?.includes(business.category)) return false;
     if (!item.capabilities) return true;
     // Show if ANY required capability is enabled
     return item.capabilities.some(cap => capabilities.includes(cap));

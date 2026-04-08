@@ -18,7 +18,7 @@ export const paymentFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name')
+          .select('id, name, billing_type, recurring_interval, price')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .order('sort_order');
@@ -27,22 +27,27 @@ export const paymentFlow: FlowDefinition = {
           return [{ type: 'text', text: 'No payment categories are set up yet. Please contact the administrator.' }];
         }
 
+        const cc = (ctx.business.country_code || 'NG') as CountryCode;
         const labels = CATEGORY_LABELS[ctx.business.category];
         return [{
           type: 'list',
           title: `Select ${labels.entityName} Type`,
           body: `What would you like to ${labels.actionVerb.toLowerCase()}?`,
           buttonLabel: 'Choose',
-          items: services.map(s => ({
-            title: s.name,
-            postbackText: s.id,
-          })),
+          items: services.map(s => {
+            let title = s.name;
+            if (s.billing_type === 'recurring' && s.recurring_interval && s.price > 0) {
+              const suffix = s.recurring_interval === 'weekly' ? '/week' : '/month';
+              title = `${s.name} — ${formatCurrency(s.price, cc)}${suffix}`;
+            }
+            return { title, postbackText: s.id };
+          }),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name')
+          .select('id, name, billing_type, recurring_interval')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
@@ -51,7 +56,12 @@ export const paymentFlow: FlowDefinition = {
 
         return {
           valid: true,
-          data: { service_id: service.id, service_name: service.name },
+          data: {
+            service_id: service.id,
+            service_name: service.name,
+            service_billing_type: service.billing_type || 'one_time',
+            service_recurring_interval: service.recurring_interval || null,
+          },
         };
       },
       async next() { return 'enter_amount'; },
@@ -314,6 +324,46 @@ export const paymentFlow: FlowDefinition = {
           const verified = await verifyPayment(ctx.supabase, ref, cc);
           if (verified) {
             const d = ctx.session.session_data;
+
+            // Upsert customer_profiles so the member appears in the dashboard
+            if (ctx.business?.id) {
+              const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+              const name = `${d.first_name || ''} ${d.last_name || ''}`.trim() || null;
+              const amount = d.amount as number;
+              const now = new Date().toISOString();
+
+              const { data: existing } = await ctx.supabase
+                .from('customer_profiles')
+                .select('id, total_visits, total_spent')
+                .eq('business_id', ctx.business.id)
+                .eq('phone', phone)
+                .maybeSingle();
+
+              if (existing) {
+                await ctx.supabase
+                  .from('customer_profiles')
+                  .update({
+                    name: name || undefined,
+                    total_visits: (existing.total_visits || 0) + 1,
+                    total_spent: (existing.total_spent || 0) + amount,
+                    last_seen_at: now,
+                  })
+                  .eq('id', existing.id);
+              } else {
+                await ctx.supabase
+                  .from('customer_profiles')
+                  .insert({
+                    business_id: ctx.business.id,
+                    phone,
+                    name,
+                    total_visits: 1,
+                    total_spent: amount,
+                    first_seen_at: now,
+                    last_seen_at: now,
+                  });
+              }
+            }
+
             const labels = CATEGORY_LABELS[ctx.business?.category || 'church'];
             await ctx.sender.sendText({
               to: ctx.from,
@@ -336,7 +386,14 @@ export const paymentFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') return null;
-        if (ctx.session.session_data._action === 'payment_confirmed') return 'offer_recurring';
+        if (ctx.session.session_data._action === 'payment_confirmed') {
+          // If the service itself is recurring, skip the offer step and go straight to consent
+          if (ctx.session.session_data.service_billing_type === 'recurring') {
+            ctx.session.session_data.recurring_frequency = ctx.session.session_data.service_recurring_interval as string;
+            return 'confirm_recurring';
+          }
+          return 'offer_recurring';
+        }
         return null;
       },
     },
@@ -347,14 +404,28 @@ export const paymentFlow: FlowDefinition = {
       async skipIf(ctx: FlowContext): Promise<boolean> {
         if (!ctx.business) return true;
 
-        // Check if business has recurring enabled
-        const { data: biz } = await ctx.supabase
-          .from('businesses')
-          .select('recurring_enabled')
-          .eq('id', ctx.business.id)
-          .single();
+        // If this service is already recurring, it was handled by await_payment routing
+        if (ctx.session.session_data.service_billing_type === 'recurring') return true;
 
-        if (!biz?.recurring_enabled) return true;
+        // Check if business has ANY recurring services (otherwise no point offering)
+        const { data: recurringServices } = await ctx.supabase
+          .from('services')
+          .select('id')
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true)
+          .eq('billing_type', 'recurring')
+          .limit(1);
+
+        if (!recurringServices || recurringServices.length === 0) {
+          // Fallback: also check legacy business-level toggle
+          const { data: biz } = await ctx.supabase
+            .from('businesses')
+            .select('recurring_enabled')
+            .eq('id', ctx.business.id)
+            .single();
+
+          if (!biz?.recurring_enabled) return true;
+        }
 
         // Check if customer already has active sub for this service
         const userId = ctx.session.user_id;
@@ -395,7 +466,7 @@ export const paymentFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please choose *Monthly*, *Weekly*, or *No thanks*.' };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data.recurring_frequency === 'none') return null;
+        if (ctx.session.session_data.recurring_frequency === 'none') return 'payment_thank_you';
         return 'confirm_recurring';
       },
     },
@@ -434,7 +505,7 @@ export const paymentFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap *I Accept* or *Decline*.' };
       },
       async next(ctx: FlowContext) {
-        if (!ctx.session.session_data.recurring_accepted) return null;
+        if (!ctx.session.session_data.recurring_accepted) return 'payment_thank_you';
         return 'setup_recurring';
       },
     },
@@ -576,6 +647,36 @@ export const paymentFlow: FlowDefinition = {
             `Your ${label} payment of *${formatCurrency(amount, cc)}* for *${serviceName}* is now active.`,
             '',
             `You'll be charged automatically. To manage your recurring payments, type *subscriptions* anytime.`,
+            '',
+            `_Powered by *Waaiio*_`,
+          ].join('\n'),
+        }];
+      },
+      async validate(): Promise<ValidationResult> { return { valid: true }; },
+      async next() { return null; },
+    },
+
+    // ── Payment Thank You (terminal) ──
+    {
+      id: 'payment_thank_you',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const labels = CATEGORY_LABELS[ctx.business?.category || 'church'];
+
+        return [{
+          type: 'text',
+          text: [
+            `${labels.confirmationEmoji} *Thank you for your ${labels.actionVerb.toLowerCase()}!*`,
+            '',
+            `${labels.confirmationEmoji} ${ctx.business?.name || 'Business'}`,
+            `📋 ${d.service_name as string}`,
+            `💰 ${formatCurrency(d.amount as number, cc)}`,
+            `🔑 Ref: *${d.reference_code as string}*`,
+            '',
+            `We appreciate your support. 🙏`,
+            '',
+            `_Powered by *Waaiio*_`,
           ].join('\n'),
         }];
       },

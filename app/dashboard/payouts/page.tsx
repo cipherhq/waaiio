@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { type CountryCode } from '@/lib/constants';
+import { type CountryCode, formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
 
@@ -37,6 +37,19 @@ interface Balance {
   pending_payouts: number;
 }
 
+interface PayoutRecord {
+  id: string;
+  period_start: string;
+  period_end: string;
+  gross_amount: number;
+  platform_fee: number;
+  gateway_fee: number;
+  net_amount: number;
+  status: string;
+  paid_at: string | null;
+  created_at: string;
+}
+
 type SetupStep = 'idle' | 'resolving' | 'confirming' | 'creating' | 'done';
 type PageView = 'loading' | 'terms' | 'setup' | 'connected';
 
@@ -58,6 +71,7 @@ export default function PayoutsPage() {
   const [error, setError] = useState('');
   const [stripeLoading, setStripeLoading] = useState(false);
   const [balance, setBalance] = useState<Balance | null>(null);
+  const [recentPayouts, setRecentPayouts] = useState<PayoutRecord[]>([]);
   const [payoutMode, setPayoutMode] = useState<'direct_split' | 'platform_managed'>('platform_managed');
   const [termsChecked, setTermsChecked] = useState(false);
   const [acceptingTerms, setAcceptingTerms] = useState(false);
@@ -87,19 +101,25 @@ export default function PayoutsPage() {
       setExisting(payoutAccount);
       setTermsAccepted(terms);
 
+      // Fetch balance in all views (not just connected) so setup view shows earnings
+      try {
+        const res = await fetch(`/api/payouts/balance?business_id=${business.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setBalance(data);
+        }
+      } catch { /* ignore */ }
+
       if (payoutAccount) {
         setPageView('connected');
-        // Fetch balance for platform_managed mode
-        const bizPayoutMode = business.payout_mode || 'platform_managed';
-        if (bizPayoutMode === 'platform_managed') {
-          try {
-            const res = await fetch(`/api/payouts/balance?business_id=${business.id}`);
-            if (res.ok) {
-              const data = await res.json();
-              setBalance(data);
-            }
-          } catch { /* ignore */ }
-        }
+        // Fetch recent payouts for the connected view
+        try {
+          const res = await fetch(`/api/payouts/history?business_id=${business.id}&page=1`);
+          if (res.ok) {
+            const data = await res.json();
+            setRecentPayouts((data.records || []).slice(0, 5));
+          }
+        } catch { /* ignore */ }
       } else if (!terms) {
         setPageView('terms');
       } else {
@@ -417,19 +437,19 @@ export default function PayoutsPage() {
             <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
               <div>
                 <p className="text-blue-600">Gross Earnings</p>
-                <p className="text-lg font-bold text-blue-900">{formatMoney(balance.gross)}</p>
+                <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.gross, country)}</p>
               </div>
               <div>
                 <p className="text-blue-600">Platform Fees</p>
-                <p className="text-lg font-bold text-blue-900">{formatMoney(balance.fees)}</p>
+                <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.fees, country)}</p>
               </div>
               <div>
                 <p className="text-blue-600">Available</p>
-                <p className="text-lg font-bold text-green-700">{formatMoney(balance.net_available)}</p>
+                <p className="text-lg font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
               </div>
               <div>
                 <p className="text-blue-600">Pending Payouts</p>
-                <p className="text-lg font-bold text-yellow-700">{formatMoney(balance.pending_payouts)}</p>
+                <p className="text-lg font-bold text-yellow-700">{formatCurrency(balance.pending_payouts, country)}</p>
               </div>
             </div>
           </div>
@@ -493,16 +513,68 @@ export default function PayoutsPage() {
             >
               Change account
             </button>
-            {isPlatformManaged && (
-              <Link
-                href="/dashboard/payouts/history"
-                className="text-sm font-medium text-green-700 hover:text-green-900 hover:underline"
-              >
-                View payout history
-              </Link>
-            )}
           </div>
         </div>
+
+        {/* Recent Payouts */}
+        {isPlatformManaged && (
+          <div className="mt-6 max-w-lg rounded-xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900">Recent Payouts</h3>
+              <Link
+                href="/dashboard/payouts/history"
+                className="text-xs font-medium text-brand hover:underline"
+              >
+                View all &rarr;
+              </Link>
+            </div>
+
+            {recentPayouts.length === 0 ? (
+              <p className="mt-4 text-sm text-gray-500">No payouts yet</p>
+            ) : (
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
+                      <th className="pb-2 font-medium">Date</th>
+                      <th className="pb-2 font-medium">Period</th>
+                      <th className="pb-2 font-medium text-right">Net</th>
+                      <th className="pb-2 font-medium text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {recentPayouts.map(p => (
+                      <tr key={p.id}>
+                        <td className="py-2 text-gray-700">
+                          {new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                        </td>
+                        <td className="py-2 text-gray-500">
+                          {new Date(p.period_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          {' – '}
+                          {new Date(p.period_end).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                        </td>
+                        <td className="py-2 text-right font-medium text-gray-900">
+                          {formatCurrency(p.net_amount, country)}
+                        </td>
+                        <td className="py-2 text-right">
+                          <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                            p.status === 'paid'
+                              ? 'bg-green-100 text-green-700'
+                              : p.status === 'pending'
+                              ? 'bg-yellow-100 text-yellow-700'
+                              : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {p.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -516,6 +588,33 @@ export default function PayoutsPage() {
       </p>
 
       <div className="mt-8 max-w-lg">
+        {/* Earnings Overview */}
+        {balance && (
+          <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
+            <h3 className="text-sm font-semibold text-gray-900">Earnings Overview</h3>
+            {balance.gross === 0 && balance.fees === 0 && balance.net_available === 0 ? (
+              <p className="mt-3 text-sm text-gray-500">No earnings yet. Connect a bank account to start receiving payouts.</p>
+            ) : (
+              <>
+                <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Gross Earnings</p>
+                    <p className="text-lg font-bold text-gray-900">{formatCurrency(balance.gross, country)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Platform Fees</p>
+                    <p className="text-lg font-bold text-gray-900">{formatCurrency(balance.fees, country)}</p>
+                  </div>
+                </div>
+                <div className="mt-4 rounded-lg bg-green-50 px-4 py-3">
+                  <p className="text-xs text-green-700">Available for Payout</p>
+                  <p className="text-xl font-bold text-green-800">{formatCurrency(balance.net_available, country)}</p>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
         {error && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {error}
@@ -656,6 +755,3 @@ export default function PayoutsPage() {
   );
 }
 
-function formatMoney(amount: number): string {
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount);
-}

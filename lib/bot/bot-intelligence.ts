@@ -5,7 +5,10 @@ export type BotIntent =
   | 'help'
   | 'booking'
   | 'cancel'
+  | 'escalate'
   | 'status'
+  | 'history'
+  | 'receipt'
   | 'menu'
   | 'pricing'
   | 'hours'
@@ -65,6 +68,39 @@ const INTENT_RULES: IntentRule[] = [
       /^(i'm here|i am here|arrived|i'm waiting|im here|im waiting)$/i,
     ],
     action: 'queue_checkin',
+    response: null,
+  },
+  {
+    intent: 'history',
+    patterns: [
+      /^(my\s+)?(transaction\s*|payment\s*)?history$/i,
+      /^(show\s+)?(my\s+)?transaction\s*history$/i,
+      /^(all|past)\s+(transactions?|payments?)$/i,
+    ],
+    action: 'transaction_history',
+    response: null,
+  },
+  {
+    intent: 'receipt',
+    patterns: [
+      /^(my\s+)?receipt$/i,
+      /^(last|latest|recent)\s+(receipt|transaction|payment)$/i,
+      /^send\s+(my\s+)?receipt$/i,
+    ],
+    action: 'transaction_receipt',
+    response: null,
+  },
+  {
+    intent: 'escalate',
+    patterns: [
+      /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone|representative)\b/i,
+      /\b(live\s+(agent|chat|person|support))\b/i,
+      /\b(real\s+person)\b/i,
+      /\b(customer\s+service)\b/i,
+      /\bi\s+need\s+(a\s+)?(human|agent|help|support)\b/i,
+      /^(abeg\s+connect\s+me|wan\s+talk\s+to\s+person|make\s+i\s+talk\s+to\s+person)$/i,
+    ],
+    action: 'escalate',
     response: null,
   },
   {
@@ -240,6 +276,7 @@ const STEP_HELP: Record<string, string> = {
   await_payment: "Tap *I've Paid* after paying. 💳",
   await_order_payment: "Tap *I've Paid* after paying. 💳",
   await_ticket_payment: "Tap *I've Paid* after paying. 💳",
+  chat_handoff: 'You\'re connected to a human agent. Type *restart* to go back to the bot.',
   queue_start: 'Tap *Check In* to join the queue, or *Queue Status* to check your position.',
   queue_collect_name: 'Type your name for the queue entry.',
   queue_confirm_checkin: 'Your check-in is being processed...',
@@ -424,9 +461,12 @@ export class BotIntelligenceService {
       '',
       '📋 *Book / Order / Pay* — get started',
       '📋 *My bookings* — view & manage',
+      '📄 *My history* — download all past transactions',
+      '🧾 *Receipt* — get your last receipt',
       '❌ *Cancel booking* — cancel',
       '📍 *Location* — get directions',
       '💰 *Pricing* — learn about fees',
+      '🙋 *Talk to human* — speak with a team member',
     ];
 
     if (!isStandalone) {

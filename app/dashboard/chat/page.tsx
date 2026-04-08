@@ -13,16 +13,30 @@ interface ChatMessage {
   message_text: string;
   is_read: boolean;
   staff_id: string | null;
+  conversation_id: string | null;
   created_at: string;
 }
 
-interface Conversation {
+interface ChatConversation {
+  id: string;
+  business_id: string;
   customer_phone: string;
   customer_name: string | null;
-  last_message: string;
-  last_message_at: string;
-  unread_count: number;
+  status: 'open' | 'pending' | 'resolved';
+  escalated_from_step: string | null;
+  escalated_at: string | null;
+  last_message_at: string | null;
+  created_at: string;
 }
+
+interface CannedResponse {
+  id: string;
+  title: string;
+  message_text: string;
+  shortcut: string | null;
+}
+
+type StatusFilter = 'open' | 'resolved' | 'all';
 
 function formatMessageTime(dateStr: string) {
   const date = new Date(dateStr);
@@ -33,7 +47,6 @@ function formatMessageTime(dateStr: string) {
   if (diffMins < 1) return 'now';
   if (diffMins < 60) return `${diffMins}m`;
 
-  const diffHrs = Math.floor(diffMins / 60);
   const isToday = date.toDateString() === now.toDateString();
 
   if (isToday) {
@@ -46,6 +59,7 @@ function formatMessageTime(dateStr: string) {
     return 'Yesterday';
   }
 
+  const diffHrs = Math.floor(diffMins / 60);
   if (diffHrs < 168) {
     return date.toLocaleDateString('en-US', { weekday: 'short' });
   }
@@ -61,31 +75,113 @@ function formatBubbleTime(dateStr: string) {
 export default function ChatPage() {
   const business = useBusiness();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedPhone, setSelectedPhone] = useState<string | null>(null);
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('open');
+  const [resolving, setResolving] = useState(false);
+  const [cannedResponses, setCannedResponses] = useState<CannedResponse[]>([]);
+  const [showCanned, setShowCanned] = useState(false);
+  // Canned responses management panel
+  const [showCannedPanel, setShowCannedPanel] = useState(false);
+  const [editingCanned, setEditingCanned] = useState<CannedResponse | null>(null);
+  const [cannedTitle, setCannedTitle] = useState('');
+  const [cannedMessage, setCannedMessage] = useState('');
+  const [cannedSaving, setCannedSaving] = useState(false);
+  const [cannedDeleting, setCannedDeleting] = useState<string | null>(null);
+  // Chat forwarding settings
+  const [forwardEnabled, setForwardEnabled] = useState(false);
+  const [forwardToggling, setForwardToggling] = useState(false);
+  const [forwardUsage, setForwardUsage] = useState<{ count: number; month: string } | null>(null);
+  const [businessTier, setBusinessTier] = useState<string>('free');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const cannedRef = useRef<HTMLDivElement>(null);
 
-  // Fetch all messages for this business
+  // Request browser notification permission on mount
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Load conversations and messages
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const { data } = await supabase
-        .from('chat_messages')
-        .select('*')
-        .eq('business_id', business.id)
-        .order('created_at', { ascending: true });
 
-      setMessages(data || []);
+      const [convRes, msgRes] = await Promise.all([
+        supabase
+          .from('chat_conversations')
+          .select('*')
+          .eq('business_id', business.id)
+          .order('last_message_at', { ascending: false }),
+        supabase
+          .from('chat_messages')
+          .select('*')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: true }),
+      ]);
+
+      setConversations(convRes.data || []);
+      setMessages(msgRes.data || []);
       setLoading(false);
     }
     load();
   }, [business.id]);
 
-  // Realtime subscription
+  // Load canned responses
+  useEffect(() => {
+    async function loadCanned() {
+      try {
+        const res = await fetch(`/api/chat/canned-responses?businessId=${business.id}`);
+        const data = await res.json();
+        if (data.responses) setCannedResponses(data.responses);
+      } catch { /* silent */ }
+    }
+    loadCanned();
+  }, [business.id]);
+
+  // Load forwarding settings + usage
+  useEffect(() => {
+    async function loadForwardSettings() {
+      const supabase = createClient();
+
+      // Get business tier
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('subscription_tier')
+        .eq('id', business.id)
+        .single();
+      if (biz) setBusinessTier(biz.subscription_tier || 'free');
+
+      // Get forwarding toggle
+      const { data: waConfig } = await supabase
+        .from('whatsapp_config')
+        .select('forward_chat_to_phone')
+        .eq('business_id', business.id)
+        .maybeSingle();
+      if (waConfig) setForwardEnabled(waConfig.forward_chat_to_phone || false);
+
+      // Get current month usage
+      const monthKey = new Date().toISOString().slice(0, 7); // '2026-04'
+      const { data: usage } = await supabase
+        .from('chat_forward_usage')
+        .select('forward_count, month_key')
+        .eq('business_id', business.id)
+        .eq('month_key', monthKey)
+        .maybeSingle();
+      if (usage) {
+        setForwardUsage({ count: usage.forward_count, month: usage.month_key });
+      }
+    }
+    loadForwardSettings();
+  }, [business.id]);
+
+  // Realtime: chat_messages
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
@@ -101,10 +197,56 @@ export default function ChatPage() {
         (payload) => {
           const newMsg = payload.new as ChatMessage;
           setMessages((prev) => {
-            // Avoid duplicates
             if (prev.some((m) => m.id === newMsg.id)) return prev;
             return [...prev, newMsg];
           });
+
+          // Browser notification for inbound messages
+          if (
+            newMsg.direction === 'inbound' &&
+            'Notification' in window &&
+            Notification.permission === 'granted'
+          ) {
+            const name = newMsg.customer_name || newMsg.customer_phone;
+            new Notification(`New message from ${name}`, {
+              body: newMsg.message_text.slice(0, 100),
+              tag: `chat-${newMsg.customer_phone}`,
+            });
+          }
+
+          // Auto-reopen resolved conversations on new inbound
+          if (newMsg.direction === 'inbound') {
+            setConversations((prev) => {
+              const existing = prev.find(
+                (c) => c.customer_phone === newMsg.customer_phone
+              );
+              if (existing && existing.status === 'resolved') {
+                // Reopen via API (fire-and-forget)
+                fetch('/api/chat/reopen', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    businessId: business.id,
+                    customerPhone: newMsg.customer_phone,
+                  }),
+                }).catch(() => {});
+                return prev.map((c) =>
+                  c.customer_phone === newMsg.customer_phone
+                    ? { ...c, status: 'open' as const, last_message_at: newMsg.created_at }
+                    : c
+                );
+              }
+              // Update last_message_at for existing conversations
+              if (existing) {
+                return prev.map((c) =>
+                  c.customer_phone === newMsg.customer_phone
+                    ? { ...c, last_message_at: newMsg.created_at }
+                    : c
+                );
+              }
+              return prev;
+            });
+          }
         }
       )
       .on(
@@ -129,53 +271,94 @@ export default function ChatPage() {
     };
   }, [business.id]);
 
-  // Scroll to bottom when messages change or conversation selected
+  // Realtime: chat_conversations
+  useEffect(() => {
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`chat_conversations:${business.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_conversations',
+          filter: `business_id=eq.${business.id}`,
+        },
+        (payload) => {
+          const updated = payload.new as ChatConversation;
+          setConversations((prev) => {
+            const idx = prev.findIndex((c) => c.id === updated.id);
+            if (idx >= 0) {
+              const next = [...prev];
+              next[idx] = updated;
+              return next;
+            }
+            return [updated, ...prev];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [business.id]);
+
+  // Scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, selectedPhone]);
 
-  // Build conversation list from messages
-  const conversations: Conversation[] = (() => {
-    const map = new Map<string, Conversation>();
-
-    for (const msg of messages) {
-      const existing = map.get(msg.customer_phone);
-      if (!existing) {
-        map.set(msg.customer_phone, {
-          customer_phone: msg.customer_phone,
-          customer_name: msg.customer_name,
-          last_message: msg.message_text,
-          last_message_at: msg.created_at,
-          unread_count: msg.direction === 'inbound' && !msg.is_read ? 1 : 0,
-        });
-      } else {
-        // Update with latest info
-        if (new Date(msg.created_at) > new Date(existing.last_message_at)) {
-          existing.last_message = msg.message_text;
-          existing.last_message_at = msg.created_at;
-        }
-        if (msg.customer_name) {
-          existing.customer_name = msg.customer_name;
-        }
-        if (msg.direction === 'inbound' && !msg.is_read) {
-          existing.unread_count++;
-        }
+  // Close canned popover on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (cannedRef.current && !cannedRef.current.contains(e.target as Node)) {
+        setShowCanned(false);
       }
     }
+    if (showCanned) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showCanned]);
 
-    return Array.from(map.values()).sort(
-      (a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
+  // Build enriched conversation list from conversations table + messages for unread counts
+  const enrichedConversations = conversations.map((conv) => {
+    const convMessages = messages.filter(
+      (m) => m.customer_phone === conv.customer_phone
     );
-  })();
+    const lastMsg = convMessages[convMessages.length - 1];
+    const unreadCount = convMessages.filter(
+      (m) => m.direction === 'inbound' && !m.is_read
+    ).length;
 
-  // Filter conversations by search
+    return {
+      ...conv,
+      last_message: lastMsg?.message_text || '',
+      unread_count: unreadCount,
+      display_name: conv.customer_name || conv.customer_phone,
+    };
+  });
+
+  // Filter by status
+  const statusFiltered =
+    statusFilter === 'all'
+      ? enrichedConversations
+      : enrichedConversations.filter((c) => c.status === statusFilter);
+
+  // Filter by search
   const filteredConversations = searchQuery.trim()
-    ? conversations.filter(
+    ? statusFiltered.filter(
         (c) =>
           (c.customer_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
           c.customer_phone.includes(searchQuery)
       )
-    : conversations;
+    : statusFiltered;
+
+  // Sort by last_message_at
+  const sortedConversations = [...filteredConversations].sort(
+    (a, b) =>
+      new Date(b.last_message_at || b.created_at).getTime() -
+      new Date(a.last_message_at || a.created_at).getTime()
+  );
 
   // Messages for selected conversation
   const threadMessages = selectedPhone
@@ -183,11 +366,11 @@ export default function ChatPage() {
     : [];
 
   // Selected conversation info
-  const selectedConversation = conversations.find(
+  const selectedConversation = enrichedConversations.find(
     (c) => c.customer_phone === selectedPhone
   );
 
-  // Mark as read when selecting a conversation
+  // Mark as read
   const markAsRead = useCallback(
     async (phone: string) => {
       const supabase = createClient();
@@ -240,9 +423,34 @@ export default function ChatPage() {
         setReplyText('');
       }
     } catch {
-      // Silently fail - message will appear via realtime if sent
+      // Silently fail
     } finally {
       setSending(false);
+    }
+  }
+
+  async function handleResolve() {
+    if (!selectedPhone || resolving) return;
+    setResolving(true);
+    try {
+      await fetch('/api/chat/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          customerPhone: selectedPhone,
+        }),
+      });
+      // Optimistic update
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.customer_phone === selectedPhone
+            ? { ...c, status: 'resolved' as const, resolved_at: new Date().toISOString() }
+            : c
+        )
+      );
+    } catch { /* silent */ } finally {
+      setResolving(false);
     }
   }
 
@@ -253,7 +461,93 @@ export default function ChatPage() {
     }
   }
 
-  // Group thread messages by date
+  // ── Canned Responses CRUD ──────────────────────────────
+
+  function resetCannedForm() {
+    setEditingCanned(null);
+    setCannedTitle('');
+    setCannedMessage('');
+  }
+
+  function startEditCanned(cr: CannedResponse) {
+    setEditingCanned(cr);
+    setCannedTitle(cr.title);
+    setCannedMessage(cr.message_text);
+  }
+
+  async function handleSaveCanned() {
+    if (!cannedTitle.trim() || !cannedMessage.trim() || cannedSaving) return;
+    setCannedSaving(true);
+    try {
+      if (editingCanned) {
+        await fetch('/api/chat/canned-responses', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: editingCanned.id,
+            businessId: business.id,
+            title: cannedTitle.trim(),
+            messageText: cannedMessage.trim(),
+          }),
+        });
+        setCannedResponses((prev) =>
+          prev.map((cr) =>
+            cr.id === editingCanned.id
+              ? { ...cr, title: cannedTitle.trim(), message_text: cannedMessage.trim() }
+              : cr
+          )
+        );
+      } else {
+        const res = await fetch('/api/chat/canned-responses', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            businessId: business.id,
+            title: cannedTitle.trim(),
+            messageText: cannedMessage.trim(),
+          }),
+        });
+        const data = await res.json();
+        if (data.response) {
+          setCannedResponses((prev) => [...prev, data.response]);
+        }
+      }
+      resetCannedForm();
+    } catch { /* silent */ } finally {
+      setCannedSaving(false);
+    }
+  }
+
+  async function handleToggleForwarding() {
+    if (forwardToggling) return;
+    setForwardToggling(true);
+    try {
+      const supabase = createClient();
+      const newValue = !forwardEnabled;
+      await supabase
+        .from('whatsapp_config')
+        .update({ forward_chat_to_phone: newValue })
+        .eq('business_id', business.id);
+      setForwardEnabled(newValue);
+    } catch { /* silent */ } finally {
+      setForwardToggling(false);
+    }
+  }
+
+  async function handleDeleteCanned(id: string) {
+    setCannedDeleting(id);
+    try {
+      await fetch('/api/chat/canned-responses', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, businessId: business.id }),
+      });
+      setCannedResponses((prev) => prev.filter((cr) => cr.id !== id));
+    } catch { /* silent */ } finally {
+      setCannedDeleting(null);
+    }
+  }
+
   function getDateLabel(dateStr: string) {
     const date = new Date(dateStr);
     const now = new Date();
@@ -271,6 +565,13 @@ export default function ChatPage() {
     });
   }
 
+  // Count by status for tabs
+  const openCount = enrichedConversations.filter((c) => c.status === 'open').length;
+  const resolvedCount = enrichedConversations.filter((c) => c.status === 'resolved').length;
+
+  // Total unread
+  const totalUnread = enrichedConversations.reduce((sum, c) => sum + c.unread_count, 0);
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -279,20 +580,30 @@ export default function ChatPage() {
     );
   }
 
-  // Total unread across all conversations
-  const totalUnread = conversations.reduce((sum, c) => sum + c.unread_count, 0);
-
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col">
       {/* Header */}
       <div className="mb-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
-          {totalUnread > 0 && (
-            <span className="rounded-full bg-brand px-2.5 py-0.5 text-xs font-semibold text-white">
-              {totalUnread} unread
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-gray-900">Chat</h1>
+            {totalUnread > 0 && (
+              <span className="rounded-full bg-brand px-2.5 py-0.5 text-xs font-semibold text-white">
+                {totalUnread} unread
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => { setShowCannedPanel(true); resetCannedForm(); }}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 hover:text-gray-900"
+          >
+            <span className="flex items-center gap-1.5">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              </svg>
+              Chat Settings
             </span>
-          )}
+          </button>
         </div>
         <p className="mt-1 text-sm text-gray-500">
           Manage customer conversations
@@ -303,6 +614,32 @@ export default function ChatPage() {
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-100 bg-white">
         {/* Left panel - Conversation list */}
         <div className="flex w-80 shrink-0 flex-col border-r border-gray-100">
+          {/* Status filter tabs */}
+          <div className="flex border-b border-gray-100">
+            {([
+              { key: 'open' as StatusFilter, label: 'Open', count: openCount },
+              { key: 'resolved' as StatusFilter, label: 'Resolved', count: resolvedCount },
+              { key: 'all' as StatusFilter, label: 'All', count: enrichedConversations.length },
+            ]).map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setStatusFilter(tab.key)}
+                className={`flex-1 px-3 py-2.5 text-xs font-semibold transition ${
+                  statusFilter === tab.key
+                    ? 'border-b-2 border-brand text-brand'
+                    : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {tab.label}
+                {tab.count > 0 && (
+                  <span className="ml-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600">
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
           {/* Search */}
           <div className="border-b border-gray-100 p-3">
             <div className="relative">
@@ -331,7 +668,7 @@ export default function ChatPage() {
 
           {/* Conversation items */}
           <div className="flex-1 overflow-y-auto">
-            {filteredConversations.length === 0 ? (
+            {sortedConversations.length === 0 ? (
               <div className="flex flex-col items-center justify-center p-8 text-center">
                 <svg
                   className="h-10 w-10 text-gray-300"
@@ -347,16 +684,22 @@ export default function ChatPage() {
                   />
                 </svg>
                 <p className="mt-3 text-sm text-gray-500">
-                  {searchQuery ? 'No matching conversations' : 'No conversations yet'}
+                  {searchQuery
+                    ? 'No matching conversations'
+                    : statusFilter === 'open'
+                    ? 'No open conversations'
+                    : statusFilter === 'resolved'
+                    ? 'No resolved conversations'
+                    : 'No conversations yet'}
                 </p>
-                {!searchQuery && (
+                {!searchQuery && statusFilter === 'all' && (
                   <p className="mt-1 text-xs text-gray-400">
                     Messages from customers will appear here
                   </p>
                 )}
               </div>
             ) : (
-              filteredConversations.map((conv) => (
+              sortedConversations.map((conv) => (
                 <button
                   key={conv.customer_phone}
                   onClick={() => handleSelectConversation(conv.customer_phone)}
@@ -378,17 +721,27 @@ export default function ChatPage() {
                   {/* Content */}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p
-                        className={`truncate text-sm ${
-                          conv.unread_count > 0
-                            ? 'font-bold text-gray-900'
-                            : 'font-medium text-gray-900'
-                        }`}
-                      >
-                        {conv.customer_name || conv.customer_phone}
-                      </p>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <p
+                          className={`truncate text-sm ${
+                            conv.unread_count > 0
+                              ? 'font-bold text-gray-900'
+                              : 'font-medium text-gray-900'
+                          }`}
+                        >
+                          {conv.customer_name || conv.customer_phone}
+                        </p>
+                        {/* Escalation badge */}
+                        {conv.escalated_from_step && (
+                          <span className="shrink-0 rounded bg-orange-100 px-1 py-0.5 text-[9px] font-semibold text-orange-700">
+                            BOT
+                          </span>
+                        )}
+                      </div>
                       <span className="shrink-0 text-xs text-gray-400">
-                        {formatMessageTime(conv.last_message_at)}
+                        {formatMessageTime(
+                          conv.last_message_at || conv.created_at
+                        )}
                       </span>
                     </div>
                     <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -399,7 +752,7 @@ export default function ChatPage() {
                             : 'text-gray-500'
                         }`}
                       >
-                        {conv.last_message}
+                        {conv.last_message || 'No messages yet'}
                       </p>
                       {conv.unread_count > 0 && (
                         <span className="flex h-5 min-w-[20px] shrink-0 items-center justify-center rounded-full bg-brand px-1.5 text-[10px] font-bold text-white">
@@ -407,6 +760,12 @@ export default function ChatPage() {
                         </span>
                       )}
                     </div>
+                    {/* Escalation source label */}
+                    {conv.escalated_from_step && (
+                      <p className="mt-0.5 text-[10px] text-orange-600">
+                        From: {conv.escalated_from_step.replace(/_/g, ' ')}
+                      </p>
+                    )}
                   </div>
                 </button>
               ))
@@ -417,7 +776,6 @@ export default function ChatPage() {
         {/* Right panel - Message thread */}
         <div className="flex min-w-0 flex-1 flex-col">
           {!selectedPhone ? (
-            // Empty state - no conversation selected
             <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
                 <svg
@@ -444,44 +802,72 @@ export default function ChatPage() {
           ) : (
             <>
               {/* Thread header */}
-              <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-3">
-                {/* Back button for mobile - hidden on larger screens */}
-                <button
-                  onClick={() => setSelectedPhone(null)}
-                  className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 lg:hidden"
-                >
-                  <svg
-                    className="h-5 w-5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+              <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
+                <div className="flex items-center gap-3">
+                  {/* Back button for mobile */}
+                  <button
+                    onClick={() => setSelectedPhone(null)}
+                    className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 lg:hidden"
                   >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 19l-7-7 7-7"
-                    />
-                  </svg>
-                </button>
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100">
-                  <span className="text-sm font-semibold text-gray-500">
-                    {(
-                      selectedConversation?.customer_name ||
-                      selectedPhone
-                    )
-                      .charAt(0)
-                      .toUpperCase()}
-                  </span>
+                    <svg
+                      className="h-5 w-5"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15 19l-7-7 7-7"
+                      />
+                    </svg>
+                  </button>
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gray-100">
+                    <span className="text-sm font-semibold text-gray-500">
+                      {(
+                        selectedConversation?.customer_name ||
+                        selectedPhone
+                      )
+                        .charAt(0)
+                        .toUpperCase()}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-gray-900">
+                        {selectedConversation?.customer_name || selectedPhone}
+                      </p>
+                      {selectedConversation?.status && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            selectedConversation.status === 'open'
+                              ? 'bg-green-100 text-green-700'
+                              : selectedConversation.status === 'resolved'
+                              ? 'bg-gray-100 text-gray-500'
+                              : 'bg-yellow-100 text-yellow-700'
+                          }`}
+                        >
+                          {selectedConversation.status}
+                        </span>
+                      )}
+                    </div>
+                    {selectedConversation?.customer_name && (
+                      <p className="text-xs text-gray-500">{selectedPhone}</p>
+                    )}
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-gray-900">
-                    {selectedConversation?.customer_name || selectedPhone}
-                  </p>
-                  {selectedConversation?.customer_name && (
-                    <p className="text-xs text-gray-500">{selectedPhone}</p>
-                  )}
-                </div>
+
+                {/* Resolve button */}
+                {selectedConversation?.status === 'open' && (
+                  <button
+                    onClick={handleResolve}
+                    disabled={resolving}
+                    className="rounded-lg border border-green-200 px-3 py-1.5 text-xs font-semibold text-green-700 transition hover:bg-green-50 disabled:opacity-50"
+                  >
+                    {resolving ? 'Resolving...' : 'Resolve'}
+                  </button>
+                )}
               </div>
 
               {/* Messages area */}
@@ -496,12 +882,14 @@ export default function ChatPage() {
                 ) : (
                   <div className="space-y-1">
                     {threadMessages.map((msg, idx) => {
-                      // Show date separator
                       const prevMsg = idx > 0 ? threadMessages[idx - 1] : null;
                       const showDate =
                         !prevMsg ||
                         new Date(msg.created_at).toDateString() !==
                           new Date(prevMsg.created_at).toDateString();
+
+                      // System messages (escalation markers)
+                      const isSystem = msg.message_text.startsWith('[') && msg.message_text.endsWith(']');
 
                       return (
                         <div key={msg.id}>
@@ -512,34 +900,42 @@ export default function ChatPage() {
                               </span>
                             </div>
                           )}
-                          <div
-                            className={`flex ${
-                              msg.direction === 'outbound'
-                                ? 'justify-end'
-                                : 'justify-start'
-                            }`}
-                          >
+                          {isSystem ? (
+                            <div className="my-2 flex items-center justify-center">
+                              <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-orange-600">
+                                {msg.message_text.slice(1, -1)}
+                              </span>
+                            </div>
+                          ) : (
                             <div
-                              className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${
+                              className={`flex ${
                                 msg.direction === 'outbound'
-                                  ? 'bg-brand text-white'
-                                  : 'bg-gray-100 text-gray-800'
+                                  ? 'justify-end'
+                                  : 'justify-start'
                               }`}
                             >
-                              <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                                {msg.message_text}
-                              </p>
-                              <p
-                                className={`mt-1 text-right text-[10px] ${
+                              <div
+                                className={`max-w-[70%] rounded-2xl px-4 py-2.5 ${
                                   msg.direction === 'outbound'
-                                    ? 'text-white/60'
-                                    : 'text-gray-400'
+                                    ? 'bg-brand text-white'
+                                    : 'bg-gray-100 text-gray-800'
                                 }`}
                               >
-                                {formatBubbleTime(msg.created_at)}
-                              </p>
+                                <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                                  {msg.message_text}
+                                </p>
+                                <p
+                                  className={`mt-1 text-right text-[10px] ${
+                                    msg.direction === 'outbound'
+                                      ? 'text-white/60'
+                                      : 'text-gray-400'
+                                  }`}
+                                >
+                                  {formatBubbleTime(msg.created_at)}
+                                </p>
+                              </div>
                             </div>
-                          </div>
+                          )}
                         </div>
                       );
                     })}
@@ -551,6 +947,45 @@ export default function ChatPage() {
               {/* Reply input */}
               <div className="border-t border-gray-100 px-4 py-3">
                 <div className="flex items-end gap-2">
+                  {/* Canned responses button */}
+                  <div className="relative" ref={cannedRef}>
+                    <button
+                      onClick={() => setShowCanned(!showCanned)}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700"
+                      title="Quick replies"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                    </button>
+
+                    {/* Canned responses popover */}
+                    {showCanned && cannedResponses.length > 0 && (
+                      <div className="absolute bottom-12 left-0 z-10 w-64 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                          Quick Replies
+                        </p>
+                        {cannedResponses.map((cr) => (
+                          <button
+                            key={cr.id}
+                            onClick={() => {
+                              setReplyText(cr.message_text);
+                              setShowCanned(false);
+                            }}
+                            className="flex w-full flex-col px-3 py-2 text-left transition hover:bg-gray-50"
+                          >
+                            <span className="text-sm font-medium text-gray-900">
+                              {cr.title}
+                            </span>
+                            <span className="mt-0.5 truncate text-xs text-gray-500">
+                              {cr.message_text}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <textarea
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
@@ -597,6 +1032,194 @@ export default function ChatPage() {
           )}
         </div>
       </div>
+
+      {/* Quick Replies Management Panel (slide-over) */}
+      {showCannedPanel && (
+        <div className="fixed inset-0 z-50">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/30"
+            onClick={() => { setShowCannedPanel(false); resetCannedForm(); }}
+          />
+          {/* Panel */}
+          <div className="fixed inset-y-0 right-0 flex w-full max-w-md flex-col bg-white shadow-xl">
+            {/* Panel header */}
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <h2 className="text-lg font-bold text-gray-900">Chat Settings</h2>
+              <button
+                onClick={() => { setShowCannedPanel(false); resetCannedForm(); }}
+                className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Chat Forwarding Settings */}
+            <div className="border-b border-gray-100 px-6 py-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                WhatsApp Forwarding
+              </p>
+              <div className="rounded-lg border border-gray-100 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0 pr-4">
+                    <p className="text-sm font-medium text-gray-900">
+                      Forward messages to your phone
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      Receive every customer message on WhatsApp
+                    </p>
+                  </div>
+                  {businessTier === 'free' ? (
+                    <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-500">
+                      Paid plans only
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleToggleForwarding}
+                      disabled={forwardToggling}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors disabled:opacity-50 ${
+                        forwardEnabled ? 'bg-brand' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow ring-0 transition-transform ${
+                          forwardEnabled ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  )}
+                </div>
+                {forwardEnabled && forwardUsage && (
+                  <div className="mt-3 flex items-center gap-2 rounded-md bg-gray-50 px-3 py-2">
+                    <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                    </svg>
+                    <span className="text-xs text-gray-600">
+                      <span className="font-semibold text-gray-900">{forwardUsage.count}</span> messages forwarded this month
+                    </span>
+                  </div>
+                )}
+                {businessTier === 'free' && (
+                  <p className="mt-2 text-[11px] text-gray-400">
+                    Upgrade to Growth or Business plan to enable WhatsApp forwarding.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Add / Edit form */}
+            <div className="border-b border-gray-100 px-6 py-4">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
+                {editingCanned ? 'Edit Reply' : 'Add New Reply'}
+              </p>
+              <div className="space-y-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Title</label>
+                  <input
+                    type="text"
+                    value={cannedTitle}
+                    onChange={(e) => setCannedTitle(e.target.value)}
+                    placeholder="e.g. Thanks for waiting"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Message</label>
+                  <textarea
+                    value={cannedMessage}
+                    onChange={(e) => setCannedMessage(e.target.value)}
+                    placeholder="The message that will be inserted..."
+                    rows={3}
+                    className="w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSaveCanned}
+                    disabled={!cannedTitle.trim() || !cannedMessage.trim() || cannedSaving}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    {cannedSaving ? 'Saving...' : editingCanned ? 'Update' : 'Add Reply'}
+                  </button>
+                  {editingCanned && (
+                    <button
+                      onClick={resetCannedForm}
+                      className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Existing replies list */}
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+              {cannedResponses.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <svg className="h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  <p className="mt-3 text-sm text-gray-500">No quick replies yet</p>
+                  <p className="mt-1 text-xs text-gray-400">Add one above to get started</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {cannedResponses.map((cr) => (
+                    <div
+                      key={cr.id}
+                      className={`rounded-lg border p-3 ${
+                        editingCanned?.id === cr.id
+                          ? 'border-brand bg-brand-50/30'
+                          : 'border-gray-100 hover:border-gray-200'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {cr.title}
+                          </p>
+                          <p className="mt-0.5 text-xs text-gray-500 line-clamp-2">
+                            {cr.message_text}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button
+                            onClick={() => startEditCanned(cr)}
+                            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                            title="Edit"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteCanned(cr.id)}
+                            disabled={cannedDeleting === cr.id}
+                            className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                            title="Delete"
+                          >
+                            {cannedDeleting === cr.id ? (
+                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-red-400 border-t-transparent" />
+                            ) : (
+                              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

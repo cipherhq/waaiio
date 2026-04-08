@@ -215,6 +215,6 @@ ALTER TABLE processed_webhook_events
 DO $$ BEGIN
   CREATE TRIGGER set_processed_webhook_events_updated_at
     BEFORE UPDATE ON processed_webhook_events
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;

@@ -54,7 +54,17 @@ export default async function DashboardLayout({
       ['scheduling'];
   }
 
-  const businessWithCaps = { ...business, capabilities };
+  // Load capability overrides
+  const { data: overrideRows } = await supabase
+    .from('capability_overrides')
+    .select('capability')
+    .eq('business_id', business.id);
+
+  const capabilityOverrides: CapabilityId[] = (overrideRows || []).map(
+    r => r.capability as CapabilityId,
+  );
+
+  const businessWithCaps = { ...business, capabilities, capabilityOverrides };
 
   return (
     <DashboardProvider business={businessWithCaps} userId={user.id}>

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 
 interface Booking {
   id: string;
@@ -19,6 +19,7 @@ interface Booking {
   special_requests: string | null;
   deposit_amount: number;
   deposit_status: string;
+  total_amount: number;
   notes: string | null;
   created_at: string;
   confirmed_at: string | null;
@@ -71,7 +72,7 @@ export default function BookingsPage() {
     const supabase = createClient();
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at')
       .eq('business_id', business.id)
       .order('date', { ascending: false })
       .order('time', { ascending: false })
@@ -200,7 +201,11 @@ export default function BookingsPage() {
                     {new Date(r.date + 'T00:00').toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' })}
                     {r.time && ` at ${r.time.slice(0, 5)}`}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{r.party_size}</td>
+                  <td className="px-4 py-3 text-gray-600">
+                    {labels.quantityLabel === 'amount'
+                      ? formatCurrency(r.total_amount || r.deposit_amount || 0, (business.country_code || 'NG') as CountryCode)
+                      : r.party_size}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2 py-0.5 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                       {r.channel || 'whatsapp'}
@@ -269,8 +274,12 @@ export default function BookingsPage() {
                     <p className="font-medium text-gray-900">{selected.time?.slice(0, 5) || '\u2014'}</p>
                   </div>
                   <div>
-                    <span className="text-gray-400">{labels.quantityLabel}</span>
-                    <p className="font-medium text-gray-900">{selected.party_size}</p>
+                    <span className="text-gray-400">{labels.quantityLabel === 'amount' ? 'Amount' : labels.quantityLabel}</span>
+                    <p className="font-medium text-gray-900">
+                      {labels.quantityLabel === 'amount'
+                        ? formatCurrency(selected.total_amount || selected.deposit_amount || 0, (business.country_code || 'NG') as CountryCode)
+                        : selected.party_size}
+                    </p>
                   </div>
                   <div>
                     <span className="text-gray-400">Channel</span>

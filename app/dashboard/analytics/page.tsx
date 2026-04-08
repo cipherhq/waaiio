@@ -53,19 +53,27 @@ export default function AnalyticsPage() {
       startDate.setDate(startDate.getDate() - days);
       const startStr = startDate.toISOString().split('T')[0];
 
-      const { data: bookings } = await supabase
-        .from('bookings')
-        .select('id, status, date, time_slot, guest_phone, deposit_amount, service_name')
-        .eq('business_id', business.id)
-        .gte('date', startStr)
-        .order('date', { ascending: false });
+      const [bookingsRes, servicesRes] = await Promise.all([
+        supabase
+          .from('bookings')
+          .select('id, status, date, time, guest_phone, total_amount, deposit_amount, service_id')
+          .eq('business_id', business.id)
+          .gte('date', startStr)
+          .order('date', { ascending: false }),
+        supabase
+          .from('services')
+          .select('id, name')
+          .eq('business_id', business.id),
+      ]);
+      const bookings = bookingsRes.data;
+      const serviceMap = new Map((servicesRes.data || []).map((s: { id: string; name: string }) => [s.id, s.name]));
 
       const all = bookings || [];
       setTotalBookings(all.length);
       setCompletedBookings(all.filter((b) => b.status === 'completed').length);
       setCancelledBookings(all.filter((b) => b.status === 'cancelled').length);
       setNoShows(all.filter((b) => b.status === 'no_show').length);
-      setTotalRevenue(all.reduce((sum, b) => sum + (b.deposit_amount || 0), 0));
+      setTotalRevenue(all.reduce((sum, b) => sum + (b.total_amount || b.deposit_amount || 0), 0));
 
       // Guest analysis
       const phoneMap = new Map<string, number>();
@@ -84,7 +92,7 @@ export default function AnalyticsPage() {
       for (const b of all) {
         const existing = dayMap.get(b.date) || { count: 0, revenue: 0 };
         existing.count++;
-        existing.revenue += b.deposit_amount || 0;
+        existing.revenue += b.total_amount || b.deposit_amount || 0;
         dayMap.set(b.date, existing);
       }
       const daily: DailyCount[] = [];
@@ -100,8 +108,8 @@ export default function AnalyticsPage() {
       // Hourly distribution
       const hourMap = new Map<number, number>();
       for (const b of all) {
-        if (b.time_slot) {
-          const hour = parseInt(b.time_slot.split(':')[0], 10);
+        if (b.time) {
+          const hour = parseInt(b.time.split(':')[0], 10);
           hourMap.set(hour, (hourMap.get(hour) || 0) + 1);
         }
       }
@@ -112,15 +120,15 @@ export default function AnalyticsPage() {
       setHourlyCounts(hourly);
 
       // Top services
-      const serviceMap = new Map<string, { count: number; revenue: number }>();
+      const svcStatsMap = new Map<string, { count: number; revenue: number }>();
       for (const b of all) {
-        const name = b.service_name || 'General';
-        const existing = serviceMap.get(name) || { count: 0, revenue: 0 };
+        const name = (b.service_id ? serviceMap.get(b.service_id) : null) || 'General';
+        const existing = svcStatsMap.get(name) || { count: 0, revenue: 0 };
         existing.count++;
-        existing.revenue += b.deposit_amount || 0;
-        serviceMap.set(name, existing);
+        existing.revenue += b.total_amount || b.deposit_amount || 0;
+        svcStatsMap.set(name, existing);
       }
-      const services = Array.from(serviceMap.entries())
+      const services = Array.from(svcStatsMap.entries())
         .map(([name, stats]) => ({ name, ...stats }))
         .sort((a, b) => b.count - a.count)
         .slice(0, 5);
@@ -238,7 +246,7 @@ export default function AnalyticsPage() {
       {/* Top Services */}
       {topServices.length > 0 && (
         <div className="mt-8 rounded-xl border border-gray-100 bg-white p-6">
-          <h2 className="text-sm font-semibold text-gray-900">Top Services</h2>
+          <h2 className="text-sm font-semibold text-gray-900">Top {labels.serviceNamePlural}</h2>
           <div className="mt-4 space-y-3">
             {topServices.map((s, i) => {
               const pct = totalBookings > 0 ? Math.round((s.count / totalBookings) * 100) : 0;

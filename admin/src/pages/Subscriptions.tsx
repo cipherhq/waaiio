@@ -36,6 +36,7 @@ export default function Subscriptions() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [tierFilter, setTierFilter] = useState('all');
   const [selected, setSelected] = useState<SubscriptionRecord | null>(null);
+  const [selectedOverrideCount, setSelectedOverrideCount] = useState<number | null>(null);
   const perPage = 20;
 
   const loadingRef = useRef(false);
@@ -96,6 +97,19 @@ export default function Subscriptions() {
   }
 
   useEffect(() => { loadData(); }, []);
+
+  // Load override count when subscription is selected
+  useEffect(() => {
+    if (!selected) {
+      setSelectedOverrideCount(null);
+      return;
+    }
+    supabase
+      .from('capability_overrides')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', selected.business_id)
+      .then(({ count }) => setSelectedOverrideCount(count ?? 0));
+  }, [selected]);
 
   // Derive unique tiers for filter dropdown
   const uniqueTiers = [...new Set(subscriptions.map(s => s.tier).filter(Boolean))].sort();
@@ -269,6 +283,16 @@ export default function Subscriptions() {
             <DetailRow label="Plan" value={selected.plan_name} />
             <DetailRow label="Tier" value={selected.tier} />
             <DetailRow label="Status" value={selected.status} />
+            {selectedOverrideCount !== null && selectedOverrideCount > 0 && (
+              <DetailRow label="Capability Overrides" value={
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">
+                    {selectedOverrideCount}
+                  </span>
+                  <span className="text-xs text-gray-500">admin-granted</span>
+                </span>
+              } />
+            )}
 
             <div className="my-3 border-t border-gray-100" />
 

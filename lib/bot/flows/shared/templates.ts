@@ -64,16 +64,18 @@ export function getPaymentReceiptMessage(opts: {
 
 export function getOrderConfirmationMessage(opts: {
   businessName: string;
-  items: Array<{ name: string; quantity: number; price: number }>;
+  items: Array<{ name: string; quantity: number; price: number; variant_label?: string }>;
   totalAmount: number;
   referenceCode: string;
   deliveryAddress?: string;
+  shippingCost?: number;
   countryCode?: CountryCode;
 }): string {
   const cc = opts.countryCode || 'NG';
-  const itemLines = opts.items.map(i =>
-    `  \u2022 ${i.name} x${i.quantity} \u2014 ${formatCurrency(i.price * i.quantity, cc)}`
-  );
+  const itemLines = opts.items.map(i => {
+    const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
+    return `  \u2022 ${label} x${i.quantity} \u2014 ${formatCurrency(i.price * i.quantity, cc)}`;
+  });
 
   const lines = [
     `\u2705 *Order Confirmed!*`,
@@ -83,9 +85,13 @@ export function getOrderConfirmationMessage(opts: {
     '',
     '\ud83d\udce6 *Items:*',
     ...itemLines,
-    '',
-    `\ud83d\udcb0 *Total: ${formatCurrency(opts.totalAmount, cc)}*`,
   ];
+
+  if (opts.shippingCost && opts.shippingCost > 0) {
+    lines.push(`  \ud83d\ude9a Shipping: ${formatCurrency(opts.shippingCost, cc)}`);
+  }
+
+  lines.push('', `\ud83d\udcb0 *Total: ${formatCurrency(opts.totalAmount, cc)}*`);
 
   if (opts.deliveryAddress) {
     lines.push('', `\ud83d\udccd Delivery to: ${opts.deliveryAddress}`);

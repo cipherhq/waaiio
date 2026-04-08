@@ -68,9 +68,8 @@ export default function PricingPage() {
                 '7-day free trial (no fees at all)',
                 'Up to 50 bookings/month',
                 'WhatsApp automation',
-                'Basic dashboard',
+                'Dashboard & analytics',
                 `2.5% + ${formatCurrency(tiers.free.feeFlat, country)} per transaction`,
-                'Email support',
               ]}
               cta={{ label: 'Start Free Trial', href: '/get-started' }}
               country={country}
@@ -83,13 +82,12 @@ export default function PricingPage() {
               description="For growing businesses that need more volume and features."
               highlight
               features={[
+                'Everything in Starter, plus:',
                 'Up to 500 bookings/month',
-                'WhatsApp automation',
-                'Full dashboard & analytics',
-                'SMS & email reminders',
+                'WhatsApp reminders',
+                'Recurring payments',
+                'Broadcast messages',
                 `1.5% + ${formatCurrency(tiers.growth.feeFlat, country)} per transaction`,
-                'Priority email support',
-                'Guest management',
               ]}
               cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
               country={country}
@@ -101,14 +99,13 @@ export default function PricingPage() {
               priceNote="/month"
               description="For established businesses that want full control and branding."
               features={[
+                'Everything in Pro, plus:',
                 'Unlimited bookings',
-                'White-label (your brand)',
-                'Custom persona & greeting',
-                'Priority support',
-                'Advanced analytics & exports',
+                'Custom bot persona & greeting',
+                'Loyalty & referral programs',
+                'Queue & waitlist management',
+                'Customer feedback & reviews',
                 `1% + ${formatCurrency(tiers.business.feeFlat, country)} per transaction`,
-                'Dedicated account manager',
-                'API access (coming soon)',
               ]}
               cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
               country={country}
