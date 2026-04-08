@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
@@ -15,6 +15,12 @@ interface Service {
   deposit_amount: number;
   is_active: boolean;
   sort_order: number;
+  status: 'active' | 'inactive' | 'archived';
+  billing_type: 'one_time' | 'recurring';
+  recurring_interval: 'weekly' | 'monthly' | null;
+  is_featured: boolean;
+  image_url: string | null;
+  cancellation_policy: string | null;
 }
 
 type ViewMode = 'list' | 'add' | 'edit';
@@ -39,8 +45,16 @@ export default function ServicesPage() {
     deposit_amount: 0,
     is_active: true,
     sort_order: 0,
+    status: 'active',
+    billing_type: 'one_time',
+    recurring_interval: null,
+    is_featured: false,
+    image_url: null,
+    cancellation_policy: null,
   });
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchServices() {
     const supabase = createClient();
@@ -66,6 +80,12 @@ export default function ServicesPage() {
       deposit_amount: 0,
       is_active: true,
       sort_order: services.length,
+      status: 'active',
+      billing_type: 'one_time',
+      recurring_interval: null,
+      is_featured: false,
+      image_url: null,
+      cancellation_policy: null,
     });
     setView('add');
   }
@@ -73,6 +93,23 @@ export default function ServicesPage() {
   function openEdit(service: Service) {
     setForm({ ...service });
     setView('edit');
+  }
+
+  async function handleImageUpload(file: File) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('business_id', business.id);
+      const res = await fetch('/api/services/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success && json.url) {
+        setForm(prev => ({ ...prev, image_url: json.url }));
+      }
+    } catch {
+      // upload failed silently
+    }
+    setUploading(false);
   }
 
   async function handleSave() {
@@ -88,8 +125,14 @@ export default function ServicesPage() {
       price_is_variable: form.price_is_variable,
       duration_minutes: form.duration_minutes,
       deposit_amount: form.deposit_amount,
-      is_active: form.is_active,
+      is_active: form.status === 'active',
       sort_order: form.sort_order,
+      status: form.status,
+      billing_type: form.billing_type,
+      recurring_interval: form.billing_type === 'recurring' ? form.recurring_interval : null,
+      is_featured: form.is_featured,
+      image_url: form.image_url,
+      cancellation_policy: form.cancellation_policy?.trim() || null,
     };
 
     if (view === 'add') {
@@ -109,6 +152,16 @@ export default function ServicesPage() {
     await supabase.from('services').delete().eq('id', form.id);
     setView('list');
     fetchServices();
+  }
+
+  /** Format price with recurring suffix */
+  function priceLabel(service: Service) {
+    const prefix = service.price_is_variable ? 'From ' : '';
+    const base = formatCurrency(service.price, country);
+    if (service.billing_type === 'recurring' && service.recurring_interval) {
+      return `${prefix}${base}/${service.recurring_interval === 'weekly' ? 'week' : 'month'}`;
+    }
+    return `${prefix}${base}`;
   }
 
   if (loading) {
@@ -136,13 +189,53 @@ export default function ServicesPage() {
             </svg>
           </button>
           <h1 className="text-xl font-bold text-gray-900">
-            {view === 'add' ? 'Add Service' : 'Edit Service'}
+            {view === 'add' ? `Add ${labels.serviceName}` : `Edit ${labels.serviceName}`}
           </h1>
         </div>
 
         <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
           {/* Left column: Main fields */}
           <div className="space-y-4">
+            {/* Image upload */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Image</label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleImageUpload(f);
+                }}
+              />
+              {form.image_url ? (
+                <div className="relative inline-block">
+                  <img
+                    src={form.image_url}
+                    alt="Service"
+                    className="h-28 w-28 rounded-lg border border-gray-200 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, image_url: null })}
+                    className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow hover:bg-red-600"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex h-28 w-full items-center justify-center rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-brand hover:text-brand"
+                >
+                  {uploading ? 'Uploading...' : 'Click to upload image'}
+                </button>
+              )}
+            </div>
+
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">
                 Name <span className="text-red-400">*</span>
@@ -199,6 +292,43 @@ export default function ServicesPage() {
               </div>
             </div>
 
+            {/* Billing Type + Recurring Interval */}
+            {!isScheduling && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Billing Type</label>
+                  <select
+                    value={form.billing_type}
+                    onChange={(e) => {
+                      const val = e.target.value as 'one_time' | 'recurring';
+                      setForm({
+                        ...form,
+                        billing_type: val,
+                        recurring_interval: val === 'recurring' ? (form.recurring_interval || 'monthly') : null,
+                      });
+                    }}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  >
+                    <option value="one_time">One-time</option>
+                    <option value="recurring">Recurring</option>
+                  </select>
+                </div>
+                {form.billing_type === 'recurring' && (
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Recurring Interval</label>
+                    <select
+                      value={form.recurring_interval || 'monthly'}
+                      onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
+
             {isScheduling && (
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Duration (minutes)</label>
@@ -212,24 +342,50 @@ export default function ServicesPage() {
                 />
               </div>
             )}
+
+            {/* Cancellation Policy */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Cancellation Policy</label>
+              <textarea
+                value={form.cancellation_policy || ''}
+                onChange={(e) => setForm({ ...form, cancellation_policy: e.target.value })}
+                rows={2}
+                placeholder="e.g. Full refund if cancelled 24 hours before (optional)"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+              />
+            </div>
           </div>
 
           {/* Right column: Settings */}
           <div className="space-y-3">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Settings</p>
 
+            {/* Status dropdown */}
+            <div className="rounded-lg border border-gray-100 bg-white p-3">
+              <label className="mb-1 block text-sm font-medium text-gray-800">Status</label>
+              <select
+                value={form.status}
+                onChange={(e) => setForm({ ...form, status: e.target.value as 'active' | 'inactive' | 'archived' })}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="archived">Archived</option>
+              </select>
+            </div>
+
+            <ToggleRow
+              label="Featured"
+              description="Highlight this service"
+              checked={form.is_featured}
+              onChange={(v) => setForm({ ...form, is_featured: v })}
+            />
+
             <ToggleRow
               label="Variable Pricing"
               description="Price may vary (show 'from' prefix)"
               checked={form.price_is_variable}
               onChange={(v) => setForm({ ...form, price_is_variable: v })}
-            />
-
-            <ToggleRow
-              label="Active"
-              description="Visible to customers"
-              checked={form.is_active}
-              onChange={(v) => setForm({ ...form, is_active: v })}
             />
           </div>
         </div>
@@ -241,7 +397,7 @@ export default function ServicesPage() {
             disabled={saving || !form.name.trim()}
             className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
           >
-            {saving ? 'Saving...' : view === 'add' ? 'Add Service' : 'Save Changes'}
+            {saving ? 'Saving...' : view === 'add' ? `Add ${labels.serviceName}` : 'Save Changes'}
           </button>
           <button
             onClick={() => setView('list')}
@@ -254,7 +410,7 @@ export default function ServicesPage() {
               onClick={handleDelete}
               className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50"
             >
-              Delete Service
+              Delete {labels.serviceName}
             </button>
           )}
         </div>
@@ -269,7 +425,7 @@ export default function ServicesPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Services</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{labels.serviceNamePlural}</h1>
           <p className="mt-1 text-sm text-gray-500">
             Manage what your business offers
           </p>
@@ -278,7 +434,7 @@ export default function ServicesPage() {
           onClick={openAdd}
           className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600"
         >
-          + Add Service
+          + Add {labels.serviceName}
         </button>
       </div>
 
@@ -289,13 +445,13 @@ export default function ServicesPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             </svg>
           </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No services yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Add your first service so customers know what you offer.</p>
+          <h3 className="mt-4 text-sm font-semibold text-gray-900">No {labels.serviceNamePlural.toLowerCase()} yet</h3>
+          <p className="mt-1 text-sm text-gray-500">Add your first {labels.serviceName.toLowerCase()} so {labels.personLabelPlural.toLowerCase()} know what you offer.</p>
           <button
             onClick={openAdd}
             className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
           >
-            + Add Service
+            + Add {labels.serviceName}
           </button>
         </div>
       ) : (
@@ -305,31 +461,41 @@ export default function ServicesPage() {
               key={service.id}
               onClick={() => openEdit(service)}
               className={`cursor-pointer rounded-xl border bg-white p-4 transition hover:shadow-sm ${
-                service.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
+                service.status === 'active' ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
               }`}
             >
               <div className="flex items-center justify-between">
-                <div className="min-w-0 flex-1 pr-4">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-gray-900">{service.name}</h3>
-                    {!service.is_active && (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Inactive</span>
-                    )}
-                  </div>
-                  {service.description && (
-                    <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{service.description}</p>
+                <div className="flex min-w-0 flex-1 items-center gap-3 pr-4">
+                  {/* Thumbnail */}
+                  {service.image_url && (
+                    <img
+                      src={service.image_url}
+                      alt={service.name}
+                      className="h-10 w-10 shrink-0 rounded-lg border border-gray-100 object-cover"
+                    />
                   )}
-                  <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-500">
-                    <span className="font-medium text-gray-900">
-                      {service.price_is_variable && 'From '}
-                      {formatCurrency(service.price, country)}
-                    </span>
-                    {service.duration_minutes && (
-                      <span>{service.duration_minutes} min</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-semibold text-gray-900">{service.name}</h3>
+                      {service.is_featured && (
+                        <span className="text-amber-400" title="Featured">&#9733;</span>
+                      )}
+                      <StatusBadge status={service.status} />
+                    </div>
+                    {service.description && (
+                      <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{service.description}</p>
                     )}
-                    {service.deposit_amount > 0 && (
-                      <span>Deposit: {formatCurrency(service.deposit_amount, country)}</span>
-                    )}
+                    <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-500">
+                      <span className="font-medium text-gray-900">
+                        {priceLabel(service)}
+                      </span>
+                      {service.duration_minutes && (
+                        <span>{service.duration_minutes} min</span>
+                      )}
+                      {service.deposit_amount > 0 && (
+                        <span>Deposit: {formatCurrency(service.deposit_amount, country)}</span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -342,6 +508,20 @@ export default function ServicesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Status badge ──
+function StatusBadge({ status }: { status: string }) {
+  if (status === 'active') return null; // active is the default, no badge needed
+  const styles =
+    status === 'inactive'
+      ? 'bg-gray-100 text-gray-500'
+      : 'bg-gray-50 text-gray-400'; // archived
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${styles}`}>
+      {status}
+    </span>
   );
 }
 

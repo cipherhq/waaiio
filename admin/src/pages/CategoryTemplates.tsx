@@ -23,6 +23,10 @@ interface DefaultService {
   price_is_variable: boolean;
   duration_minutes: number | null;
   deposit_amount: number;
+  billing_type: 'one_time' | 'recurring';
+  recurring_interval: 'weekly' | 'monthly' | null;
+  is_featured: boolean;
+  cancellation_policy: string | null;
 }
 
 interface CategoryTemplate {
@@ -50,12 +54,33 @@ const FLOW_BADGE_COLORS: Record<string, string> = {
   ticketing: 'bg-yellow-100 text-yellow-700',
 };
 
+const ALL_CAPABILITIES = [
+  { id: 'scheduling', label: 'Scheduling', icon: '📅' },
+  { id: 'payment', label: 'Payments', icon: '💳' },
+  { id: 'ordering', label: 'Online Store', icon: '🛒' },
+  { id: 'ticketing', label: 'Ticketing', icon: '🎟️' },
+  { id: 'feedback', label: 'Feedback', icon: '⭐' },
+  { id: 'chat', label: 'Chat', icon: '💬' },
+  { id: 'reminders', label: 'Reminders', icon: '🔔' },
+  { id: 'loyalty', label: 'Loyalty', icon: '🏆' },
+  { id: 'referral', label: 'Referral', icon: '🤝' },
+  { id: 'queue', label: 'Queue', icon: '📋' },
+  { id: 'waitlist', label: 'Waitlist', icon: '📝' },
+  { id: 'reports', label: 'Reports', icon: '📄' },
+  { id: 'staff', label: 'Staff', icon: '👥' },
+  { id: 'crowdfunding', label: 'Crowdfunding', icon: '❤️' },
+] as const;
+
 const EMPTY_SERVICE: DefaultService = {
   name: '',
   price: 0,
   price_is_variable: false,
   duration_minutes: 60,
   deposit_amount: 0,
+  billing_type: 'one_time',
+  recurring_interval: null,
+  is_featured: false,
+  cancellation_policy: null,
 };
 
 const EMPTY_LABELS = {
@@ -67,6 +92,8 @@ const EMPTY_LABELS = {
   quantityLabel: '',
   personLabel: '',
   personLabelPlural: '',
+  serviceName: '',
+  serviceNamePlural: '',
   hiddenStatuses: [] as string[],
 };
 
@@ -103,6 +130,7 @@ export default function CategoryTemplates() {
   const [formGreeting, setFormGreeting] = useState('Welcome to {{name}}! How can I help you today?');
   const [formLabels, setFormLabels] = useState<typeof EMPTY_LABELS>({ ...EMPTY_LABELS });
   const [formServices, setFormServices] = useState<DefaultService[]>([]);
+  const [formCapabilities, setFormCapabilities] = useState<string[]>([]);
 
   const loadingRef = useRef(false);
 
@@ -159,6 +187,7 @@ export default function CategoryTemplates() {
     setFormGreeting('Welcome to {{name}}! How can I help you today?');
     setFormLabels({ ...EMPTY_LABELS });
     setFormServices([]);
+    setFormCapabilities(['scheduling', 'feedback', 'chat']);
     setModalOpen(true);
   }
 
@@ -182,9 +211,13 @@ export default function CategoryTemplates() {
       quantityLabel: labels.quantityLabel || '',
       personLabel: labels.personLabel || '',
       personLabelPlural: labels.personLabelPlural || '',
+      serviceName: labels.serviceName || '',
+      serviceNamePlural: labels.serviceNamePlural || '',
       hiddenStatuses: labels.hiddenStatuses || [],
     });
     setFormServices(Array.isArray(t.default_services) ? [...t.default_services] : []);
+    const metaCaps = (t.metadata as Record<string, unknown>)?.default_capabilities;
+    setFormCapabilities(Array.isArray(metaCaps) ? [...metaCaps] : ['scheduling', 'feedback', 'chat']);
     setModalOpen(true);
   }
 
@@ -207,6 +240,7 @@ export default function CategoryTemplates() {
         default_greeting: formGreeting,
         labels: formLabels,
         default_services: formServices.filter(s => s.name.trim()),
+        metadata: { default_capabilities: formCapabilities },
         updated_at: new Date().toISOString(),
       };
 
@@ -655,19 +689,116 @@ export default function CategoryTemplates() {
                         <X className="h-4 w-4" />
                       </button>
                     </div>
-                    <label className="mt-2 flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={svc.price_is_variable}
-                        onChange={e => updateService(i, 'price_is_variable', e.target.checked)}
-                        className="h-3.5 w-3.5 rounded border-gray-300 text-brand focus:ring-brand"
-                      />
-                      Variable price (customer enters amount)
-                    </label>
+                    <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600">Billing Type</label>
+                        <select
+                          value={svc.billing_type || 'one_time'}
+                          onChange={e => {
+                            const val = e.target.value as 'one_time' | 'recurring';
+                            updateService(i, 'billing_type', val);
+                            if (val === 'recurring' && !svc.recurring_interval) {
+                              updateService(i, 'recurring_interval', 'monthly');
+                            }
+                            if (val === 'one_time') {
+                              updateService(i, 'recurring_interval', null);
+                            }
+                          }}
+                          className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                        >
+                          <option value="one_time">One-time</option>
+                          <option value="recurring">Recurring</option>
+                        </select>
+                      </div>
+                      {(svc.billing_type === 'recurring') && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600">Interval</label>
+                          <select
+                            value={svc.recurring_interval || 'monthly'}
+                            onChange={e => updateService(i, 'recurring_interval', e.target.value)}
+                            className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                          >
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                          </select>
+                        </div>
+                      )}
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600">Cancellation Policy</label>
+                        <input
+                          type="text"
+                          value={svc.cancellation_policy || ''}
+                          onChange={e => updateService(i, 'cancellation_policy', e.target.value || null)}
+                          placeholder="Optional"
+                          className="mt-1 w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-2 flex items-center gap-4">
+                      <label className="flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={svc.price_is_variable}
+                          onChange={e => updateService(i, 'price_is_variable', e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-gray-300 text-brand focus:ring-brand"
+                        />
+                        Variable price
+                      </label>
+                      <label className="flex items-center gap-2 text-xs font-medium text-gray-600 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={svc.is_featured || false}
+                          onChange={e => updateService(i, 'is_featured', e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-gray-300 text-brand focus:ring-brand"
+                        />
+                        Featured
+                      </label>
+                    </div>
                   </div>
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="border-t border-gray-100" />
+
+          {/* Default Capabilities */}
+          <div>
+            <p className="text-xs font-semibold uppercase text-gray-500 mb-3">
+              Default Capabilities
+              <span className="ml-2 text-gray-400 normal-case font-normal">
+                ({formCapabilities.length} selected)
+              </span>
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {ALL_CAPABILITIES.map(cap => {
+                const isSelected = formCapabilities.includes(cap.id);
+                return (
+                  <button
+                    key={cap.id}
+                    type="button"
+                    onClick={() => {
+                      setFormCapabilities(prev =>
+                        isSelected
+                          ? prev.filter(c => c !== cap.id)
+                          : [...prev, cap.id]
+                      );
+                    }}
+                    className={`flex items-center gap-2 rounded-lg border p-2.5 text-left text-xs transition ${
+                      isSelected
+                        ? 'border-brand/30 bg-brand-50 font-semibold text-gray-900'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    <span className="text-base">{cap.icon}</span>
+                    <span>{cap.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-xs text-gray-400">
+              These capabilities will be pre-enabled when a business selects this category during signup.
+            </p>
           </div>
 
           {/* Save button */}

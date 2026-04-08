@@ -7,6 +7,7 @@ import { useBusiness, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { useChatUnreadCount } from '@/hooks/useChatUnreadCount';
 
 interface NavItem {
   href: string;
@@ -254,6 +255,7 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const { capabilities } = useCapabilities();
+  const chatUnreadCount = useChatUnreadCount(business.id);
   const categoryLabel =
     CATEGORY_LABELS[business.category as BusinessCategoryKey]?.entityName || 'business';
 
@@ -293,6 +295,14 @@ export function Sidebar() {
     if (item.label === 'Guests') {
       const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
       if (labels) return labels.personLabelPlural;
+    }
+    if (item.label === 'Services') {
+      const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
+      if (labels?.serviceNamePlural) return labels.serviceNamePlural;
+    }
+    if (item.label === 'Customers') {
+      const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
+      if (labels?.personLabelPlural) return labels.personLabelPlural;
     }
     return item.label;
   };
@@ -347,7 +357,12 @@ export function Sidebar() {
                       d={item.icon}
                     />
                   </svg>
-                  {getLabel(item)}
+                  <span className="flex-1">{getLabel(item)}</span>
+                  {item.label === 'Chat' && chatUnreadCount > 0 && !isActive(item.href) && (
+                    <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                      {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                    </span>
+                  )}
                 </Link>
               ))}
             </div>

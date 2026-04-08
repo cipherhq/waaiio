@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { exportToCsv } from '@/lib/utils/csv-export';
+import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -118,6 +119,7 @@ function tagColor(tag: string): string {
 export default function CustomersPage() {
   const business = useBusiness();
   const supabase = createClient();
+  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
 
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -304,9 +306,9 @@ export default function CustomersPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{labels.personLabelPlural}</h1>
           <p className="mt-1 text-sm text-gray-500">
-            {totalCustomers} customer profile{totalCustomers !== 1 ? 's' : ''} across all channels.
+            {totalCustomers} {labels.personLabel.toLowerCase()} profile{totalCustomers !== 1 ? 's' : ''} across all channels.
           </p>
         </div>
         {filtered.length > 0 && (
@@ -322,7 +324,7 @@ export default function CustomersPage() {
       {/* Metrics Row */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Total Customers</p>
+          <p className="text-xs font-medium text-gray-500">Total {labels.personLabelPlural}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{totalCustomers}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
@@ -338,7 +340,7 @@ export default function CustomersPage() {
           <p className="mt-2 text-2xl font-bold text-gray-900">{formatNaira(totalRevenue)}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Avg Spend / Customer</p>
+          <p className="text-xs font-medium text-gray-500">Avg Spend / {labels.personLabel}</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{formatNaira(Math.round(avgSpend))}</p>
         </div>
       </div>
@@ -385,7 +387,7 @@ export default function CustomersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Total Visits</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Total Spent</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Avg Rating</th>
@@ -477,7 +479,7 @@ export default function CustomersPage() {
           <div className="relative ml-auto flex w-full max-w-lg flex-col bg-white shadow-xl">
             {/* Drawer header */}
             <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-              <h2 className="text-lg font-bold text-gray-900">Customer Details</h2>
+              <h2 className="text-lg font-bold text-gray-900">{labels.personLabel} Details</h2>
               <button
                 onClick={() => setSelectedId(null)}
                 className="text-gray-400 hover:text-gray-600"
