@@ -244,7 +244,7 @@ export default function ServicesPage() {
                 type="text"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="e.g. Haircut, Full Body Massage"
+                placeholder={labels.namePlaceholder}
                 className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
                 autoFocus
               />
