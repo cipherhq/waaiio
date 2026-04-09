@@ -12,7 +12,7 @@ function getCapabilityLabel(cap: CapabilityId, category: string): string {
       if (category === 'car_wash') return 'Book a Wash';
       return labels ? `${labels.actionVerb} ${labels.entityName}` : 'Book Appointment';
     case 'payment':
-      if (category === 'church' || category === 'mosque') return 'Make a Payment';
+      if (category === 'church' || category === 'mosque') return 'Give';
       if (category === 'school') return 'Pay Fees';
       return 'Make Payment';
     case 'ordering':
@@ -22,7 +22,7 @@ function getCapabilityLabel(cap: CapabilityId, category: string): string {
     case 'ticketing':
       return 'Buy Tickets';
     case 'crowdfunding':
-      return 'Support Campaign';
+      return 'Give';
     case 'reminders':
       return 'My Reminders';
     case 'chat':

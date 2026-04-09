@@ -5,6 +5,11 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
+interface OptionGroup {
+  name: string;
+  values: string[];
+}
+
 interface ProductVariant {
   id?: string;
   label: string;
@@ -13,6 +18,8 @@ interface ProductVariant {
   sku: string;
   is_active: boolean;
   sort_order: number;
+  image_url?: string | null;
+  options?: Record<string, string>;
 }
 
 interface Product {
@@ -31,6 +38,7 @@ interface Product {
   allow_promo: boolean;
   has_variants: boolean;
   shipping_cost: number | null;
+  variant_options?: OptionGroup[];
 }
 
 const EMPTY_PRODUCT: Omit<Product, 'id'> = {
@@ -48,6 +56,7 @@ const EMPTY_PRODUCT: Omit<Product, 'id'> = {
   allow_promo: true,
   has_variants: false,
   shipping_cost: null,
+  variant_options: [],
 };
 
 const EMPTY_VARIANT: ProductVariant = {
@@ -57,9 +66,38 @@ const EMPTY_VARIANT: ProductVariant = {
   sku: '',
   is_active: true,
   sort_order: 0,
+  image_url: null,
+  options: {},
 };
 
 type ViewMode = 'list' | 'add' | 'edit' | 'bulk';
+
+// ── Helpers ──
+
+function generateCombinations(groups: OptionGroup[]): Record<string, string>[] {
+  const validGroups = groups.filter(g => g.name.trim() && g.values.length > 0);
+  if (validGroups.length === 0) return [];
+  return validGroups.reduce<Record<string, string>[]>(
+    (combos, group) => {
+      if (combos.length === 0) return group.values.map(v => ({ [group.name]: v }));
+      const result: Record<string, string>[] = [];
+      for (const combo of combos) {
+        for (const value of group.values) {
+          result.push({ ...combo, [group.name]: value });
+        }
+      }
+      return result;
+    }, []
+  );
+}
+
+function optionsKey(options: Record<string, string>): string {
+  return Object.entries(options).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('|');
+}
+
+function labelFromOptions(options: Record<string, string>): string {
+  return Object.values(options).join(' / ');
+}
 
 // ── CSV helpers ──
 function parseCSV(text: string): Record<string, string>[] {
@@ -105,6 +143,10 @@ export default function ProductsPage() {
   // Variants
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [deletedVariantIds, setDeletedVariantIds] = useState<string[]>([]);
+  const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
+  const [bulkPrice, setBulkPrice] = useState<string>('');
+  const [variantImageFiles, setVariantImageFiles] = useState<Record<number, File>>({});
+  const variantImageRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // Bulk
   const [bulkText, setBulkText] = useState('');
@@ -163,6 +205,9 @@ export default function ProductsPage() {
   // Get unique categories for suggestions
   const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
 
+  // Check if we're using multi-axis (option groups defined with >= 1 group)
+  const isMultiAxis = optionGroups.length > 0 && optionGroups.some(g => g.name.trim() && g.values.length > 0);
+
   // ── Open add/edit form ──
   function openAdd() {
     setForm({ ...EMPTY_PRODUCT, sort_order: products.length });
@@ -170,6 +215,9 @@ export default function ProductsPage() {
     setImagePreview(null);
     setVariants([]);
     setDeletedVariantIds([]);
+    setOptionGroups([]);
+    setBulkPrice('');
+    setVariantImageFiles({});
     setView('add');
   }
 
@@ -178,13 +226,19 @@ export default function ProductsPage() {
     setImageFile(null);
     setImagePreview(product.image_url);
     setDeletedVariantIds([]);
+    setBulkPrice('');
+    setVariantImageFiles({});
+
+    // Restore option groups from product
+    const groups = (product.variant_options as OptionGroup[]) || [];
+    setOptionGroups(groups);
 
     // Fetch variants if product has them
     if (product.has_variants) {
       const supabase = createClient();
       const { data } = await supabase
         .from('product_variants')
-        .select('id, label, price, stock_quantity, sku, is_active, sort_order')
+        .select('id, label, price, stock_quantity, sku, is_active, sort_order, image_url, options')
         .eq('product_id', product.id)
         .order('sort_order', { ascending: true });
       setVariants((data as ProductVariant[]) || []);
@@ -206,21 +260,87 @@ export default function ProductsPage() {
     e.target.value = '';
   }
 
-  async function uploadImage(): Promise<string | null> {
-    if (!imageFile) return form.image_url || null;
-    setUploadingImage(true);
+  async function uploadImageFile(file: File): Promise<string | null> {
     try {
       const formData = new FormData();
-      formData.append('file', imageFile);
+      formData.append('file', file);
       formData.append('business_id', business.id);
       const res = await fetch('/api/products/upload-image', { method: 'POST', body: formData });
       const json = await res.json();
-      setUploadingImage(false);
-      return json.url || form.image_url || null;
+      return json.url || null;
     } catch {
-      setUploadingImage(false);
-      return form.image_url || null;
+      return null;
     }
+  }
+
+  async function uploadImage(): Promise<string | null> {
+    if (!imageFile) return form.image_url || null;
+    setUploadingImage(true);
+    const url = await uploadImageFile(imageFile);
+    setUploadingImage(false);
+    return url || form.image_url || null;
+  }
+
+  // ── Variant image handling ──
+  function handleVariantImageSelect(idx: number, e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setVariantImageFiles(prev => ({ ...prev, [idx]: file }));
+    // Set preview immediately
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const updated = [...variants];
+      updated[idx] = { ...updated[idx], image_url: ev.target?.result as string };
+      setVariants(updated);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  }
+
+  // ── Generate variants from option groups ──
+  function handleGenerateVariants() {
+    const combos = generateCombinations(optionGroups);
+    if (combos.length === 0) return;
+
+    // Build a lookup of existing variants by their options key
+    const existingMap = new Map<string, ProductVariant>();
+    for (const v of variants) {
+      if (v.options && Object.keys(v.options).length > 0) {
+        existingMap.set(optionsKey(v.options), v);
+      }
+    }
+
+    const newVariants: ProductVariant[] = combos.map((combo, idx) => {
+      const key = optionsKey(combo);
+      const existing = existingMap.get(key);
+      if (existing) {
+        return { ...existing, sort_order: idx, label: labelFromOptions(combo), options: combo };
+      }
+      return {
+        ...EMPTY_VARIANT,
+        label: labelFromOptions(combo),
+        options: combo,
+        sort_order: idx,
+        price: bulkPrice ? Number(bulkPrice) : 0,
+      };
+    });
+
+    // Mark removed variants for deletion
+    const newKeys = new Set(combos.map(c => optionsKey(c)));
+    for (const v of variants) {
+      if (v.id && v.options && Object.keys(v.options).length > 0 && !newKeys.has(optionsKey(v.options))) {
+        setDeletedVariantIds(prev => [...prev, v.id!]);
+      }
+    }
+
+    setVariants(newVariants);
+  }
+
+  // ── Apply bulk price ──
+  function applyBulkPrice() {
+    const price = Number(bulkPrice);
+    if (!price || price <= 0) return;
+    setVariants(variants.map(v => ({ ...v, price })));
   }
 
   // ── Save (create or update) ──
@@ -230,7 +350,7 @@ export default function ProductsPage() {
 
     const imageUrl = await uploadImage();
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       business_id: business.id,
       name: form.name.trim(),
       description: form.description?.trim() || null,
@@ -246,6 +366,7 @@ export default function ProductsPage() {
       allow_promo: form.allow_promo,
       has_variants: form.has_variants,
       shipping_cost: form.shipping_cost,
+      variant_options: isMultiAxis ? optionGroups.filter(g => g.name.trim() && g.values.length > 0) : [],
     };
 
     const supabase = createClient();
@@ -265,17 +386,39 @@ export default function ProductsPage() {
         await supabase.from('product_variants').delete().in('id', deletedVariantIds);
       }
 
+      // Upload variant images in parallel
+      const imageUploads = Object.entries(variantImageFiles).map(async ([idxStr, file]) => {
+        const idx = Number(idxStr);
+        const url = await uploadImageFile(file);
+        return { idx, url };
+      });
+      const uploadResults = await Promise.all(imageUploads);
+      const uploadedUrls: Record<number, string | null> = {};
+      for (const r of uploadResults) {
+        uploadedUrls[r.idx] = r.url;
+      }
+
       // Upsert each variant
       for (let i = 0; i < variants.length; i++) {
         const v = variants[i];
-        const variantPayload = {
+        // Determine image_url: newly uploaded > existing (non-data-uri) > null
+        let variantImageUrl = v.image_url;
+        if (uploadedUrls[i] !== undefined) {
+          variantImageUrl = uploadedUrls[i];
+        } else if (variantImageUrl && variantImageUrl.startsWith('data:')) {
+          variantImageUrl = null; // data URI preview without upload — shouldn't happen but safety
+        }
+
+        const variantPayload: Record<string, unknown> = {
           product_id: productId,
-          label: v.label.trim(),
+          label: v.label.trim() || labelFromOptions(v.options || {}),
           price: v.price || 0,
           stock_quantity: v.stock_quantity,
           sku: v.sku?.trim() || null,
           is_active: v.is_active,
           sort_order: i,
+          image_url: variantImageUrl || null,
+          options: v.options && Object.keys(v.options).length > 0 ? v.options : {},
         };
 
         if (v.id) {
@@ -535,8 +678,8 @@ export default function ProductsPage() {
                   onClick={() => {
                     const newHasVariants = !form.has_variants;
                     setForm({ ...form, has_variants: newHasVariants });
-                    if (newHasVariants && variants.length === 0) {
-                      setVariants([{ ...EMPTY_VARIANT }]);
+                    if (newHasVariants && variants.length === 0 && optionGroups.length === 0) {
+                      setOptionGroups([{ name: '', values: [] }]);
                     }
                   }}
                   className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.has_variants ? 'bg-brand' : 'bg-gray-200'}`}
@@ -546,79 +689,245 @@ export default function ProductsPage() {
               </div>
 
               {form.has_variants && (
-                <div className="mt-4 space-y-2">
-                  {variants.map((v, idx) => (
-                    <div key={idx} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-2">
-                      <input
-                        type="text"
-                        value={v.label}
-                        onChange={(e) => {
-                          const updated = [...variants];
-                          updated[idx] = { ...updated[idx], label: e.target.value };
-                          setVariants(updated);
-                        }}
-                        placeholder="Label (e.g. 8 inches)"
-                        className="min-w-0 flex-1 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
-                      />
-                      <div className="relative w-24 shrink-0">
-                        <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{curr}</span>
-                        <input
-                          type="number"
-                          min={0}
-                          value={v.price || ''}
-                          onChange={(e) => {
-                            const updated = [...variants];
-                            updated[idx] = { ...updated[idx], price: Number(e.target.value) };
-                            setVariants(updated);
-                          }}
-                          placeholder="Price"
-                          className="w-full rounded border border-gray-100 py-1.5 pl-6 pr-1 text-sm outline-none focus:border-brand"
-                        />
+                <div className="mt-4 space-y-4">
+                  {/* Option Groups Editor */}
+                  <div className="space-y-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Option Groups</p>
+                    {optionGroups.map((group, gIdx) => (
+                      <div key={gIdx} className="rounded-lg border border-gray-200 bg-white p-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={group.name}
+                            onChange={(e) => {
+                              const updated = [...optionGroups];
+                              updated[gIdx] = { ...updated[gIdx], name: e.target.value };
+                              setOptionGroups(updated);
+                            }}
+                            placeholder={`Option name (e.g. ${gIdx === 0 ? 'Length' : gIdx === 1 ? 'Color' : 'Size'})`}
+                            className="w-40 rounded border border-gray-100 px-2 py-1.5 text-sm font-medium outline-none focus:border-brand"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <OptionValueInput
+                              values={group.values}
+                              onChange={(values) => {
+                                const updated = [...optionGroups];
+                                updated[gIdx] = { ...updated[gIdx], values };
+                                setOptionGroups(updated);
+                              }}
+                              maxValues={10}
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setOptionGroups(optionGroups.filter((_, i) => i !== gIdx));
+                            }}
+                            className="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
                       </div>
-                      <input
-                        type="number"
-                        min={0}
-                        value={v.stock_quantity ?? ''}
-                        onChange={(e) => {
-                          const updated = [...variants];
-                          updated[idx] = { ...updated[idx], stock_quantity: e.target.value ? Number(e.target.value) : null };
-                          setVariants(updated);
-                        }}
-                        placeholder="Stock"
-                        className="w-16 shrink-0 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
-                      />
-                      <input
-                        type="text"
-                        value={v.sku}
-                        onChange={(e) => {
-                          const updated = [...variants];
-                          updated[idx] = { ...updated[idx], sku: e.target.value };
-                          setVariants(updated);
-                        }}
-                        placeholder="SKU"
-                        className="w-20 shrink-0 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
-                      />
+                    ))}
+                    {optionGroups.length < 3 && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (v.id) setDeletedVariantIds(prev => [...prev, v.id!]);
-                          setVariants(variants.filter((_, i) => i !== idx));
-                        }}
-                        className="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                        onClick={() => setOptionGroups([...optionGroups, { name: '', values: [] }])}
+                        className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        + Add Option Group
                       </button>
+                    )}
+                  </div>
+
+                  {/* Generate button */}
+                  {optionGroups.some(g => g.name.trim() && g.values.length > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleGenerateVariants}
+                      className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600"
+                    >
+                      Generate Variants ({generateCombinations(optionGroups).length} combinations)
+                    </button>
+                  )}
+
+                  {/* Variant Grid */}
+                  {variants.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                          Variants ({variants.length})
+                        </p>
+                        {/* Bulk price setter */}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-gray-500">Set all prices:</span>
+                          <div className="relative w-24">
+                            <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{curr}</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={bulkPrice}
+                              onChange={(e) => setBulkPrice(e.target.value)}
+                              placeholder="0"
+                              className="w-full rounded border border-gray-200 py-1.5 pl-5 pr-1 text-sm outline-none focus:border-brand"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={applyBulkPrice}
+                            disabled={!bulkPrice || Number(bulkPrice) <= 0}
+                            className="rounded bg-gray-100 px-2 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-200 disabled:opacity-50"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Variant rows */}
+                      <div className="max-h-[400px] space-y-2 overflow-auto">
+                        {variants.map((v, idx) => (
+                          <div key={idx} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white p-2">
+                            {/* Options chips (read-only if multi-axis) */}
+                            {isMultiAxis && v.options && Object.keys(v.options).length > 0 ? (
+                              <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+                                {Object.entries(v.options).map(([key, val]) => (
+                                  <span key={key} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+                                    {val}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <input
+                                type="text"
+                                value={v.label}
+                                onChange={(e) => {
+                                  const updated = [...variants];
+                                  updated[idx] = { ...updated[idx], label: e.target.value };
+                                  setVariants(updated);
+                                }}
+                                placeholder="Label (e.g. 8 inches)"
+                                className="min-w-0 flex-1 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                              />
+                            )}
+                            <div className="relative w-24 shrink-0">
+                              <span className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">{curr}</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={v.price || ''}
+                                onChange={(e) => {
+                                  const updated = [...variants];
+                                  updated[idx] = { ...updated[idx], price: Number(e.target.value) };
+                                  setVariants(updated);
+                                }}
+                                placeholder="Price"
+                                className="w-full rounded border border-gray-100 py-1.5 pl-6 pr-1 text-sm outline-none focus:border-brand"
+                              />
+                            </div>
+                            <input
+                              type="number"
+                              min={0}
+                              value={v.stock_quantity ?? ''}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                updated[idx] = { ...updated[idx], stock_quantity: e.target.value ? Number(e.target.value) : null };
+                                setVariants(updated);
+                              }}
+                              placeholder="Stock"
+                              className="w-16 shrink-0 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                            <input
+                              type="text"
+                              value={v.sku}
+                              onChange={(e) => {
+                                const updated = [...variants];
+                                updated[idx] = { ...updated[idx], sku: e.target.value };
+                                setVariants(updated);
+                              }}
+                              placeholder="SKU"
+                              className="w-20 shrink-0 rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                            {/* Variant image */}
+                            <button
+                              type="button"
+                              onClick={() => variantImageRefs.current[idx]?.click()}
+                              className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-gray-200 bg-gray-50 hover:border-brand"
+                              title="Upload variant image"
+                            >
+                              {v.image_url ? (
+                                <img src={v.image_url} alt="" className="h-full w-full object-cover" />
+                              ) : (
+                                <svg className="mx-auto mt-1 h-5 w-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                              )}
+                              <input
+                                ref={(el) => { variantImageRefs.current[idx] = el; }}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                onChange={(e) => handleVariantImageSelect(idx, e)}
+                                className="hidden"
+                              />
+                            </button>
+                            {/* Active toggle */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const updated = [...variants];
+                                updated[idx] = { ...updated[idx], is_active: !updated[idx].is_active };
+                                setVariants(updated);
+                              }}
+                              className={`relative h-5 w-9 shrink-0 rounded-full transition ${v.is_active ? 'bg-brand' : 'bg-gray-200'}`}
+                              title={v.is_active ? 'Active' : 'Inactive'}
+                            >
+                              <div className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition" style={{ left: v.is_active ? '18px' : '2px' }} />
+                            </button>
+                            {/* Delete variant (only for non-multi-axis or manual) */}
+                            {!isMultiAxis && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (v.id) setDeletedVariantIds(prev => [...prev, v.id!]);
+                                  setVariants(variants.filter((_, i) => i !== idx));
+                                }}
+                                className="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Add manual variant (only when not using option groups) */}
+                      {!isMultiAxis && (
+                        <button
+                          type="button"
+                          onClick={() => setVariants([...variants, { ...EMPTY_VARIANT, sort_order: variants.length }])}
+                          className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
+                        >
+                          + Add Variant
+                        </button>
+                      )}
                     </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setVariants([...variants, { ...EMPTY_VARIANT, sort_order: variants.length }])}
-                    className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
-                  >
-                    + Add Variant
-                  </button>
+                  )}
+
+                  {/* Legacy: show add variant button if no option groups and no variants */}
+                  {!isMultiAxis && variants.length === 0 && optionGroups.every(g => !g.name.trim() || g.values.length === 0) && (
+                    <button
+                      type="button"
+                      onClick={() => setVariants([{ ...EMPTY_VARIANT }])}
+                      className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
+                    >
+                      + Add Variant Manually
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -785,8 +1094,8 @@ export default function ProductsPage() {
                         <td className="px-4 py-2 text-gray-400">{i + 1}</td>
                         <td className="px-4 py-2 font-medium text-gray-900">{p.name}</td>
                         <td className="px-4 py-2 text-gray-600">{curr}{p.price.toLocaleString()}</td>
-                        <td className="px-4 py-2 text-gray-500">{p.category || '—'}</td>
-                        <td className="px-4 py-2 text-gray-500">{p.stock_quantity ?? '—'}</td>
+                        <td className="px-4 py-2 text-gray-500">{p.category || '\u2014'}</td>
+                        <td className="px-4 py-2 text-gray-500">{p.stock_quantity ?? '\u2014'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -934,7 +1243,7 @@ export default function ProductsPage() {
                   <span className="text-sm font-bold text-gray-900">
                     {product.has_variants
                       ? (product as Product & { _variant_count?: number; _price_min?: number; _price_max?: number })._price_min !== undefined
-                        ? `${formatCurrency((product as Product & { _price_min?: number })._price_min!, country)} – ${formatCurrency((product as Product & { _price_max?: number })._price_max!, country)}`
+                        ? `${formatCurrency((product as Product & { _price_min?: number })._price_min!, country)} \u2013 ${formatCurrency((product as Product & { _price_max?: number })._price_max!, country)}`
                         : 'Variants'
                       : formatCurrency(product.price, country)}
                   </span>
@@ -982,6 +1291,53 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── Option value tag input ──
+function OptionValueInput({ values, onChange, maxValues }: {
+  values: string[];
+  onChange: (values: string[]) => void;
+  maxValues: number;
+}) {
+  const [inputValue, setInputValue] = useState('');
+
+  function addValue() {
+    const val = inputValue.trim();
+    if (!val || values.includes(val) || values.length >= maxValues) return;
+    onChange([...values, val]);
+    setInputValue('');
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {values.map((val, i) => (
+        <span key={i} className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs text-brand-700">
+          {val}
+          <button
+            type="button"
+            onClick={() => onChange(values.filter((_, j) => j !== i))}
+            className="ml-0.5 text-brand-400 hover:text-brand-700"
+          >
+            &times;
+          </button>
+        </span>
+      ))}
+      {values.length < maxValues && (
+        <input
+          type="text"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); addValue(); }
+            if (e.key === ',' ) { e.preventDefault(); addValue(); }
+          }}
+          onBlur={addValue}
+          placeholder={values.length === 0 ? 'Type value + Enter' : '+add'}
+          className="min-w-[60px] max-w-[100px] rounded border-none bg-transparent px-1 py-0.5 text-xs outline-none"
+        />
       )}
     </div>
   );

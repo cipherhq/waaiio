@@ -10,14 +10,19 @@ function getOrderingLabels(category: string): { noun: string; emoji: string; bro
   switch (category) {
     case 'restaurant':
     case 'food_delivery':
-      return { noun: 'menu', emoji: '🍽️', browseLabel: 'View Menu' };
+      return { noun: 'menu', emoji: '\uD83C\uDF7D\uFE0F', browseLabel: 'View Menu' };
     case 'pharmacy':
-      return { noun: 'medicines', emoji: '💊', browseLabel: 'Browse' };
+      return { noun: 'medicines', emoji: '\uD83D\uDC8A', browseLabel: 'Browse' };
     case 'logistics':
-      return { noun: 'services', emoji: '📦', browseLabel: 'Browse' };
+      return { noun: 'services', emoji: '\uD83D\uDCE6', browseLabel: 'Browse' };
     default:
-      return { noun: 'products', emoji: '🛍️', browseLabel: 'Browse' };
+      return { noun: 'products', emoji: '\uD83D\uDECD\uFE0F', browseLabel: 'Browse' };
   }
+}
+
+interface OptionGroup {
+  name: string;
+  values: string[];
 }
 
 interface CartItem {
@@ -40,7 +45,7 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: rawProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .order('sort_order')
@@ -79,7 +84,7 @@ export const orderingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity, has_variants')
+          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
@@ -97,15 +102,153 @@ export const orderingFlow: FlowDefinition = {
             current_product_name: product.name,
             current_product_price: product.price,
             current_product_has_variants: product.has_variants,
+            current_product_image_url: product.image_url || null,
+            current_product_variant_options: product.variant_options || [],
+            current_stock_quantity: product.has_variants ? null : product.stock_quantity,
           },
         };
       },
       async next(ctx: FlowContext) {
-        return ctx.session.session_data.current_product_has_variants ? 'select_variant' : 'select_quantity';
+        const d = ctx.session.session_data;
+        if (!d.current_product_has_variants) return 'select_quantity';
+
+        const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
+        if (variantOptions.length >= 2 && variantOptions.every(g => g.name && g.values.length > 0)) {
+          // Multi-axis: step through each option group
+          d.current_option_axis_index = 0;
+          d.current_selected_options = {};
+          return 'select_option_axis';
+        }
+        // Single axis or legacy flat variants
+        return 'select_variant';
       },
     },
 
-    // ── Select Variant ──
+    // ── Select Option Axis (multi-axis sequential selection) ──
+    {
+      id: 'select_option_axis',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
+        const axisIndex = (d.current_option_axis_index as number) || 0;
+        const axis = variantOptions[axisIndex];
+
+        if (!axis) {
+          return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start again.' }];
+        }
+
+        const messages: PromptMessage[] = [];
+
+        // On first axis, send product image
+        if (axisIndex === 0 && d.current_product_image_url) {
+          messages.push({
+            type: 'image',
+            imageUrl: d.current_product_image_url as string,
+            caption: `${d.current_product_name}`,
+          });
+        }
+
+        messages.push({
+          type: 'list',
+          title: `Choose ${axis.name}`,
+          body: `Select *${axis.name}* for *${d.current_product_name}*:`,
+          buttonLabel: `Choose ${axis.name}`,
+          items: axis.values.map(val => ({
+            title: val,
+            description: '',
+            postbackText: val,
+          })),
+        });
+
+        return messages;
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
+        const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
+        const axisIndex = (d.current_option_axis_index as number) || 0;
+        const axis = variantOptions[axisIndex];
+
+        if (!axis) return { valid: false, errorMessage: 'Invalid option. Send *Hi* to start again.' };
+
+        // Match input to a value (case-insensitive)
+        const match = axis.values.find(v => v.toLowerCase() === input.toLowerCase());
+        if (!match) {
+          return { valid: false, errorMessage: `Please select a valid ${axis.name}.` };
+        }
+
+        // Store selected option
+        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
+        selectedOptions[axis.name] = match;
+
+        return {
+          valid: true,
+          data: {
+            current_selected_options: selectedOptions,
+            current_option_axis_index: axisIndex + 1,
+          },
+        };
+      },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
+        const axisIndex = (d.current_option_axis_index as number) || 0;
+
+        // More axes remaining?
+        if (axisIndex < variantOptions.length) {
+          return 'select_option_axis';
+        }
+
+        // All axes done — find matching variant
+        const selectedOptions = (d.current_selected_options as Record<string, string>) || {};
+        const productId = d.current_product_id as string;
+
+        const { data: variants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, label, price, stock_quantity, image_url, options')
+          .eq('product_id', productId)
+          .eq('is_active', true);
+
+        // Find variant whose options match all selected values
+        const matchingVariant = (variants || []).find(v => {
+          const opts = (v.options as Record<string, string>) || {};
+          return Object.entries(selectedOptions).every(([key, val]) => opts[key] === val);
+        });
+
+        if (!matchingVariant) {
+          return 'select_variant_error';
+        }
+
+        if (matchingVariant.stock_quantity !== null && matchingVariant.stock_quantity <= 0) {
+          return 'select_variant_error';
+        }
+
+        // Store variant details
+        d.current_variant_id = matchingVariant.id;
+        d.current_variant_label = matchingVariant.label;
+        d.current_product_price = matchingVariant.price;
+        d.current_variant_image_url = matchingVariant.image_url || null;
+        d.current_stock_quantity = matchingVariant.stock_quantity;
+
+        return 'select_quantity';
+      },
+    },
+
+    // ── Select Variant Error ──
+    {
+      id: 'select_variant_error',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'text',
+          text: 'Sorry, that combination is not available. Send *Hi* to start again.',
+        }];
+      },
+      async validate(): Promise<ValidationResult> {
+        return { valid: true };
+      },
+      async next() { return null; },
+    },
+
+    // ── Select Variant (single-axis / legacy flat) ──
     {
       id: 'select_variant',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
@@ -114,7 +257,7 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: variants } = await ctx.supabase
           .from('product_variants')
-          .select('id, label, price, stock_quantity')
+          .select('id, label, price, stock_quantity, image_url')
           .eq('product_id', productId)
           .eq('is_active', true)
           .order('sort_order');
@@ -125,8 +268,19 @@ export const orderingFlow: FlowDefinition = {
           return [{ type: 'text', text: `Sorry, all options for *${d.current_product_name}* are out of stock.` }];
         }
 
+        const messages: PromptMessage[] = [];
+
+        // Send product image if available
+        if (d.current_product_image_url) {
+          messages.push({
+            type: 'image',
+            imageUrl: d.current_product_image_url as string,
+            caption: `${d.current_product_name}`,
+          });
+        }
+
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        return [{
+        messages.push({
           type: 'list',
           title: `${d.current_product_name}`,
           body: `Choose an option for *${d.current_product_name}*:`,
@@ -136,12 +290,14 @@ export const orderingFlow: FlowDefinition = {
             description: formatCurrency(v.price, cc) + (v.stock_quantity !== null && v.stock_quantity <= 3 ? ` (${v.stock_quantity} left)` : ''),
             postbackText: v.id,
           })),
-        }];
+        });
+
+        return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: variant } = await ctx.supabase
           .from('product_variants')
-          .select('id, label, price, stock_quantity')
+          .select('id, label, price, stock_quantity, image_url')
           .eq('id', input)
           .single();
 
@@ -157,6 +313,8 @@ export const orderingFlow: FlowDefinition = {
             current_variant_id: variant.id,
             current_variant_label: variant.label,
             current_product_price: variant.price,
+            current_variant_image_url: variant.image_url || null,
+            current_stock_quantity: variant.stock_quantity,
           },
         };
       },
@@ -170,27 +328,81 @@ export const orderingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const variantInfo = d.current_variant_label ? ` (${d.current_variant_label})` : '';
-        return [
-          {
-            type: 'text',
-            text: `*${d.current_product_name}*${variantInfo} — ${formatCurrency(d.current_product_price as number, cc)}\n\nHow many would you like?`,
-          },
-          {
+        const productName = d.current_product_name as string;
+        const stockQty = d.current_stock_quantity as number | null;
+
+        // Calculate how many of this product/variant are already in cart
+        const cart = (d.cart as CartItem[]) || [];
+        const variantId = d.current_variant_id as string | undefined;
+        const productId = d.current_product_id as string;
+        const inCart = cart
+          .filter(i => variantId ? i.variant_id === variantId : i.product_id === productId && !i.variant_id)
+          .reduce((sum, i) => sum + i.quantity, 0);
+
+        const available = stockQty !== null ? stockQty - inCart : null;
+
+        const messages: PromptMessage[] = [];
+
+        // Send variant image or product image
+        const imageUrl = (d.current_variant_image_url as string) || (d.current_product_image_url as string);
+        if (imageUrl) {
+          messages.push({
+            type: 'image',
+            imageUrl,
+            caption: `${productName}${variantInfo}`,
+          });
+        }
+
+        let promptText = `*${productName}*${variantInfo} \u2014 ${formatCurrency(d.current_product_price as number, cc)}`;
+        if (available !== null && available <= 5) {
+          promptText += `\n\n_Only ${available} available_`;
+        }
+        promptText += '\n\nHow many would you like?';
+
+        // Cap quick-select buttons to available stock
+        const quickOptions = [1, 2, 3].filter(n => available === null || n <= available);
+
+        messages.push({ type: 'text', text: promptText });
+
+        if (quickOptions.length > 0) {
+          messages.push({
             type: 'buttons',
             body: 'Select quantity:',
-            buttons: [
-              { id: '1', title: '1' },
-              { id: '2', title: '2' },
-              { id: '3', title: '3' },
-            ],
-          },
-        ];
+            buttons: quickOptions.map(n => ({ id: String(n), title: String(n) })),
+          });
+        }
+
+        return messages;
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const qty = parseInt(input, 10);
         if (isNaN(qty) || qty < 1 || qty > 99) {
           return { valid: false, errorMessage: 'Please enter a number between 1 and 99.' };
         }
+
+        const d = ctx.session.session_data;
+        const stockQty = d.current_stock_quantity as number | null;
+
+        if (stockQty !== null) {
+          // Account for items already in cart for this product/variant
+          const cart = (d.cart as CartItem[]) || [];
+          const variantId = d.current_variant_id as string | undefined;
+          const productId = d.current_product_id as string;
+          const inCart = cart
+            .filter(i => variantId ? i.variant_id === variantId : i.product_id === productId && !i.variant_id)
+            .reduce((sum, i) => sum + i.quantity, 0);
+
+          const available = stockQty - inCart;
+
+          if (available <= 0) {
+            return { valid: false, errorMessage: `Sorry, this item is already fully added to your cart.` };
+          }
+
+          if (qty > available) {
+            return { valid: false, errorMessage: `Only ${available} available. Please enter ${available} or less.` };
+          }
+        }
+
         return { valid: true, data: { current_quantity: qty } };
       },
       async next() { return 'add_to_cart'; },
@@ -217,10 +429,16 @@ export const orderingFlow: FlowDefinition = {
 
         cart.push(cartItem);
 
-        // Clean up variant session data
+        // Clean up variant + multi-axis session data
         delete d.current_variant_id;
         delete d.current_variant_label;
         delete d.current_product_has_variants;
+        delete d.current_product_image_url;
+        delete d.current_variant_image_url;
+        delete d.current_product_variant_options;
+        delete d.current_option_axis_index;
+        delete d.current_selected_options;
+        delete d.current_stock_quantity;
 
         d.cart = cart;
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -233,19 +451,19 @@ export const orderingFlow: FlowDefinition = {
 
         const itemSummary = cart.map(i => {
           const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
-          return `  • ${label} x${i.quantity} — ${formatCurrency(i.price * i.quantity, cc)}`;
+          return `  \u2022 ${label} x${i.quantity} \u2014 ${formatCurrency(i.price * i.quantity, cc)}`;
         }).join('\n');
 
         return [
           {
             type: 'text',
-            text: `✅ Added! Your cart:\n\n${itemSummary}\n\n*Total: ${formatCurrency(total, cc)}*`,
+            text: `\u2705 Added! Your cart:\n\n${itemSummary}\n\n*Total: ${formatCurrency(total, cc)}*`,
           },
           {
             type: 'buttons',
             body: 'What next?',
             buttons: [
-              { id: 'checkout', title: 'Checkout 💳' },
+              { id: 'checkout', title: 'Checkout \uD83D\uDCB3' },
               { id: 'add_more', title: 'Add More' },
             ],
           },
@@ -266,7 +484,7 @@ export const orderingFlow: FlowDefinition = {
           type: 'buttons',
           body: `Cart total: ${formatCurrency(total, cc)}\n\nCheckout or add more items?`,
           buttons: [
-            { id: 'checkout', title: 'Checkout 💳' },
+            { id: 'checkout', title: 'Checkout \uD83D\uDCB3' },
             { id: 'add_more', title: 'Add More' },
           ],
         }];
@@ -385,8 +603,8 @@ export const orderingFlow: FlowDefinition = {
             type: 'buttons',
             body: 'Would you like delivery or pickup?',
             buttons: [
-              { id: 'delivery', title: '🚚 Delivery' },
-              { id: 'pickup', title: '🏪 Pickup' },
+              { id: 'delivery', title: '\uD83D\uDE9A Delivery' },
+              { id: 'pickup', title: '\uD83C\uDFEA Pickup' },
             ],
           },
         ];
@@ -409,7 +627,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'collect_address',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📍 Please type your delivery address:' }];
+        return [{ type: 'text', text: '\uD83D\uDCCD Please type your delivery address:' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input.trim().length < 5) {
@@ -607,7 +825,7 @@ export const orderingFlow: FlowDefinition = {
                   deliveryAddress: d.delivery_address as string | undefined,
                   shippingCost: shippingCost || undefined,
                   countryCode: cc,
-                }) + `\n\n💳 Pay here 👇\n${paymentResult.url}`,
+                }) + `\n\n\uD83D\uDCB3 Pay here \uD83D\uDC47\n${paymentResult.url}`,
               },
               {
                 type: 'buttons',
@@ -690,7 +908,7 @@ export const orderingFlow: FlowDefinition = {
           if (verified) {
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `✅ *Payment Confirmed!*\n\nYour order *${ctx.session.session_data.reference_code}* has been confirmed.\n\nThank you! 🎉`,
+              text: `\u2705 *Payment Confirmed!*\n\nYour order *${ctx.session.session_data.reference_code}* has been confirmed.\n\nThank you! \uD83C\uDF89`,
             });
 
             // Post-completion: loyalty, feedback, referral
