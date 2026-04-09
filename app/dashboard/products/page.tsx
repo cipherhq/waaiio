@@ -366,17 +366,38 @@ export default function ProductsPage() {
       allow_promo: form.allow_promo,
       has_variants: form.has_variants,
       shipping_cost: form.shipping_cost,
-      variant_options: isMultiAxis ? optionGroups.filter(g => g.name.trim() && g.values.length > 0) : [],
     };
+
+    // Only include variant_options if the column exists (migration 032)
+    if (isMultiAxis) {
+      payload.variant_options = optionGroups.filter(g => g.name.trim() && g.values.length > 0);
+    }
 
     const supabase = createClient();
     let productId = form.id;
 
     if (view === 'add') {
-      const { data } = await supabase.from('products').insert(payload).select('id').single();
-      productId = data?.id;
+      const { data, error } = await supabase.from('products').insert(payload).select('id').single();
+      if (error) {
+        // Retry without variant_options in case migration not applied
+        if (error.message?.includes('variant_options')) {
+          delete payload.variant_options;
+          const { data: retryData } = await supabase.from('products').insert(payload).select('id').single();
+          productId = retryData?.id;
+        } else {
+          console.error('Product save error:', error);
+          setSaving(false);
+          return;
+        }
+      } else {
+        productId = data?.id;
+      }
     } else {
-      await supabase.from('products').update(payload).eq('id', form.id);
+      const { error } = await supabase.from('products').update(payload).eq('id', form.id);
+      if (error?.message?.includes('variant_options')) {
+        delete payload.variant_options;
+        await supabase.from('products').update(payload).eq('id', form.id);
+      }
     }
 
     // Upsert variants
@@ -417,14 +438,26 @@ export default function ProductsPage() {
           sku: v.sku?.trim() || null,
           is_active: v.is_active,
           sort_order: i,
-          image_url: variantImageUrl || null,
-          options: v.options && Object.keys(v.options).length > 0 ? v.options : {},
         };
 
+        // Only include new columns if they have values (graceful if migration not applied)
+        if (variantImageUrl) variantPayload.image_url = variantImageUrl;
+        if (v.options && Object.keys(v.options).length > 0) variantPayload.options = v.options;
+
         if (v.id) {
-          await supabase.from('product_variants').update(variantPayload).eq('id', v.id);
+          const { error } = await supabase.from('product_variants').update(variantPayload).eq('id', v.id);
+          if (error?.message?.includes('image_url') || error?.message?.includes('options')) {
+            delete variantPayload.image_url;
+            delete variantPayload.options;
+            await supabase.from('product_variants').update(variantPayload).eq('id', v.id);
+          }
         } else {
-          await supabase.from('product_variants').insert(variantPayload);
+          const { error } = await supabase.from('product_variants').insert(variantPayload);
+          if (error?.message?.includes('image_url') || error?.message?.includes('options')) {
+            delete variantPayload.image_url;
+            delete variantPayload.options;
+            await supabase.from('product_variants').insert(variantPayload);
+          }
         }
       }
     }
@@ -695,35 +728,37 @@ export default function ProductsPage() {
                     <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Option Groups</p>
                     {optionGroups.map((group, gIdx) => (
                       <div key={gIdx} className="rounded-lg border border-gray-200 bg-white p-3">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={group.name}
-                            onChange={(e) => {
-                              const updated = [...optionGroups];
-                              updated[gIdx] = { ...updated[gIdx], name: e.target.value };
-                              setOptionGroups(updated);
-                            }}
-                            placeholder={`Option name (e.g. ${gIdx === 0 ? 'Length' : gIdx === 1 ? 'Color' : 'Size'})`}
-                            className="w-40 rounded border border-gray-100 px-2 py-1.5 text-sm font-medium outline-none focus:border-brand"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <OptionValueInput
-                              values={group.values}
-                              onChange={(values) => {
+                        <div className="flex items-start gap-2">
+                          <div className="flex-1 space-y-2">
+                            <input
+                              type="text"
+                              value={group.name}
+                              onChange={(e) => {
                                 const updated = [...optionGroups];
-                                updated[gIdx] = { ...updated[gIdx], values };
+                                updated[gIdx] = { ...updated[gIdx], name: e.target.value };
                                 setOptionGroups(updated);
                               }}
-                              maxValues={10}
+                              placeholder={`Option name (e.g. ${gIdx === 0 ? 'Length' : gIdx === 1 ? 'Color' : 'Size'})`}
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm font-medium outline-none focus:border-brand"
                             />
+                            <div className="rounded border border-gray-100 px-2 py-1.5">
+                              <OptionValueInput
+                                values={group.values}
+                                onChange={(values) => {
+                                  const updated = [...optionGroups];
+                                  updated[gIdx] = { ...updated[gIdx], values };
+                                  setOptionGroups(updated);
+                                }}
+                                maxValues={10}
+                              />
+                            </div>
                           </div>
                           <button
                             type="button"
                             onClick={() => {
                               setOptionGroups(optionGroups.filter((_, i) => i !== gIdx));
                             }}
-                            className="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                            className="mt-1.5 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
                           >
                             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1335,8 +1370,8 @@ function OptionValueInput({ values, onChange, maxValues }: {
             if (e.key === ',' ) { e.preventDefault(); addValue(); }
           }}
           onBlur={addValue}
-          placeholder={values.length === 0 ? 'Type value + Enter' : '+add'}
-          className="min-w-[60px] max-w-[100px] rounded border-none bg-transparent px-1 py-0.5 text-xs outline-none"
+          placeholder={values.length === 0 ? 'Type a value and press Enter' : 'Add more...'}
+          className="min-w-[120px] flex-1 rounded border-none bg-transparent px-1 py-0.5 text-xs outline-none"
         />
       )}
     </div>
