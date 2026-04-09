@@ -182,7 +182,7 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // ── Per-Country Pricing ──
 
 const COUNTRY_PRICING: Record<CountryCode, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 100 }, growth: { price: 15_000, feeFlat: 50 }, business: { price: 50_000, feeFlat: 50 } },
+  NG: { free: { price: 0, feeFlat: 200 }, growth: { price: 15_000, feeFlat: 50 }, business: { price: 50_000, feeFlat: 50 } },
   US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 15, feeFlat: 0.25 }, business: { price: 50, feeFlat: 0.25 } },
   GB: { free: { price: 0, feeFlat: 0.40 }, growth: { price: 12, feeFlat: 0.20 }, business: { price: 40, feeFlat: 0.20 } },
   CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 20, feeFlat: 0.25 }, business: { price: 65, feeFlat: 0.25 } },
