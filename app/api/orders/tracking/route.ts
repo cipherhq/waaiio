@@ -1,6 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { GupshupService } from '@/lib/channels/gupshup';
+import type { MessageSender } from '@/lib/channels/message-sender';
+
+let defaultGupshup: GupshupService;
+function getDefaultGupshup() {
+  if (!defaultGupshup) defaultGupshup = new GupshupService();
+  return defaultGupshup;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -40,25 +48,23 @@ export async function POST(request: NextRequest) {
       try {
         const resolver = new ChannelResolver(supabase);
         const resolved = await resolver.resolveByBusinessId(businessId);
+        const sender: MessageSender = resolved?.sender || getDefaultGupshup();
 
-        if (resolved) {
-          const phone = order.delivery_phone.startsWith('+')
-            ? order.delivery_phone.slice(1)
-            : order.delivery_phone;
+        const phone = order.delivery_phone.startsWith('+')
+          ? order.delivery_phone.slice(1)
+          : order.delivery_phone;
 
-          let message = `Your order *${order.reference_code}* has been shipped!`;
-          if (shippingCarrier) {
-            message += `\n\nCarrier: ${shippingCarrier}`;
-          }
-          if (trackingNumber) {
-            message += `\nTracking: ${trackingNumber}`;
-          }
-
-          await resolved.sender.sendText({ to: phone, text: message });
+        let message = `Your order *${order.reference_code}* has been shipped!`;
+        if (shippingCarrier) {
+          message += `\n\nCarrier: ${shippingCarrier}`;
         }
+        if (trackingNumber) {
+          message += `\nTracking: ${trackingNumber}`;
+        }
+
+        await sender.sendText({ to: phone, text: message });
       } catch (err) {
         console.error('[TRACKING] WhatsApp notification error:', err);
-        // Don't fail the whole request if notification fails
       }
     }
 

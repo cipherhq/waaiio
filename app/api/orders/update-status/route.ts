@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { GupshupService } from '@/lib/channels/gupshup';
+import type { MessageSender } from '@/lib/channels/message-sender';
 
 const STATUS_MESSAGES: Record<string, string> = {
   processing: 'Your order *{ref}* is now being prepared.',
@@ -9,6 +11,12 @@ const STATUS_MESSAGES: Record<string, string> = {
   delivered: 'Your order *{ref}* has been delivered. Thank you for your purchase!',
   cancelled: 'Your order *{ref}* has been cancelled. If you have questions, please reach out.',
 };
+
+let defaultGupshup: GupshupService;
+function getDefaultGupshup() {
+  if (!defaultGupshup) defaultGupshup = new GupshupService();
+  return defaultGupshup;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,16 +58,15 @@ export async function POST(request: NextRequest) {
       try {
         const resolver = new ChannelResolver(supabase);
         const resolved = await resolver.resolveByBusinessId(businessId);
+        const sender: MessageSender = resolved?.sender || getDefaultGupshup();
 
-        if (resolved) {
-          const phone = order.delivery_phone.startsWith('+')
-            ? order.delivery_phone.slice(1)
-            : order.delivery_phone;
+        const phone = order.delivery_phone.startsWith('+')
+          ? order.delivery_phone.slice(1)
+          : order.delivery_phone;
 
-          const message = messageTemplate.replace('{ref}', order.reference_code);
-          await resolved.sender.sendText({ to: phone, text: message });
-          notified = true;
-        }
+        const message = messageTemplate.replace('{ref}', order.reference_code);
+        await sender.sendText({ to: phone, text: message });
+        notified = true;
       } catch (err) {
         console.error('[ORDER-STATUS] WhatsApp notification error:', err);
       }

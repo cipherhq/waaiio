@@ -635,7 +635,36 @@ export const orderingFlow: FlowDefinition = {
         }
         return { valid: true, data: { delivery_address: input.trim() } };
       },
-      async next() { return 'collect_name'; },
+      async next() { return 'confirm_address'; },
+    },
+
+    // ── Confirm Address ──
+    {
+      id: 'confirm_address',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const address = ctx.session.session_data.delivery_address as string;
+        return [{
+          type: 'buttons',
+          body: `\uD83D\uDCCD Your delivery address:\n\n*${address}*\n\nIs this correct?`,
+          buttons: [
+            { id: 'yes', title: 'Yes, correct' },
+            { id: 'change', title: 'Change address' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.toLowerCase();
+        if (text === 'yes' || text === 'yes, correct') {
+          return { valid: true, data: { address_confirmed: true } };
+        }
+        if (text === 'change' || text === 'change address') {
+          return { valid: true, data: { address_confirmed: false } };
+        }
+        return { valid: false, errorMessage: 'Please tap *Yes, correct* or *Change address*.' };
+      },
+      async next(ctx: FlowContext) {
+        return ctx.session.session_data.address_confirmed ? 'collect_name' : 'collect_address';
+      },
     },
 
     // ── Collect Name ──
@@ -826,11 +855,11 @@ export const orderingFlow: FlowDefinition = {
                   deliveryAddress: d.delivery_address as string | undefined,
                   shippingCost: shippingCost || undefined,
                   countryCode: cc,
-                }) + `\n\n\uD83D\uDCB3 Pay here \uD83D\uDC47\n${paymentResult.url}`,
+                }) + `\n\n\uD83D\uDCB3 Pay here \uD83D\uDC47\n${paymentResult.url}\n\n\u2757 After completing payment, *come back to this chat* and tap *I've Paid* to confirm your order.`,
               },
               {
                 type: 'buttons',
-                body: "Tap *I've Paid* after completing payment:",
+                body: "\uD83D\uDD14 Completed payment? Return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'cancel', title: 'Cancel' },
@@ -881,7 +910,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete payment using the link above.\n\nTap *I've Paid* after paying:",
+          body: "Complete payment using the link above, then *come back here* and tap *I've Paid* to confirm your order:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'cancel', title: 'Cancel' },
