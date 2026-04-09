@@ -682,8 +682,9 @@ export const orderingFlow: FlowDefinition = {
 
           if (shippingMode === 'flat') {
             shippingCost = defaultFee;
-          } else if (shippingMode === 'per_product') {
-            // Fetch per-product shipping costs
+          } else {
+            // Fetch per-product shipping costs (works for 'per_product' mode
+            // AND auto-detects when products have shipping_cost even without explicit mode)
             const productIds = [...new Set(cart.map(i => i.product_id))];
             const { data: productsData } = await ctx.supabase
               .from('products')
@@ -692,11 +693,11 @@ export const orderingFlow: FlowDefinition = {
 
             const shippingMap: Record<string, number> = {};
             for (const p of productsData || []) {
-              shippingMap[p.id] = p.shipping_cost ?? defaultFee;
+              shippingMap[p.id] = p.shipping_cost ?? (shippingMode === 'per_product' ? defaultFee : 0);
             }
 
             for (const item of cart) {
-              shippingCost += (shippingMap[item.product_id] || defaultFee) * item.quantity;
+              shippingCost += (shippingMap[item.product_id] || 0) * item.quantity;
             }
           }
         }
