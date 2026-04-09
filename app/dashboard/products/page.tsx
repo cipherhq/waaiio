@@ -569,8 +569,8 @@ export default function ProductsPage() {
               className="relative cursor-pointer overflow-hidden rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 transition hover:border-brand hover:bg-gray-100"
             >
               {imagePreview ? (
-                <div className="relative h-48 w-full">
-                  <img src={imagePreview} alt="Product" className="h-full w-full object-cover" />
+                <div className="relative h-48 w-full bg-gray-100">
+                  <img src={imagePreview} alt="Product" className="h-full w-full object-contain" />
                   <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/30">
                     <span className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-medium text-gray-700 opacity-0 transition hover:opacity-100">
                       Change Photo
