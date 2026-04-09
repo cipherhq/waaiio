@@ -1,0 +1,73 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
+
+const STATUS_MESSAGES: Record<string, string> = {
+  processing: 'Your order *{ref}* is now being prepared.',
+  shipped: 'Your order *{ref}* has been shipped! It\'s on its way.',
+  ready: 'Your order *{ref}* is ready for pickup!',
+  delivered: 'Your order *{ref}* has been delivered. Thank you for your purchase!',
+  cancelled: 'Your order *{ref}* has been cancelled. If you have questions, please reach out.',
+};
+
+export async function POST(request: NextRequest) {
+  try {
+    const { orderId, businessId, status } = await request.json();
+
+    if (!orderId || !businessId || !status) {
+      return NextResponse.json({ error: 'orderId, businessId, and status required' }, { status: 400 });
+    }
+
+    const supabase = createServiceClient();
+
+    // Validate order belongs to business
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .select('id, reference_code, delivery_phone, business_id, status')
+      .eq('id', orderId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (orderError || !order) {
+      return NextResponse.json({ error: 'Order not found' }, { status: 404 });
+    }
+
+    // Don't update if same status
+    if (order.status === status) {
+      return NextResponse.json({ success: true, notified: false });
+    }
+
+    // Update order status
+    await supabase
+      .from('orders')
+      .update({ status })
+      .eq('id', orderId);
+
+    // Send WhatsApp notification to customer
+    let notified = false;
+    const messageTemplate = STATUS_MESSAGES[status];
+    if (order.delivery_phone && messageTemplate) {
+      try {
+        const resolver = new ChannelResolver(supabase);
+        const resolved = await resolver.resolveByBusinessId(businessId);
+
+        if (resolved) {
+          const phone = order.delivery_phone.startsWith('+')
+            ? order.delivery_phone.slice(1)
+            : order.delivery_phone;
+
+          const message = messageTemplate.replace('{ref}', order.reference_code);
+          await resolved.sender.sendText({ to: phone, text: message });
+          notified = true;
+        }
+      } catch (err) {
+        console.error('[ORDER-STATUS] WhatsApp notification error:', err);
+      }
+    }
+
+    return NextResponse.json({ success: true, notified });
+  } catch (error) {
+    console.error('[ORDER-STATUS] Error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}

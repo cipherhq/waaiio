@@ -100,8 +100,17 @@ export default function OrdersPage() {
 
   async function updateOrderStatus(orderId: string, newStatus: string) {
     setUpdatingStatus(true);
-    const supabase = createClient();
-    await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+    try {
+      await fetch('/api/orders/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, businessId: business.id, status: newStatus }),
+      });
+    } catch {
+      // Fallback to direct update if API fails
+      const supabase = createClient();
+      await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+    }
     await fetchOrders();
     if (selectedOrder?.id === orderId) {
       setSelectedOrder(prev => prev ? { ...prev, status: newStatus } : null);

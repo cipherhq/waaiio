@@ -10,6 +10,7 @@ import { recurringManageFlow } from './recurring-manage.flow';
 import { queueCheckinFlow } from './queue-checkin.flow';
 import { feedbackFlow } from './feedback.flow';
 import { waitlistFlow } from './waitlist.flow';
+import { chatFlow } from './chat.flow';
 
 const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   scheduling: schedulingFlow,
@@ -27,6 +28,7 @@ const EXTENDED_REGISTRY: Record<string, FlowDefinition> = {
   'queue-checkin': queueCheckinFlow,
   feedback: feedbackFlow,
   waitlist: waitlistFlow,
+  chat: chatFlow,
 };
 
 export function getFlowDefinition(type: FlowType): FlowDefinition {
