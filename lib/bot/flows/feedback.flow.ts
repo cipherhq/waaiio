@@ -1,4 +1,6 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getCapabilityLabel } from './capability-selection.flow';
+import type { CapabilityId } from '@/lib/capabilities/types';
 
 const feedbackRatingStep: FlowStepConfig = {
   id: 'feedback_rating',
@@ -107,12 +109,51 @@ const feedbackThanksStep: FlowStepConfig = {
       });
     }
 
-    const stars = '⭐'.repeat(rating);
+    const stars = '\u2B50'.repeat(rating);
     const thanks = rating >= 4
       ? `Thank you for the ${stars} rating! We appreciate your feedback.`
       : `Thank you for your feedback ${stars}. We'll work to improve your experience.`;
 
-    return [{ type: 'text', text: thanks }];
+    const messages: PromptMessage[] = [{ type: 'text', text: thanks }];
+
+    // Show capability buttons so user can continue without hitting the greeting again
+    if (ctx.business) {
+      try {
+        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+        const capabilities = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
+        const userFacing = capabilities.filter(
+          (c: string) => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff'].includes(c),
+        );
+
+        if (userFacing.length > 0) {
+          // Store capabilities and advance session to select_capability
+          delete d.active_capability;
+          d.capabilities = capabilities;
+          await ctx.supabase
+            .from('bot_sessions')
+            .update({ session_data: d, current_step: 'select_capability' })
+            .eq('id', ctx.session.id);
+
+          const category = ctx.business.category || 'other';
+          const buttons = userFacing.slice(0, 3).map((cap: string) => ({
+            id: `cap_${cap}`,
+            title: getCapabilityLabel(cap as CapabilityId, category),
+          }));
+
+          messages.push({
+            type: 'buttons',
+            body: 'Is there anything else I can help with?',
+            buttons,
+          });
+
+          return messages;
+        }
+      } catch (err) {
+        console.error('[FEEDBACK] Capabilities fetch error:', err);
+      }
+    }
+
+    return messages;
   },
 
   async validate(): Promise<ValidationResult> {
@@ -120,7 +161,7 @@ const feedbackThanksStep: FlowStepConfig = {
   },
 
   async next() {
-    return null; // Flow complete
+    return null; // Flow complete (only reached if no capabilities available)
   },
 };
 

@@ -1,8 +1,17 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-get'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true });
+    if (auth instanceof NextResponse) return auth;
+
     const businessId = request.nextUrl.searchParams.get('businessId');
     if (!businessId) {
       return NextResponse.json({ error: 'businessId required' }, { status: 400 });
@@ -22,14 +31,21 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ responses: data || [] });
   } catch (error) {
-    console.error('[CANNED] GET error:', error);
+    logger.error('[CANNED] GET error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { businessId, title, messageText, shortcut } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-post'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { businessId, title, messageText, shortcut } = body;
     if (!businessId || !title || !messageText) {
       return NextResponse.json({ error: 'businessId, title, and messageText required' }, { status: 400 });
     }
@@ -64,14 +80,21 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ response: data });
   } catch (error) {
-    console.error('[CANNED] POST error:', error);
+    logger.error('[CANNED] POST error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
-    const { id, businessId, title, messageText, shortcut, isActive } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-put'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { id, businessId, title, messageText, shortcut, isActive } = body;
     if (!id || !businessId) {
       return NextResponse.json({ error: 'id and businessId required' }, { status: 400 });
     }
@@ -96,14 +119,21 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[CANNED] PUT error:', error);
+    logger.error('[CANNED] PUT error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
   try {
-    const { id, businessId } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-delete'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { id, businessId } = body;
     if (!id || !businessId) {
       return NextResponse.json({ error: 'id and businessId required' }, { status: 400 });
     }
@@ -122,7 +152,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[CANNED] DELETE error:', error);
+    logger.error('[CANNED] DELETE error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

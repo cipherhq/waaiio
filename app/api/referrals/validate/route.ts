@@ -1,9 +1,19 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { businessId, referralCode, refereePhone } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'referrals-validate'), 20, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { businessId, referralCode, refereePhone } = body;
     if (!businessId || !referralCode) {
       return NextResponse.json({ error: 'businessId and referralCode required' }, { status: 400 });
     }
@@ -98,7 +108,7 @@ export async function POST(request: NextRequest) {
       reward_amount: referral.reward_amount,
     });
   } catch (error) {
-    console.error('[REFERRALS] Validate error:', error);
+    logger.error('[REFERRALS] Validate error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

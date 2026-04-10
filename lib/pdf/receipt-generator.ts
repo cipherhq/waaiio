@@ -51,7 +51,7 @@ function formatDate(iso: string): string {
   }
 }
 
-function collectPdfBuffer(doc: PDFKit.PDFDocument): Promise<Buffer> {
+function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Uint8Array[] = [];
     doc.on('data', (chunk: Uint8Array) => chunks.push(chunk));
@@ -213,6 +213,171 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
 
   // Footer
   y += 30;
+  doc.fontSize(8).font('Helvetica').fillColor('#888888')
+    .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+
+  doc.end();
+  return bufferPromise;
+}
+
+// ── Annual Statement PDF (A4, grouped by month) ──
+
+export interface AnnualStatementData {
+  customerName: string;
+  customerPhone: string;
+  countryCode: CountryCode;
+  year: number;
+  businessName?: string;
+  rows: HistoryRow[];
+}
+
+export async function generateAnnualStatementPdf(data: AnnualStatementData): Promise<Buffer> {
+  const doc = new PDFDocument({ size: 'A4', margin: 40 });
+  const bufferPromise = collectPdfBuffer(doc);
+
+  const pageWidth = doc.page.width;
+  const contentWidth = pageWidth - 80;
+
+  // Header
+  doc.fontSize(18).font('Helvetica-Bold')
+    .text(`ANNUAL STATEMENT — ${data.year}`, 40, 40, { width: contentWidth, align: 'center' });
+
+  if (data.businessName) {
+    doc.fontSize(11).font('Helvetica')
+      .text(data.businessName, 40, 65, { width: contentWidth, align: 'center' });
+  }
+
+  const subHeaderY = data.businessName ? 82 : 65;
+  doc.fontSize(10).font('Helvetica')
+    .text(`${data.customerName}  |  ${maskPhone(data.customerPhone)}`, 40, subHeaderY, {
+      width: contentWidth, align: 'center',
+    });
+
+  doc.fontSize(9).font('Helvetica').fillColor('#666666')
+    .text(`Generated: ${formatDate(new Date().toISOString())}`, 40, subHeaderY + 15, {
+      width: contentWidth, align: 'center',
+    });
+
+  doc.fillColor('#000000');
+
+  // Group rows by month
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+
+  const grouped = new Map<number, HistoryRow[]>();
+  for (const row of data.rows) {
+    const d = new Date(row.date);
+    const month = d.getMonth();
+    if (!grouped.has(month)) grouped.set(month, []);
+    grouped.get(month)!.push(row);
+  }
+
+  // Sort months ascending
+  const sortedMonths = Array.from(grouped.keys()).sort((a, b) => a - b);
+
+  // Table columns
+  const cols = {
+    date: { x: 40, w: 75 },
+    service: { x: 115, w: 140 },
+    business: { x: 255, w: 110 },
+    ref: { x: 365, w: 70 },
+    amount: { x: 435, w: 70 },
+    status: { x: 505, w: 50 },
+  };
+
+  let y = subHeaderY + 35;
+  let grandTotal = 0;
+  const rowHeight = 18;
+
+  for (const monthIdx of sortedMonths) {
+    const monthRows = grouped.get(monthIdx)!;
+
+    // Check page space for month header + at least 1 row
+    if (y + 40 > doc.page.height - 60) {
+      doc.addPage();
+      y = 40;
+    }
+
+    // Month header
+    doc.fontSize(12).font('Helvetica-Bold').fillColor('#333333')
+      .text(`${monthNames[monthIdx]} ${data.year}`, 40, y);
+    y += 20;
+
+    // Table header
+    doc.rect(40, y - 3, contentWidth, 18).fillColor('#f0f0f0').fill();
+    doc.fillColor('#333333');
+    doc.fontSize(8).font('Helvetica-Bold');
+    doc.text('Date', cols.date.x, y, { width: cols.date.w });
+    doc.text('Service', cols.service.x, y, { width: cols.service.w });
+    doc.text('Business', cols.business.x, y, { width: cols.business.w });
+    doc.text('Ref', cols.ref.x, y, { width: cols.ref.w });
+    doc.text('Amount', cols.amount.x, y, { width: cols.amount.w, align: 'right' });
+    doc.text('Status', cols.status.x, y, { width: cols.status.w });
+    y += 20;
+    doc.fillColor('#000000');
+
+    let monthTotal = 0;
+
+    for (let i = 0; i < monthRows.length; i++) {
+      const row = monthRows[i];
+
+      if (y + rowHeight > doc.page.height - 60) {
+        doc.addPage();
+        y = 40;
+      }
+
+      if (i % 2 === 1) {
+        doc.rect(40, y - 3, contentWidth, rowHeight).fillColor('#fafafa').fill();
+        doc.fillColor('#000000');
+      }
+
+      doc.fontSize(8).font('Helvetica');
+      doc.text(formatDate(row.date), cols.date.x, y, { width: cols.date.w });
+      doc.text(row.serviceName.slice(0, 28), cols.service.x, y, { width: cols.service.w });
+      doc.text(row.businessName.slice(0, 20), cols.business.x, y, { width: cols.business.w });
+      doc.text(row.referenceCode || '-', cols.ref.x, y, { width: cols.ref.w });
+      doc.text(formatCurrency(row.amount, data.countryCode), cols.amount.x, y, { width: cols.amount.w, align: 'right' });
+      doc.text(row.status, cols.status.x, y, { width: cols.status.w });
+
+      monthTotal += row.amount;
+      y += rowHeight;
+    }
+
+    // Month subtotal
+    y += 4;
+    doc.fontSize(9).font('Helvetica-Bold')
+      .text(`Subtotal: ${formatCurrency(monthTotal, data.countryCode)}`, 40, y, {
+        width: contentWidth, align: 'right',
+      });
+    y += 20;
+    grandTotal += monthTotal;
+  }
+
+  // Grand total
+  if (y + 60 > doc.page.height - 40) {
+    doc.addPage();
+    y = 40;
+  }
+
+  doc.moveTo(40, y).lineTo(pageWidth - 40, y).strokeColor('#cccccc').stroke();
+  y += 12;
+
+  doc.fontSize(11).font('Helvetica-Bold')
+    .text(`Total Transactions: ${data.rows.length}`, 40, y);
+  doc.text(`Grand Total: ${formatCurrency(grandTotal, data.countryCode)}`, 300, y, {
+    width: contentWidth - 260, align: 'right',
+  });
+
+  // Tax notice
+  y += 25;
+  doc.fontSize(8).font('Helvetica').fillColor('#666666')
+    .text(
+      'This statement is provided for your records. Please consult your tax advisor regarding the deductibility of any amounts shown.',
+      40, y, { width: contentWidth, align: 'center' },
+    );
+
+  // Footer
+  y += 25;
   doc.fontSize(8).font('Helvetica').fillColor('#888888')
     .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
 

@@ -2,9 +2,14 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { cancelSubscription as cancelPaystackSub } from '@/lib/payments/paystack-recurring';
 import { cancelSubscription as cancelStripeSub } from '@/lib/payments/stripe-recurring';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'recurring-cancel'), 10, 60_000);
+    if (rateLimit) return rateLimit;
+
     const { subscriptionId, phone } = await request.json();
 
     if (!subscriptionId || !phone) {
@@ -48,7 +53,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Recurring cancel error:', error);
+    logger.error('Recurring cancel error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

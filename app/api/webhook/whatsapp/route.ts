@@ -6,6 +6,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
+import { logger } from '@/lib/logger';
 
 // Singleton instances (persisted across warm invocations)
 let defaultGupshup: GupshupService;
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
     }
 
     const rawBody = await request.text();
-    console.log('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
+    logger.debug('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
 
     let body: Record<string, unknown>;
     // Gupshup may send URL-encoded form data instead of JSON
@@ -56,12 +57,12 @@ export async function POST(request: NextRequest) {
       body = JSON.parse(rawBody);
     }
 
-    console.log('[WEBHOOK] Parsed type:', body.type, 'payload keys:', body.payload ? Object.keys(body.payload as object) : 'none');
+    logger.debug('[WEBHOOK] Parsed type:', body.type, 'payload keys:', body.payload ? Object.keys(body.payload as object) : 'none');
 
     // Only process message events
     const eventType = (body.type || body.eventType || '') as string;
     if (eventType && eventType !== 'message' && eventType !== 'message-event') {
-      console.log('[WEBHOOK] Skipping event type:', eventType);
+      logger.debug('[WEBHOOK] Skipping event type:', eventType);
       return NextResponse.json({ status: 'ok', message: 'Non-message event' });
     }
 
@@ -84,10 +85,10 @@ export async function POST(request: NextRequest) {
 
     const msgType = (innerPayload?.type || payload.type || 'text') as string;
 
-    console.log('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
+    logger.debug('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
 
     if (!source) {
-      console.log('[WEBHOOK] No source phone, skipping');
+      logger.debug('[WEBHOOK] No source phone, skipping');
       return NextResponse.json({ status: 'ok', message: 'No source phone' });
     }
 
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (existing) {
-      console.log('[WEBHOOK] Duplicate message, skipping:', messageId);
+      logger.debug('[WEBHOOK] Duplicate message, skipping:', messageId);
       return NextResponse.json({ success: true, duplicate: true });
     }
 
@@ -132,10 +133,10 @@ export async function POST(request: NextRequest) {
       });
     } catch { /* Don't fail if insert fails */ }
 
-    console.log('[WEBHOOK] Message processed successfully');
+    logger.debug('[WEBHOOK] Message processed successfully');
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
-    console.error('[WEBHOOK] Error:', error);
+    logger.error('[WEBHOOK] Error:', error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
 }

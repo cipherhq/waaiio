@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
       });
 
     if (termsError) {
-      console.error('Insert terms acceptance error:', termsError);
+      logger.error('Insert terms acceptance error:', termsError);
       return NextResponse.json({ error: 'Failed to record terms acceptance' }, { status: 500 });
     }
 
@@ -55,13 +56,13 @@ export async function POST(request: NextRequest) {
       .eq('id', business_id);
 
     if (updateError) {
-      console.error('Update payout mode error:', updateError);
+      logger.error('Update payout mode error:', updateError);
       return NextResponse.json({ error: 'Failed to update payout mode' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Accept terms error:', (error as Error).message);
+    logger.error('Accept terms error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to accept terms' }, { status: 500 });
   }
 }

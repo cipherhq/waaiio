@@ -22,6 +22,12 @@ interface BusinessPayout {
   created_at: string;
 }
 
+interface Refund {
+  amount: number;
+  status: string;
+  created_at: string;
+}
+
 interface Business {
   id: string;
   category: string;
@@ -32,20 +38,23 @@ export default function Finance() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [fees, setFees] = useState<PlatformFee[]>([]);
   const [payouts, setPayouts] = useState<BusinessPayout[]>([]);
+  const [refunds, setRefunds] = useState<Refund[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
 
   useEffect(() => {
     async function load() {
-      const [paymentsRes, feesRes, payoutsRes, bizRes] = await Promise.all([
+      const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes] = await Promise.all([
         supabase.from('payments').select('id, amount, status, business_id, created_at'),
         supabase.from('platform_fees').select('fee_total, waived, created_at'),
         supabase.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
+        supabase.from('refunds').select('amount, status, created_at').eq('status', 'success'),
         supabase.from('businesses').select('id, category'),
       ]);
 
       setPayments(paymentsRes.data || []);
       setFees(feesRes.data || []);
       setPayouts(payoutsRes.data || []);
+      setRefunds(refundsRes.data || []);
       setBusinesses(bizRes.data || []);
       setLoading(false);
     }
@@ -56,6 +65,8 @@ export default function Finance() {
   const metrics = useMemo(() => {
     const successPayments = payments.filter(p => p.status === 'success');
     const grossVolume = successPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
+
+    const totalRefunds = refunds.reduce((s, r) => s + Number(r.amount || 0), 0);
 
     const platformFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
     const gatewayFeeEstimate = grossVolume * 0.015; // ~1.5% estimate
@@ -93,8 +104,12 @@ export default function Finance() {
       payoutBuckets[p.status].amount += Number(p.net_amount || 0);
     }
 
+    const netVolume = grossVolume - totalRefunds;
+
     return {
       grossVolume,
+      totalRefunds,
+      netVolume,
       platformFees,
       gatewayFeeEstimate,
       netPlatformRevenue,
@@ -105,7 +120,7 @@ export default function Finance() {
       paymentBuckets,
       payoutBuckets,
     };
-  }, [payments, fees, payouts]);
+  }, [payments, fees, payouts, refunds]);
 
   // Monthly rollup (last 12 months)
   const monthly = useMemo(() => {
@@ -113,6 +128,7 @@ export default function Finance() {
       month: string;
       transactions: number;
       gross: number;
+      refunded: number;
       fees: number;
       payouts: number;
       net: number;
@@ -123,16 +139,23 @@ export default function Finance() {
     for (const p of payments) {
       if (p.status !== 'success') continue;
       const key = getKey(p.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, fees: 0, payouts: 0, net: 0 };
+      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
       row.transactions++;
       row.gross += Number(p.amount || 0);
+      byMonth.set(key, row);
+    }
+
+    for (const r of refunds) {
+      const key = getKey(r.created_at);
+      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
+      row.refunded += Number(r.amount || 0);
       byMonth.set(key, row);
     }
 
     for (const f of fees) {
       if (f.waived) continue;
       const key = getKey(f.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, fees: 0, payouts: 0, net: 0 };
+      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
       row.fees += Number(f.fee_total || 0);
       byMonth.set(key, row);
     }
@@ -140,7 +163,7 @@ export default function Finance() {
     for (const p of payouts) {
       if (p.status !== 'paid') continue;
       const key = getKey(p.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, fees: 0, payouts: 0, net: 0 };
+      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
       row.payouts += Number(p.net_amount || 0);
       byMonth.set(key, row);
     }
@@ -149,7 +172,7 @@ export default function Finance() {
       .sort((a, b) => b.month.localeCompare(a.month))
       .slice(0, 12)
       .map(row => ({ ...row, net: row.fees - row.payouts }));
-  }, [payments, fees, payouts]);
+  }, [payments, fees, payouts, refunds]);
 
   // Category revenue breakdown
   const categoryRevenue = useMemo(() => {
@@ -186,6 +209,8 @@ export default function Finance() {
       {/* Metric Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="Gross Transaction Volume" value={formatMoney(metrics.grossVolume)} color="blue" />
+        <MetricCard label="Total Refunds" value={formatMoney(metrics.totalRefunds)} color="red" />
+        <MetricCard label="Net Volume" value={formatMoney(metrics.netVolume)} color="blue" />
         <MetricCard label="Platform Fees Earned" value={formatMoney(metrics.platformFees)} color="green" />
         <MetricCard label="Gateway Fees (est.)" value={formatMoney(metrics.gatewayFeeEstimate)} color="gray" />
         <MetricCard label="Net Platform Revenue" value={formatMoney(metrics.netPlatformRevenue)} color="indigo" />
@@ -279,6 +304,7 @@ export default function Finance() {
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Month</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Transactions</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Gross Volume</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Refunds</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Payouts</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
@@ -290,6 +316,7 @@ export default function Finance() {
                     <td className="px-4 py-3 font-medium text-gray-900">{formatMonth(row.month)}</td>
                     <td className="px-4 py-3 text-right text-gray-600">{row.transactions}</td>
                     <td className="px-4 py-3 text-right text-gray-900">{formatMoney(row.gross)}</td>
+                    <td className="px-4 py-3 text-right text-red-600">{row.refunded > 0 ? formatMoney(row.refunded) : '—'}</td>
                     <td className="px-4 py-3 text-right text-green-700">{formatMoney(row.fees)}</td>
                     <td className="px-4 py-3 text-right text-orange-700">{formatMoney(row.payouts)}</td>
                     <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(row.net)}</td>

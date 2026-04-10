@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
-import type { PaymentGateway, InitPaymentOpts, InitPaymentResult } from './types';
+import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
+import { logger } from '@/lib/logger';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
@@ -31,6 +32,9 @@ export class StripeGateway implements PaymentGateway {
 
     try {
       if (!stripeSecretKey) {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('Payment gateway not configured: missing Stripe secret key');
+        }
         const mockRef = `mock_stripe_${idempotencyKey}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
@@ -77,7 +81,7 @@ export class StripeGateway implements PaymentGateway {
       const sessionData = await stripeRequest('/checkout/sessions', sessionParams);
 
       if (!sessionData.id || !sessionData.url) {
-        console.error('Stripe session creation failed', sessionData);
+        logger.error('Stripe session creation failed', sessionData);
         return null;
       }
 
@@ -105,13 +109,16 @@ export class StripeGateway implements PaymentGateway {
 
       return { url: sessionData.url as string, reference: stripeRef };
     } catch (error) {
-      console.error('Stripe init error:', (error as Error).message);
+      logger.error('Stripe init error:', (error as Error).message);
       return null;
     }
   }
 
   async verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean> {
     if (!stripeSecretKey || reference.startsWith('mock_')) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Payment gateway not configured: missing Stripe secret key');
+      }
       await supabase
         .from('payments')
         .update({ status: 'success', paid_at: new Date().toISOString() })
@@ -164,8 +171,66 @@ export class StripeGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      console.error('Stripe verify error:', (error as Error).message);
+      logger.error('Stripe verify error:', (error as Error).message);
       return false;
+    }
+  }
+
+  async refundPayment(opts: RefundPaymentOpts): Promise<RefundResult> {
+    // Mock mode
+    if (!stripeSecretKey || opts.gatewayReference.startsWith('mock_')) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Payment gateway not configured: missing Stripe secret key');
+      }
+      return {
+        success: true,
+        gatewayRefundReference: `mock_refund_stripe_${Date.now()}`,
+        gatewayResponse: { mock: true },
+      };
+    }
+
+    try {
+      // If reference starts with cs_, it's a checkout session — resolve to payment_intent first
+      let paymentIntent = opts.gatewayReference;
+      if (opts.gatewayReference.startsWith('cs_')) {
+        const session = await stripeGet(`/checkout/sessions/${encodeURIComponent(opts.gatewayReference)}`);
+        paymentIntent = session.payment_intent as string;
+        if (!paymentIntent) {
+          return { success: false, errorMessage: 'Could not resolve checkout session to payment intent' };
+        }
+      }
+
+      const refundParams: Record<string, string> = {
+        payment_intent: paymentIntent,
+      };
+      if (opts.amount != null) {
+        refundParams.amount = String(Math.round(opts.amount * 100)); // convert to cents
+      }
+      if (opts.reason) {
+        refundParams.reason = 'requested_by_customer';
+      }
+
+      const data = await stripeRequest('/refunds', refundParams);
+
+      if (data.id) {
+        return {
+          success: true,
+          gatewayRefundReference: data.id as string,
+          gatewayResponse: data,
+        };
+      }
+
+      const error = data.error as Record<string, unknown> | undefined;
+      return {
+        success: false,
+        errorMessage: (error?.message as string) || 'Stripe refund failed',
+        gatewayResponse: data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorMessage: `Stripe refund error: ${(error as Error).message}`,
+      };
     }
   }
 }

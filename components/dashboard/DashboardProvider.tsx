@@ -27,6 +27,7 @@ export interface Business {
   logo_url: string | null;
   cover_photo_url: string | null;
   bot_code: string | null;
+  wa_method: 'shared' | 'transfer' | 'coexist' | null;
   gupshup_app_id: string | null;
   is_whitelabel: boolean;
   timezone: string;
@@ -34,6 +35,7 @@ export interface Business {
   country_code: string | null;
   payment_gateway: string | null;
   payout_mode: string;
+  recurring_enabled: boolean;
   metadata: Record<string, unknown>;
   created_at: string;
   capabilities: CapabilityId[];

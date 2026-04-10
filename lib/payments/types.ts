@@ -18,6 +18,16 @@ export interface InitPaymentOpts {
   stripeAccountId?: string;
   /** Platform fee in base currency units (e.g. naira, dollars — NOT kobo/cents) */
   platformFeeAmount?: number;
+  /** BYO: use business's own gateway API key instead of platform key */
+  byoSecretKey?: string;
+  /** BYO: platform subaccount code on the business's gateway account */
+  byoPlatformSubaccount?: string;
+  /** BYO: indicates this is a BYO payment (reversed split) */
+  isByo?: boolean;
+  /** BYO: the business ID that owns the credentials */
+  byoBusinessId?: string;
+  /** Paystack Connect account ID — use platform key with X-Connect-Account header */
+  connectAccountId?: string;
 }
 
 export interface InitPaymentResult {
@@ -29,8 +39,29 @@ export interface VerifyResult {
   success: boolean;
 }
 
+export interface RefundPaymentOpts {
+  gatewayReference: string;
+  /** Amount to refund in base currency units (e.g. naira, dollars — NOT kobo/cents). Omit for full refund. */
+  amount?: number;
+  currency: string;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  /** BYO: use business's own gateway API key */
+  byoSecretKey?: string;
+  /** Paystack Connect account ID */
+  connectAccountId?: string;
+}
+
+export interface RefundResult {
+  success: boolean;
+  gatewayRefundReference?: string;
+  gatewayResponse?: Record<string, unknown>;
+  errorMessage?: string;
+}
+
 export interface PaymentGateway {
   name: 'paystack' | 'stripe' | 'flutterwave' | 'square';
   initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null>;
-  verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean>;
+  verifyPayment(supabase: SupabaseClient, reference: string, byoSecretKey?: string): Promise<boolean>;
+  refundPayment(opts: RefundPaymentOpts): Promise<RefundResult>;
 }

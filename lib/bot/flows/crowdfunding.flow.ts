@@ -213,6 +213,8 @@ const donationPaymentStep: FlowStepConfig = {
         '',
         `Pay here: ${result.url}`,
         '',
+        `⚠️ After paying, *return to WhatsApp*.`,
+        '',
         `Your donation will be reflected once payment is confirmed.`,
       ].join('\n'),
     }];

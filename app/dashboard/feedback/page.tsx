@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
 
 interface FeedbackEntry {
   id: string;
@@ -42,6 +43,7 @@ const RATING_COLORS: Record<number, string> = {
 
 export default function FeedbackPage() {
   const business = useBusiness();
+  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
   const [reviews, setReviews] = useState<FeedbackEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -83,9 +85,9 @@ export default function FeedbackPage() {
   return (
     <div>
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Reviews</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Feedback</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Customer feedback and ratings for your business.
+          {labels.personLabel} feedback and ratings for your business.
         </p>
       </div>
 
@@ -101,7 +103,7 @@ export default function FeedbackPage() {
           </div>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Total Reviews</p>
+          <p className="text-xs font-medium text-gray-500">Total Feedback</p>
           <p className="mt-1 text-2xl font-bold text-brand">{totalReviews}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
@@ -109,7 +111,7 @@ export default function FeedbackPage() {
           <p className="mt-1 text-2xl font-bold text-green-600">{fiveStarPct}%</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Reviews This Month</p>
+          <p className="text-xs font-medium text-gray-500">Feedback This Month</p>
           <p className="mt-1 text-2xl font-bold text-gray-700">{reviewsThisMonth}</p>
         </div>
       </div>
@@ -146,7 +148,7 @@ export default function FeedbackPage() {
           <thead className="border-b border-gray-100 bg-gray-50/50">
             <tr>
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Date</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</th>
+              <th className="px-4 py-3 text-xs font-semibold text-gray-500">{labels.personLabel}</th>
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Rating</th>
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Comment</th>
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Service Type</th>
@@ -157,15 +159,15 @@ export default function FeedbackPage() {
               <tr>
                 <td colSpan={5} className="px-4 py-12 text-center">
                   <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-brand" />
-                  <p className="mt-2 text-sm text-gray-400">Loading reviews...</p>
+                  <p className="mt-2 text-sm text-gray-400">Loading feedback...</p>
                 </td>
               </tr>
             ) : reviews.length === 0 ? (
               <tr>
                 <td colSpan={5} className="px-4 py-12 text-center">
-                  <p className="text-sm text-gray-400">No reviews yet.</p>
+                  <p className="text-sm text-gray-400">No feedback yet.</p>
                   <p className="mt-1 text-xs text-gray-300">
-                    Customer feedback will appear here once submitted.
+                    {labels.personLabel} feedback will appear here once submitted.
                   </p>
                 </td>
               </tr>

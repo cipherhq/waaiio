@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
-import type { PaymentGateway, InitPaymentOpts, InitPaymentResult } from './types';
+import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
+import { logger } from '@/lib/logger';
 
 const squareAccessToken = process.env.SQUARE_ACCESS_TOKEN || '';
 const squareLocationId = process.env.SQUARE_LOCATION_ID || '';
@@ -43,6 +44,9 @@ export class SquareGateway implements PaymentGateway {
 
     try {
       if (!squareAccessToken) {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('Payment gateway not configured: missing Square access token');
+        }
         const mockRef = `mock_square_${idempotencyKey}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
@@ -89,7 +93,7 @@ export class SquareGateway implements PaymentGateway {
 
       const paymentLink = result.payment_link as Record<string, unknown> | undefined;
       if (!paymentLink?.id || !paymentLink?.url) {
-        console.error('[SQUARE] Payment link creation failed:', JSON.stringify(result).slice(0, 500));
+        logger.error('[SQUARE] Payment link creation failed:', JSON.stringify(result).slice(0, 500));
         return null;
       }
 
@@ -119,13 +123,16 @@ export class SquareGateway implements PaymentGateway {
 
       return { url: paymentLink.url as string, reference: squareRef };
     } catch (error) {
-      console.error('[SQUARE] init error:', (error as Error).message);
+      logger.error('[SQUARE] init error:', (error as Error).message);
       return null;
     }
   }
 
   async verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean> {
     if (!squareAccessToken || reference.startsWith('mock_')) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Payment gateway not configured: missing Square access token');
+      }
       await supabase
         .from('payments')
         .update({ status: 'success', paid_at: new Date().toISOString() })
@@ -185,8 +192,15 @@ export class SquareGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      console.error('Square verify error:', (error as Error).message);
+      logger.error('Square verify error:', (error as Error).message);
       return false;
     }
+  }
+
+  async refundPayment(_opts: RefundPaymentOpts): Promise<RefundResult> {
+    return {
+      success: false,
+      errorMessage: 'Square refunds not yet supported',
+    };
   }
 }

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
@@ -74,7 +75,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ message: 'OK' }, { status: 200 });
   } catch (error) {
-    console.error('Flutterwave webhook error:', (error as Error).message);
+    logger.error('Flutterwave webhook error:', (error as Error).message);
     return NextResponse.json({ message: 'Internal error' }, { status: 500 });
   }
 }

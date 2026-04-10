@@ -1,0 +1,231 @@
+import { NextResponse, type NextRequest } from 'next/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { GupshupService } from '@/lib/channels/gupshup';
+import type { MessageSender } from '@/lib/channels/message-sender';
+import { initializePayment } from '@/lib/bot/flows/shared/payment';
+import { logger } from '@/lib/logger';
+import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+
+let defaultGupshup: GupshupService;
+function getDefaultGupshup() {
+  if (!defaultGupshup) defaultGupshup = new GupshupService();
+  return defaultGupshup;
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { quote_id, action } = body;
+
+    if (!quote_id || !action || !['accept', 'reject'].includes(action)) {
+      return NextResponse.json({ error: 'quote_id and action (accept/reject) required' }, { status: 400 });
+    }
+
+    const supabase = createServiceClient();
+
+    // Fetch quote
+    const { data: quote, error: quoteError } = await supabase
+      .from('quote_requests')
+      .select('*')
+      .eq('id', quote_id)
+      .single();
+
+    if (quoteError || !quote) {
+      return NextResponse.json({ error: 'Quote not found' }, { status: 404 });
+    }
+
+    if (quote.status !== 'quoted') {
+      return NextResponse.json({ error: `Quote is already ${quote.status}` }, { status: 400 });
+    }
+
+    // Check expiry
+    if (quote.expires_at && new Date(quote.expires_at) < new Date()) {
+      await supabase.from('quote_requests').update({ status: 'expired' }).eq('id', quote_id);
+      return NextResponse.json({ error: 'Quote has expired' }, { status: 400 });
+    }
+
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('id, name, country_code, subscription_tier, trial_ends_at')
+      .eq('id', quote.business_id)
+      .single();
+
+    const cc = (biz?.country_code || 'NG') as CountryCode;
+
+    if (action === 'reject') {
+      await supabase.from('quote_requests').update({
+        status: 'rejected',
+        responded_at: new Date().toISOString(),
+      }).eq('id', quote_id);
+
+      // Notify owner
+      const { data: ownerBiz } = await supabase
+        .from('businesses')
+        .select('phone, owner_id, profiles:owner_id (phone)')
+        .eq('id', quote.business_id)
+        .single();
+      const ownerPhone = (ownerBiz?.phone as string) || ((ownerBiz?.profiles as unknown as { phone?: string })?.phone);
+
+      if (ownerPhone) {
+        try {
+          const resolver = new ChannelResolver(supabase);
+          const resolved = await resolver.resolveByBusinessId(quote.business_id);
+          const sender: MessageSender = resolved?.sender || getDefaultGupshup();
+          const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+          await sender.sendText({
+            to: phone,
+            text: `\u274C Quote declined by ${quote.customer_name || quote.customer_phone || 'customer'}.\n\nEstimated: ${formatCurrency(quote.estimated_subtotal, cc)}\nQuoted: ${formatCurrency(quote.quoted_amount, cc)}`,
+          });
+        } catch {}
+      }
+
+      return NextResponse.json({ success: true, action: 'rejected' });
+    }
+
+    // ── Accept: create order from snapshot ──
+    const total = quote.quoted_amount || quote.estimated_subtotal;
+    const cart = (quote.cart_snapshot || []) as Array<{
+      product_id: string; name: string; quantity: number; price: number;
+      variant_id?: string; variant_label?: string;
+      addons?: Array<{ name: string; price: number; quantity?: number }>;
+    }>;
+
+    // Ensure user
+    let userId = quote.user_id;
+    if (!userId && quote.customer_phone) {
+      const phoneP = quote.customer_phone.startsWith('+') ? quote.customer_phone : `+${quote.customer_phone}`;
+      const phoneN = quote.customer_phone.startsWith('+') ? quote.customer_phone.slice(1) : quote.customer_phone;
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+        .limit(1)
+        .maybeSingle();
+      userId = profile?.id || null;
+    }
+
+    // Create order
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        business_id: quote.business_id,
+        user_id: userId,
+        status: 'confirmed',
+        delivery_address: quote.delivery_address || null,
+        delivery_phone: quote.customer_phone || null,
+        total_amount: total,
+        delivery_zone_id: quote.delivery_zone_id || null,
+        delivery_zone_name: quote.delivery_zone_name || null,
+        quote_request_id: quote_id,
+        channel: quote.channel || 'whatsapp',
+        notes: quote.quote_notes || null,
+      })
+      .select('id, reference_code')
+      .single();
+
+    if (orderError || !order) {
+      logger.error('[QUOTE-ACCEPT] Order creation failed:', orderError);
+      return NextResponse.json({ error: 'Failed to create order' }, { status: 500 });
+    }
+
+    // Create order items
+    for (const item of cart) {
+      await supabase.from('order_items').insert({
+        order_id: order.id,
+        product_id: item.product_id,
+        quantity: item.quantity,
+        unit_price: item.price,
+        variant_id: item.variant_id || null,
+        variant_label: item.variant_label || null,
+        addons: item.addons || [],
+      });
+    }
+
+    // Update quote
+    await supabase.from('quote_requests').update({
+      status: 'accepted',
+      responded_at: new Date().toISOString(),
+      order_id: order.id,
+    }).eq('id', quote_id);
+
+    // Record platform fee
+    if (biz && total > 0) {
+      const { recordPlatformFee } = await import('@/lib/bot/flows/shared/payment');
+      const isInTrial = new Date(biz.trial_ends_at) > new Date();
+      await recordPlatformFee(supabase, {
+        businessId: biz.id,
+        orderId: order.id,
+        transactionAmount: total,
+        tier: biz.subscription_tier as SubscriptionTier,
+        isInTrial,
+      });
+    }
+
+    // Initialize payment and send link to customer
+    if (total > 0 && quote.customer_phone) {
+      const paymentResult = await initializePayment(supabase, {
+        orderId: order.id,
+        userId: userId || undefined,
+        amount: total,
+        referenceCode: order.reference_code,
+        businessName: biz?.name || 'Shop',
+        phone: quote.customer_phone,
+        countryCode: cc,
+        businessId: biz?.id,
+      });
+
+      if (paymentResult) {
+        try {
+          const resolver = new ChannelResolver(supabase);
+          const resolved = await resolver.resolveByBusinessId(quote.business_id);
+          const sender: MessageSender = resolved?.sender || getDefaultGupshup();
+          const phone = quote.customer_phone.startsWith('+')
+            ? quote.customer_phone.slice(1)
+            : quote.customer_phone;
+
+          await sender.sendText({
+            to: phone,
+            text: [
+              `\u2705 *Quote Accepted!*`,
+              '',
+              `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
+              `\uD83D\uDD11 Ref: *${order.reference_code}*`,
+              `\uD83D\uDCB0 Total: *${formatCurrency(total, cc)}*`,
+              '',
+              `\uD83D\uDCB3 Pay here \uD83D\uDC47`,
+              paymentResult.url,
+            ].join('\n'),
+          });
+        } catch (err) {
+          logger.error('[QUOTE-ACCEPT] Payment link send error:', err);
+        }
+      }
+    }
+
+    // Notify owner
+    const { data: ownerBiz } = await supabase
+      .from('businesses')
+      .select('phone')
+      .eq('id', quote.business_id)
+      .single();
+
+    if (ownerBiz?.phone) {
+      try {
+        const resolver = new ChannelResolver(supabase);
+        const resolved = await resolver.resolveByBusinessId(quote.business_id);
+        const sender: MessageSender = resolved?.sender || getDefaultGupshup();
+        const phone = (ownerBiz.phone as string).startsWith('+') ? (ownerBiz.phone as string).slice(1) : ownerBiz.phone as string;
+        await sender.sendText({
+          to: phone,
+          text: `\u2705 Quote accepted by ${quote.customer_name || 'customer'}!\n\n\uD83D\uDD11 Order: *${order.reference_code}*\n\uD83D\uDCB0 Amount: *${formatCurrency(total, cc)}*`,
+        });
+      } catch {}
+    }
+
+    return NextResponse.json({ success: true, action: 'accepted', orderId: order.id, referenceCode: order.reference_code });
+  } catch (error) {
+    logger.error('[QUOTE-ACCEPT] Error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}

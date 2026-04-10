@@ -5,6 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
+import { logger } from '@/lib/logger';
 
 /**
  * POST /api/webhook/meta-cloud
@@ -98,7 +99,7 @@ export async function POST(request: NextRequest) {
         // Resolve channel by phone_number_id
         const resolved = await resolver.resolveByPhoneNumberId(phoneNumberId);
         if (!resolved) {
-          console.log('[META-WEBHOOK] No channel found for phone_number_id:', phoneNumberId);
+          logger.debug('[META-WEBHOOK] No channel found for phone_number_id:', phoneNumberId);
           continue;
         }
 
@@ -134,11 +135,11 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
 
           if (existingMsg) {
-            console.log('[META-WEBHOOK] Duplicate message, skipping:', metaMsgId);
+            logger.debug('[META-WEBHOOK] Duplicate message, skipping:', metaMsgId);
             continue;
           }
 
-          console.log('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
+          logger.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
 
           const standalone = new StandaloneService(supabase);
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
@@ -159,7 +160,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
-    console.error('[META-WEBHOOK] Error:', error);
+    logger.error('[META-WEBHOOK] Error:', error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
 }
@@ -178,12 +179,12 @@ export async function GET(request: NextRequest) {
 
   const verifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
   if (!verifyToken) {
-    console.error('[META-WEBHOOK] META_WEBHOOK_VERIFY_TOKEN not configured');
+    logger.error('[META-WEBHOOK] META_WEBHOOK_VERIFY_TOKEN not configured');
     return new NextResponse('Configuration error', { status: 500 });
   }
 
   if (mode === 'subscribe' && token === verifyToken) {
-    console.log('[META-WEBHOOK] Verification successful');
+    logger.debug('[META-WEBHOOK] Verification successful');
     return new NextResponse(challenge, { status: 200 });
   }
 

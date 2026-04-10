@@ -266,8 +266,8 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   gym: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🏋️', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Personal Training, Group Class', defaultHasPrice: true },
   clinic: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🏥', receiptTitle: 'Appointment Confirmed', quantityLabel: 'patients', personLabel: 'Patient', personLabelPlural: 'Patients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Consultation, Check-up', defaultHasPrice: true },
   consultant: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '💼', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Strategy Session, Advisory', defaultHasPrice: true },
-  church: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '⛪', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Giving Category', serviceNamePlural: 'Giving Categories', namePlaceholder: 'e.g. Tithe, Offering, Building Fund', defaultHasPrice: false },
-  mosque: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🕌', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Offering', serviceNamePlural: 'Offerings', namePlaceholder: 'e.g. Zakat, Sadaqah, Fitrah', defaultHasPrice: false },
+  church: { entityName: 'giving', entityNamePlural: 'giving', actionVerb: 'Give', confirmationEmoji: '⛪', receiptTitle: 'Giving Received', quantityLabel: 'amount', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Giving Category', serviceNamePlural: 'Giving Categories', namePlaceholder: 'e.g. Tithe, Offering, Building Fund', defaultHasPrice: false },
+  mosque: { entityName: 'giving', entityNamePlural: 'giving', actionVerb: 'Give', confirmationEmoji: '🕌', receiptTitle: 'Giving Received', quantityLabel: 'amount', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Offering', serviceNamePlural: 'Offerings', namePlaceholder: 'e.g. Zakat, Sadaqah, Fitrah', defaultHasPrice: false },
   school: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '🎓', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Fee Category', serviceNamePlural: 'Fee Categories', namePlaceholder: 'e.g. School Fees, PTA Dues, Exam Fees', defaultHasPrice: false },
   ngo: { entityName: 'donation', entityNamePlural: 'donations', actionVerb: 'Donate', confirmationEmoji: '🤝', receiptTitle: 'Donation Received', quantityLabel: 'amount', personLabel: 'Donor', personLabelPlural: 'Donors', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Program', serviceNamePlural: 'Programs', namePlaceholder: 'e.g. Education Fund, Community Outreach', defaultHasPrice: false },
   shop: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛍️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. T-Shirt, Gift Box', defaultHasPrice: true },
@@ -358,6 +358,16 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       '1% + ₦50 per transaction',
     ],
   },
+};
+
+// ── Broadcast Limits per Tier ──
+export const BROADCAST_LIMITS: Record<SubscriptionTier, {
+  maxBroadcasts: number;
+  maxRecipients: number;
+}> = {
+  free: { maxBroadcasts: 0, maxRecipients: 0 },
+  growth: { maxBroadcasts: 10, maxRecipients: 500 },
+  business: { maxBroadcasts: Infinity, maxRecipients: Infinity },
 };
 
 // ── Legacy pricing (kept for backward compatibility) ──

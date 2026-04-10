@@ -11,7 +11,23 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set(
     'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=()'
+    'camera=(), microphone=(), geolocation=()',
+  );
+  response.headers.set(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://js.squareup.com https://js.paystack.co",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' https: data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.paystack.co https://api.stripe.com https://connect.squareup.com https://api.flutterwave.com",
+      "frame-src 'self' https://js.stripe.com https://js.squareup.com https://checkout.paystack.com https://checkout.flutterwave.com",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+    ].join('; '),
   );
   return response;
 }
@@ -33,7 +49,7 @@ export async function middleware(request: NextRequest) {
           );
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
+            supabaseResponse.cookies.set(name, value, { ...options, path: '/' })
           );
         },
       },

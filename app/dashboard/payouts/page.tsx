@@ -35,6 +35,10 @@ interface Balance {
   net_available: number;
   paid_out: number;
   pending_payouts: number;
+  pending_order_revenue: number;
+  pending_booking_revenue: number;
+  total_orders: number;
+  total_bookings: number;
 }
 
 interface PayoutRecord {
@@ -59,6 +63,7 @@ export default function PayoutsPage() {
   const countryConfig = getCountry(country);
   const gateway = countryConfig?.payment_gateway || 'paystack';
   const isStripe = gateway === 'stripe';
+  const isFaith = business.category === 'church' || business.category === 'mosque';
 
   const [pageView, setPageView] = useState<PageView>('loading');
   const [existing, setExisting] = useState<PayoutAccount | null>(null);
@@ -304,7 +309,7 @@ export default function PayoutsPage() {
     return (
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
-        <p className="mt-1 text-sm text-gray-500">Accept terms and choose how you receive payments</p>
+        <p className="mt-1 text-sm text-gray-500">Accept terms and choose how you receive {isFaith ? 'giving' : 'payments'}</p>
 
         <div className="mt-8 max-w-2xl">
           {error && (
@@ -414,7 +419,20 @@ export default function PayoutsPage() {
     return (
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
-        <p className="mt-1 text-sm text-gray-500">Receive customer payments directly to your account</p>
+        <p className="mt-1 text-sm text-gray-500">Receive {isFaith ? 'member giving' : 'customer payments'} directly to your account</p>
+
+        {/* Tabs */}
+        <div className="mt-4 flex gap-1 border-b border-gray-200">
+          <span className="border-b-2 border-brand px-4 py-2 text-sm font-medium text-brand">
+            Account
+          </span>
+          <Link
+            href="/dashboard/payouts/history"
+            className="border-b-2 border-transparent px-4 py-2 text-sm font-medium text-gray-500 transition hover:text-gray-700 hover:border-gray-300"
+          >
+            History
+          </Link>
+        </div>
 
         {/* Mode badge */}
         <div className="mt-4">
@@ -434,24 +452,46 @@ export default function PayoutsPage() {
         {isPlatformManaged && balance && (
           <div className="mt-6 max-w-lg rounded-xl border border-blue-200 bg-blue-50 p-5">
             <h3 className="text-sm font-semibold text-blue-900">Payout Balance</h3>
-            <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <p className="text-blue-600">Gross Earnings</p>
-                <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.gross, country)}</p>
+            {balance.gross > 0 ? (
+              <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <p className="text-blue-600">Gross Earnings</p>
+                  <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.gross, country)}</p>
+                </div>
+                <div>
+                  <p className="text-blue-600">Platform Fees</p>
+                  <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.fees, country)}</p>
+                </div>
+                <div>
+                  <p className="text-blue-600">Available</p>
+                  <p className="text-lg font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
+                </div>
+                <div>
+                  <p className="text-blue-600">Pending Payouts</p>
+                  <p className="text-lg font-bold text-yellow-700">{formatCurrency(balance.pending_payouts, country)}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-blue-600">Platform Fees</p>
-                <p className="text-lg font-bold text-blue-900">{formatCurrency(balance.fees, country)}</p>
+            ) : (balance.total_orders > 0 || balance.total_bookings > 0) ? (
+              <div className="mt-3">
+                <p className="text-sm text-blue-700">No completed {isFaith ? 'giving' : 'payments'} yet. Pending activity:</p>
+                <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                  {balance.total_orders > 0 && (
+                    <div className="rounded-lg bg-white/60 px-3 py-2">
+                      <p className="text-xs text-blue-600">{balance.total_orders} order{balance.total_orders !== 1 ? 's' : ''}</p>
+                      <p className="font-bold text-blue-900">{formatCurrency(balance.pending_order_revenue, country)}</p>
+                    </div>
+                  )}
+                  {balance.total_bookings > 0 && (
+                    <div className="rounded-lg bg-white/60 px-3 py-2">
+                      <p className="text-xs text-blue-600">{balance.total_bookings} {isFaith ? 'giving' : `payment${balance.total_bookings !== 1 ? 's' : ''}`}</p>
+                      <p className="font-bold text-blue-900">{formatCurrency(balance.pending_booking_revenue, country)}</p>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="text-blue-600">Available</p>
-                <p className="text-lg font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
-              </div>
-              <div>
-                <p className="text-blue-600">Pending Payouts</p>
-                <p className="text-lg font-bold text-yellow-700">{formatCurrency(balance.pending_payouts, country)}</p>
-              </div>
-            </div>
+            ) : (
+              <p className="mt-3 text-sm text-blue-700">No earnings yet. Earnings will appear here as {isFaith ? 'members complete giving' : 'customers complete payments'}.</p>
+            )}
           </div>
         )}
 
@@ -468,7 +508,7 @@ export default function PayoutsPage() {
               <p className="text-xs text-green-700">
                 {isPlatformManaged
                   ? 'Payouts are processed weekly to your bank account'
-                  : 'Customer payments will be split automatically'}
+                  : isFaith ? 'Member giving will be split automatically' : 'Customer payments will be split automatically'}
               </p>
             </div>
           </div>
@@ -584,7 +624,7 @@ export default function PayoutsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Set up your bank account to receive customer payments
+        Set up your bank account to receive {isFaith ? 'member giving' : 'customer payments'}
       </p>
 
       <div className="mt-8 max-w-lg">
@@ -592,9 +632,7 @@ export default function PayoutsPage() {
         {balance && (
           <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
             <h3 className="text-sm font-semibold text-gray-900">Earnings Overview</h3>
-            {balance.gross === 0 && balance.fees === 0 && balance.net_available === 0 ? (
-              <p className="mt-3 text-sm text-gray-500">No earnings yet. Connect a bank account to start receiving payouts.</p>
-            ) : (
+            {balance.gross > 0 ? (
               <>
                 <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
                   <div>
@@ -611,6 +649,29 @@ export default function PayoutsPage() {
                   <p className="text-xl font-bold text-green-800">{formatCurrency(balance.net_available, country)}</p>
                 </div>
               </>
+            ) : (balance.total_orders > 0 || balance.total_bookings > 0) ? (
+              <>
+                <p className="mt-3 text-sm text-gray-500">No completed {isFaith ? 'giving' : 'payments'} yet. Here&apos;s your activity so far:</p>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  {balance.total_orders > 0 && (
+                    <div className="rounded-lg bg-blue-50 px-3 py-2.5">
+                      <p className="text-xs text-blue-600">Orders</p>
+                      <p className="text-lg font-bold text-blue-900">{balance.total_orders}</p>
+                      <p className="text-xs text-blue-600">{formatCurrency(balance.pending_order_revenue, country)} pending</p>
+                    </div>
+                  )}
+                  {balance.total_bookings > 0 && (
+                    <div className="rounded-lg bg-purple-50 px-3 py-2.5">
+                      <p className="text-xs text-purple-600">{isFaith ? 'Giving' : 'Bookings / Payments'}</p>
+                      <p className="text-lg font-bold text-purple-900">{balance.total_bookings}</p>
+                      <p className="text-xs text-purple-600">{formatCurrency(balance.pending_booking_revenue, country)} pending</p>
+                    </div>
+                  )}
+                </div>
+                <p className="mt-3 text-xs text-gray-400">Connect a bank account below to receive payouts once {isFaith ? 'giving is' : 'payments are'} completed.</p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">No earnings yet. Connect a bank account to start receiving payouts.</p>
             )}
           </div>
         )}

@@ -12,6 +12,12 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+const isDev = Deno.env.get('ENVIRONMENT') !== 'production';
+const log = {
+  debug: (...args: unknown[]) => { if (isDev) console.log(...args); },
+  error: (...args: unknown[]) => console.error(...args),
+};
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
@@ -19,7 +25,7 @@ const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 
 async function sendWhatsApp(to: string, text: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
-    console.log(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
+    log.debug(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
     return true;
   }
 
@@ -43,7 +49,7 @@ async function sendWhatsApp(to: string, text: string): Promise<boolean> {
     );
     return response.ok;
   } catch (err) {
-    console.error('WhatsApp send error:', err);
+    log.error('WhatsApp send error:', err);
     return false;
   }
 }
@@ -102,7 +108,8 @@ Deno.serve(async (req) => {
     const { data: pastDueSubs } = await supabase
       .from('customer_subscriptions')
       .select(`
-        id, amount, currency, frequency, customer_name, customer_phone,
+        id, amount, currency, frequency, customer_name, customer_phone, failure_count,
+        auto_cancel_notified,
         businesses:business_id (name, country_code)
       `)
       .eq('status', 'past_due');
@@ -116,7 +123,27 @@ Deno.serve(async (req) => {
       const cc = biz?.country_code || 'NG';
       const currencySymbol = cc === 'NG' ? '\u20a6' : cc === 'GH' ? 'GH\u20b5' : cc === 'GB' ? '\u00a3' : '$';
 
-      const msg = `Hi ${sub.customer_name || 'there'},\n\nYour recurring payment of *${currencySymbol}${sub.amount.toLocaleString()}* for *${biz?.name || 'Business'}* has failed multiple times.\n\nPlease update your payment method or make a manual payment to keep your subscription active.\n\nType *subscriptions* to manage your recurring payments.`;
+      // Auto-cancel after 3+ failures
+      if (sub.failure_count >= 3) {
+        if (!sub.auto_cancel_notified) {
+          await supabase
+            .from('customer_subscriptions')
+            .update({
+              status: 'cancelled',
+              cancelled_at: new Date().toISOString(),
+              auto_cancel_notified: true,
+            })
+            .eq('id', sub.id);
+
+          const cancelMsg = `Hi ${sub.customer_name || 'there'},\n\nYour recurring payment of *${currencySymbol}${sub.amount.toLocaleString()}* for *${biz?.name || 'Business'}* has been automatically cancelled after ${sub.failure_count} failed payment attempts.\n\nIf you'd like to resubscribe, type *subscriptions* to set up a new payment.\n\nWe're sorry for the inconvenience.`;
+
+          await sendWhatsApp(phone, cancelMsg);
+          results.recovery.messaged++;
+        }
+        continue;
+      }
+
+      const msg = `Hi ${sub.customer_name || 'there'},\n\nYour recurring payment of *${currencySymbol}${sub.amount.toLocaleString()}* for *${biz?.name || 'Business'}* has failed (attempt ${sub.failure_count}/3).\n\nPlease update your payment method or make a manual payment to keep your subscription active. After 3 failed attempts, it will be automatically cancelled.\n\nType *subscriptions* to manage your recurring payments.`;
 
       const sent = await sendWhatsApp(phone, msg);
       if (sent) results.recovery.messaged++;
@@ -126,7 +153,7 @@ Deno.serve(async (req) => {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (err) {
-    console.error('Recurring reminder error:', err);
+    log.error('Recurring reminder error:', err);
     return new Response(JSON.stringify({ error: (err as Error).message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

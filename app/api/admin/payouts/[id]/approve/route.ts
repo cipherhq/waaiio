@@ -4,6 +4,7 @@ import { sendEmail } from '@/lib/email/client';
 import { payoutApprovedEmail, payoutPaidEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
+import { logger } from '@/lib/logger';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -215,7 +216,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, status: finalStatus });
   } catch (error) {
-    console.error('Approve payout error:', (error as Error).message);
+    logger.error('Approve payout error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to approve payout' }, { status: 500 });
   }
 }

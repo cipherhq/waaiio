@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     await loadCountries();
     const body = await request.json();
-    const { name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities } = body;
+    const { name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
     if (!name || !city || !neighborhood || !address || !phone || !category) {
@@ -58,7 +58,14 @@ export async function POST(request: NextRequest) {
     const service = createServiceClient();
 
     const slug = generateSlug(name);
-    let botCode = generateBotCode(name);
+
+    // Use custom bot code if provided, otherwise auto-generate from name
+    let botCode = customBotCode
+      ? String(customBotCode).trim().toUpperCase().replace(/\s+/g, '-').replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').slice(0, 30)
+      : generateBotCode(name);
+
+    // Validate minimum length
+    if (botCode.length < 2) botCode = generateBotCode(name);
 
     // Fetch template from DB (with fallback to hardcoded constants)
     const { data: template } = await service
@@ -78,6 +85,14 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (existing) {
+      // If user chose a custom code and it collides, reject it
+      if (customBotCode) {
+        return NextResponse.json(
+          { message: 'Bot code is already taken. Please choose a different one.' },
+          { status: 409 },
+        );
+      }
+      // Auto-generated code collision: append suffix as fallback
       for (let i = 1; i <= 99; i++) {
         const candidate = `${botCode}-${String(i).padStart(2, '0')}`.slice(0, 30);
         const { data: collision } = await service

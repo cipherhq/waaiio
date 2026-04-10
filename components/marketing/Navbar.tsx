@@ -2,104 +2,134 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { motion, useScroll, useMotionValueEvent } from 'framer-motion';
 import { WaaiioMark, WaaiioWordmark } from './WaaiioLogo';
+import MobileMenu from './MobileMenu';
+import { createClient } from '@/lib/supabase/client';
 
 const NAV_LINKS = [
-  { href: '/#features', label: 'Features' },
+  { href: '/features', label: 'Features' },
   { href: '/pricing', label: 'Pricing' },
   { href: '/about', label: 'About' },
   { href: '/#faq', label: 'FAQ' },
 ];
 
 export default function Navbar() {
-  const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const pathname = usePathname();
+  const { scrollY } = useScroll();
+
+  useMotionValueEvent(scrollY, 'change', (latest) => {
+    setScrolled(latest > 50);
+  });
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setLoggedIn(!!session);
+    });
+  }, []);
+
+  // Hero pages where nav starts transparent
+  const isHeroPage = pathname === '/';
 
   return (
-    <nav className="sticky top-0 z-50 border-b border-gray-100 bg-white/80 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        {/* Logo */}
-        <Link href="/" className="flex items-center gap-2">
-          <WaaiioMark />
-          <WaaiioWordmark variant="dark" />
-        </Link>
-
-        {/* Desktop links */}
-        <div className="hidden items-center gap-6 md:flex">
-          {NAV_LINKS.map((link) => (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`text-sm transition ${
-                pathname === link.href
-                  ? 'font-semibold text-brand'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {link.label}
-            </Link>
-          ))}
-          <Link
-            href="/login"
-            className="text-sm font-medium text-gray-700 hover:text-gray-900"
-          >
-            Log In
+    <>
+      <header
+        className={`fixed left-0 right-0 top-0 z-40 transition-all duration-300 ${
+          scrolled || !isHeroPage
+            ? 'border-b border-gray-200/60 bg-white/85 shadow-sm backdrop-blur-lg'
+            : 'bg-transparent'
+        }`}
+      >
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
+          <Link href="/" className="flex items-center gap-2">
+            <WaaiioMark />
+            <WaaiioWordmark variant={scrolled || !isHeroPage ? 'dark' : 'light'} />
           </Link>
-          <Link
-            href="/get-started"
-            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-500"
-          >
-            Get Started
-          </Link>
-        </div>
 
-        {/* Mobile menu button */}
-        <button
-          type="button"
-          className="rounded-md p-2 text-gray-600 md:hidden"
-          onClick={() => setOpen(!open)}
-          aria-label="Toggle menu"
-        >
-          {open ? (
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          ) : (
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          )}
-        </button>
-      </div>
-
-      {/* Mobile dropdown */}
-      {open && (
-        <div className="border-t border-gray-100 bg-white px-4 pb-4 md:hidden">
-          <div className="flex flex-col gap-3 pt-3">
+          {/* Desktop links */}
+          <div className="hidden items-center gap-1 md:flex">
             {NAV_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="text-sm text-gray-600"
-                onClick={() => setOpen(false)}
+                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  pathname === link.href
+                    ? 'bg-brand-50 font-semibold text-brand'
+                    : scrolled || !isHeroPage
+                      ? 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                      : 'text-white/90 hover:bg-white/10 hover:text-white'
+                }`}
               >
                 {link.label}
               </Link>
             ))}
-            <Link href="/login" className="text-sm font-medium text-gray-700" onClick={() => setOpen(false)}>
-              Log In
-            </Link>
-            <Link
-              href="/get-started"
-              className="rounded-lg bg-brand px-4 py-2 text-center text-sm font-semibold text-white"
-              onClick={() => setOpen(false)}
+          </div>
+
+          <div className="flex items-center gap-3">
+            {loggedIn ? (
+              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                <Link
+                  href="/dashboard"
+                  className={`hidden rounded-xl px-5 py-2 text-sm font-semibold transition sm:inline-flex ${
+                    scrolled || !isHeroPage
+                      ? 'bg-brand text-white hover:bg-brand-500'
+                      : 'bg-white text-gray-900 hover:bg-gray-100'
+                  }`}
+                >
+                  Dashboard
+                </Link>
+              </motion.div>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className={`hidden text-sm font-medium transition md:inline-flex ${
+                    scrolled || !isHeroPage ? 'text-gray-700 hover:text-gray-900' : 'text-white/90 hover:text-white'
+                  }`}
+                >
+                  Log In
+                </Link>
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Link
+                    href="/get-started"
+                    className={`hidden rounded-xl px-5 py-2 text-sm font-bold shadow-lg transition sm:inline-flex ${
+                      scrolled || !isHeroPage
+                        ? 'bg-accent text-gray-900 shadow-accent/20 hover:bg-accent-400'
+                        : 'bg-white text-gray-900 shadow-white/10 hover:bg-gray-100'
+                    }`}
+                  >
+                    Get Started
+                  </Link>
+                </motion.div>
+              </>
+            )}
+
+            <button
+              onClick={() => setMenuOpen(true)}
+              className={`rounded-lg p-2 transition-colors md:hidden ${
+                scrolled || !isHeroPage ? 'text-gray-700 hover:bg-gray-100' : 'text-white hover:bg-white/10'
+              }`}
+              aria-label="Open menu"
             >
-              Get Started
-            </Link>
+              <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
           </div>
         </div>
-      )}
-    </nav>
+      </header>
+
+      <MobileMenu
+        isOpen={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        links={NAV_LINKS}
+        loggedIn={loggedIn}
+      />
+    </>
   );
 }

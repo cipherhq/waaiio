@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
 
 interface OptionGroup {
   name: string;
@@ -21,6 +21,36 @@ interface ProductVariant {
   image_url?: string | null;
   options?: Record<string, string>;
 }
+
+interface ProductAddon {
+  id?: string;
+  product_id: string | null;
+  name: string;
+  description: string | null;
+  price: number;
+  price_type: 'fixed' | 'per_unit' | 'quote';
+  unit_label: string | null;
+  min_quantity: number | null;
+  max_quantity: number | null;
+  is_required: boolean;
+  is_negotiable: boolean;
+  is_active: boolean;
+  sort_order: number;
+}
+
+const EMPTY_ADDON: Omit<ProductAddon, 'sort_order'> = {
+  product_id: null,
+  name: '',
+  description: null,
+  price: 0,
+  price_type: 'fixed',
+  unit_label: null,
+  min_quantity: null,
+  max_quantity: null,
+  is_required: false,
+  is_negotiable: false,
+  is_active: true,
+};
 
 interface Product {
   id: string;
@@ -124,6 +154,7 @@ function mapCSVRow(row: Record<string, string>) {
 
 export default function ProductsPage() {
   const business = useBusiness();
+  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
   const country = (business.country_code || 'NG') as CountryCode;
   const curr = formatCurrency(0, country).charAt(0);
 
@@ -131,6 +162,15 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  // Sales analytics
+  const [orderStats, setOrderStats] = useState<{
+    totalOrders: number;
+    totalRevenue: number;
+    avgOrderValue: number;
+    topProduct: string;
+    bestSellers: { name: string; qty: number; pct: number; revenue: number }[];
+  } | null>(null);
 
   // Form state (shared for add + edit)
   const [form, setForm] = useState<Omit<Product, 'id'> & { id?: string }>(EMPTY_PRODUCT);
@@ -147,6 +187,12 @@ export default function ProductsPage() {
   const [bulkPrice, setBulkPrice] = useState<string>('');
   const [variantImageFiles, setVariantImageFiles] = useState<Record<number, File>>({});
   const variantImageRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // Add-ons
+  const [addons, setAddons] = useState<ProductAddon[]>([]);
+  const [businessWideAddons, setBusinessWideAddons] = useState<ProductAddon[]>([]);
+  const [deletedAddonIds, setDeletedAddonIds] = useState<string[]>([]);
+  const [hasAddons, setHasAddons] = useState(false);
 
   // Bulk
   const [bulkText, setBulkText] = useState('');
@@ -200,7 +246,68 @@ export default function ProductsPage() {
     setLoading(false);
   }, [business.id]);
 
-  useEffect(() => { fetchProducts(); }, [fetchProducts]);
+  const fetchAnalytics = useCallback(async () => {
+    const supabase = createClient();
+    const validStatuses = ['confirmed', 'processing', 'shipped', 'ready', 'delivered'];
+    const { data: orders } = await supabase
+      .from('orders')
+      .select('id, total_amount')
+      .eq('business_id', business.id)
+      .in('status', validStatuses);
+
+    if (!orders || orders.length === 0) { setOrderStats(null); return; }
+
+    const orderIds = orders.map(o => o.id);
+    const { data: items } = await supabase
+      .from('order_items')
+      .select('product_id, quantity, unit_price')
+      .in('order_id', orderIds);
+
+    const totalOrders = orders.length;
+    const totalRevenue = orders.reduce((s, o) => s + (o.total_amount || 0), 0);
+    const avgOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+
+    // Aggregate by product
+    const productMap: Record<string, { qty: number; revenue: number }> = {};
+    for (const item of items || []) {
+      const pid = item.product_id;
+      if (!productMap[pid]) productMap[pid] = { qty: 0, revenue: 0 };
+      productMap[pid].qty += item.quantity;
+      productMap[pid].revenue += item.unit_price * item.quantity;
+    }
+
+    const totalQty = Object.values(productMap).reduce((s, v) => s + v.qty, 0);
+    const sorted = Object.entries(productMap)
+      .sort(([, a], [, b]) => b.qty - a.qty)
+      .slice(0, 5);
+
+    setOrderStats({
+      totalOrders,
+      totalRevenue,
+      avgOrderValue,
+      topProduct: '', // resolved below after products load
+      bestSellers: sorted.map(([pid, v]) => ({
+        name: pid, // placeholder — resolved in render using products array
+        qty: v.qty,
+        pct: totalQty > 0 ? Math.round((v.qty / totalQty) * 100) : 0,
+        revenue: v.revenue,
+      })),
+    });
+  }, [business.id]);
+
+  // Fetch business-wide addons (product_id IS NULL)
+  const fetchBusinessWideAddons = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('product_addons')
+      .select('*')
+      .eq('business_id', business.id)
+      .is('product_id', null)
+      .order('sort_order', { ascending: true });
+    setBusinessWideAddons((data as ProductAddon[]) || []);
+  }, [business.id]);
+
+  useEffect(() => { fetchProducts(); fetchAnalytics(); fetchBusinessWideAddons(); }, [fetchProducts, fetchAnalytics, fetchBusinessWideAddons]);
 
   // Get unique categories for suggestions
   const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
@@ -218,6 +325,9 @@ export default function ProductsPage() {
     setOptionGroups([]);
     setBulkPrice('');
     setVariantImageFiles({});
+    setAddons([]);
+    setDeletedAddonIds([]);
+    setHasAddons(false);
     setView('add');
   }
 
@@ -228,14 +338,16 @@ export default function ProductsPage() {
     setDeletedVariantIds([]);
     setBulkPrice('');
     setVariantImageFiles({});
+    setDeletedAddonIds([]);
 
     // Restore option groups from product
     const groups = (product.variant_options as OptionGroup[]) || [];
     setOptionGroups(groups);
 
+    const supabase = createClient();
+
     // Fetch variants if product has them
     if (product.has_variants) {
-      const supabase = createClient();
       const { data } = await supabase
         .from('product_variants')
         .select('id, label, price, stock_quantity, sku, is_active, sort_order, image_url, options')
@@ -245,6 +357,16 @@ export default function ProductsPage() {
     } else {
       setVariants([]);
     }
+
+    // Fetch product-specific addons
+    const { data: addonData } = await supabase
+      .from('product_addons')
+      .select('*')
+      .eq('product_id', product.id)
+      .order('sort_order', { ascending: true });
+    const productAddons = (addonData as ProductAddon[]) || [];
+    setAddons(productAddons);
+    setHasAddons(productAddons.length > 0);
 
     setView('edit');
   }
@@ -465,6 +587,44 @@ export default function ProductsPage() {
     // If variants were disabled, clean up any existing variants
     if (productId && !form.has_variants && view === 'edit') {
       await supabase.from('product_variants').delete().eq('product_id', productId);
+    }
+
+    // Save addons
+    if (productId && hasAddons) {
+      // Delete removed addons
+      if (deletedAddonIds.length > 0) {
+        await supabase.from('product_addons').delete().in('id', deletedAddonIds);
+      }
+
+      for (let i = 0; i < addons.length; i++) {
+        const addon = addons[i];
+        if (!addon.name.trim()) continue;
+        const addonPayload = {
+          business_id: business.id,
+          product_id: productId,
+          name: addon.name.trim(),
+          description: addon.description?.trim() || null,
+          price: addon.price_type === 'quote' ? 0 : (addon.price || 0),
+          price_type: addon.price_type,
+          unit_label: addon.unit_label || null,
+          min_quantity: addon.min_quantity || null,
+          max_quantity: addon.max_quantity || null,
+          is_required: addon.is_required,
+          is_negotiable: addon.is_negotiable,
+          is_active: addon.is_active,
+          sort_order: i,
+        };
+        if (addon.id) {
+          await supabase.from('product_addons').update(addonPayload).eq('id', addon.id);
+        } else {
+          await supabase.from('product_addons').insert(addonPayload);
+        }
+      }
+    }
+
+    // If addons were disabled, clean up existing product-specific addons
+    if (productId && !hasAddons && view === 'edit') {
+      await supabase.from('product_addons').delete().eq('product_id', productId);
     }
 
     setSaving(false);
@@ -697,6 +857,208 @@ export default function ProductsPage() {
                 />
               </div>
               <p className="mt-0.5 text-xs text-gray-400">Per-product shipping cost (optional)</p>
+            </div>
+
+            {/* Add-ons */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Product Add-ons</p>
+                  <p className="text-xs text-gray-400">E.g. extra servers, ice, gift wrapping, setup fee</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newHasAddons = !hasAddons;
+                    setHasAddons(newHasAddons);
+                    if (newHasAddons && addons.length === 0) {
+                      setAddons([{ ...EMPTY_ADDON, sort_order: 0 }]);
+                    }
+                  }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${hasAddons ? 'bg-brand' : 'bg-gray-200'}`}
+                >
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: hasAddons ? '22px' : '2px' }} />
+                </button>
+              </div>
+
+              {hasAddons && (
+                <div className="mt-4 space-y-3">
+                  {/* Business-wide addons (read-only) */}
+                  {businessWideAddons.length > 0 && (
+                    <div className="rounded-lg bg-blue-50 p-3">
+                      <p className="text-xs font-medium text-blue-700">Business-wide add-ons (apply to all products)</p>
+                      <div className="mt-2 space-y-1">
+                        {businessWideAddons.map(a => (
+                          <p key={a.id} className="text-xs text-blue-600">
+                            {a.name} — {a.price_type === 'quote' ? 'Quote' : `${curr}${a.price.toLocaleString()}`}
+                            {a.price_type === 'per_unit' && a.unit_label ? ` ${a.unit_label}` : ''}
+                            {a.is_required ? ' (Required)' : ''}
+                            {a.is_negotiable ? ' (Negotiable)' : ''}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Product-specific addons */}
+                  {addons.map((addon, idx) => (
+                    <div key={addon.id || idx} className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="mb-0.5 block text-xs font-medium text-gray-600">Add-on Name</label>
+                          <input
+                            type="text"
+                            value={addon.name}
+                            onChange={(e) => {
+                              const updated = [...addons];
+                              updated[idx] = { ...updated[idx], name: e.target.value };
+                              setAddons(updated);
+                            }}
+                            placeholder="e.g. Extra Servers"
+                            className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Price ({curr})</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={addon.price || ''}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], price: Number(e.target.value) || 0 };
+                                setAddons(updated);
+                              }}
+                              placeholder="0"
+                              disabled={addon.price_type === 'quote'}
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand disabled:bg-gray-50 disabled:text-gray-400"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Type</label>
+                            <select
+                              value={addon.price_type}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], price_type: e.target.value as ProductAddon['price_type'] };
+                                setAddons(updated);
+                              }}
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            >
+                              <option value="fixed">Fixed</option>
+                              <option value="per_unit">Per Unit</option>
+                              <option value="quote">Quote</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {addon.price_type === 'per_unit' && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Unit Label</label>
+                            <input
+                              type="text"
+                              value={addon.unit_label || ''}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], unit_label: e.target.value || null };
+                                setAddons(updated);
+                              }}
+                              placeholder="per person"
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Min Qty</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={addon.min_quantity ?? ''}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], min_quantity: e.target.value ? Number(e.target.value) : null };
+                                setAddons(updated);
+                              }}
+                              placeholder="None"
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Max Qty</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={addon.max_quantity ?? ''}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], max_quantity: e.target.value ? Number(e.target.value) : null };
+                                setAddons(updated);
+                              }}
+                              placeholder="None"
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-4">
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={addon.is_required}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], is_required: e.target.checked };
+                                setAddons(updated);
+                              }}
+                              className="rounded border-gray-300 text-brand focus:ring-brand"
+                            />
+                            Required
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-gray-600">
+                            <input
+                              type="checkbox"
+                              checked={addon.is_negotiable}
+                              onChange={(e) => {
+                                const updated = [...addons];
+                                updated[idx] = { ...updated[idx], is_negotiable: e.target.checked };
+                                setAddons(updated);
+                              }}
+                              className="rounded border-gray-300 text-brand focus:ring-brand"
+                            />
+                            Negotiable
+                          </label>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (addon.id) setDeletedAddonIds(prev => [...prev, addon.id!]);
+                            setAddons(addons.filter((_, i) => i !== idx));
+                          }}
+                          className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {addons.length < 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setAddons([...addons, { ...EMPTY_ADDON, sort_order: addons.length }])}
+                      className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
+                    >
+                      + Add Add-on
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Variants */}
@@ -975,7 +1337,7 @@ export default function ProductsPage() {
             {/* Refund Available */}
             <ToggleRow
               label="Refund Available"
-              description="Customers can request a refund"
+              description={`${labels.personLabelPlural} can request a refund`}
               checked={form.refundable}
               onChange={(v) => setForm({ ...form, refundable: v })}
             />
@@ -1012,7 +1374,7 @@ export default function ProductsPage() {
             {/* Active */}
             <ToggleRow
               label="Active"
-              description="Visible to customers on WhatsApp"
+              description={`Visible to ${labels.personLabelPlural.toLowerCase()} on WhatsApp`}
               checked={form.is_active}
               onChange={(v) => setForm({ ...form, is_active: v })}
             />
@@ -1170,7 +1532,7 @@ export default function ProductsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Products</h1>
           <p className="mt-1 text-sm text-gray-500">
             {products.length === 0
-              ? 'Add your products so customers can browse and order via WhatsApp'
+              ? `Add your products so ${labels.personLabelPlural.toLowerCase()} can browse and order via WhatsApp`
               : `${products.length} product${products.length !== 1 ? 's' : ''} in your catalog`}
           </p>
         </div>
@@ -1207,6 +1569,68 @@ export default function ProductsPage() {
         </div>
       )}
 
+      {/* Sales Analytics */}
+      {orderStats && products.length > 0 && (() => {
+        const productNameMap: Record<string, string> = {};
+        for (const p of products) productNameMap[p.id] = p.name;
+        const bestSellers = orderStats.bestSellers.map(s => ({
+          ...s,
+          name: productNameMap[s.name] || 'Unknown Product',
+        }));
+        const topProductName = bestSellers[0]?.name || '—';
+        return (
+          <div className="mt-5">
+            {/* Summary cards */}
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+                <p className="text-xs font-medium text-blue-600">Total Orders</p>
+                <p className="mt-1 text-2xl font-bold text-blue-900">{orderStats.totalOrders}</p>
+              </div>
+              <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+                <p className="text-xs font-medium text-green-600">Product Revenue</p>
+                <p className="mt-1 text-2xl font-bold text-green-900">{formatCurrency(orderStats.totalRevenue, country)}</p>
+              </div>
+              <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
+                <p className="text-xs font-medium text-orange-600">Avg Order Value</p>
+                <p className="mt-1 text-2xl font-bold text-orange-900">{formatCurrency(Math.round(orderStats.avgOrderValue), country)}</p>
+              </div>
+              <div className="rounded-xl border border-gray-100 bg-white p-4">
+                <p className="text-xs font-medium text-gray-500">Top Product</p>
+                <p className="mt-1 text-lg font-bold text-gray-900 truncate">{topProductName}</p>
+              </div>
+            </div>
+
+            {/* Best Sellers */}
+            {bestSellers.length > 0 && (
+              <div className="mt-4 rounded-xl border border-gray-100 bg-white">
+                <div className="border-b border-gray-100 px-4 py-3">
+                  <p className="text-sm font-semibold text-gray-900">Best Sellers</p>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {bestSellers.map((item, i) => (
+                    <div key={i} className="flex items-center gap-3 px-4 py-3">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand">{i + 1}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="truncate text-sm font-medium text-gray-900">{item.name}</p>
+                          <p className="shrink-0 text-sm font-semibold text-gray-900">{formatCurrency(item.revenue, country)}</p>
+                        </div>
+                        <div className="mt-1 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 rounded-full bg-gray-100">
+                            <div className="h-1.5 rounded-full bg-brand" style={{ width: `${item.pct}%` }} />
+                          </div>
+                          <span className="shrink-0 text-xs text-gray-500">{item.qty} sold ({item.pct}%)</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Empty state */}
       {products.length === 0 ? (
         <div className="mt-12 text-center">
@@ -1217,7 +1641,7 @@ export default function ProductsPage() {
           </div>
           <h3 className="mt-4 text-sm font-semibold text-gray-900">No products yet</h3>
           <p className="mx-auto mt-1 max-w-xs text-sm text-gray-500">
-            Add your products so customers can browse and order through WhatsApp.
+            Add your products so {labels.personLabelPlural.toLowerCase()} can browse and order through WhatsApp.
           </p>
           <div className="mt-4 flex justify-center gap-3">
             <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">

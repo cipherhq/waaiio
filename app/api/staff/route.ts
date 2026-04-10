@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ staff: data });
   } catch (error) {
-    console.error('[STAFF] GET error:', error);
+    logger.error('[STAFF] GET error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -90,13 +91,13 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      console.error('[STAFF] Insert error:', error);
+      logger.error('[STAFF] Insert error:', error);
       return NextResponse.json({ error: 'Failed to create staff member' }, { status: 500 });
     }
 
     return NextResponse.json({ staff: data });
   } catch (error) {
-    console.error('[STAFF] POST error:', error);
+    logger.error('[STAFF] POST error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -145,13 +146,13 @@ export async function PUT(request: NextRequest) {
       .eq('business_id', businessId);
 
     if (error) {
-      console.error('[STAFF] Update error:', error);
+      logger.error('[STAFF] Update error:', error);
       return NextResponse.json({ error: 'Failed to update staff member' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[STAFF] PUT error:', error);
+    logger.error('[STAFF] PUT error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -192,13 +193,13 @@ export async function DELETE(request: NextRequest) {
       .eq('business_id', businessId);
 
     if (error) {
-      console.error('[STAFF] Delete error:', error);
+      logger.error('[STAFF] Delete error:', error);
       return NextResponse.json({ error: 'Failed to delete staff member' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[STAFF] DELETE error:', error);
+    logger.error('[STAFF] DELETE error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

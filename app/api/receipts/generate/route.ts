@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { generateReceiptPdf, generateHistoryPdf } from '@/lib/pdf/receipt-generator';
+import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } from '@/lib/pdf/receipt-generator';
 import type { HistoryRow } from '@/lib/pdf/receipt-generator';
 import type { CountryCode } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,14 +13,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { userId, type, phone } = await request.json();
+    const { userId, type, phone, year } = await request.json();
 
     if (!userId || !type || !phone) {
       return NextResponse.json({ error: 'userId, type, and phone required' }, { status: 400 });
     }
 
-    if (type !== 'history' && type !== 'receipt') {
-      return NextResponse.json({ error: 'type must be "history" or "receipt"' }, { status: 400 });
+    if (type !== 'history' && type !== 'receipt' && type !== 'annual') {
+      return NextResponse.json({ error: 'type must be "history", "receipt", or "annual"' }, { status: 400 });
     }
 
     const supabase = createServiceClient();
@@ -40,11 +41,14 @@ export async function POST(request: NextRequest) {
 
     if (type === 'receipt') {
       return await handleReceipt(supabase, userId, customerName, customerPhone);
+    } else if (type === 'annual') {
+      const targetYear = year ? Number(year) : new Date().getFullYear() - 1;
+      return await handleAnnual(supabase, userId, customerName, customerPhone, targetYear);
     } else {
       return await handleHistory(supabase, userId, customerName, customerPhone);
     }
   } catch (error) {
-    console.error('[RECEIPTS] Error:', error);
+    logger.error('[RECEIPTS] Error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -209,15 +213,109 @@ async function handleHistory(
   return await uploadAndSign(supabase, pdfBuffer, userId, 'history');
 }
 
+async function handleAnnual(
+  supabase: ReturnType<typeof createServiceClient>,
+  userId: string,
+  customerName: string,
+  customerPhone: string,
+  year: number,
+) {
+  const startDate = `${year}-01-01`;
+  const endDate = `${year}-12-31`;
+
+  // Fetch bookings for the year
+  const { data: bookings } = await supabase
+    .from('bookings')
+    .select('reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
+    .eq('user_id', userId)
+    .in('status', ['completed', 'confirmed'])
+    .gte('created_at', `${startDate}T00:00:00`)
+    .lte('created_at', `${endDate}T23:59:59`)
+    .order('created_at', { ascending: true })
+    .limit(200);
+
+  // Fetch subscription charges for the year
+  const { data: charges } = await supabase
+    .from('subscription_charges')
+    .select('reference_code, amount, status, created_at, services(name), businesses(name, country_code)')
+    .eq('user_id', userId)
+    .eq('status', 'success')
+    .gte('created_at', `${startDate}T00:00:00`)
+    .lte('created_at', `${endDate}T23:59:59`)
+    .order('created_at', { ascending: true })
+    .limit(200);
+
+  const rows: HistoryRow[] = [];
+  let countryCode: CountryCode = 'NG';
+  let businessName: string | undefined;
+
+  if (bookings) {
+    for (const b of bookings) {
+      const biz = b.businesses as unknown as { name: string; country_code?: string } | null;
+      const svc = b.services as unknown as { name: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      if (biz?.name && !businessName) businessName = biz.name;
+      rows.push({
+        date: b.date || b.created_at,
+        serviceName: svc?.name || 'Service',
+        businessName: biz?.name || 'Business',
+        referenceCode: b.reference_code || '-',
+        amount: b.total_amount || 0,
+        status: b.status,
+      });
+    }
+  }
+
+  if (charges) {
+    for (const c of charges) {
+      const biz = c.businesses as unknown as { name: string; country_code?: string } | null;
+      const svc = c.services as unknown as { name: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      if (biz?.name && !businessName) businessName = biz.name;
+      rows.push({
+        date: c.created_at,
+        serviceName: svc?.name || 'Subscription',
+        businessName: biz?.name || 'Business',
+        referenceCode: c.reference_code || '-',
+        amount: c.amount || 0,
+        status: c.status,
+      });
+    }
+  }
+
+  if (rows.length === 0) {
+    return NextResponse.json({ error: `No transactions found for ${year}` }, { status: 404 });
+  }
+
+  // Sort chronologically
+  rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+  const pdfBuffer = await generateAnnualStatementPdf({
+    customerName,
+    customerPhone,
+    countryCode,
+    year,
+    businessName: rows.length > 0 ? undefined : businessName, // omit if multi-business
+    rows,
+  });
+
+  return await uploadAndSign(supabase, pdfBuffer, userId, 'annual');
+}
+
 async function uploadAndSign(
   supabase: ReturnType<typeof createServiceClient>,
   pdfBuffer: Buffer,
   userId: string,
-  type: 'receipt' | 'history',
+  type: 'receipt' | 'history' | 'annual',
 ) {
   const uuid = crypto.randomUUID();
   const filePath = `receipts/${userId}/${uuid}.pdf`;
-  const filename = type === 'receipt' ? `receipt-${uuid.slice(0, 8)}.pdf` : `history-${uuid.slice(0, 8)}.pdf`;
+  const filenameMap = {
+    receipt: `receipt-${uuid.slice(0, 8)}.pdf`,
+    history: `history-${uuid.slice(0, 8)}.pdf`,
+    annual: `annual-statement-${uuid.slice(0, 8)}.pdf`,
+  };
+  const filename = filenameMap[type];
 
   // Upload to Supabase Storage
   const { error: uploadError } = await supabase.storage
@@ -228,7 +326,7 @@ async function uploadAndSign(
     });
 
   if (uploadError) {
-    console.error('[RECEIPTS] Upload error:', uploadError);
+    logger.error('[RECEIPTS] Upload error:', uploadError);
     return NextResponse.json({ error: 'Failed to upload PDF' }, { status: 500 });
   }
 
@@ -238,7 +336,7 @@ async function uploadAndSign(
     .createSignedUrl(filePath, 3600);
 
   if (signError || !signedUrlData?.signedUrl) {
-    console.error('[RECEIPTS] Signed URL error:', signError);
+    logger.error('[RECEIPTS] Signed URL error:', signError);
     return NextResponse.json({ error: 'Failed to create download link' }, { status: 500 });
   }
 

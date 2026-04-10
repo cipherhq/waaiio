@@ -3,6 +3,9 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 import type { MessageSender } from '@/lib/channels/message-sender';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 const STATUS_MESSAGES: Record<string, string> = {
   processing: 'Your order *{ref}* is now being prepared.',
@@ -20,7 +23,14 @@ function getDefaultGupshup() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { orderId, businessId, status } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'order-status'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { orderId, businessId, status } = body;
 
     if (!orderId || !businessId || !status) {
       return NextResponse.json({ error: 'orderId, businessId, and status required' }, { status: 400 });
@@ -68,13 +78,13 @@ export async function POST(request: NextRequest) {
         await sender.sendText({ to: phone, text: message });
         notified = true;
       } catch (err) {
-        console.error('[ORDER-STATUS] WhatsApp notification error:', err);
+        logger.error('[ORDER-STATUS] WhatsApp notification error:', err);
       }
     }
 
     return NextResponse.json({ success: true, notified });
   } catch (error) {
-    console.error('[ORDER-STATUS] Error:', error);
+    logger.error('[ORDER-STATUS] Error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

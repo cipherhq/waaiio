@@ -269,6 +269,43 @@ export function subscriptionActivatedEmail(businessName: string, tier: string, t
   };
 }
 
+export function newOrderEmail(details: {
+  businessName: string;
+  referenceCode: string;
+  customerName: string;
+  items: Array<{ name: string; quantity: number; price: number; variant_label?: string }>;
+  totalAmount: string;
+  deliveryAddress?: string;
+  dashboardUrl: string;
+}) {
+  const { businessName, referenceCode, customerName, items, totalAmount, deliveryAddress, dashboardUrl } = details;
+  const itemRows = items.map(i => {
+    const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
+    return `<tr>
+      <td style="padding:6px 0;font-size:13px;color:#3f3f46">${label}</td>
+      <td style="padding:6px 0;font-size:13px;color:#3f3f46;text-align:center">x${i.quantity}</td>
+    </tr>`;
+  }).join('');
+
+  return {
+    subject: `New order received — ${referenceCode}`,
+    html: wrap(`
+      ${h('New Order Received!')}
+      ${p(`<strong>${businessName}</strong> just received a new order.`)}
+      ${table(
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
+        kv('Customer', customerName) +
+        kv('Total', `<strong>${totalAmount}</strong>`) +
+        (deliveryAddress ? kv('Delivery', deliveryAddress) : '')
+      )}
+      ${p('<strong>Items:</strong>')}
+      <table cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px">${itemRows}</table>
+      ${btn('View Order', dashboardUrl)}
+      ${p('Log in to your dashboard to manage this order.')}
+    `),
+  };
+}
+
 export function weeklyDigestEmail(businessName: string, stats: {
   bookings: number;
   revenue: string;

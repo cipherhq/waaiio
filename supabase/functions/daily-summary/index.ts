@@ -10,6 +10,12 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+const isDev = Deno.env.get('ENVIRONMENT') !== 'production';
+const log = {
+  debug: (...args: unknown[]) => { if (isDev) console.log(...args); },
+  error: (...args: unknown[]) => console.error(...args),
+};
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const resendKey = Deno.env.get('RESEND_API_KEY') || '';
@@ -17,7 +23,7 @@ const fromEmail = Deno.env.get('FROM_EMAIL') || 'noreply@waaiio.com';
 
 async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
   if (!resendKey) {
-    console.log(`[mock] Email to ${to}: ${subject}`);
+    log.debug(`[mock] Email to ${to}: ${subject}`);
     return true;
   }
 
@@ -32,7 +38,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
     });
     return response.ok;
   } catch (err) {
-    console.error(`Failed to send email to ${to}:`, err);
+    log.error(`Failed to send email to ${to}:`, err);
     return false;
   }
 }

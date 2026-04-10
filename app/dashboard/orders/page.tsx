@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { RefundModal } from '@/components/dashboard/RefundModal';
 
 interface OrderItem {
   id: string;
@@ -45,6 +46,7 @@ const statusColors: Record<string, string> = {
 
 export default function OrdersPage() {
   const business = useBusiness();
+  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
   const country = (business.country_code || 'NG') as CountryCode;
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -56,6 +58,30 @@ export default function OrdersPage() {
   const [trackingCarrier, setTrackingCarrier] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [savingTracking, setSavingTracking] = useState(false);
+
+  // Refund state
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
+
+  async function openRefundForOrder(orderId: string) {
+    const supabase = createClient();
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('id, amount, refund_amount, currency, status')
+      .eq('business_id', business.id)
+      .contains('metadata', { order_id: orderId })
+      .eq('status', 'success')
+      .maybeSingle();
+    if (payment) {
+      setRefundPayment({
+        id: payment.id,
+        amount: Number(payment.amount),
+        refund_amount: Number(payment.refund_amount || 0),
+        currency: payment.currency || 'NGN',
+      });
+      setRefundModalOpen(true);
+    }
+  }
 
   async function fetchOrders() {
     const supabase = createClient();
@@ -140,6 +166,21 @@ export default function OrdersPage() {
   if (selectedOrder) {
     return (
       <div>
+        {/* Refund Modal (detail view) */}
+        {refundPayment && (
+          <RefundModal
+            open={refundModalOpen}
+            onClose={() => { setRefundModalOpen(false); setRefundPayment(null); }}
+            paymentId={refundPayment.id}
+            paymentAmount={refundPayment.amount}
+            existingRefundAmount={refundPayment.refund_amount}
+            currency={refundPayment.currency}
+            businessId={business.id}
+            isDirectSplit={business.payout_mode === 'direct_split'}
+            countryCode={country}
+            onSuccess={() => { fetchOrders(); setSelectedOrder(null); }}
+          />
+        )}
         <div className="flex items-center gap-4">
           <button
             onClick={() => setSelectedOrder(null)}
@@ -204,7 +245,7 @@ export default function OrdersPage() {
 
             {/* Customer Info */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">
-              <h2 className="text-sm font-semibold text-gray-900">Customer</h2>
+              <h2 className="text-sm font-semibold text-gray-900">{labels.personLabel}</h2>
               <div className="mt-3 space-y-2 text-sm">
                 {selectedOrder.user && (
                   <div className="flex justify-between">
@@ -261,6 +302,20 @@ export default function OrdersPage() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Refund Payment */}
+            <div className="rounded-xl border border-gray-100 bg-white p-6">
+              <h2 className="text-sm font-semibold text-gray-900">Refund Payment</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Issue a full or partial refund for this order
+              </p>
+              <button
+                onClick={() => openRefundForOrder(selectedOrder.id)}
+                className="mt-3 w-full rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+              >
+                Refund
+              </button>
             </div>
 
             {selectedOrder.notes && (
@@ -349,10 +404,10 @@ export default function OrdersPage() {
                     disabled={savingTracking || (!trackingCarrier.trim() && !trackingNumber.trim())}
                     className="w-full rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
                   >
-                    {savingTracking ? 'Saving...' : 'Save & Notify Customer'}
+                    {savingTracking ? 'Saving...' : `Save & Notify ${labels.personLabel}`}
                   </button>
                   <p className="text-xs text-gray-400">
-                    Customer will receive a WhatsApp message with tracking info.
+                    {labels.personLabel} will receive a WhatsApp message with tracking info.
                   </p>
                 </div>
               )}
@@ -365,9 +420,25 @@ export default function OrdersPage() {
 
   return (
     <div>
+      {/* Refund Modal */}
+      {refundPayment && (
+        <RefundModal
+          open={refundModalOpen}
+          onClose={() => { setRefundModalOpen(false); setRefundPayment(null); }}
+          paymentId={refundPayment.id}
+          paymentAmount={refundPayment.amount}
+          existingRefundAmount={refundPayment.refund_amount}
+          currency={refundPayment.currency}
+          businessId={business.id}
+          isDirectSplit={business.payout_mode === 'direct_split'}
+          countryCode={(business.country_code || 'NG') as CountryCode}
+          onSuccess={() => { fetchOrders(); setSelectedOrder(null); }}
+        />
+      )}
+
       <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Manage orders from your WhatsApp customers
+        Manage orders from your WhatsApp {labels.personLabelPlural.toLowerCase()}
       </p>
 
       {/* Quick Stats */}
@@ -413,7 +484,7 @@ export default function OrdersPage() {
           </div>
           <h3 className="mt-4 text-sm font-semibold text-gray-900">No orders yet</h3>
           <p className="mt-1 text-sm text-gray-500">
-            Orders from WhatsApp customers will appear here.
+            Orders from WhatsApp {labels.personLabelPlural.toLowerCase()} will appear here.
           </p>
         </div>
       ) : (

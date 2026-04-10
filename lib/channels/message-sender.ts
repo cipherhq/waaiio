@@ -33,6 +33,11 @@ export interface MessageSender {
     filename: string;
     caption?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
+  sendTemplate?(msg: {
+    to: string;
+    templateName: string;
+    templateParams: string[];
+  }): Promise<{ success?: boolean; messageId?: string }>;
 }
 
 /**
@@ -110,6 +115,22 @@ export class MetaCloudSender implements MessageSender {
       documentUrl: msg.documentUrl,
       filename: msg.filename,
       caption: msg.caption,
+    });
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendTemplate(msg: {
+    to: string;
+    templateName: string;
+    templateParams: string[];
+  }) {
+    const result = await this.cloud.sendTemplate({
+      to: msg.to,
+      templateName: msg.templateName,
+      components: [{
+        type: 'body' as const,
+        parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })),
+      }],
     });
     return { success: true, messageId: result.messageId };
   }

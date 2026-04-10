@@ -269,11 +269,13 @@ export const paymentFlow: FlowDefinition = {
                 '',
                 `Pay here \ud83d\udc47`,
                 paymentResult.url,
+                '',
+                `\u26a0\ufe0f After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
               ].join('\n'),
             },
             {
               type: 'buttons',
-              body: "Tap *I've Paid* after completing payment:",
+              body: "After paying, return here and tap *I've Paid* to confirm:",
               buttons: [
                 { id: 'i_paid', title: "I've Paid" },
                 { id: 'cancel', title: 'Cancel' },
@@ -294,7 +296,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete your payment using the link above.\n\nTap *I've Paid* after paying:",
+          body: "Complete your payment using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'cancel', title: 'Cancel' },
@@ -600,7 +602,7 @@ export const paymentFlow: FlowDefinition = {
           // For Stripe, send the checkout link and save subscription as pending
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `Complete your recurring payment setup here:\n${checkout.url}`,
+            text: `Complete your recurring payment setup here:\n${checkout.url}\n\n⚠️ After completing setup, *return to WhatsApp*.`,
           });
         }
 

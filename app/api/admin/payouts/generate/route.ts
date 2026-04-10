@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 const COOLING_PERIOD_DAYS = 7;
 const VELOCITY_THRESHOLD = 50; // max transactions per day before flagging
@@ -207,7 +208,7 @@ export async function POST(request: NextRequest) {
       period: { start: periodStartStr, end: periodEndStr },
     });
   } catch (error) {
-    console.error('Generate payouts error:', (error as Error).message);
+    logger.error('Generate payouts error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to generate payouts' }, { status: 500 });
   }
 }

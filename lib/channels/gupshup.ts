@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger';
+
 export interface WhatsAppMessage {
   to: string;
   templateId?: string;
@@ -68,7 +70,7 @@ export class GupshupService {
 
   async sendTemplate(message: WhatsAppMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      console.log(`[DEV] WhatsApp template to ${message.to}: ${message.templateId}`);
+      logger.debug(`[DEV] WhatsApp template to ${message.to}: ${message.templateId}`);
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -97,17 +99,17 @@ export class GupshupService {
       if (data.status === 'submitted') {
         return { success: true, messageId: data.messageId };
       }
-      console.error('Gupshup template send failed', data);
+      logger.error('Gupshup template send failed', data);
       return { success: false };
     } catch (error) {
-      console.error('Gupshup API error', error);
+      logger.error('Gupshup API error', error);
       return { success: false };
     }
   }
 
   async sendText(message: WhatsAppMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      console.log(`[DEV] WhatsApp text to ${message.to}: ${message.text}`);
+      logger.debug(`[DEV] WhatsApp text to ${message.to}: ${message.text}`);
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -133,17 +135,17 @@ export class GupshupService {
       if (data.status === 'submitted') {
         return { success: true, messageId: data.messageId };
       }
-      console.error('Gupshup text send failed', data);
+      logger.error('Gupshup text send failed', data);
       return { success: false };
     } catch (error) {
-      console.error('Gupshup API error', error);
+      logger.error('Gupshup API error', error);
       return { success: false };
     }
   }
 
   async sendList(message: WhatsAppListMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      console.log(`[DEV] WhatsApp list to ${message.to}: "${message.title}" (${message.items.length} items)`);
+      logger.debug(`[DEV] WhatsApp list to ${message.to}: "${message.title}" (${message.items.length} items)`);
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -189,17 +191,17 @@ export class GupshupService {
       if (data.status === 'submitted') {
         return { success: true, messageId: data.messageId };
       }
-      console.error('Gupshup list send failed', data);
+      logger.error('Gupshup list send failed', data);
       return { success: false };
     } catch (error) {
-      console.error('Gupshup API error', error);
+      logger.error('Gupshup API error', error);
       return { success: false };
     }
   }
 
   async sendButtons(message: WhatsAppButtonMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      console.log(`[DEV] WhatsApp buttons to ${message.to}: "${message.body}"`);
+      logger.debug(`[DEV] WhatsApp buttons to ${message.to}: "${message.body}"`);
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -236,17 +238,63 @@ export class GupshupService {
       if (data.status === 'submitted') {
         return { success: true, messageId: data.messageId };
       }
-      console.error('Gupshup buttons send failed', data);
+      logger.error('Gupshup buttons send failed', data);
       return { success: false };
     } catch (error) {
-      console.error('Gupshup API error', error);
+      logger.error('Gupshup API error', error);
+      return { success: false };
+    }
+  }
+
+  async sendDocument(message: {
+    to: string;
+    documentUrl: string;
+    filename: string;
+    caption?: string;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    if (!this.isConfigured) {
+      logger.debug(`[DEV] WhatsApp document to ${message.to}: ${message.documentUrl}`);
+      return { success: true, messageId: `mock_wa_${Date.now()}` };
+    }
+
+    try {
+      const body = new URLSearchParams({
+        channel: 'whatsapp',
+        source: this.phoneNumber,
+        destination: message.to.replace('+', ''),
+        'src.name': this.appName,
+        message: JSON.stringify({
+          type: 'file',
+          url: message.documentUrl,
+          filename: message.filename,
+          caption: message.caption || '',
+        }),
+      });
+
+      const response = await fetch(`${this.baseUrl}/msg`, {
+        method: 'POST',
+        headers: {
+          apikey: this.apiKey,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+
+      const data = await response.json();
+      if (data.status === 'submitted') {
+        return { success: true, messageId: data.messageId };
+      }
+      logger.error('Gupshup document send failed', data);
+      return { success: false };
+    } catch (error) {
+      logger.error('Gupshup API error', error);
       return { success: false };
     }
   }
 
   async sendImage(message: WhatsAppImageMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      console.log(`[DEV] WhatsApp image to ${message.to}: ${message.imageUrl}`);
+      logger.debug(`[DEV] WhatsApp image to ${message.to}: ${message.imageUrl}`);
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -277,10 +325,10 @@ export class GupshupService {
       if (data.status === 'submitted') {
         return { success: true, messageId: data.messageId };
       }
-      console.error('Gupshup image send failed', data);
+      logger.error('Gupshup image send failed', data);
       return { success: false };
     } catch (error) {
-      console.error('Gupshup API error', error);
+      logger.error('Gupshup API error', error);
       return { success: false };
     }
   }

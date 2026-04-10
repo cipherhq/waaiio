@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -10,6 +11,7 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const businessId = params.get('business_id');
+  const fetchAll = params.get('all') === 'true';
   const page = Math.max(1, parseInt(params.get('page') || '1'));
   const status = params.get('status') || 'all';
   const perPage = 20;
@@ -35,8 +37,11 @@ export async function GET(request: NextRequest) {
       .from('business_payouts')
       .select('*', { count: 'exact' })
       .eq('business_id', businessId)
-      .order('created_at', { ascending: false })
-      .range((page - 1) * perPage, page * perPage - 1);
+      .order('created_at', { ascending: false });
+
+    if (!fetchAll) {
+      query = query.range((page - 1) * perPage, page * perPage - 1);
+    }
 
     if (status !== 'all') {
       query = query.eq('status', status);
@@ -45,7 +50,7 @@ export async function GET(request: NextRequest) {
     const { data, count, error } = await query;
 
     if (error) {
-      console.error('Payout history error:', error);
+      logger.error('Payout history error:', error);
       return NextResponse.json({ error: 'Failed to fetch payout history' }, { status: 500 });
     }
 
@@ -57,7 +62,7 @@ export async function GET(request: NextRequest) {
       total_pages: Math.ceil((count || 0) / perPage),
     });
   } catch (error) {
-    console.error('History error:', (error as Error).message);
+    logger.error('History error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to fetch history' }, { status: 500 });
   }
 }

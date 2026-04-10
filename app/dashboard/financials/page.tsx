@@ -53,11 +53,15 @@ export default function FinancialsPage() {
   const [page, setPage] = useState(1);
   const perPage = 20;
 
+  const [totalRefunds, setTotalRefunds] = useState(0);
+  const [platformPct, setPlatformPct] = useState<number | null>(null);
+  const isDirectSplit = business.payout_mode === 'direct_split';
+
   useEffect(() => {
     async function load() {
       const supabase = createClient();
 
-      const [bookingsRes, feesRes, payoutsRes] = await Promise.all([
+      const [bookingsRes, feesRes, payoutsRes, payoutAccountRes, refundsRes] = await Promise.all([
         supabase
           .from('bookings')
           .select('id, flow_type, reference_code, guest_name, total_amount, deposit_amount, status, created_at')
@@ -74,15 +78,33 @@ export default function FinancialsPage() {
           .select('net_amount')
           .eq('business_id', business.id)
           .in('status', ['pending', 'approved']),
+        isDirectSplit
+          ? supabase
+              .from('payout_accounts')
+              .select('platform_percentage')
+              .eq('business_id', business.id)
+              .eq('is_active', true)
+              .maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase
+          .from('refunds')
+          .select('amount, status')
+          .eq('business_id', business.id)
+          .eq('status', 'success'),
       ]);
 
       setBookings(bookingsRes.data || []);
-      setPlatformFees((feesRes.data || []).reduce((s, f) => s + Number(f.fee_total || 0), 0));
+      if (isDirectSplit) {
+        setPlatformPct(payoutAccountRes.data?.platform_percentage ?? 2.5);
+      } else {
+        setPlatformFees((feesRes.data || []).reduce((s, f) => s + Number(f.fee_total || 0), 0));
+      }
       setPendingPayouts((payoutsRes.data || []).reduce((s, p) => s + Number(p.net_amount || 0), 0));
+      setTotalRefunds((refundsRes.data || []).reduce((s, r) => s + Number(r.amount || 0), 0));
       setLoading(false);
     }
     load();
-  }, [business.id]);
+  }, [business.id, isDirectSplit]);
 
   // Revenue from all non-cancelled bookings
   const totalRevenue = useMemo(() =>
@@ -91,7 +113,10 @@ export default function FinancialsPage() {
       .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0),
   [bookings]);
 
-  const netEarnings = totalRevenue - platformFees;
+  const effectiveFees = isDirectSplit && platformPct !== null
+    ? Math.round(totalRevenue * (platformPct / 100))
+    : platformFees;
+  const netEarnings = totalRevenue - effectiveFees - totalRefunds;
 
   // Build unified transactions from bookings
   const entityLabel = labels.entityName.charAt(0).toUpperCase() + labels.entityName.slice(1);
@@ -169,9 +194,10 @@ export default function FinancialsPage() {
       <p className="mt-1 text-sm text-gray-500">Transaction tracking and revenue analytics</p>
 
       {/* Metric Cards */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <MetricCard label={isGiving ? 'Total Received' : 'Total Revenue'} value={formatCurrency(totalRevenue, country)} color="blue" />
-        <MetricCard label="Platform Fees" value={formatCurrency(platformFees, country)} color="orange" />
+        <MetricCard label="Platform Fees" value={formatCurrency(effectiveFees, country)} color="orange" />
+        <MetricCard label="Total Refunds" value={formatCurrency(totalRefunds, country)} color="red" />
         <MetricCard label={isGiving ? 'Net Received' : 'Net Earnings'} value={formatCurrency(netEarnings, country)} color="green" />
         <MetricCard label="Pending Payouts" value={formatCurrency(pendingPayouts, country)} color="yellow" />
       </div>
@@ -308,6 +334,7 @@ function MetricCard({ label, value, color }: { label: string; value: string; col
     green: 'bg-green-50 border-green-100',
     orange: 'bg-orange-50 border-orange-100',
     yellow: 'bg-yellow-50 border-yellow-100',
+    red: 'bg-red-50 border-red-100',
   };
   return (
     <div className={`rounded-xl border p-4 ${colors[color] || 'bg-gray-50 border-gray-100'}`}>

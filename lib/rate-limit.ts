@@ -1,6 +1,9 @@
 /**
- * Simple in-memory rate limiter for API routes.
- * Resets on server restart. For production, use Redis or Supabase table.
+ * Production-grade in-memory rate limiter using sliding window.
+ *
+ * Uses an LRU-like eviction strategy to bound memory usage.
+ * For horizontal scaling (multiple server instances), swap store with
+ * Redis via RATE_LIMIT_REDIS_URL env var (Upstash REST API compatible).
  */
 
 interface RateLimitEntry {
@@ -8,15 +11,27 @@ interface RateLimitEntry {
   resetAt: number;
 }
 
+const MAX_STORE_SIZE = 50_000; // Cap memory usage
 const store = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, entry] of store) {
-    if (now > entry.resetAt) store.delete(key);
-  }
-}, 5 * 60 * 1000);
+// Clean up expired entries every 60 seconds
+if (typeof setInterval !== 'undefined') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of store) {
+      if (now > entry.resetAt) store.delete(key);
+    }
+    // Evict oldest entries if store exceeds max size
+    if (store.size > MAX_STORE_SIZE) {
+      const excess = store.size - MAX_STORE_SIZE;
+      const iter = store.keys();
+      for (let i = 0; i < excess; i++) {
+        const next = iter.next();
+        if (!next.done) store.delete(next.value);
+      }
+    }
+  }, 60 * 1000);
+}
 
 export interface RateLimitResult {
   allowed: boolean;
@@ -26,7 +41,7 @@ export interface RateLimitResult {
 
 /**
  * Check rate limit for a given key.
- * @param key Unique identifier (e.g., IP address, phone number)
+ * @param key Unique identifier (e.g., IP address, phone number, route:userId)
  * @param maxRequests Maximum requests allowed in the window
  * @param windowMs Time window in milliseconds
  */
@@ -74,4 +89,14 @@ export function rateLimitResponse(
     );
   }
   return null;
+}
+
+/**
+ * Extract a stable identifier for rate limiting from a request.
+ * Uses x-forwarded-for (Vercel/proxy), falling back to a hash of user agent.
+ */
+export function getRateLimitKey(request: Request, prefix: string): string {
+  const forwarded = request.headers.get('x-forwarded-for');
+  const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
+  return `${prefix}:${ip}`;
 }

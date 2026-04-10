@@ -36,28 +36,100 @@ export async function initializePayment(
     let stripeAccountId: string | undefined;
     let platformFeeAmount: number | undefined;
 
-    if (opts.businessId) {
-      // Check business payout mode
-      const { data: biz } = await supabase
-        .from('businesses')
-        .select('payout_mode')
-        .eq('id', opts.businessId)
-        .single();
+    // BYO credential fields
+    let byoSecretKey: string | undefined;
+    let byoPlatformSubaccount: string | undefined;
+    let isByo = false;
+    let byoBusinessId: string | undefined;
+    let connectAccountId: string | undefined;
 
-      const { data: payout } = await supabase
-        .from('payout_accounts')
-        .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
+    if (opts.businessId) {
+      // Check for BYO (Bring Your Own) gateway credentials first
+      const { data: byoCreds } = await supabase
+        .from('business_payment_credentials')
+        .select('secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
         .eq('business_id', opts.businessId)
         .eq('is_active', true)
+        .not('verified_at', 'is', null)
         .maybeSingle();
 
-      // Only add split params for direct_split mode with an active payout account
-      if (biz?.payout_mode === 'direct_split' && payout) {
-        subaccountCode = payout.subaccount_code || undefined;
-        stripeAccountId = payout.stripe_account_id || undefined;
-        platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+      if (byoCreds?.platform_subaccount_code && !byoCreds?.secret_key) {
+        // Subaccount-based connect: platform key + subaccount split
+        // (connect_account_id may also be set to satisfy DB constraint, but we use subaccount split)
+        subaccountCode = byoCreds.platform_subaccount_code;
+
+        const { data: business } = await supabase
+          .from('businesses')
+          .select('subscription_tier, trial_ends_at')
+          .eq('id', opts.businessId)
+          .single();
+
+        if (business) {
+          const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const { calculatePlatformFee } = await import('@/lib/constants');
+          const feeResult = calculatePlatformFee(opts.amount, business.subscription_tier || 'free', !!isInTrial);
+          platformFeeAmount = feeResult.feeTotal;
+        }
+      } else if (byoCreds?.connect_account_id && !byoCreds?.platform_subaccount_code) {
+        // True Connect mode: use platform key + X-Connect-Account header
+        connectAccountId = byoCreds.connect_account_id;
+        byoBusinessId = opts.businessId;
+
+        const { data: business } = await supabase
+          .from('businesses')
+          .select('subscription_tier, trial_ends_at')
+          .eq('id', opts.businessId)
+          .single();
+
+        if (business) {
+          const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const { calculatePlatformFee } = await import('@/lib/constants');
+          const feeResult = calculatePlatformFee(opts.amount, business.subscription_tier || 'free', !!isInTrial);
+          platformFeeAmount = feeResult.feeTotal;
+        }
+      } else if (byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
+        // BYO mode: use business's own gateway key with reversed split
+        isByo = true;
+        byoSecretKey = byoCreds.secret_key;
+        byoPlatformSubaccount = byoCreds.platform_subaccount_code;
+        byoBusinessId = opts.businessId;
+
+        // Calculate platform fee based on business tier
+        const { data: business } = await supabase
+          .from('businesses')
+          .select('subscription_tier, trial_ends_at')
+          .eq('id', opts.businessId)
+          .single();
+
+        if (business) {
+          const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const { calculatePlatformFee } = await import('@/lib/constants');
+          const feeResult = calculatePlatformFee(opts.amount, business.subscription_tier || 'free', !!isInTrial);
+          platformFeeAmount = feeResult.feeTotal;
+        }
+      } else {
+        // Normal platform flow: check payout mode
+        const { data: biz } = await supabase
+          .from('businesses')
+          .select('payout_mode')
+          .eq('id', opts.businessId)
+          .single();
+
+        const { data: payout } = await supabase
+          .from('payout_accounts')
+          .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
+          .eq('business_id', opts.businessId)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        // Only add split params for direct_split mode with an active payout account
+        if (biz?.payout_mode === 'direct_split' && payout) {
+          subaccountCode = payout.subaccount_code || undefined;
+          stripeAccountId = payout.stripe_account_id || undefined;
+          platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+        }
+        // platform_managed: no split params, full amount goes to platform
       }
-      // platform_managed: no split params, full amount goes to platform
     }
 
     const result = await gateway.initializePayment({
@@ -74,6 +146,11 @@ export async function initializePayment(
       subaccountCode,
       stripeAccountId,
       platformFeeAmount,
+      byoSecretKey,
+      byoPlatformSubaccount,
+      isByo,
+      byoBusinessId,
+      connectAccountId,
     });
 
     return result;

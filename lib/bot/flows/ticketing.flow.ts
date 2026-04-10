@@ -299,11 +299,11 @@ export const ticketingFlow: FlowDefinition = {
             return [
               {
                 type: 'text',
-                text: `🎫 *Tickets Reserved!*\n\n🎪 ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ₦${total.toLocaleString()}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}`,
+                text: `🎫 *Tickets Reserved!*\n\n🎪 ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ₦${total.toLocaleString()}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
               },
               {
                 type: 'buttons',
-                body: "Tap *I've Paid* after payment:",
+                body: "After paying, return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'cancel', title: 'Cancel' },
@@ -341,7 +341,7 @@ export const ticketingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete payment using the link above.\n\nTap *I've Paid* after paying:",
+          body: "Complete payment using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'cancel', title: 'Cancel' },

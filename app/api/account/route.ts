@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { cancelSubscription as cancelStripeSub } from '@/lib/payments/stripe-recurring';
 import { cancelSubscription as cancelPaystackSub } from '@/lib/payments/paystack-recurring';
+import { logger } from '@/lib/logger';
 
 export async function DELETE() {
   try {
@@ -36,12 +37,12 @@ export async function DELETE() {
       for (const sub of activeSubs) {
         if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
           await cancelStripeSub(sub.gateway_subscription_code).catch((e) =>
-            console.error(`[ACCOUNT] Failed to cancel Stripe sub ${sub.id}:`, e)
+            logger.error(`[ACCOUNT] Failed to cancel Stripe sub ${sub.id}:`, e)
           );
         } else if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
           const emailToken = (sub.metadata as Record<string, string>)?.email_token || '';
           await cancelPaystackSub(sub.gateway_subscription_code, emailToken).catch((e) =>
-            console.error(`[ACCOUNT] Failed to cancel Paystack sub ${sub.id}:`, e)
+            logger.error(`[ACCOUNT] Failed to cancel Paystack sub ${sub.id}:`, e)
           );
         }
       }
@@ -63,13 +64,13 @@ export async function DELETE() {
     // Delete auth user (cascades to profiles via FK)
     const { error: deleteError } = await serviceClient.auth.admin.deleteUser(user.id);
     if (deleteError) {
-      console.error('[ACCOUNT] Failed to delete auth user:', deleteError);
+      logger.error('[ACCOUNT] Failed to delete auth user:', deleteError);
       return NextResponse.json({ error: 'Failed to delete account' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[ACCOUNT] DELETE error:', error);
+    logger.error('[ACCOUNT] DELETE error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

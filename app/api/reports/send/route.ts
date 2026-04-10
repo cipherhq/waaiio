@@ -1,10 +1,20 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { reportIds } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'reports-send'), 10, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { reportIds } = body;
     if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
       return NextResponse.json({ error: 'reportIds required' }, { status: 400 });
     }
@@ -33,7 +43,7 @@ export async function POST(request: NextRequest) {
           .createSignedUrl(report.file_path, 3600);
 
         if (signError || !signedUrlData?.signedUrl) {
-          console.error('[REPORTS] Signed URL error:', signError);
+          logger.error('[REPORTS] Signed URL error:', signError);
           await supabase.from('customer_reports').update({ status: 'failed' }).eq('id', reportId);
           results.push({ id: reportId, status: 'failed' });
           continue;
@@ -42,7 +52,7 @@ export async function POST(request: NextRequest) {
         // Resolve channel for the business
         const resolved = await resolver.resolveByBusinessId(report.business_id);
         if (!resolved) {
-          console.error('[REPORTS] No channel for business:', report.business_id);
+          logger.error('[REPORTS] No channel for business:', report.business_id);
           await supabase.from('customer_reports').update({ status: 'failed' }).eq('id', reportId);
           results.push({ id: reportId, status: 'failed' });
           continue;
@@ -73,7 +83,7 @@ export async function POST(request: NextRequest) {
 
         results.push({ id: reportId, status: 'sent' });
       } catch (err) {
-        console.error('[REPORTS] Send error for', reportId, err);
+        logger.error('[REPORTS] Send error for', reportId, err);
         await supabase.from('customer_reports').update({ status: 'failed' }).eq('id', reportId);
         results.push({ id: reportId, status: 'failed' });
       }
@@ -81,7 +91,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ results });
   } catch (error) {
-    console.error('[REPORTS] Send error:', error);
+    logger.error('[REPORTS] Send error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

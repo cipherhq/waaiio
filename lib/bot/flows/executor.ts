@@ -149,7 +149,13 @@ export class FlowExecutor {
 
     if (!result.valid) {
       if (result.errorMessage) {
-        await this.sendText(from, result.errorMessage);
+        await this.sendText(from, `${result.errorMessage}\n\n_Type *cancel* to exit or *start over* to restart._`);
+      }
+      // Re-send interactive prompts (buttons/list) so user gets fresh clickable options
+      // WhatsApp buttons are single-use — once tapped, they gray out
+      const retryMessages = await step.prompt(ctx);
+      if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
+        await this.sendMessages(from, retryMessages);
       }
       return;
     }

@@ -4,10 +4,19 @@ import { getPaymentGateway } from '@/lib/payments/factory';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import type { CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'recurring-setup'), 10, 60_000);
+    if (rateLimit) return rateLimit;
+
     const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
     const { businessId, serviceId, amount, frequency, customerName, customerEmail, customerPhone, channel } = body;
 
     if (!businessId || !serviceId || !amount || !frequency || !customerName || !customerEmail || !customerPhone) {
@@ -142,7 +151,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ url: checkout.url, sessionId: checkout.sessionId });
     }
   } catch (error) {
-    console.error('Recurring setup error:', error);
+    logger.error('Recurring setup error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

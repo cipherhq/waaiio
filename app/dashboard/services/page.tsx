@@ -160,7 +160,9 @@ export default function ServicesPage() {
   /** Format price with recurring suffix */
   function priceLabel(service: Service) {
     if (service.price_is_variable && service.price === 0) {
-      return 'Any amount';
+      return labels?.quantityLabel === 'amount'
+        ? `${labels.personLabelPlural} choose amount`
+        : 'Variable pricing';
     }
     const prefix = service.price_is_variable ? 'From ' : '';
     const base = formatCurrency(service.price, country);
@@ -448,8 +450,10 @@ export default function ServicesPage() {
             />
 
             <ToggleRow
-              label="Variable Pricing"
-              description="Price may vary (show 'from' prefix)"
+              label={labels?.quantityLabel === 'amount' ? 'Open Amount' : 'Variable Pricing'}
+              description={labels?.quantityLabel === 'amount'
+                ? `${labels.personLabelPlural} can give any amount they choose`
+                : 'Price may vary (show \'from\' prefix)'}
               checked={form.price_is_variable}
               onChange={(v) => setForm({ ...form, price_is_variable: v })}
             />

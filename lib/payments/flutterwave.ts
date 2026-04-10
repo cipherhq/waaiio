@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
-import type { PaymentGateway, InitPaymentOpts, InitPaymentResult } from './types';
+import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
+import { logger } from '@/lib/logger';
 
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
 
@@ -11,9 +12,15 @@ export class FlutterwaveGateway implements PaymentGateway {
     const txRef = `flw_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
     const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.waaiio.com`;
 
+    // BYO: use business's own API key; platform flow: use platform key
+    const secretKey = opts.isByo && opts.byoSecretKey ? opts.byoSecretKey : flutterwaveSecretKey;
+
     try {
       // Mock mode when no secret key
-      if (!flutterwaveSecretKey) {
+      if (!secretKey) {
+        if (process.env.NODE_ENV === 'production') {
+          throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+        }
         const mockRef = `mock_flw_${randomUUID()}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
@@ -23,17 +30,41 @@ export class FlutterwaveGateway implements PaymentGateway {
           gateway: 'flutterwave',
           gateway_reference: mockRef,
           status: 'pending',
-          metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
+          metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null, byo: !!opts.isByo },
         });
         return { url: `https://waaiio.com/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
+      // Build split params
+      let splitParams: Record<string, unknown> = {};
+      if (opts.isByo && opts.byoPlatformSubaccount && opts.platformFeeAmount != null) {
+        // BYO reversed split: platform subaccount on business's account
+        // transaction_charge = amount business keeps (their share)
+        const businessKeeps = opts.amount - opts.platformFeeAmount;
+        splitParams = {
+          subaccounts: [{
+            id: opts.byoPlatformSubaccount,
+            transaction_charge_type: 'flat',
+            transaction_charge: businessKeeps,
+          }],
+        };
+      } else if (opts.subaccountCode) {
+        // Normal platform split
+        splitParams = {
+          subaccounts: [{
+            id: opts.subaccountCode,
+            transaction_charge_type: 'flat',
+            transaction_charge: opts.platformFeeAmount || 0,
+          }],
+        };
+      }
+
       const response = await fetch('https://api.flutterwave.com/v3/payments', {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${flutterwaveSecretKey}`,
+          Authorization: `Bearer ${secretKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -41,14 +72,7 @@ export class FlutterwaveGateway implements PaymentGateway {
           amount: opts.amount,
           currency: opts.currency,
           redirect_url: `${callbackUrl}/api/webhooks/flutterwave/redirect?ref=${txRef}`,
-          // Split to business subaccount
-          ...(opts.subaccountCode && {
-            subaccounts: [{
-              id: opts.subaccountCode,
-              transaction_charge_type: 'flat',
-              transaction_charge: opts.platformFeeAmount || 0,
-            }],
-          }),
+          ...splitParams,
           customer: {
             email,
             phonenumber: opts.phone,
@@ -60,6 +84,8 @@ export class FlutterwaveGateway implements PaymentGateway {
             user_id: opts.userId,
             reference_code: opts.referenceCode,
             channel: 'whatsapp',
+            byo: !!opts.isByo,
+            byo_business_id: opts.byoBusinessId || null,
           },
           customizations: {
             title: opts.businessName,
@@ -71,7 +97,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       const data = await response.json();
 
       if (data.status !== 'success' || !data.data?.link) {
-        console.error('Flutterwave init failed:', data);
+        logger.error('Flutterwave init failed:', data);
         return null;
       }
 
@@ -88,6 +114,7 @@ export class FlutterwaveGateway implements PaymentGateway {
           reference_code: opts.referenceCode,
           channel: 'whatsapp',
           order_id: opts.orderId || null,
+          ...(opts.isByo && { byo: true, byo_business_id: opts.byoBusinessId }),
         },
       }).select().single();
 
@@ -97,14 +124,18 @@ export class FlutterwaveGateway implements PaymentGateway {
 
       return { url: data.data.link, reference: txRef };
     } catch (error) {
-      console.error('Flutterwave init error:', (error as Error).message);
+      logger.error('Flutterwave init error:', (error as Error).message);
       return null;
     }
   }
 
-  async verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean> {
+  async verifyPayment(supabase: SupabaseClient, reference: string, byoSecretKey?: string): Promise<boolean> {
+    const secretKey = byoSecretKey || flutterwaveSecretKey;
     // Mock mode
-    if (!flutterwaveSecretKey || reference.startsWith('mock_')) {
+    if (!secretKey || reference.startsWith('mock_')) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+      }
       await supabase
         .from('payments')
         .update({ status: 'success', paid_at: new Date().toISOString() })
@@ -129,7 +160,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       // Find the transaction ID by tx_ref
       const searchRes = await fetch(
         `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
-        { headers: { Authorization: `Bearer ${flutterwaveSecretKey}` } },
+        { headers: { Authorization: `Bearer ${secretKey}` } },
       );
       const searchData = await searchRes.json();
 
@@ -167,8 +198,81 @@ export class FlutterwaveGateway implements PaymentGateway {
       }
       return false;
     } catch (error) {
-      console.error('Flutterwave verify error:', (error as Error).message);
+      logger.error('Flutterwave verify error:', (error as Error).message);
       return false;
+    }
+  }
+
+  async refundPayment(opts: RefundPaymentOpts): Promise<RefundResult> {
+    const secretKey = opts.byoSecretKey || flutterwaveSecretKey;
+
+    // Mock mode
+    if (!secretKey || opts.gatewayReference.startsWith('mock_')) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Payment gateway not configured: missing Flutterwave secret key');
+      }
+      return {
+        success: true,
+        gatewayRefundReference: `mock_refund_flw_${Date.now()}`,
+        gatewayResponse: { mock: true },
+      };
+    }
+
+    try {
+      // First resolve tx_ref to transaction id via verify-by-reference
+      const verifyRes = await fetch(
+        `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(opts.gatewayReference)}`,
+        { headers: { Authorization: `Bearer ${secretKey}` } },
+      );
+      const verifyData = await verifyRes.json();
+
+      if (verifyData.status !== 'success' || !verifyData.data?.id) {
+        return {
+          success: false,
+          errorMessage: 'Could not resolve Flutterwave transaction reference',
+          gatewayResponse: verifyData,
+        };
+      }
+
+      const transactionId = verifyData.data.id as number;
+
+      const body: Record<string, unknown> = {};
+      if (opts.amount != null) {
+        body.amount = opts.amount;
+      }
+
+      const refundRes = await fetch(
+        `https://api.flutterwave.com/v3/transactions/${transactionId}/refund`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        },
+      );
+
+      const refundData = await refundRes.json();
+
+      if (refundData.status === 'success') {
+        return {
+          success: true,
+          gatewayRefundReference: refundData.data?.id?.toString(),
+          gatewayResponse: refundData.data,
+        };
+      }
+
+      return {
+        success: false,
+        errorMessage: refundData.message || 'Flutterwave refund failed',
+        gatewayResponse: refundData,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        errorMessage: `Flutterwave refund error: ${(error as Error).message}`,
+      };
     }
   }
 }

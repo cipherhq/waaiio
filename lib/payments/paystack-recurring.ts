@@ -32,6 +32,9 @@ export async function createPlan(opts: {
   currency?: string;
 }): Promise<{ planCode: string } | null> {
   if (!paystackSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Paystack secret key');
+    }
     return { planCode: `mock_plan_${Date.now()}` };
   }
 
@@ -62,6 +65,9 @@ export async function createSubscription(opts: {
   startDate?: string; // ISO date string
 }): Promise<{ subscriptionCode: string; emailToken: string } | null> {
   if (!paystackSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Paystack secret key');
+    }
     return {
       subscriptionCode: `mock_sub_${Date.now()}`,
       emailToken: `mock_token_${Date.now()}`,
@@ -96,7 +102,12 @@ export async function cancelSubscription(
   subscriptionCode: string,
   emailToken: string,
 ): Promise<boolean> {
-  if (!paystackSecretKey) return true;
+  if (!paystackSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Paystack secret key');
+    }
+    return true;
+  }
 
   const data = await paystackRequest('/subscription/disable', 'POST', {
     code: subscriptionCode,
@@ -118,6 +129,9 @@ export async function getAuthorization(reference: string): Promise<{
   email: string;
 } | null> {
   if (!paystackSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Paystack secret key');
+    }
     return {
       authorizationCode: `mock_auth_${Date.now()}`,
       last4: '4242',

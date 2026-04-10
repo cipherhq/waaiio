@@ -2,10 +2,20 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { handlePostCompletion } from '@/lib/bot/flows/shared/post-completion';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { entryId, status, businessId, priority_level } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'queue-update'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { entryId, status, businessId, priority_level } = body;
     if (!entryId || !businessId) {
       return NextResponse.json({ error: 'entryId and businessId required' }, { status: 400 });
     }
@@ -43,7 +53,7 @@ export async function POST(request: NextRequest) {
       .eq('business_id', businessId);
 
     if (error) {
-      console.error('[QUEUE] Update error:', error);
+      logger.error('[QUEUE] Update error:', error);
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
 
@@ -72,7 +82,7 @@ export async function POST(request: NextRequest) {
           }
         }
       } catch (err) {
-        console.error('[QUEUE] Post-completion hook error:', err);
+        logger.error('[QUEUE] Post-completion hook error:', err);
       }
     }
 
@@ -102,13 +112,13 @@ export async function POST(request: NextRequest) {
           }
         }
       } catch (err) {
-        console.error('[QUEUE] WhatsApp notification error:', err);
+        logger.error('[QUEUE] WhatsApp notification error:', err);
       }
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[QUEUE] Update error:', error);
+    logger.error('[QUEUE] Update error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

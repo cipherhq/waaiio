@@ -1,9 +1,19 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { businessId, customerPhone, points, reason } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'loyalty-redeem'), 20, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { businessId, customerPhone, points, reason } = body;
     if (!businessId || !customerPhone || !points) {
       return NextResponse.json({ error: 'businessId, customerPhone, and points required' }, { status: 400 });
     }
@@ -52,7 +62,7 @@ export async function POST(request: NextRequest) {
       new_balance: loyalty.points_balance - points,
     });
   } catch (error) {
-    console.error('[LOYALTY] Redeem error:', error);
+    logger.error('[LOYALTY] Redeem error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

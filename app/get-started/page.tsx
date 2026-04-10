@@ -279,6 +279,11 @@ function OnboardingWizard() {
   const [name, setName] = useState('');
   const [nameCheckStatus, setNameCheckStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const nameCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [customBotCode, setCustomBotCode] = useState('');
+  const [suggestedBotCode, setSuggestedBotCode] = useState('');
+  const [botCodeStatus, setBotCodeStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
+  const [botCodeEdited, setBotCodeEdited] = useState(false);
+  const botCodeCheckRef = useRef<NodeJS.Timeout | null>(null);
   const [city, setCity] = useState('');
   const [neighborhood, setNeighborhood] = useState('');
   const [address, setAddress] = useState('');
@@ -392,10 +397,11 @@ function OnboardingWizard() {
     };
   }, []);
 
-  // Cleanup name check timeout on unmount
+  // Cleanup timeouts on unmount
   useEffect(() => {
     return () => {
       if (nameCheckTimeoutRef.current) clearTimeout(nameCheckTimeoutRef.current);
+      if (botCodeCheckRef.current) clearTimeout(botCodeCheckRef.current);
     };
   }, []);
 
@@ -404,18 +410,49 @@ function OnboardingWizard() {
     if (nameCheckTimeoutRef.current) clearTimeout(nameCheckTimeoutRef.current);
     if (!value || value.trim().length < 2) {
       setNameCheckStatus('idle');
+      setSuggestedBotCode('');
+      if (!botCodeEdited) { setCustomBotCode(''); setBotCodeStatus('idle'); }
       return;
     }
     setNameCheckStatus('checking');
     nameCheckTimeoutRef.current = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(value.trim())}`);
+        const codeParam = botCodeEdited && customBotCode ? `&bot_code=${encodeURIComponent(customBotCode)}` : '';
+        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(value.trim())}${codeParam}`);
         const data = await res.json();
-        setNameCheckStatus(data.available ? 'available' : 'taken');
+        setNameCheckStatus(data.slug_available !== false ? (data.code_available ? 'available' : 'taken') : 'taken');
+        setSuggestedBotCode(data.suggested_code || data.bot_code || '');
+        // Auto-fill bot code if user hasn't manually edited it
+        if (!botCodeEdited) {
+          setCustomBotCode(data.suggested_code || data.bot_code || '');
+          setBotCodeStatus(data.code_available ? 'available' : 'taken');
+        }
       } catch {
         setNameCheckStatus('idle');
       }
     }, 500);
+  }
+
+  function handleBotCodeChange(value: string) {
+    // Normalize: uppercase, hyphens for spaces, only alphanumeric + hyphens
+    const cleaned = value.toUpperCase().replace(/\s+/g, '-').replace(/[^A-Z0-9-]/g, '').replace(/-+/g, '-').slice(0, 30);
+    setCustomBotCode(cleaned);
+    setBotCodeEdited(true);
+    if (botCodeCheckRef.current) clearTimeout(botCodeCheckRef.current);
+    if (!cleaned || cleaned.length < 2) {
+      setBotCodeStatus('idle');
+      return;
+    }
+    setBotCodeStatus('checking');
+    botCodeCheckRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/onboarding/check-name?name=${encodeURIComponent(name.trim())}&bot_code=${encodeURIComponent(cleaned)}`);
+        const data = await res.json();
+        setBotCodeStatus(data.code_available ? 'available' : 'taken');
+      } catch {
+        setBotCodeStatus('idle');
+      }
+    }, 400);
   }
 
   async function verifyPayment(reference: string, bid?: string) {
@@ -605,6 +642,7 @@ function OnboardingWizard() {
           phone: businessPhone, category, country: selectedCountry,
           bot_alias: botAlias || undefined,
           bot_greeting: botGreeting || undefined,
+          bot_code: customBotCode || undefined,
           wa_method: waMethod,
           wa_own_phone: fbConnectionData.phone_number || ownPhone || undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
@@ -666,6 +704,7 @@ function OnboardingWizard() {
           country: selectedCountry,
           bot_alias: botAlias || undefined,
           bot_greeting: botGreeting || undefined,
+          bot_code: customBotCode || undefined,
           wa_method: waMethod,
           wa_own_phone: waMethod !== 'shared' ? ownPhone : undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
@@ -743,7 +782,7 @@ function OnboardingWizard() {
       case 'restaurant': return `Welcome to ${name}! I can help you book a table. When would you like to dine?`;
       case 'barber': return `Welcome to ${name}! I can help you book an appointment. What service would you like?`;
       case 'spa': case 'salon': return `Welcome to ${name}! I can help you book a session. What would you like?`;
-      case 'church': case 'mosque': return `Welcome to ${name}! I can help you make payments. What would you like to pay for?`;
+      case 'church': case 'mosque': return `Welcome to ${name}! I can help you with giving. What would you like to give towards?`;
       case 'school': return `Welcome to ${name}! I can help you make payments. Select a category to proceed.`;
       case 'shop': case 'food_delivery': return `Welcome to ${name}! Browse our products and place an order.`;
       case 'events': return `Welcome to ${name}! Check out our upcoming events and get your tickets!`;
@@ -1099,6 +1138,44 @@ function OnboardingWizard() {
                       </p>
                     )}
                   </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Your WhatsApp Business Name *</label>
+                    <p className="mb-2 text-xs text-gray-500">
+                      This is the name customers will text to the Waaiio WhatsApp number to find and interact with your business.
+                      It also appears in your WhatsApp link. Pick something short, memorable, and easy to spell.
+                    </p>
+                    <input
+                      type="text"
+                      value={customBotCode}
+                      onChange={(e) => handleBotCodeChange(e.target.value)}
+                      placeholder="e.g. LOLAH-BEAUTY"
+                      className="w-full rounded-xl border border-gray-300 px-4 py-3 font-mono text-sm uppercase outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
+                      required
+                    />
+                    {botCodeStatus === 'checking' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-gray-500">
+                        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                        Checking availability...
+                      </p>
+                    )}
+                    {botCodeStatus === 'available' && customBotCode.length >= 2 && (
+                      <div className="mt-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
+                        <p className="flex items-center gap-1.5 text-xs font-medium text-green-700">
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                          Available!
+                        </p>
+                        <p className="mt-1 text-xs text-green-600">
+                          Customers will text <strong>&quot;{customBotCode}&quot;</strong> to the Waaiio WhatsApp number to reach your business.
+                        </p>
+                      </div>
+                    )}
+                    {botCodeStatus === 'taken' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-600">
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        Already taken. Try something different like &quot;{suggestedBotCode ? suggestedBotCode + '-' + (name.split(' ')[name.split(' ').length - 1]?.toUpperCase().slice(0, 4) || 'BIZ') : 'YOUR-CODE'}&quot;
+                      </p>
+                    )}
+                  </div>
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div>
                       <label className="mb-1.5 block text-sm font-medium text-gray-700">City *</label>
@@ -1126,7 +1203,7 @@ function OnboardingWizard() {
                 </div>
                 <div className="mt-8 flex gap-3">
                   <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="submit" disabled={!name || !city || !neighborhood || !address || !businessPhone} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
+                  <button type="submit" disabled={!name || !city || !neighborhood || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
                 </div>
               </form>
             )}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
 
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?connected=true`);
   } catch (error) {
-    console.error('Stripe callback error:', (error as Error).message);
+    logger.error('Stripe callback error:', (error as Error).message);
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=callback_failed`);
   }
 }

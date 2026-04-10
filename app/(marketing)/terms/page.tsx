@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { createClient } from '@/lib/supabase/server';
 import { markdownToHtml } from '@/lib/markdown';
+import AnimatedSection from '@/components/marketing/AnimatedSection';
 
 export async function generateMetadata(): Promise<Metadata> {
   const supabase = await createClient();
@@ -39,13 +40,25 @@ export default async function TermsPage() {
   const updated = new Date(data.updated_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-16">
-      <h1 className="text-3xl font-bold text-gray-900">{data.title}</h1>
-      <p className="mt-2 text-sm text-gray-400">Last updated: {updated}</p>
-      <div
-        className="prose-pages mt-10"
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-    </div>
+    <>
+      <section className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700 py-20 lg:py-24">
+        <div className="pointer-events-none absolute -left-40 -top-40 h-[500px] w-[500px] rounded-full bg-brand-400/15 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-32 right-0 h-[400px] w-[400px] rounded-full bg-accent/10 blur-3xl" />
+        <div className="relative mx-auto max-w-6xl px-4 text-center">
+          <h1 className="text-4xl font-extrabold text-white lg:text-5xl">Terms of Service</h1>
+          <p className="mx-auto mt-4 max-w-2xl text-lg text-brand-200">The agreement between you and Waaiio.</p>
+        </div>
+      </section>
+
+      <AnimatedSection>
+        <div className="mx-auto max-w-3xl px-4 py-16">
+          <p className="mt-2 text-sm text-gray-400">Last updated: {updated}</p>
+          <div
+            className="prose-pages mt-10"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        </div>
+      </AnimatedSection>
+    </>
   );
 }

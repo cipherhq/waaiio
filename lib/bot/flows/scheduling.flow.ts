@@ -747,11 +747,13 @@ export const schedulingFlow: FlowDefinition = {
                   '',
                   `Pay here 👇`,
                   paymentResult.url,
+                  '',
+                  `⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
                 ].join('\n'),
               },
               {
                 type: 'buttons',
-                body: "Tap *I've Paid* after completing payment:",
+                body: "After paying, return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'cancel', title: 'Cancel' },
@@ -832,7 +834,7 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Please complete your deposit payment using the link sent above.\n\nTap *I've Paid* after paying, or *Cancel* to cancel.",
+          body: "Please complete your deposit payment using the link sent above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm, or *Cancel* to cancel.",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'cancel', title: 'Cancel' },

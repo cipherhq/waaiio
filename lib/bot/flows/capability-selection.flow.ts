@@ -1,24 +1,16 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext } from './types';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
 
-/** Industry-aware labels for capability selection buttons */
-function getCapabilityLabel(cap: CapabilityId, category: string): string {
-  const labels = CATEGORY_LABELS[category as BusinessCategoryKey];
+/** Generic labels for capability selection buttons */
+export function getCapabilityLabel(cap: CapabilityId, category: string): string {
   switch (cap) {
     case 'scheduling':
-      if (category === 'restaurant') return 'Reserve a Table';
-      if (category === 'hotel') return 'Book a Room';
-      if (category === 'car_wash') return 'Book a Wash';
-      return labels ? `${labels.actionVerb} ${labels.entityName}` : 'Book Appointment';
+      return 'Book Appointment';
     case 'payment':
       if (category === 'church' || category === 'mosque') return 'Give';
-      if (category === 'school') return 'Pay Fees';
       return 'Make Payment';
     case 'ordering':
-      if (category === 'food_delivery') return 'Order Food';
-      if (category === 'pharmacy') return 'Order Medicine';
-      return 'Order Products';
+      return 'Place an Order';
     case 'ticketing':
       return 'Buy Tickets';
     case 'crowdfunding':

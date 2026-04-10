@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
@@ -7,6 +8,7 @@ import { getLocale, type BusinessCategoryKey, type FlowType, type CountryCode } 
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
+import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
 
 interface BotSession {
   id: string;
@@ -52,7 +54,7 @@ export class BotService {
   ): Promise<void> {
     try {
     const text = messageText.trim();
-    console.log('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
+    logger.debug('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
@@ -72,6 +74,17 @@ export class BotService {
       return;
     }
 
+    // Handle quote response button postbacks (accept_quote_{id} / reject_quote_{id})
+    const quoteResponseMatch = text.match(/^(accept|reject)_quote_([0-9a-f-]{36})$/i);
+    if (quoteResponseMatch) {
+      const qAction = quoteResponseMatch[1].toLowerCase() as 'accept' | 'reject';
+      const quoteId = quoteResponseMatch[2];
+      const existingSession = await this.getActiveSession(from);
+      if (existingSession) await this.deactivateSession(existingSession.id);
+      await this.handleQuoteResponse(from, quoteId, qAction);
+      return;
+    }
+
     // Detect "my bookings" keyword — covers industry-specific terminology
     const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|sessions?|upcoming|schedule)$/i.test(text)
       || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|schedule)$/i.test(text);
@@ -83,6 +96,13 @@ export class BotService {
     const isReceiptQuery = /^(my\s+)?receipt$/i.test(text)
       || /^(last|latest|recent)\s+(receipt|transaction|payment)$/i.test(text)
       || /^send\s+(my\s+)?receipt$/i.test(text);
+
+    const isAnnualQuery = /annual\s+statement/i.test(text)
+      || /yearly\s+summary/i.test(text)
+      || /tax\s+receipt/i.test(text)
+      || /donation\s+(receipt|summary)/i.test(text)
+      || /year[\s-]*end\s+statement/i.test(text)
+      || /yearly\s+statement/i.test(text);
 
     const isSubscriptionsQuery = /^(my\s+)?subscriptions?$/i.test(text)
       || /^(my\s+)?recurring(\s+payments?)?$/i.test(text)
@@ -130,6 +150,21 @@ export class BotService {
         return;
       }
       await this.handleTransactionDocument(from, profile.id, isHistoryQuery ? 'history' : 'receipt');
+      return;
+    }
+
+    if (isAnnualQuery) {
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+        return;
+      }
+      await this.handleTransactionDocument(from, profile.id, 'annual');
       return;
     }
 
@@ -192,7 +227,7 @@ export class BotService {
       return;
     }
 
-    // Check for "switch <keyword>" command — lets testers swap between businesses
+    // Check for "switch <keyword>" command — lets users swap between businesses
     const switchMatch = text.match(/^switch\s+(.+)$/i);
     if (switchMatch) {
       const keyword = switchMatch[1].trim().toLowerCase();
@@ -200,18 +235,50 @@ export class BotService {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
 
-      // Search by category, name, or bot_code
-      const { data: matches } = await this.supabase
-        .from('businesses')
-        .select('id, name, bot_code, category, flow_type')
-        .or(`category.ilike.%${keyword}%,name.ilike.%${keyword}%,bot_code.ilike.%${keyword}%`)
-        .eq('status', 'active')
-        .limit(1);
+      // Use the full fuzzy matching engine (same as bot code detection)
+      const detection = await this.detectBotCodeWithSuggestions(keyword, from);
 
-      if (matches && matches.length > 0) {
-        const biz = matches[0];
-        // Treat as if user sent the bot_code — trigger a fresh session
-        await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id);
+      if (detection.businessId) {
+        // Exact/confident match — route directly
+        const { data: biz } = await this.supabase
+          .from('businesses')
+          .select('id, bot_code')
+          .eq('id', detection.businessId)
+          .single();
+        if (biz) {
+          await this.handleMessage(from, biz.bot_code || 'Hi', messageType, destinationPhone, biz.id);
+          return;
+        }
+      }
+
+      if (detection.suggestions && detection.suggestions.length > 0) {
+        // Show suggestions as buttons
+        if (detection.suggestions.length <= 3) {
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `Which business did you mean?`,
+            buttons: detection.suggestions.map((s, i) => ({
+              id: `biz_${i}`,
+              title: s.name.slice(0, 20),
+            })),
+          });
+        } else {
+          const list = detection.suggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+          await this.sendText(from, `Which business did you mean?\n\n${list}\n\nReply with the number to select.`);
+        }
+
+        // Create suggestion session so the reply gets handled
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: detection.suggestions },
+          is_active: true,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        });
         return;
       }
 
@@ -221,7 +288,7 @@ export class BotService {
 
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
-    const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address'].includes(currentStep);
+    const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion'].includes(currentStep);
     const detectedRestart = !isFreeTextStep ? this.intelligence.detectIntent(text, currentStep) : null;
 
     // Also treat bot codes as restarts so users can switch businesses mid-session
@@ -248,14 +315,14 @@ export class BotService {
     );
 
     if (!session || isRestart) {
-      console.log('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
+      logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
 
       // Determine standalone business
       let businessId: string | null = preResolvedBusinessId || null;
-      console.log('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
+      logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
 
       // Fallback: lookup by destination phone
       if (!businessId && destinationPhone) {
@@ -265,13 +332,18 @@ export class BotService {
           .eq('whatsapp_phone_number_id', destinationPhone)
           .single();
         businessId = biz?.id || null;
-        console.log('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
+        logger.debug('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
       }
 
-      // Bot code routing
+      // Bot code routing (with fuzzy suggestions)
+      let pendingSuggestions: { id: string; name: string; bot_code: string }[] | undefined;
+      let isCategoryMatch = false;
       if (!businessId) {
-        businessId = await this.detectBotCode(text);
-        console.log('[BOT] detectBotCode("' + text + '") →', businessId);
+        const detection = await this.detectBotCodeWithSuggestions(text, from);
+        businessId = detection.businessId;
+        pendingSuggestions = detection.suggestions;
+        isCategoryMatch = detection.isCategory || false;
+        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
       }
 
       // Link to existing user (check both +phone and phone formats)
@@ -287,7 +359,61 @@ export class BotService {
       // Returning customer: check past history if no business resolved yet
       if (!businessId) {
         businessId = await this.findReturningCustomerBusiness(from, profile?.id || null);
-        if (businessId) console.log('[BOT] returning customer → business:', businessId);
+        if (businessId) logger.debug('[BOT] returning customer → business:', businessId);
+      }
+
+      // "Did you mean?" — fuzzy suggestions / category matches / auto-correct confirmation
+      if (!businessId && pendingSuggestions && pendingSuggestions.length > 0) {
+        // Clean up old sessions
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+
+        // Create a session at the select_business_suggestion step
+        const { data: sugSession } = await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: profile?.id || null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
+          is_active: true,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 min expiry
+        }).select().single();
+
+        if (sugSession) {
+          // Choose wording based on match type
+          const headerText = isCategoryMatch
+            ? `Here are some businesses that might help:`
+            : pendingSuggestions.length === 1
+              ? `Did you mean *${pendingSuggestions[0].name}*?`
+              : `Did you mean one of these businesses?`;
+
+          if (pendingSuggestions.length === 1 && !isCategoryMatch) {
+            // Single fuzzy match — confirmation buttons (Yes/No)
+            await this.messageSender.sendButtons({
+              to: from,
+              body: headerText,
+              buttons: [
+                { id: 'biz_0', title: 'Yes' },
+                { id: 'biz_no', title: 'No' },
+              ],
+            });
+          } else if (pendingSuggestions.length <= 3) {
+            // Use buttons (WhatsApp supports up to 3)
+            await this.messageSender.sendButtons({
+              to: from,
+              body: headerText,
+              buttons: pendingSuggestions.map((s, i) => ({
+                id: `biz_${i}`,
+                title: s.name.slice(0, 20),
+              })),
+            });
+          } else {
+            // Fallback to numbered list as text
+            const list = pendingSuggestions.map((s, i) => `${i + 1}. *${s.name}*`).join('\n');
+            await this.sendText(from, `${headerText}\n\n${list}\n\nReply with the number to select.`);
+          }
+          return;
+        }
       }
 
       // Load business info
@@ -341,7 +467,7 @@ export class BotService {
         .single();
 
       if (sessionError || !newSession) {
-        console.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
+        logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
         await this.sendText(from, 'Sorry, something went wrong. Please try again.');
         return;
       }
@@ -441,7 +567,7 @@ export class BotService {
               }
             }
           } catch (err) {
-            console.error('[BOT] Smart intent parse error (non-fatal):', err);
+            logger.error('[BOT] Smart intent parse error (non-fatal):', err);
           }
         }
 
@@ -451,6 +577,9 @@ export class BotService {
       }
 
       // Marketplace greeting — no business found from bot code or past history
+      // Check if this is a returning user with past businesses for quick-pick
+      const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null);
+
       if (profile) {
         const { data: returningProfile } = await this.supabase
           .from('profiles')
@@ -466,7 +595,41 @@ export class BotService {
         await this.sendText(from, 'Welcome to Waaiio! 👋\n\nAutomate bookings, payments, orders & more via WhatsApp.');
       }
 
-      await this.sendText(from, 'Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_\n_switch spa_');
+      // Quick-pick for returning users with 2+ businesses
+      if (recentBusinesses.length >= 2) {
+        // Clean up old sessions
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+
+        const quickPick = recentBusinesses.slice(0, 3);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: profile?.id || null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: quickPick },
+          is_active: true,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        });
+
+        await this.messageSender.sendButtons({
+          to: from,
+          body: `Which business would you like to visit?`,
+          buttons: quickPick.map((s, i) => ({
+            id: `biz_${i}`,
+            title: s.name.slice(0, 20),
+          })),
+        });
+        return;
+      }
+
+      // Smart retry: different message if user typed something specific vs just "Hi"
+      const isGreeting = /^(hi|hello|hey|yo|start)$/i.test(text.trim());
+      if (isGreeting) {
+        await this.sendText(from, 'Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_\n_switch spa_');
+      } else {
+        await this.sendText(from, `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔\n\nTry sending the exact *business code*, or type *switch* followed by a name.\n\nType *help* for more options.`);
+      }
       return;
     }
 
@@ -605,6 +768,59 @@ export class BotService {
         await this.sendText(from, detectedIntent.response);
         const nudge = this.intelligence.getContextualHelp(step);
         await this.sendText(from, nudge);
+        return;
+      }
+    }
+
+    // Handle "Did you mean?" business selection
+    if (step === 'select_business_suggestion') {
+      const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
+      let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
+
+      // Check for "No" / rejection
+      const isNo = /^(biz_no|no|nah|nope|wrong|not|cancel)$/i.test(text);
+      if (isNo) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.sendText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
+        return;
+      }
+
+      // Check for "Yes" (for single-match confirmation)
+      const isYes = /^(yes|yeah|yep|yea|sure|correct|ok|okay|biz_0)$/i.test(text);
+      if (isYes && suggestions.length > 0) {
+        selectedBiz = suggestions[0];
+      }
+
+      if (!selectedBiz) {
+        // Match button reply (biz_0, biz_1, biz_2)
+        const btnMatch = text.match(/^biz_(\d+)$/i);
+        if (btnMatch) {
+          const idx = parseInt(btnMatch[1], 10);
+          selectedBiz = suggestions[idx] || null;
+        }
+      }
+
+      if (!selectedBiz) {
+        // Match number reply (1, 2, 3)
+        const numMatch = text.match(/^(\d+)$/);
+        if (numMatch) {
+          const idx = parseInt(numMatch[1], 10) - 1;
+          selectedBiz = suggestions[idx] || null;
+        }
+      }
+
+      if (!selectedBiz) {
+        // Try matching by name (partial, case-insensitive)
+        const lower = text.toLowerCase();
+        selectedBiz = suggestions.find(s => s.name.toLowerCase().includes(lower)) || null;
+      }
+
+      if (selectedBiz) {
+        // Deactivate the suggestion session, re-process as if they sent the bot code
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
+      } else {
+        await this.sendText(from, 'Please select one of the options above, or send a *business code* to connect.');
         return;
       }
     }
@@ -759,7 +975,7 @@ export class BotService {
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business);
     } catch (err) {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
-      console.error('[BOT] handleMessage CRASH:', errMsg);
+      logger.error('[BOT] handleMessage CRASH:', errMsg);
       try { await this.sendText(from, 'Sorry, something went wrong. Please try again.'); } catch (_) { /* ignore */ }
     }
   }
@@ -767,18 +983,55 @@ export class BotService {
   // ── Bot code detection ────────────────────────────────
 
   private async detectBotCode(text: string): Promise<string | null> {
+    const result = await this.detectBotCodeWithSuggestions(text);
+    return result.businessId;
+  }
+
+  /**
+   * Enhanced bot code detection with multiple matching strategies:
+   * 1. Exact match (case-insensitive)
+   * 2. Spaces-to-hyphens ("citadel of grace" → "citadel-of-grace")
+   * 3. Hyphenated token extraction
+   * 4. Filler/pidgin word stripping
+   * 5. Acronym detection ("COG" → "Citadel-Of-Grace")
+   * 6. Typo tolerance (Levenshtein distance)
+   * 7. Phonetic matching (Soundex — "sitadel" → "citadel")
+   * 8. Partial name/code search with popularity ranking
+   * 9. Category browsing ("I need a salon")
+   *
+   * Returns { businessId } for confident matches, or { suggestions } for fuzzy/partial matches.
+   * suggestions include `confidence: 'fuzzy'` to trigger confirmation UI.
+   */
+  private async detectBotCodeWithSuggestions(text: string, callerPhone?: string): Promise<{
+    businessId: string | null;
+    suggestions?: { id: string; name: string; bot_code: string }[];
+    isCategory?: boolean;
+  }> {
     const normalizedText = text.toLowerCase().trim();
 
     const FILLER_WORDS = new Set([
+      // English greetings & pleasantries
       'hi', 'hello', 'hey', 'yo', 'sup', 'hiya', 'howdy',
       'good', 'morning', 'afternoon', 'evening', 'night',
-      'book', 'booking', 'reserve', 'reservation', 'table', 'order',
-      'i', 'want', 'need', 'would', 'like', 'to', 'a', 'at', 'the', 'for',
       'please', 'pls', 'plz', 'thanks', 'thank', 'you',
+      // English action words
+      'book', 'booking', 'reserve', 'reservation', 'table', 'order',
+      'i', 'want', 'need', 'would', 'like', 'to', 'a', 'an', 'at', 'the', 'for',
       'can', 'me', 'my', 'get', 'make', 'help', 'pay', 'buy', 'ticket',
+      'do', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had',
+      'this', 'that', 'it', 'its', 'with', 'from', 'of', 'on', 'in', 'or', 'and',
+      // Nigerian pidgin / informal
+      'wan', 'go', 'dey', 'na', 'abeg', 'oga', 'bro', 'sis', 'bros',
+      'madam', 'sir', 'dis', 'dat', 'wetin', 'where', 'how', 'una',
+      'e', 'o', 'sha', 'sef', 'joor', 'jare', 'abi', 'shey', 'ehen',
+      'no', 'nor', 'don', 'just', 'come', 'give', 'take', 'put',
+      'find', 'show', 'look', 'see', 'know', 'tell',
+      'one', 'some', 'any', 'which', 'what',
+      'im', 'dem', 'we', 'us', 'them', 'they', 'he', 'she',
+      'pls', 'biko', 'ejoor', 'mehn', 'guy', 'babe',
     ]);
 
-    // Exact match (case-insensitive)
+    // ── 1. Exact match (case-insensitive) — "CITADEL-OF-GRACE" ──
     if (/^[a-z0-9-]{2,30}$/.test(normalizedText)) {
       const { data } = await this.supabase
         .from('businesses')
@@ -786,10 +1039,22 @@ export class BotService {
         .ilike('bot_code', normalizedText)
         .eq('status', 'active')
         .maybeSingle();
-      if (data) return data.id;
+      if (data) return { businessId: data.id };
     }
 
-    // Hyphenated token match
+    // ── 2. Spaces-to-hyphens — "citadel of grace" → "citadel-of-grace" ──
+    const spacesToHyphens = normalizedText.replace(/\s+/g, '-');
+    if (/^[a-z0-9-]{2,30}$/.test(spacesToHyphens) && spacesToHyphens !== normalizedText) {
+      const { data } = await this.supabase
+        .from('businesses')
+        .select('id')
+        .ilike('bot_code', spacesToHyphens)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (data) return { businessId: data.id };
+    }
+
+    // ── 3. Hyphenated token match ──
     const tokens = normalizedText.split(/\s+/);
     const hyphenated = tokens.filter(t => t.includes('-') && /^[a-z0-9-]{2,30}$/.test(t));
     for (const candidate of hyphenated) {
@@ -799,12 +1064,12 @@ export class BotService {
         .ilike('bot_code', candidate)
         .eq('status', 'active')
         .maybeSingle();
-      if (data) return data.id;
+      if (data) return { businessId: data.id };
     }
 
-    // Strip filler words
+    // ── 4. Strip filler/pidgin words and join with hyphens ──
     const meaningful = tokens.filter(t => !FILLER_WORDS.has(t) && t.length > 0);
-    if (meaningful.length > 0 && meaningful.length <= 5) {
+    if (meaningful.length > 0 && meaningful.length <= 6) {
       const candidate = meaningful.join('-').replace(/-+/g, '-').slice(0, 30);
       if (/^[a-z0-9-]{2,30}$/.test(candidate)) {
         const { data } = await this.supabase
@@ -813,11 +1078,233 @@ export class BotService {
           .ilike('bot_code', candidate)
           .eq('status', 'active')
           .maybeSingle();
-        if (data) return data.id;
+        if (data) return { businessId: data.id };
       }
     }
 
-    return null;
+    // Skip advanced matching if the input is just common greetings/filler
+    const allFiller = tokens.every(t => FILLER_WORDS.has(t));
+    if (allFiller) return { businessId: null };
+
+    // ── Fetch candidate businesses for advanced matching (5-8) ──
+    // Grab a broader set of active businesses for local matching algorithms
+    const searchWords = meaningful.length > 0 ? meaningful : tokens;
+    const nameFilters = searchWords.map(w => `name.ilike.%${w}%`).join(',');
+    const codeFilters = searchWords.map(w => `bot_code.ilike.%${w}%`).join(',');
+
+    const { data: candidatePool } = await this.supabase
+      .from('businesses')
+      .select('id, name, bot_code, country_code, total_bookings, rating_avg')
+      .eq('status', 'active')
+      .not('bot_code', 'is', null)
+      .or(`${nameFilters},${codeFilters}`)
+      .limit(20);
+
+    // ── 5. Acronym detection — "COG" → "Citadel-Of-Grace" ──
+    if (/^[a-z]{2,6}$/i.test(normalizedText)) {
+      // Check against the broader pool first, then a targeted query
+      const acronymMatches = (candidatePool || []).filter(b =>
+        b.bot_code && isAcronymOf(normalizedText, b.bot_code)
+      );
+      if (acronymMatches.length === 0) {
+        // Wider search — acronym might not match name/code ilike filters
+        const { data: allActive } = await this.supabase
+          .from('businesses')
+          .select('id, name, bot_code, country_code, total_bookings, rating_avg')
+          .eq('status', 'active')
+          .not('bot_code', 'is', null)
+          .limit(100);
+
+        const wideAcronyms = (allActive || []).filter(b =>
+          b.bot_code && isAcronymOf(normalizedText, b.bot_code)
+        );
+
+        if (wideAcronyms.length === 1) {
+          return { businessId: wideAcronyms[0].id };
+        }
+        if (wideAcronyms.length > 1) {
+          return {
+            businessId: null,
+            suggestions: this.rankSuggestions(wideAcronyms, callerPhone).slice(0, 3),
+          };
+        }
+      } else if (acronymMatches.length === 1) {
+        return { businessId: acronymMatches[0].id };
+      } else {
+        return {
+          businessId: null,
+          suggestions: this.rankSuggestions(acronymMatches, callerPhone).slice(0, 3),
+        };
+      }
+    }
+
+    // ── 6 & 7. Typo tolerance (Levenshtein) + Phonetic matching (Soundex) ──
+    // Compare input against all candidates using edit distance and phonetic matching
+    if (candidatePool && candidatePool.length > 0) {
+      const inputHyphenated = searchWords.join('-');
+
+      type ScoredMatch = { id: string; name: string; bot_code: string; country_code: string | null; total_bookings: number; rating_avg: number; score: number };
+      const scored: ScoredMatch[] = [];
+
+      for (const biz of candidatePool) {
+        if (!biz.bot_code) continue;
+        const code = biz.bot_code.toLowerCase();
+
+        // Levenshtein against bot_code
+        const editDist = matchScore(inputHyphenated, code);
+
+        // Levenshtein against name (hyphenated form)
+        const nameHyphenated = biz.name.toLowerCase().replace(/\s+/g, '-');
+        const nameDist = matchScore(inputHyphenated, nameHyphenated);
+
+        // Phonetic match against bot_code segments
+        const isPhonetic = phoneticMatch(inputHyphenated, code);
+
+        // Phonetic match against name
+        const isPhoneticName = phoneticMatch(searchWords.join(' '), biz.name);
+
+        const bestDist = Math.min(editDist, nameDist);
+
+        if (bestDist < Infinity || isPhonetic || isPhoneticName) {
+          scored.push({
+            ...biz,
+            bot_code: biz.bot_code,
+            score: bestDist < Infinity ? bestDist : 0.5, // phonetic matches get 0.5 score
+          });
+        }
+      }
+
+      if (scored.length > 0) {
+        scored.sort((a, b) => a.score - b.score);
+        // If the best match has score 0, it's a direct partial match — auto-route
+        if (scored.length === 1 || (scored[0].score <= 1 && scored.length > 1 && scored[1].score > scored[0].score + 1)) {
+          // Very confident single best match
+          return { businessId: scored[0].id };
+        }
+        // Return top matches as suggestions
+        return {
+          businessId: null,
+          suggestions: this.rankSuggestions(scored, callerPhone).slice(0, 3),
+        };
+      }
+    }
+
+    // ── 8. Wider partial name/code search (if narrower filters found nothing) ──
+    if (!candidatePool || candidatePool.length === 0) {
+      // Try each word individually
+      for (const word of searchWords) {
+        if (word.length < 3) continue;
+        const { data: singleWordMatches } = await this.supabase
+          .from('businesses')
+          .select('id, name, bot_code, country_code, total_bookings, rating_avg')
+          .eq('status', 'active')
+          .not('bot_code', 'is', null)
+          .or(`name.ilike.%${word}%,bot_code.ilike.%${word}%`)
+          .limit(5);
+
+        if (singleWordMatches && singleWordMatches.length > 0) {
+          if (singleWordMatches.length === 1) {
+            return { businessId: singleWordMatches[0].id };
+          }
+          return {
+            businessId: null,
+            suggestions: this.rankSuggestions(singleWordMatches, callerPhone).slice(0, 3),
+          };
+        }
+      }
+
+      // ── 6b & 7b. Levenshtein + Soundex against ALL businesses (expensive fallback) ──
+      if (searchWords.length <= 4) {
+        const { data: allActive } = await this.supabase
+          .from('businesses')
+          .select('id, name, bot_code, country_code, total_bookings, rating_avg')
+          .eq('status', 'active')
+          .not('bot_code', 'is', null)
+          .limit(100);
+
+        if (allActive && allActive.length > 0) {
+          const inputHyphenated = searchWords.join('-');
+          const fuzzyHits: { id: string; name: string; bot_code: string; country_code: string | null; total_bookings: number; rating_avg: number; score: number }[] = [];
+
+          for (const biz of allActive) {
+            if (!biz.bot_code) continue;
+            const code = biz.bot_code.toLowerCase();
+            const editDist = matchScore(inputHyphenated, code);
+            const nameHyphenated = biz.name.toLowerCase().replace(/\s+/g, '-');
+            const nameDist = matchScore(inputHyphenated, nameHyphenated);
+            const isPhonetic = phoneticMatch(inputHyphenated, code);
+            const isPhoneticName = phoneticMatch(searchWords.join(' '), biz.name);
+
+            const bestDist = Math.min(editDist, nameDist);
+            if (bestDist < Infinity || isPhonetic || isPhoneticName) {
+              fuzzyHits.push({ ...biz, bot_code: biz.bot_code!, score: bestDist < Infinity ? bestDist : 0.5 });
+            }
+          }
+
+          if (fuzzyHits.length > 0) {
+            fuzzyHits.sort((a, b) => a.score - b.score);
+            return {
+              businessId: null,
+              suggestions: this.rankSuggestions(fuzzyHits, callerPhone).slice(0, 3),
+            };
+          }
+        }
+      }
+    }
+
+    // ── 9. Category browsing — "I need a salon near me" ──
+    const categories = detectCategoryIntent(normalizedText);
+    if (categories.length > 0) {
+      const catFilter = categories.map(c => `category.eq.${c}`).join(',');
+      const { data: catMatches } = await this.supabase
+        .from('businesses')
+        .select('id, name, bot_code, country_code, total_bookings, rating_avg')
+        .eq('status', 'active')
+        .not('bot_code', 'is', null)
+        .or(catFilter)
+        .order('total_bookings', { ascending: false })
+        .limit(5);
+
+      if (catMatches && catMatches.length > 0) {
+        return {
+          businessId: null,
+          suggestions: this.rankSuggestions(catMatches, callerPhone).slice(0, 3),
+          isCategory: true,
+        };
+      }
+    }
+
+    return { businessId: null };
+  }
+
+  /**
+   * Rank suggestion results by:
+   * 1. Country match (caller's country = business country → boost)
+   * 2. Popularity (total_bookings + rating)
+   */
+  private rankSuggestions(
+    businesses: { id: string; name: string; bot_code: string; country_code?: string | null; total_bookings?: number; rating_avg?: number; score?: number }[],
+    callerPhone?: string,
+  ): { id: string; name: string; bot_code: string }[] {
+    const callerCountry = callerPhone ? phoneToCountry(callerPhone) : null;
+
+    const scored = businesses.map(b => {
+      let rank = 0;
+      // Country match bonus (big boost)
+      if (callerCountry && b.country_code && b.country_code.toUpperCase() === callerCountry) {
+        rank += 1000;
+      }
+      // Popularity score
+      rank += (b.total_bookings || 0) * 2 + (b.rating_avg || 0) * 50;
+      // If there's an existing match score, invert it (lower distance = better)
+      if (typeof b.score === 'number' && b.score < Infinity) {
+        rank -= b.score * 100;
+      }
+      return { ...b, rank };
+    });
+
+    scored.sort((a, b) => b.rank - a.rank);
+    return scored.map(({ id, name, bot_code }) => ({ id, name, bot_code }));
   }
 
   /**
@@ -826,6 +1313,17 @@ export class BotService {
    * If multiple, return the most recent one (they can always "switch" to another).
    */
   private async findReturningCustomerBusiness(phone: string, userId: string | null): Promise<string | null> {
+    const result = await this.findReturningCustomerBusinesses(phone, userId);
+    // Auto-route to single business or most recent
+    if (result.length > 0) return result[0].id;
+    return null;
+  }
+
+  /**
+   * Returns ALL recent businesses for a returning customer, ordered by recency.
+   * Used for quick-pick lists when customer has multiple past businesses.
+   */
+  private async findReturningCustomerBusinesses(phone: string, userId: string | null): Promise<{ id: string; name: string; bot_code: string }[]> {
     // Check past bot_sessions (most reliable — covers all interaction types)
     const { data: pastSessions } = await this.supabase
       .from('bot_sessions')
@@ -835,64 +1333,54 @@ export class BotService {
       .order('last_active_at', { ascending: false })
       .limit(10);
 
-    if (pastSessions && pastSessions.length > 0) {
-      // Get unique business IDs, ordered by most recent
-      const seen = new Set<string>();
-      const uniqueBusinessIds: string[] = [];
+    const seen = new Set<string>();
+    const uniqueBusinessIds: string[] = [];
+
+    if (pastSessions) {
       for (const s of pastSessions) {
         if (s.business_id && !seen.has(s.business_id)) {
           seen.add(s.business_id);
           uniqueBusinessIds.push(s.business_id);
         }
       }
-
-      if (uniqueBusinessIds.length === 1) {
-        // Single business — auto-route
-        const { data: biz } = await this.supabase
-          .from('businesses')
-          .select('id')
-          .eq('id', uniqueBusinessIds[0])
-          .eq('status', 'active')
-          .maybeSingle();
-        if (biz) return biz.id;
-      }
-
-      if (uniqueBusinessIds.length > 1) {
-        // Multiple businesses — return the most recent active one
-        for (const bid of uniqueBusinessIds) {
-          const { data: biz } = await this.supabase
-            .from('businesses')
-            .select('id')
-            .eq('id', bid)
-            .eq('status', 'active')
-            .maybeSingle();
-          if (biz) return biz.id;
-        }
-      }
     }
 
-    // Fallback: check bookings if we have a user profile
+    // Also check bookings if we have a user profile
     if (userId) {
-      const { data: recentBooking } = await this.supabase
+      const { data: recentBookings } = await this.supabase
         .from('bookings')
         .select('business_id')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(5);
 
-      if (recentBooking?.business_id) {
-        const { data: biz } = await this.supabase
-          .from('businesses')
-          .select('id')
-          .eq('id', recentBooking.business_id)
-          .eq('status', 'active')
-          .maybeSingle();
-        if (biz) return biz.id;
+      if (recentBookings) {
+        for (const b of recentBookings) {
+          if (b.business_id && !seen.has(b.business_id)) {
+            seen.add(b.business_id);
+            uniqueBusinessIds.push(b.business_id);
+          }
+        }
       }
     }
 
-    return null;
+    if (uniqueBusinessIds.length === 0) return [];
+
+    // Fetch business details for all unique IDs
+    const { data: businesses } = await this.supabase
+      .from('businesses')
+      .select('id, name, bot_code')
+      .in('id', uniqueBusinessIds)
+      .eq('status', 'active')
+      .not('bot_code', 'is', null);
+
+    if (!businesses || businesses.length === 0) return [];
+
+    // Preserve recency order from uniqueBusinessIds
+    const bizMap = new Map(businesses.map(b => [b.id, b]));
+    return uniqueBusinessIds
+      .map(id => bizMap.get(id))
+      .filter((b): b is { id: string; name: string; bot_code: string } => !!b && !!b.bot_code);
   }
 
   private getFirstStep(flowType: FlowType): string {
@@ -1065,14 +1553,18 @@ export class BotService {
 
   // ── Transaction Document Handler ──────────────────────────
 
-  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt'): Promise<void> {
-    const label = type === 'history' ? 'transaction history' : 'receipt';
+  private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual'): Promise<void> {
+    const labelMap = { history: 'transaction history', receipt: 'receipt', annual: 'annual statement' };
+    const label = labelMap[type];
     await this.sendText(from, `Generating your ${label}... 📄`);
 
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : 'http://localhost:3000';
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+
+      if (!baseUrl) {
+        throw new Error('NEXT_PUBLIC_APP_URL or VERCEL_URL must be set');
+      }
 
       const response = await fetch(`${baseUrl}/api/receipts/generate`, {
         method: 'POST',
@@ -1089,7 +1581,7 @@ export class BotService {
           await this.sendText(from, `No transactions found. Make a booking first, then come back for your ${label}!`);
           return;
         }
-        console.error('[BOT] Receipt API error:', response.status, body);
+        logger.error('[BOT] Receipt API error:', response.status, body);
         await this.sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
         return;
       }
@@ -1102,11 +1594,48 @@ export class BotService {
         filename,
         caption: type === 'history'
           ? 'Your transaction history'
-          : 'Your latest receipt',
+          : type === 'annual'
+            ? 'Your annual statement'
+            : 'Your latest receipt',
       });
     } catch (err) {
-      console.error('[BOT] handleTransactionDocument error:', err);
+      logger.error('[BOT] handleTransactionDocument error:', err);
       await this.sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
+    }
+  }
+
+  // ── Quote Response Handler ──────────────────────────────
+
+  private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject'): Promise<void> {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL
+        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+
+      if (!baseUrl) {
+        await this.sendText(from, 'Sorry, something went wrong. Please try again.');
+        return;
+      }
+
+      const response = await fetch(`${baseUrl}/api/orders/quote-accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quote_id: quoteId, action }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        await this.sendText(from, result.error || 'Something went wrong. Please try again.');
+        return;
+      }
+
+      if (action === 'reject') {
+        await this.sendText(from, 'Quote declined. Thank you for considering!');
+      }
+      // Accept case: payment link is sent by the API route itself
+    } catch (err) {
+      logger.error('[BOT] Quote response error:', err);
+      await this.sendText(from, 'Sorry, something went wrong. Please try again.');
     }
   }
 
@@ -1132,9 +1661,9 @@ export class BotService {
   }
 
   private async sendText(to: string, text: string): Promise<void> {
-    console.log('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
+    logger.debug('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
     const result = await this.messageSender.sendText({ to, text });
-    console.log('[BOT] sendText result:', JSON.stringify(result));
+    logger.debug('[BOT] sendText result:', JSON.stringify(result));
   }
 
   /**

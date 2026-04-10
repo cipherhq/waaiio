@@ -33,6 +33,16 @@ interface RecentBooking {
   date: string;
   time: string;
   party_size: number;
+  total_amount: number;
+  deposit_amount: number;
+  status: string;
+  created_at: string;
+}
+
+interface RecentOrder {
+  id: string;
+  reference_code: string;
+  total_amount: number;
   status: string;
   created_at: string;
 }
@@ -45,6 +55,9 @@ export default function DashboardOverview() {
     totalRevenue: 0, totalServices: 0, hasHours: false, hasWhatsAppConfig: false,
   });
   const [recent, setRecent] = useState<RecentBooking[]>([]);
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [orderRevenue, setOrderRevenue] = useState(0);
+  const [totalOrders, setTotalOrders] = useState(0);
   const [monthlyBookings, setMonthlyBookings] = useState(0);
   const [loading, setLoading] = useState(true);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -64,7 +77,7 @@ export default function DashboardOverview() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
 
-      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes] = await Promise.all([
+      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
@@ -72,13 +85,17 @@ export default function DashboardOverview() {
           (await supabase.from('bookings').select('id').eq('business_id', business.id)).data?.map(b => b.id) || []
         ),
         supabase.from('bookings')
-          .select('id, reference_code, guest_name, guest_phone, date, time, party_size, status, created_at')
+          .select('id, reference_code, guest_name, guest_phone, date, time, party_size, total_amount, deposit_amount, status, created_at')
           .eq('business_id', business.id)
           .order('created_at', { ascending: false })
           .limit(5),
         supabase.from('services').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('whatsapp_config').select('bot_greeting').eq('business_id', business.id).maybeSingle(),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).gte('created_at', monthStart),
+        // Order queries
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id).is('deleted_at', null),
+        supabase.from('orders').select('total_amount').eq('business_id', business.id).is('deleted_at', null).in('status', ['confirmed', 'processing', 'ready', 'shipped', 'delivered']),
+        supabase.from('orders').select('id, reference_code, total_amount, status, created_at').eq('business_id', business.id).is('deleted_at', null).order('created_at', { ascending: false }).limit(5),
       ]);
 
       const revenue = (revenueRes.data || []).reduce((sum, p) => sum + (p.amount || 0), 0);
@@ -94,6 +111,9 @@ export default function DashboardOverview() {
         hasWhatsAppConfig: !!waConfigRes.data?.bot_greeting,
       });
       setRecent((recentRes.data || []) as RecentBooking[]);
+      setTotalOrders(orderCountRes.count || 0);
+      setOrderRevenue((orderRevenueRes.data || []).reduce((sum, o) => sum + (o.total_amount || 0), 0));
+      setRecentOrders((recentOrdersRes.data || []) as RecentOrder[]);
       setMonthlyBookings(monthlyRes.count || 0);
       setLoading(false);
     }
@@ -235,27 +255,54 @@ export default function DashboardOverview() {
           icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
           color="brand"
         />
+        {totalOrders > 0 && (
+          <StatCard
+            label="Total Orders"
+            value={totalOrders}
+            icon="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+            color="blue"
+          />
+        )}
         <StatCard
-          label="Today"
+          label={`Today's ${labels.entityNamePlural}`}
           value={stats.todayBookings}
           icon="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
           color="blue"
         />
         <StatCard
-          label="Pending"
+          label={`Pending ${labels.entityNamePlural}`}
           value={stats.pendingBookings}
           icon="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
           color="amber"
         />
-        {(hasCapability('payment') || hasCapability('ordering') || hasCapability('ticketing') || hasCapability('crowdfunding')) && (
+        {/* Separate revenue cards when business has both ordering and payment */}
+        {hasCapability('ordering') && orderRevenue > 0 && (
           <StatCard
-            label="Revenue"
+            label="Order Revenue"
+            value={formatCurrency(orderRevenue, country)}
+            icon="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z"
+            color="green"
+          />
+        )}
+        {(hasCapability('payment') || hasCapability('ticketing') || hasCapability('crowdfunding')) && (
+          <StatCard
+            label={hasCapability('ordering') && orderRevenue > 0
+              ? (labels.quantityLabel === 'amount' ? 'Giving Revenue' : `${labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1)} Revenue`)
+              : 'Revenue'}
             value={formatCurrency(stats.totalRevenue, country)}
             icon="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             color="green"
           />
         )}
-        {hasCapability('scheduling') && !hasCapability('payment') && !hasCapability('ordering') && (
+        {hasCapability('ordering') && !hasCapability('payment') && !hasCapability('ticketing') && !hasCapability('crowdfunding') && (
+          <StatCard
+            label="Revenue"
+            value={formatCurrency(orderRevenue, country)}
+            icon="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            color="green"
+          />
+        )}
+        {hasCapability('scheduling') && !hasCapability('payment') && !hasCapability('ordering') && !hasCapability('ticketing') && !hasCapability('crowdfunding') && (
           <StatCard
             label={labels.serviceNamePlural}
             value={stats.totalServices}
@@ -458,6 +505,60 @@ export default function DashboardOverview() {
         )}
       </div>
 
+      {/* Recent Orders */}
+      {recentOrders.length > 0 && (
+        <div className="mt-8">
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-semibold text-gray-900">Recent Orders</h2>
+            <Link
+              href="/dashboard/orders"
+              className="text-sm font-medium text-brand hover:text-brand-600"
+            >
+              View all
+            </Link>
+          </div>
+          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-50 bg-gray-50/50">
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {recentOrders.map((o) => (
+                  <tr key={o.id} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-3 font-mono text-xs text-gray-900">{o.reference_code}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {new Date(o.created_at).toLocaleDateString('en-NG', {
+                        day: 'numeric',
+                        month: 'short',
+                        year: 'numeric',
+                      })}
+                    </td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(o.total_amount, country)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        o.status === 'delivered' ? 'bg-green-100 text-green-800' :
+                        o.status === 'shipped' ? 'bg-blue-100 text-blue-800' :
+                        o.status === 'processing' || o.status === 'ready' ? 'bg-blue-100 text-blue-800' :
+                        o.status === 'confirmed' ? 'bg-green-100 text-green-800' :
+                        o.status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                        'bg-gray-100 text-gray-600'
+                      }`}>
+                        {o.status.replace('_', ' ')}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Recent Bookings */}
       <div className="mt-8">
         <div className="flex items-center justify-between">
@@ -474,7 +575,7 @@ export default function DashboardOverview() {
           )}
         </div>
 
-        {recent.length === 0 ? (
+        {recent.length === 0 && recentOrders.length === 0 ? (
           <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-8 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
               <svg className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -486,7 +587,7 @@ export default function DashboardOverview() {
               Share your WhatsApp link to start receiving {labels.entityNamePlural}
             </p>
           </div>
-        ) : (
+        ) : recent.length === 0 ? null : (
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 bg-white">
             <table className="w-full text-sm">
               <thead>
@@ -512,7 +613,11 @@ export default function DashboardOverview() {
                         month: 'short',
                       })}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{r.party_size}</td>
+                    <td className="px-4 py-3 text-gray-600">
+                      {labels.quantityLabel === 'amount'
+                        ? formatCurrency(r.total_amount || r.deposit_amount || 0, country)
+                        : r.party_size}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
                         {r.status.replace('_', ' ')}

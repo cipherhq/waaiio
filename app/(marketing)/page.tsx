@@ -2,58 +2,117 @@
 
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
+import { motion, useScroll, useTransform } from 'framer-motion';
+import AnimatedSection from '@/components/marketing/AnimatedSection';
+import CounterAnimation from '@/components/marketing/CounterAnimation';
 import { BUSINESS_CATEGORIES, formatCurrency, getPricingTiers } from '@/lib/constants';
 
 const PRICING_TIERS = getPricingTiers('NG');
 const CATEGORY_COUNT = BUSINESS_CATEGORIES.filter(c => c.key !== 'other').length;
 
 export default function HomePage() {
+  const { scrollYProgress } = useScroll();
+  const heroY = useTransform(scrollYProgress, [0, 0.3], [0, 120]);
+  const heroOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
+
   return (
     <>
       {/* ── 1. Hero ── */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700 py-20 lg:py-28">
+      <section className="relative min-h-screen overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700">
         {/* Decorative blobs */}
-        <div className="pointer-events-none absolute -left-40 -top-40 h-[500px] w-[500px] rounded-full bg-brand-400/15 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-32 right-0 h-[400px] w-[400px] rounded-full bg-accent/10 blur-3xl" />
+        <motion.div style={{ y: heroY }} className="pointer-events-none absolute inset-0">
+          <div className="absolute -left-40 -top-40 h-[500px] w-[500px] rounded-full bg-brand-400/15 blur-3xl" />
+          <div className="absolute -bottom-32 right-0 h-[400px] w-[400px] rounded-full bg-accent/10 blur-3xl" />
+        </motion.div>
 
-        <div className="relative mx-auto max-w-6xl px-4">
-          <div className="grid items-center gap-12 lg:grid-cols-2">
+        <motion.div style={{ opacity: heroOpacity }} className="relative mx-auto flex min-h-screen max-w-6xl items-center px-4 pt-16">
+          <div className="grid w-full items-center gap-12 lg:grid-cols-2">
             {/* Left: Copy */}
             <div className="text-center lg:text-left">
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur">
+              <motion.span
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.2, duration: 0.6 }}
+                className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 text-sm font-medium text-white backdrop-blur"
+              >
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
                 </span>
                 WhatsApp Automation Platform
-              </span>
+              </motion.span>
 
               <h1 className="mt-6 text-balance text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-[3.5rem]">
-                Automate Any Business with{' '}
-                <span className="text-accent">AI-Powered</span> WhatsApp
+                {'Automate Any Business with '.split(' ').map((word, i) => (
+                  <motion.span
+                    key={i}
+                    initial={{ opacity: 0, y: 30 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 + i * 0.07, duration: 0.5 }}
+                    className="inline-block mr-[0.25em]"
+                  >
+                    {word}
+                  </motion.span>
+                ))}
+                <motion.span
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.7, duration: 0.5 }}
+                  className="inline-block text-accent mr-[0.25em]"
+                >
+                  AI-Powered
+                </motion.span>
+                <motion.span
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.77, duration: 0.5 }}
+                  className="inline-block"
+                >
+                  WhatsApp
+                </motion.span>
               </h1>
-              <p className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0">
+
+              <motion.p
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.9, duration: 0.6 }}
+                className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
+              >
                 Bookings, payments, orders, donations, ticketing, and more — for {CATEGORY_COUNT}+ industries
                 including churches, salons, restaurants, clinics, and shops. Available in 5 countries.
-              </p>
+              </motion.p>
 
-              <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
-                <Link
-                  href="/get-started"
-                  className="rounded-xl bg-accent px-7 py-3.5 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400 hover:shadow-accent/40"
-                >
-                  Get Started Free
-                </Link>
-                <Link
-                  href="/pricing"
-                  className="rounded-xl border border-white/30 px-7 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10"
-                >
-                  View Pricing
-                </Link>
-              </div>
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.1, duration: 0.6 }}
+                className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start"
+              >
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Link
+                    href="/get-started"
+                    className="rounded-xl bg-accent px-7 py-3.5 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400 hover:shadow-accent/40"
+                  >
+                    Get Started Free
+                  </Link>
+                </motion.div>
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Link
+                    href="/pricing"
+                    className="rounded-xl border border-white/30 px-7 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10"
+                  >
+                    View Pricing
+                  </Link>
+                </motion.div>
+              </motion.div>
 
               {/* Social proof mini */}
-              <div className="mt-8 flex items-center justify-center gap-4 lg:justify-start">
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 1.3, duration: 0.6 }}
+                className="mt-8 flex items-center justify-center gap-4 lg:justify-start"
+              >
                 <div className="flex -space-x-2">
                   {['bg-brand-300', 'bg-accent', 'bg-green-400', 'bg-blue-400', 'bg-pink-400'].map((c, i) => (
                     <div key={i} className={`h-8 w-8 rounded-full border-2 border-brand-900 ${c}`} />
@@ -69,64 +128,116 @@ export default function HomePage() {
                   </div>
                   <p className="text-xs text-brand-200">Trusted by <strong className="text-white">100+</strong> businesses</p>
                 </div>
-              </div>
+              </motion.div>
             </div>
 
             {/* Right: Rotating chat mockup */}
             <HeroChatMockup />
           </div>
-        </div>
+        </motion.div>
+
+        {/* Scroll indicator */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.5 }}
+          className="absolute bottom-8 left-1/2 z-10 -translate-x-1/2"
+        >
+          <motion.div
+            animate={{ y: [0, 8, 0] }}
+            transition={{ repeat: Infinity, duration: 1.5, ease: 'easeInOut' }}
+          >
+            <svg className="h-7 w-7 text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </motion.div>
+        </motion.div>
       </section>
 
       {/* ── Social Proof Bar ── */}
       <section className="border-b border-gray-100 bg-white py-8">
         <div className="mx-auto max-w-6xl px-4">
-          <p className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400">
-            Empowering businesses across 5 countries
-          </p>
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
-            {[
-              { flag: '\ud83c\uddf3\ud83c\uddec', name: 'Nigeria', gateway: 'Paystack' },
-              { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Stripe' },
-              { flag: '\ud83c\uddec\ud83c\udde7', name: 'United Kingdom', gateway: 'Stripe' },
-              { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada', gateway: 'Stripe' },
-              { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana', gateway: 'Paystack' },
-            ].map((c) => (
-              <div key={c.name} className="flex items-center gap-2">
-                <span className="text-xl">{c.flag}</span>
-                <span className="text-sm font-medium text-gray-700">{c.name}</span>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{c.gateway}</span>
-              </div>
-            ))}
-          </div>
+          <AnimatedSection>
+            <p className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400">
+              Empowering businesses across 5 countries
+            </p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
+              {[
+                { flag: '\ud83c\uddf3\ud83c\uddec', name: 'Nigeria', gateway: 'Paystack' },
+                { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Square' },
+                { flag: '\ud83c\uddec\ud83c\udde7', name: 'United Kingdom', gateway: 'Stripe' },
+                { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada', gateway: 'Stripe' },
+                { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana', gateway: 'Paystack' },
+              ].map((c) => (
+                <div key={c.name} className="flex items-center gap-2">
+                  <span className="text-xl">{c.flag}</span>
+                  <span className="text-sm font-medium text-gray-700">{c.name}</span>
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{c.gateway}</span>
+                </div>
+              ))}
+            </div>
+          </AnimatedSection>
+        </div>
+      </section>
+
+      {/* ── Stats Bar ── */}
+      <section className="bg-gray-950 py-16">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 text-center md:grid-cols-5">
+          {[
+            { value: 100, suffix: '+', label: 'Businesses Served' },
+            { value: 25000, suffix: '+', label: 'Transactions Processed' },
+            { value: 4, suffix: '', label: 'Payment Gateways' },
+            { value: 20, suffix: '+', label: 'Capabilities' },
+          ].map((s, i) => (
+            <AnimatedSection key={s.label} delay={i * 0.1}>
+              <p className="text-3xl font-extrabold text-white sm:text-4xl">
+                <CounterAnimation target={s.value} suffix={s.suffix} />
+              </p>
+              <p className="mt-1 text-sm text-gray-400">{s.label}</p>
+            </AnimatedSection>
+          ))}
+          <AnimatedSection delay={0.4}>
+            <p className="text-3xl font-extrabold text-white sm:text-4xl">24/7</p>
+            <p className="mt-1 text-sm text-gray-400">Always Available</p>
+          </AnimatedSection>
         </div>
       </section>
 
       {/* ── How Waaiio Empowers You ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4 text-center">
-          <p className="text-xs font-bold uppercase tracking-widest text-brand">How Waaiio empowers you</p>
-          <h2 className="mt-3 text-3xl font-bold text-gray-900">
-            Everything your business needs on WhatsApp
-          </h2>
-          <p className="mx-auto mt-3 max-w-2xl text-gray-600">
-            Run bookings, accept payments, take orders, and sell tickets — all from the app 2 billion people already use.
-          </p>
+          <AnimatedSection>
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">How Waaiio empowers you</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Everything your business needs on WhatsApp
+            </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-600">
+              Run bookings, accept payments, take orders, and sell tickets — all from the app 2 billion people already use.
+            </p>
+          </AnimatedSection>
 
           <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[
               { icon: '&#x1F4C5;', title: '24/7 WhatsApp Automation', desc: 'Accept bookings, payments, and orders any time — even when your staff are busy or you\'re closed.' },
               { icon: '&#x1F3ED;', title: 'Multi-Industry Support', desc: `Churches, salons, clinics, shops, schools, NGOs, events, and more — ${CATEGORY_COUNT}+ business categories supported out of the box.` },
               { icon: '&#x1F4CA;', title: 'Real-Time Dashboard', desc: 'View, manage, and export all bookings, orders, and payments from a clean analytics dashboard.' },
-              { icon: '&#x1F4B3;', title: 'Integrated Payments', desc: 'Collect payments, tithes, donations, and fees via Paystack (NG, GH) or Stripe (US, UK, CA) — prompted automatically in chat.' },
+              { icon: '&#x1F4B3;', title: 'Integrated Payments', desc: 'Collect payments, tithes, donations, and fees via Paystack (NG, GH), Square (US), or Stripe (UK, CA) — prompted automatically in chat.' },
               { icon: '&#x1F514;', title: 'Smart Reminders', desc: 'Automatic reminders before appointments and events, cutting no-shows by up to 60%.' },
               { icon: '&#x2728;', title: 'Custom Brand Persona', desc: 'Your business name, personality, and greeting. Customers interact with your brand, not ours.' },
-            ].map((f) => (
-              <div key={f.title} className="group rounded-2xl border border-gray-100 bg-white p-6 text-left transition hover:border-brand-200 hover:shadow-lg hover:shadow-brand-50">
-                <span className="text-3xl" dangerouslySetInnerHTML={{ __html: f.icon }} />
-                <h3 className="mt-4 text-base font-semibold text-gray-900">{f.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-gray-600">{f.desc}</p>
-              </div>
+              { icon: '&#x1F3C6;', title: 'Loyalty & Referrals', desc: 'Reward repeat customers with points and drive growth with referral bonuses — all managed through WhatsApp.' },
+              { icon: '&#x1F4CB;', title: 'Queue & Waitlist', desc: 'Let customers join a queue or waitlist via WhatsApp. Notify them automatically when it\'s their turn.' },
+              { icon: '&#x1F4E2;', title: 'Broadcasts & Promos', desc: 'Send targeted messages, promotions, and updates to customer segments. Drive repeat business effortlessly.' },
+            ].map((f, i) => (
+              <AnimatedSection key={f.title} delay={i * 0.06}>
+                <motion.div
+                  whileHover={{ y: -6, boxShadow: '0 20px 40px rgba(108,43,217,0.08)' }}
+                  className="group rounded-2xl border border-gray-100 bg-white p-6 text-left transition hover:border-brand-200"
+                >
+                  <span className="text-3xl" dangerouslySetInnerHTML={{ __html: f.icon }} />
+                  <h3 className="mt-4 text-base font-semibold text-gray-900">{f.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{f.desc}</p>
+                </motion.div>
+              </AnimatedSection>
             ))}
           </div>
         </div>
@@ -135,30 +246,23 @@ export default function HomePage() {
       {/* ── WHY WAAIIO — 3 Big Cards ── */}
       <section className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <p className="text-center text-xs font-bold uppercase tracking-widest text-brand">Why Waaiio?</p>
-          <h2 className="mt-3 text-center text-3xl font-bold text-gray-900">
-            Three powerful reasons to switch
-          </h2>
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Why Waaiio?</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Three powerful reasons to switch
+            </h2>
+          </AnimatedSection>
 
           <div className="mt-14 grid gap-8 lg:grid-cols-3">
-            <WhyCard
-              number="01"
-              title="Lead Generation"
-              desc="Every WhatsApp message becomes a potential sale. Your bot qualifies leads, captures contact info, and converts casual browsers into paying customers — automatically."
-              color="brand"
-            />
-            <WhyCard
-              number="02"
-              title="Customizable Flows"
-              desc="Choose from 4 pre-built flows — scheduling, payments, ordering, and ticketing — that auto-configure for your industry. Customize greetings, services, and persona."
-              color="accent"
-            />
-            <WhyCard
-              number="03"
-              title="AI-Powered Commerce"
-              desc="Smart intent detection understands what customers want. The bot handles upsells, collects payments, sends confirmations, and learns from every interaction."
-              color="whatsapp"
-            />
+            {[
+              { number: '01', title: 'Lead Generation', desc: 'Every WhatsApp message becomes a potential sale. Your bot qualifies leads, captures contact info, and converts casual browsers into paying customers — automatically.', color: 'brand' },
+              { number: '02', title: '20+ Capabilities', desc: 'Beyond 4 core flows — scheduling, payments, ordering, and ticketing — get loyalty programs, broadcasts, queue management, referrals, analytics, and more. All auto-configured for your industry.', color: 'accent' },
+              { number: '03', title: 'AI-Powered Commerce', desc: 'Smart intent detection understands what customers want. The bot handles upsells, collects payments, sends confirmations, and learns from every interaction.', color: 'whatsapp' },
+            ].map((card, i) => (
+              <AnimatedSection key={card.number} delay={i * 0.1}>
+                <WhyCard {...card} />
+              </AnimatedSection>
+            ))}
           </div>
         </div>
       </section>
@@ -169,40 +273,24 @@ export default function HomePage() {
       {/* ── Four Flows ── */}
       <section className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <p className="text-center text-xs font-bold uppercase tracking-widest text-brand">4 automation flows</p>
-          <h2 className="mt-3 text-center text-3xl font-bold text-gray-900">
-            We auto-configure the right flow for your industry
-          </h2>
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">4 automation flows</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              We auto-configure the right flow for your industry
+            </h2>
+          </AnimatedSection>
 
           <div className="mt-12 grid gap-6 sm:grid-cols-2">
-            <FlowCard
-              emoji="&#x1F4C5;"
-              title="Scheduling"
-              description="Appointments and reservations with date, time, and service selection. Automatic reminders reduce no-shows."
-              industries="Restaurants, Barbers, Spas, Salons, Gyms, Clinics, Hotels, Car Wash, Tattoo, Dental, Vet, Laundry, Tutors, Photographers, Real Estate, Travel, Coworking"
-              color="border-blue-200 bg-blue-50/50"
-            />
-            <FlowCard
-              emoji="&#x1F4B3;"
-              title="Payments"
-              description="Category-based payments with custom amounts. Perfect for tithes, offerings, donations, fees, and dues."
-              industries="Churches, Mosques, Schools, NGOs, Government, Crowdfunding, Parking, Taxi, Funeral Services"
-              color="border-green-200 bg-green-50/50"
-            />
-            <FlowCard
-              emoji="&#x1F6D2;"
-              title="Ordering"
-              description="Product catalog, cart management, delivery or pickup, and checkout with inventory tracking."
-              industries="Shops, Food Delivery, Online Vendors, Pharmacies, Mall Vendors, Logistics, Catering, Tailors"
-              color="border-amber-200 bg-amber-50/50"
-            />
-            <FlowCard
-              emoji="&#x1F3AB;"
-              title="Ticketing"
-              description="Event listings, ticket selection, availability checks, and instant purchase."
-              industries="Events, Transport, Cinemas"
-              color="border-purple-200 bg-purple-50/50"
-            />
+            {[
+              { emoji: '&#x1F4C5;', title: 'Scheduling', description: 'Appointments and reservations with date, time, and service selection. Automatic reminders reduce no-shows.', industries: 'Restaurants, Barbers, Spas, Salons, Gyms, Clinics, Hotels, Car Wash, Tattoo, Dental, Vet, Laundry, Tutors, Photographers, Real Estate, Travel, Coworking', color: 'border-blue-200 bg-blue-50/50' },
+              { emoji: '&#x1F4B3;', title: 'Payments', description: 'Category-based payments with custom amounts. Perfect for tithes, offerings, donations, fees, and dues.', industries: 'Churches, Mosques, Schools, NGOs, Government, Crowdfunding, Parking, Taxi, Funeral Services', color: 'border-green-200 bg-green-50/50' },
+              { emoji: '&#x1F6D2;', title: 'Ordering', description: 'Product catalog, cart management, delivery or pickup, and checkout with inventory tracking.', industries: 'Shops, Food Delivery, Online Vendors, Pharmacies, Mall Vendors, Logistics, Catering, Tailors', color: 'border-amber-200 bg-amber-50/50' },
+              { emoji: '&#x1F3AB;', title: 'Ticketing', description: 'Event listings, ticket selection, availability checks, and instant purchase.', industries: 'Events, Transport, Cinemas', color: 'border-purple-200 bg-purple-50/50' },
+            ].map((flow, i) => (
+              <AnimatedSection key={flow.title} delay={i * 0.1}>
+                <FlowCard {...flow} />
+              </AnimatedSection>
+            ))}
           </div>
         </div>
       </section>
@@ -211,9 +299,9 @@ export default function HomePage() {
       <section className="bg-brand py-20">
         <div className="mx-auto max-w-6xl px-4">
           <div className="grid items-center gap-12 lg:grid-cols-2">
-            <div>
+            <AnimatedSection direction="left">
               <p className="text-xs font-bold uppercase tracking-widest text-brand-200">Intelligent AI</p>
-              <h2 className="mt-3 text-3xl font-bold text-white">
+              <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
                 AI that understands your customers
               </h2>
               <p className="mt-4 text-lg leading-relaxed text-brand-200">
@@ -226,8 +314,15 @@ export default function HomePage() {
                   { title: 'Auto-Upsell & Cross-sell', desc: 'Suggests complementary services and premium options during the conversation flow.' },
                   { title: 'Multi-Language Support', desc: 'Understands Pidgin, Yoruba greetings, and mixed-language messages common in African markets.' },
                   { title: 'Profanity & Spam Filter', desc: 'Built-in moderation keeps conversations clean and professional for your brand.' },
-                ].map((item) => (
-                  <div key={item.title} className="flex gap-3">
+                ].map((item, i) => (
+                  <motion.div
+                    key={item.title}
+                    initial={{ opacity: 0, x: -20 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: 0.2 + i * 0.1 }}
+                    className="flex gap-3"
+                  >
                     <div className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-accent">
                       <svg className="h-3 w-3 text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
@@ -237,126 +332,163 @@ export default function HomePage() {
                       <p className="text-sm font-semibold text-white">{item.title}</p>
                       <p className="mt-0.5 text-sm text-brand-200">{item.desc}</p>
                     </div>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
-            </div>
+            </AnimatedSection>
 
             {/* AI visual */}
-            <div className="mx-auto max-w-sm">
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                <div className="space-y-3">
-                  <div className="rounded-lg bg-white/10 p-3">
-                    <p className="text-xs text-brand-200">Customer says:</p>
-                    <p className="mt-1 text-sm font-medium text-white">&quot;abeg I wan cut hair tomorrow for morning&quot;</p>
-                  </div>
-                  <div className="flex items-center gap-2 text-accent">
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    <span className="text-xs font-bold">AI Processing</span>
-                  </div>
-                  <div className="rounded-lg bg-white/10 p-3">
-                    <p className="text-xs text-brand-200">Detected intent:</p>
-                    <div className="mt-1 flex flex-wrap gap-1.5">
-                      <span className="rounded-full bg-accent/20 px-2 py-0.5 text-xs font-medium text-accent">booking</span>
-                      <span className="rounded-full bg-green-400/20 px-2 py-0.5 text-xs font-medium text-green-300">haircut</span>
-                      <span className="rounded-full bg-blue-400/20 px-2 py-0.5 text-xs font-medium text-blue-300">tomorrow AM</span>
+            <AnimatedSection direction="right">
+              <div className="mx-auto max-w-sm">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
+                  <div className="space-y-3">
+                    <div className="rounded-lg bg-white/10 p-3">
+                      <p className="text-xs text-brand-200">Customer says:</p>
+                      <p className="mt-1 text-sm font-medium text-white">&quot;abeg I wan cut hair tomorrow for morning&quot;</p>
                     </div>
-                  </div>
-                  <div className="rounded-lg bg-whatsapp/20 p-3">
-                    <p className="text-xs text-brand-200">Bot responds:</p>
-                    <p className="mt-1 text-sm text-white">
-                      &#x2705; I&apos;ve got you! I have these morning slots for tomorrow:{'\n'}
-                      1. 8:00 AM{'\n'}
-                      2. 9:00 AM{'\n'}
-                      3. 10:00 AM{'\n'}
-                      Which one works for you?
-                    </p>
+                    <div className="flex items-center gap-2 text-accent">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      <span className="text-xs font-bold">AI Processing</span>
+                    </div>
+                    <div className="rounded-lg bg-white/10 p-3">
+                      <p className="text-xs text-brand-200">Detected intent:</p>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        <span className="rounded-full bg-accent/20 px-2 py-0.5 text-xs font-medium text-accent">booking</span>
+                        <span className="rounded-full bg-green-400/20 px-2 py-0.5 text-xs font-medium text-green-300">haircut</span>
+                        <span className="rounded-full bg-blue-400/20 px-2 py-0.5 text-xs font-medium text-blue-300">tomorrow AM</span>
+                      </div>
+                    </div>
+                    <div className="rounded-lg bg-[#25D366]/20 p-3">
+                      <p className="text-xs text-brand-200">Bot responds:</p>
+                      <p className="mt-1 text-sm text-white">
+                        &#x2705; I&apos;ve got you! I have these morning slots for tomorrow:{'\n'}
+                        1. 8:00 AM{'\n'}
+                        2. 9:00 AM{'\n'}
+                        3. 10:00 AM{'\n'}
+                        Which one works for you?
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
+            </AnimatedSection>
           </div>
         </div>
       </section>
 
-      {/* ── Stats Bar ── */}
-      <section className="bg-gray-900 py-14">
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 text-center md:grid-cols-4">
-          {[
-            { value: '100+', label: 'Businesses Served' },
-            { value: '25,000+', label: 'Transactions Processed' },
-            { value: '60%', label: 'Fewer No-Shows' },
-            { value: '24/7', label: 'Always Available' },
-          ].map((s) => (
-            <div key={s.label}>
-              <p className="text-3xl font-extrabold text-white">{s.value}</p>
-              <p className="mt-1 text-sm text-gray-400">{s.label}</p>
-            </div>
-          ))}
+      {/* ── Full Platform Capabilities ── */}
+      <section className="bg-gray-950 py-20">
+        <div className="mx-auto max-w-6xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand-300">Full Platform</p>
+            <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
+              20+ capabilities, one platform
+            </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-400">
+              Everything you need to run and grow your business on WhatsApp — beyond the 4 core flows.
+            </p>
+          </AnimatedSection>
+
+          <div className="mt-14 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+            {[
+              { group: 'Operations', items: [
+                { icon: '&#x1F4C5;', label: 'Appointments' },
+                { icon: '&#x1F4CB;', label: 'Queue & Waitlist' },
+                { icon: '&#x23F0;', label: 'Smart Reminders' },
+                { icon: '&#x1F4C6;', label: 'Calendar Sync' },
+                { icon: '&#x1F465;', label: 'Staff Management' },
+              ]},
+              { group: 'Commerce', items: [
+                { icon: '&#x1F4B3;', label: 'Payments' },
+                { icon: '&#x1F6D2;', label: 'Ordering' },
+                { icon: '&#x1F3AB;', label: 'Ticketing' },
+                { icon: '&#x1F501;', label: 'Recurring Billing' },
+                { icon: '&#x1F4B0;', label: 'Deposits & Payouts' },
+              ]},
+              { group: 'Engagement', items: [
+                { icon: '&#x1F4E2;', label: 'Broadcasts' },
+                { icon: '&#x1F3C6;', label: 'Loyalty Program' },
+                { icon: '&#x1F91D;', label: 'Referrals' },
+                { icon: '&#x2B50;', label: 'Reviews' },
+                { icon: '&#x1F514;', label: 'Notifications' },
+              ]},
+              { group: 'Tools', items: [
+                { icon: '&#x1F4CA;', label: 'Analytics' },
+                { icon: '&#x1F3F7;', label: 'Promo Codes' },
+                { icon: '&#x1F310;', label: 'Custom Pages' },
+                { icon: '&#x1F4F1;', label: 'QR Codes' },
+                { icon: '&#x1F4E4;', label: 'CSV Export' },
+              ]},
+            ].map((group, gi) => (
+              <AnimatedSection key={group.group} delay={gi * 0.1}>
+                <p className="mb-3 text-xs font-bold uppercase tracking-widest text-gray-500">{group.group}</p>
+                <div className="space-y-2">
+                  {group.items.map((item) => (
+                    <motion.div
+                      key={item.label}
+                      whileHover={{ scale: 1.03 }}
+                      className="flex items-center gap-2.5 rounded-lg border border-white/5 bg-white/5 px-3 py-2 transition hover:bg-white/10"
+                    >
+                      <span className="text-base" dangerouslySetInnerHTML={{ __html: item.icon }} />
+                      <span className="text-sm text-gray-300">{item.label}</span>
+                    </motion.div>
+                  ))}
+                </div>
+              </AnimatedSection>
+            ))}
+          </div>
+
+          <AnimatedSection delay={0.3} className="mt-10 text-center">
+            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="inline-block">
+              <Link
+                href="/features"
+                className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-500"
+              >
+                Explore All Features
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                </svg>
+              </Link>
+            </motion.div>
+          </AnimatedSection>
         </div>
       </section>
 
       {/* ── Testimonials ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <p className="text-center text-xs font-bold uppercase tracking-widest text-brand">Customer Feedback</p>
-          <h2 className="mt-3 text-center text-3xl font-bold text-gray-900">
-            What business owners say
-          </h2>
-          <p className="mt-2 text-center text-gray-600">
-            Real results from real businesses
-          </p>
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Customer Feedback</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              What business owners say
+            </h2>
+            <p className="mt-2 text-gray-600">Real results from real businesses</p>
+          </AnimatedSection>
 
-          {/* Horizontal scroll on mobile, grid on desktop */}
           <div className="mt-12 flex gap-6 overflow-x-auto pb-4 lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0">
-            <TestimonialCard
-              quote="Our members can now pay tithes, offerings, and seed directly on WhatsApp. Collections are up and our admin team saves hours every week."
-              name="Pastor Grace A."
-              role="New Life Church, Abuja"
-              stat="5hrs saved weekly"
-              metric="-5hrs"
-            />
-            <TestimonialCard
-              quote="We went from missing 40% of after-hours booking requests to capturing every single one. Revenue is up 30% in 3 months."
-              name="Adebayo O."
-              role="King's Cuts Barbershop, Lagos"
-              stat="30% more revenue"
-              metric="+30%"
-            />
-            <TestimonialCard
-              quote="Customers love ordering via WhatsApp instead of calling. Our average order value went up because the bot upsells naturally."
-              name="Chioma N."
-              role="Fresh Bites Delivery, PH"
-              stat="22% higher AOV"
-              metric="+22%"
-            />
+            {[
+              { quote: 'Our members can now pay tithes, offerings, and seed directly on WhatsApp. Collections are up and our admin team saves hours every week.', name: 'Pastor Grace A.', role: 'New Life Church, Abuja', stat: '5hrs saved weekly', metric: '-5hrs' },
+              { quote: 'We went from missing 40% of after-hours booking requests to capturing every single one. Revenue is up 30% in 3 months.', name: 'Adebayo O.', role: "King's Cuts Barbershop, Lagos", stat: '30% more revenue', metric: '+30%' },
+              { quote: 'Customers love ordering via WhatsApp instead of calling. Our average order value went up because the bot upsells naturally.', name: 'Chioma N.', role: 'Fresh Bites Delivery, PH', stat: '22% higher AOV', metric: '+22%' },
+            ].map((t, i) => (
+              <AnimatedSection key={t.name} delay={i * 0.1}>
+                <TestimonialCard {...t} />
+              </AnimatedSection>
+            ))}
           </div>
 
-          {/* Second row of testimonials */}
           <div className="mt-6 flex gap-6 overflow-x-auto pb-4 lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0">
-            <TestimonialCard
-              quote="Zakat and sadaqah donations come in seamlessly now. The bot handles contribution categories and sends instant receipts — very professional."
-              name="Imam Yusuf K."
-              role="Al-Noor Mosque, London"
-              stat="40% more donations"
-              metric="+40%"
-            />
-            <TestimonialCard
-              quote="Parents can now check balances and pay school fees on WhatsApp. Our accounts department processes 3x more payments with zero manual entry."
-              name="Mrs. Okonkwo"
-              role="Prestige Academy, Abuja"
-              stat="3x faster processing"
-              metric="3x"
-            />
-            <TestimonialCard
-              quote="We sell event tickets through WhatsApp now. Attendees get instant QR codes and we have real-time visibility on every sale."
-              name="Tunde A."
-              role="Lagos Event Co."
-              stat="2x ticket sales"
-              metric="2x"
-            />
+            {[
+              { quote: 'Zakat and sadaqah donations come in seamlessly now. The bot handles contribution categories and sends instant receipts — very professional.', name: 'Imam Yusuf K.', role: 'Al-Noor Mosque, London', stat: '40% more donations', metric: '+40%' },
+              { quote: 'Parents can now check balances and pay school fees on WhatsApp. Our accounts department processes 3x more payments with zero manual entry.', name: 'Mrs. Okonkwo', role: 'Prestige Academy, Abuja', stat: '3x faster processing', metric: '3x' },
+              { quote: 'We sell event tickets through WhatsApp now. Attendees get instant QR codes and we have real-time visibility on every sale.', name: 'Tunde A.', role: 'Lagos Event Co.', stat: '2x ticket sales', metric: '2x' },
+            ].map((t, i) => (
+              <AnimatedSection key={t.name} delay={i * 0.1}>
+                <TestimonialCard {...t} />
+              </AnimatedSection>
+            ))}
           </div>
         </div>
       </section>
@@ -364,71 +496,86 @@ export default function HomePage() {
       {/* ── Pricing Preview ── */}
       <section id="pricing" className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <p className="text-center text-xs font-bold uppercase tracking-widest text-brand">Pricing</p>
-          <h2 className="mt-3 text-center text-3xl font-bold text-gray-900">
-            Simple, transparent pricing
-          </h2>
-          <p className="mt-2 text-center text-gray-600">
-            Start free. Upgrade when you&apos;re ready.
-          </p>
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Pricing</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Simple, transparent pricing
+            </h2>
+            <p className="mt-2 text-gray-600">
+              Start free. Upgrade when you&apos;re ready.
+            </p>
+          </AnimatedSection>
 
           <div className="mt-12 grid gap-6 sm:grid-cols-3">
-            <PlanCard
-              name={PRICING_TIERS.free.name}
-              price={formatCurrency(0, 'NG')}
-              period=""
-              features={PRICING_TIERS.free.features}
-              cta={{ label: 'Start Free', href: '/get-started' }}
-            />
-            <PlanCard
-              name={PRICING_TIERS.growth.name}
-              price={formatCurrency(PRICING_TIERS.growth.price as number, 'NG')}
-              period="/month"
-              highlight
-              features={PRICING_TIERS.growth.features}
-              cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
-            />
-            <PlanCard
-              name={PRICING_TIERS.business.name}
-              price={formatCurrency(PRICING_TIERS.business.price as number, 'NG')}
-              period="/month"
-              features={PRICING_TIERS.business.features}
-              cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
-            />
+            <AnimatedSection delay={0}>
+              <PlanCard
+                name={PRICING_TIERS.free.name}
+                price={formatCurrency(0, 'NG')}
+                period=""
+                features={PRICING_TIERS.free.features}
+                cta={{ label: 'Start Free', href: '/get-started' }}
+              />
+            </AnimatedSection>
+            <AnimatedSection delay={0.1}>
+              <PlanCard
+                name={PRICING_TIERS.growth.name}
+                price={formatCurrency(PRICING_TIERS.growth.price as number, 'NG')}
+                period="/month"
+                highlight
+                features={PRICING_TIERS.growth.features}
+                cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
+              />
+            </AnimatedSection>
+            <AnimatedSection delay={0.2}>
+              <PlanCard
+                name={PRICING_TIERS.business.name}
+                price={formatCurrency(PRICING_TIERS.business.price as number, 'NG')}
+                period="/month"
+                features={PRICING_TIERS.business.features}
+                cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
+              />
+            </AnimatedSection>
           </div>
 
-          <div className="mt-8 text-center">
+          <AnimatedSection delay={0.3} className="mt-8 text-center">
             <Link
               href="/pricing"
-              className="text-sm font-semibold text-brand hover:text-brand-400 transition"
+              className="text-sm font-semibold text-brand transition hover:text-brand-400"
             >
               See full pricing details with billing calculator &rarr;
             </Link>
-          </div>
+          </AnimatedSection>
         </div>
       </section>
 
       {/* ── Get Started Steps ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-4xl px-4 text-center">
-          <p className="text-xs font-bold uppercase tracking-widest text-brand">How it works</p>
-          <h2 className="mt-3 text-3xl font-bold text-gray-900">
-            Get started in 3 simple steps
-          </h2>
+          <AnimatedSection>
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">How it works</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Get started in 3 simple steps
+            </h2>
+          </AnimatedSection>
 
           <div className="mt-14 grid gap-8 sm:grid-cols-3">
             {[
               { step: '1', title: 'Sign Up & Pick Your Category', description: `Create your account and tell us what kind of business or organisation you run. We support ${CATEGORY_COUNT}+ categories.`, icon: '&#x1F464;' },
               { step: '2', title: 'Customize Your Bot', description: 'Set your greeting, services, operating hours, and persona. We connect WhatsApp automatically via Gupshup.', icon: '&#x2699;&#xFE0F;' },
               { step: '3', title: 'Go Live & Grow', description: 'Share your WhatsApp link with customers. The bot handles bookings, payments, and orders 24/7.', icon: '&#x1F680;' },
-            ].map((s) => (
-              <div key={s.step} className="relative">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-2xl">
-                  <span dangerouslySetInnerHTML={{ __html: s.icon }} />
+            ].map((s, i) => (
+              <AnimatedSection key={s.step} delay={i * 0.15}>
+                <div className="relative">
+                  <motion.div
+                    whileHover={{ scale: 1.1 }}
+                    className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-2xl"
+                  >
+                    <span dangerouslySetInnerHTML={{ __html: s.icon }} />
+                  </motion.div>
+                  <h3 className="mt-4 text-base font-semibold text-gray-900">{s.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{s.description}</p>
                 </div>
-                <h3 className="mt-4 text-base font-semibold text-gray-900">{s.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-gray-600">{s.description}</p>
-              </div>
+              </AnimatedSection>
             ))}
           </div>
         </div>
@@ -437,10 +584,12 @@ export default function HomePage() {
       {/* ── FAQ ── */}
       <section id="faq" className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <p className="text-center text-xs font-bold uppercase tracking-widest text-brand">FAQ</p>
-          <h2 className="mt-3 text-center text-3xl font-bold text-gray-900">
-            Frequently Asked Questions
-          </h2>
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">FAQ</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Frequently Asked Questions
+            </h2>
+          </AnimatedSection>
 
           <div className="mx-auto mt-12 grid max-w-4xl gap-x-12 gap-y-0 lg:grid-cols-2">
             <div className="space-y-0">
@@ -454,7 +603,7 @@ export default function HomePage() {
               />
               <FaqItem
                 question="How do payments work?"
-                answer="When a customer needs to pay, they receive a secure payment link in the chat via Paystack (Nigeria, Ghana) or Stripe (US, UK, Canada). Funds go directly to your account."
+                answer="When a customer needs to pay, they receive a secure payment link in the chat via Paystack (Nigeria, Ghana), Square (US), or Stripe (UK, Canada). Funds go directly to your account."
               />
             </div>
             <div className="space-y-0">
@@ -478,29 +627,41 @@ export default function HomePage() {
       {/* ── Final CTA ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-brand-900 via-brand to-brand-700 p-12 text-center lg:p-16">
-            <h2 className="text-3xl font-bold text-white lg:text-4xl">
-              Ready to automate your business on WhatsApp?
-            </h2>
-            <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-              Join 100+ businesses already saving time and growing revenue
-              with Waaiio.
-            </p>
-            <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <Link
-                href="/get-started"
-                className="rounded-xl bg-accent px-8 py-4 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400"
-              >
-                Get Started Free
-              </Link>
-              <Link
-                href="/contact"
-                className="rounded-xl border border-white/30 px-8 py-4 text-sm font-semibold text-white transition hover:bg-white/10"
-              >
-                Talk to Sales
-              </Link>
+          <AnimatedSection>
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-brand-900 via-brand to-brand-700 p-12 text-center lg:p-16">
+              <div className="pointer-events-none absolute inset-0 opacity-30">
+                <div className="absolute left-1/4 top-1/4 h-64 w-64 rounded-full bg-accent/20 blur-3xl" />
+                <div className="absolute bottom-1/4 right-1/4 h-48 w-48 rounded-full bg-brand-300/20 blur-3xl" />
+              </div>
+              <div className="relative z-10">
+                <h2 className="text-3xl font-bold text-white lg:text-4xl">
+                  Ready to automate your business on WhatsApp?
+                </h2>
+                <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
+                  Join 100+ businesses already saving time and growing revenue
+                  with Waaiio.
+                </p>
+                <div className="mt-8 flex flex-wrap justify-center gap-3">
+                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                    <Link
+                      href="/get-started"
+                      className="rounded-xl bg-accent px-8 py-4 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400"
+                    >
+                      Get Started Free
+                    </Link>
+                  </motion.div>
+                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                    <Link
+                      href="/contact"
+                      className="rounded-xl border border-white/30 px-8 py-4 text-sm font-semibold text-white transition hover:bg-white/10"
+                    >
+                      Talk to Sales
+                    </Link>
+                  </motion.div>
+                </div>
+              </div>
             </div>
-          </div>
+          </AnimatedSection>
         </div>
       </section>
     </>
@@ -579,8 +740,7 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
     <section className="bg-gray-950 py-20">
       <div className="mx-auto max-w-6xl px-4">
         <div className="grid items-start gap-12 lg:grid-cols-[320px_1fr]">
-          {/* Left: Sticky heading + tab switcher */}
-          <div className="lg:sticky lg:top-24">
+          <AnimatedSection direction="left" className="lg:sticky lg:top-24">
             <p className="text-xs font-bold uppercase tracking-widest text-brand-300">Built for every industry</p>
             <h2 className="mt-3 text-3xl font-bold leading-tight text-white lg:text-4xl">
               {categoryCount}+ Business Types
@@ -589,7 +749,6 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
               Pick a flow and we auto-configure the right WhatsApp experience for your industry.
             </p>
 
-            {/* Flow tabs — vertical on desktop, horizontal scroll on mobile */}
             <div className="mt-8 flex gap-2 overflow-x-auto pb-2 lg:flex-col lg:overflow-visible lg:pb-0">
               {FLOW_TABS.map((tab) => {
                 const isActive = tab.flow === activeFlow;
@@ -613,18 +772,20 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
                 );
               })}
             </div>
-          </div>
+          </AnimatedSection>
 
-          {/* Right: Industry cards grid */}
           <div
             key={activeFlow}
             className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
           >
             {industries.slice(0, MAX_VISIBLE_CARDS).map((cat, i) => (
-              <div
+              <motion.div
                 key={cat.key}
-                className={`group rounded-xl border ${accent.cardBorder} ${accent.cardBg} p-5 opacity-0 animate-fade-in-up transition-all hover:-translate-y-1 hover:shadow-lg hover:shadow-black/20`}
-                style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'forwards' }}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.06, duration: 0.4 }}
+                whileHover={{ y: -4 }}
+                className={`group rounded-xl border ${accent.cardBorder} ${accent.cardBg} p-5 transition-all hover:shadow-lg hover:shadow-black/20`}
               >
                 <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${accent.iconBg} text-xl transition-transform group-hover:scale-110`}>
                   {cat.icon}
@@ -633,17 +794,19 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
                 <p className="mt-1 text-xs leading-relaxed text-gray-500">
                   {INDUSTRY_DESCRIPTIONS[cat.key] ?? `${cat.label} automation via WhatsApp`}
                 </p>
-              </div>
+              </motion.div>
             ))}
             {industries.length > MAX_VISIBLE_CARDS && (
-              <div
-                className={`flex items-center justify-center rounded-xl border ${accent.cardBorder} ${accent.cardBg} p-5 opacity-0 animate-fade-in-up`}
-                style={{ animationDelay: `${MAX_VISIBLE_CARDS * 60}ms`, animationFillMode: 'forwards' }}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: MAX_VISIBLE_CARDS * 0.06, duration: 0.4 }}
+                className={`flex items-center justify-center rounded-xl border ${accent.cardBorder} ${accent.cardBg} p-5`}
               >
                 <p className={`text-sm font-semibold ${accent.text}`}>
                   +{industries.length - MAX_VISIBLE_CARDS} more
                 </p>
-              </div>
+              </motion.div>
             )}
           </div>
         </div>
@@ -652,13 +815,7 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
   );
 }
 
-function ChatBubble({
-  from,
-  children,
-}: {
-  from: 'bot' | 'user';
-  children: React.ReactNode;
-}) {
+function ChatBubble({ from, children }: { from: 'bot' | 'user'; children: React.ReactNode }) {
   const isBot = from === 'bot';
   return (
     <div className={`flex ${isBot ? 'justify-start' : 'justify-end'}`}>
@@ -675,62 +832,43 @@ function ChatBubble({
 }
 
 function WhyCard({ number, title, desc, color }: { number: string; title: string; desc: string; color: string }) {
-  const borderColor = color === 'brand' ? 'border-brand/20 hover:border-brand' : color === 'accent' ? 'border-accent/20 hover:border-accent' : 'border-whatsapp/20 hover:border-whatsapp';
-  const numColor = color === 'brand' ? 'text-brand' : color === 'accent' ? 'text-accent' : 'text-whatsapp';
+  const borderColor = color === 'brand' ? 'border-brand/20 hover:border-brand' : color === 'accent' ? 'border-accent/20 hover:border-accent' : 'border-[#25D366]/20 hover:border-[#25D366]';
+  const numColor = color === 'brand' ? 'text-brand' : color === 'accent' ? 'text-accent' : 'text-[#25D366]';
   return (
-    <div className={`rounded-2xl border-2 ${borderColor} bg-white p-8 transition`}>
+    <motion.div
+      whileHover={{ y: -6 }}
+      className={`rounded-2xl border-2 ${borderColor} bg-white p-8 transition`}
+    >
       <span className={`text-4xl font-black ${numColor} opacity-30`}>{number}</span>
       <h3 className="mt-4 text-xl font-bold text-gray-900">{title}</h3>
       <p className="mt-3 text-sm leading-relaxed text-gray-600">{desc}</p>
-    </div>
+    </motion.div>
   );
 }
 
-function FlowCard({
-  emoji,
-  title,
-  description,
-  industries,
-  color,
-}: {
-  emoji: string;
-  title: string;
-  description: string;
-  industries: string;
-  color: string;
-}) {
+function FlowCard({ emoji, title, description, industries, color }: { emoji: string; title: string; description: string; industries: string; color: string }) {
   return (
-    <div className={`rounded-2xl border ${color} p-6`}>
+    <motion.div
+      whileHover={{ y: -4 }}
+      className={`rounded-2xl border ${color} p-6 transition`}
+    >
       <div className="flex items-center gap-3">
         <span className="text-2xl" dangerouslySetInnerHTML={{ __html: emoji }} />
         <h3 className="text-base font-semibold text-gray-900">{title}</h3>
       </div>
       <p className="mt-2 text-sm text-gray-600">{description}</p>
       <p className="mt-3 text-xs font-medium text-gray-400">{industries}</p>
-    </div>
+    </motion.div>
   );
 }
 
-function PlanCard({
-  name,
-  price,
-  period,
-  features,
-  highlight,
-  cta,
-}: {
-  name: string;
-  price: string;
-  period: string;
-  features: string[];
-  highlight?: boolean;
-  cta: { label: string; href: string; gold?: boolean };
-}) {
+function PlanCard({ name, price, period, features, highlight, cta }: { name: string; price: string; period: string; features: string[]; highlight?: boolean; cta: { label: string; href: string; gold?: boolean } }) {
   return (
-    <div
-      className={`flex flex-col rounded-2xl border p-6 ${
+    <motion.div
+      whileHover={{ y: -4 }}
+      className={`flex flex-col rounded-2xl border p-6 transition ${
         highlight
-          ? 'border-brand bg-brand-50/30 ring-2 ring-brand shadow-lg shadow-brand-50'
+          ? 'border-brand bg-brand-50/30 shadow-lg shadow-brand-50 ring-2 ring-brand'
           : 'border-gray-200 bg-white'
       }`}
     >
@@ -747,12 +885,7 @@ function PlanCard({
       <ul className="mt-6 space-y-3">
         {features.map((f) => (
           <li key={f} className="flex items-start gap-2 text-sm text-gray-600">
-            <svg
-              className="mt-0.5 h-4 w-4 flex-shrink-0 text-brand"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
+            <svg className="mt-0.5 h-4 w-4 flex-shrink-0 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
             {f}
@@ -760,42 +893,33 @@ function PlanCard({
         ))}
       </ul>
       <div className="mt-auto pt-6">
-        <Link
-          href={cta.href}
-          className={`block rounded-xl px-4 py-3 text-center text-sm font-semibold transition ${
-            cta.gold
-              ? 'bg-accent text-gray-900 hover:bg-accent-400 shadow-lg shadow-accent/20'
-              : highlight
-                ? 'bg-brand text-white hover:bg-brand-500'
-                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-          }`}
-        >
-          {cta.label}
-        </Link>
+        <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+          <Link
+            href={cta.href}
+            className={`block rounded-xl px-4 py-3 text-center text-sm font-semibold transition ${
+              cta.gold
+                ? 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'
+                : highlight
+                  ? 'bg-brand text-white hover:bg-brand-500'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {cta.label}
+          </Link>
+        </motion.div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
-function TestimonialCard({
-  quote,
-  name,
-  role,
-  stat,
-  metric,
-}: {
-  quote: string;
-  name: string;
-  role: string;
-  stat: string;
-  metric: string;
-}) {
+function TestimonialCard({ quote, name, role, stat, metric }: { quote: string; name: string; role: string; stat: string; metric: string }) {
   return (
-    <div className="flex min-w-[280px] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-sm lg:min-w-0">
+    <motion.div
+      whileHover={{ y: -4 }}
+      className="flex min-w-[280px] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition lg:min-w-0"
+    >
       <div className="mb-4 flex items-center justify-between">
-        <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand">
-          {stat}
-        </span>
+        <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand">{stat}</span>
         <span className="text-2xl font-black text-brand/20">{metric}</span>
       </div>
       <p className="flex-1 text-sm leading-relaxed text-gray-700">&ldquo;{quote}&rdquo;</p>
@@ -808,7 +932,7 @@ function TestimonialCard({
           <p className="text-xs text-gray-500">{role}</p>
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -883,30 +1007,46 @@ function HeroChatMockup() {
   }, []);
 
   return (
-    <div className="relative mx-auto w-full max-w-sm lg:mx-0">
+    <motion.div
+      initial={{ opacity: 0, y: 30 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.5, duration: 0.8 }}
+      className="relative mx-auto w-full max-w-sm lg:mx-0"
+    >
       {/* Floating platform badges */}
-      <div className="absolute -left-6 top-4 z-10 animate-bounce rounded-xl bg-white px-3 py-2 shadow-lg" style={{ animationDuration: '3s' }}>
+      <motion.div
+        animate={{ y: [0, -8, 0] }}
+        transition={{ repeat: Infinity, duration: 3 }}
+        className="absolute -left-6 top-4 z-10 rounded-xl bg-white px-3 py-2 shadow-lg"
+      >
         <div className="flex items-center gap-2">
           <span className="text-lg">&#x1F4AC;</span>
           <span className="text-xs font-bold text-gray-800">WhatsApp</span>
         </div>
-      </div>
-      <div className="absolute -right-4 top-1/3 z-10 animate-bounce rounded-xl bg-white px-3 py-2 shadow-lg" style={{ animationDuration: '4s', animationDelay: '1s' }}>
+      </motion.div>
+      <motion.div
+        animate={{ y: [0, -8, 0] }}
+        transition={{ repeat: Infinity, duration: 4, delay: 1 }}
+        className="absolute -right-4 top-1/3 z-10 rounded-xl bg-white px-3 py-2 shadow-lg"
+      >
         <div className="flex items-center gap-2">
           <span className="text-lg">&#x1F916;</span>
           <span className="text-xs font-bold text-gray-800">AI Bot</span>
         </div>
-      </div>
-      <div className="absolute -left-3 bottom-16 z-10 animate-bounce rounded-xl bg-white px-3 py-2 shadow-lg" style={{ animationDuration: '3.5s', animationDelay: '0.5s' }}>
+      </motion.div>
+      <motion.div
+        animate={{ y: [0, -8, 0] }}
+        transition={{ repeat: Infinity, duration: 3.5, delay: 0.5 }}
+        className="absolute -left-3 bottom-16 z-10 rounded-xl bg-white px-3 py-2 shadow-lg"
+      >
         <div className="flex items-center gap-2">
           <span className="text-lg">&#x1F4B3;</span>
           <span className="text-xs font-bold text-gray-800">Payments</span>
         </div>
-      </div>
+      </motion.div>
 
       {/* Phone mockup */}
       <div className="relative overflow-hidden rounded-[2rem] border-4 border-white/20 bg-white shadow-2xl">
-        {/* WhatsApp header */}
         <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: '#075E54' }}>
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
             {demo.avatar}
@@ -923,18 +1063,17 @@ function HeroChatMockup() {
           ))}
         </div>
 
-        {/* Demo switcher dots */}
         <div className="flex items-center justify-center gap-2 bg-white py-2">
           {HERO_DEMOS.map((_, i) => (
             <button
               key={i}
               onClick={() => setDemoIndex(i)}
-              className={`h-2 w-2 rounded-full transition-all ${i === demoIndex ? 'w-6 bg-brand' : 'bg-gray-300'}`}
+              className={`h-2 rounded-full transition-all ${i === demoIndex ? 'w-6 bg-brand' : 'w-2 bg-gray-300'}`}
             />
           ))}
         </div>
       </div>
-    </div>
+    </motion.div>
   );
 }
 
@@ -947,20 +1086,25 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
         className="flex w-full items-center justify-between gap-4 text-left"
       >
         <h3 className="text-sm font-semibold text-gray-900">{question}</h3>
-        <svg
-          className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        <motion.svg
+          animate={{ rotate: open ? 180 : 0 }}
+          transition={{ duration: 0.2 }}
+          className="h-4 w-4 shrink-0 text-gray-400"
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
         >
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
+        </motion.svg>
       </button>
-      <div className={`grid transition-all duration-200 ${open ? 'mt-2 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
-        <div className="overflow-hidden">
-          <p className="text-sm leading-relaxed text-gray-600">{answer}</p>
-        </div>
-      </div>
+      <motion.div
+        initial={false}
+        animate={{ height: open ? 'auto' : 0, opacity: open ? 1 : 0 }}
+        transition={{ duration: 0.3 }}
+        className="overflow-hidden"
+      >
+        <p className="mt-2 text-sm leading-relaxed text-gray-600">{answer}</p>
+      </motion.div>
     </div>
   );
 }

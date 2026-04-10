@@ -39,6 +39,9 @@ export async function createRecurringCheckout(opts: {
   platformFeePercent?: number;
 }): Promise<{ sessionId: string; url: string } | null> {
   if (!stripeSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Stripe secret key');
+    }
     const mockId = `mock_stripe_sub_${Date.now()}`;
     return { sessionId: mockId, url: `https://waaiio.com/pay?ref=${mockId}` };
   }
@@ -94,7 +97,12 @@ export async function createRecurringCheckout(opts: {
  * Cancel a Stripe subscription immediately.
  */
 export async function cancelSubscription(subscriptionId: string): Promise<boolean> {
-  if (!stripeSecretKey) return true;
+  if (!stripeSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Stripe secret key');
+    }
+    return true;
+  }
 
   const data = await stripeRequest(`/subscriptions/${encodeURIComponent(subscriptionId)}`, 'DELETE');
   return (data.status as string) === 'canceled';
@@ -104,7 +112,12 @@ export async function cancelSubscription(subscriptionId: string): Promise<boolea
  * Pause a Stripe subscription (void upcoming invoices).
  */
 export async function pauseSubscription(subscriptionId: string): Promise<boolean> {
-  if (!stripeSecretKey) return true;
+  if (!stripeSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Stripe secret key');
+    }
+    return true;
+  }
 
   const data = await stripeRequest(
     `/subscriptions/${encodeURIComponent(subscriptionId)}`,
@@ -118,7 +131,12 @@ export async function pauseSubscription(subscriptionId: string): Promise<boolean
  * Resume a paused Stripe subscription.
  */
 export async function resumeSubscription(subscriptionId: string): Promise<boolean> {
-  if (!stripeSecretKey) return true;
+  if (!stripeSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Stripe secret key');
+    }
+    return true;
+  }
 
   const data = await stripeRequest(
     `/subscriptions/${encodeURIComponent(subscriptionId)}`,

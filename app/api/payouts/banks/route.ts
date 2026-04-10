@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
     bankCache.set(cacheKey, { banks, fetchedAt: Date.now() });
     return NextResponse.json({ banks });
   } catch (error) {
-    console.error('List banks error:', (error as Error).message);
+    logger.error('List banks error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to fetch banks' }, { status: 500 });
   }
 }

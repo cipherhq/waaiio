@@ -63,13 +63,13 @@ export const INDUSTRY_CONFIG: Record<string, IndustryConfig> = {
   church: {
     payment: {
       defaultCategories: ['Tithe', 'Offering', 'Building Fund', 'Welfare'],
-      receiptWording: 'Church Payment',
+      receiptWording: 'Church Giving',
     },
   },
   mosque: {
     payment: {
       defaultCategories: ['Zakat', 'Sadaqah', 'Fitrah'],
-      receiptWording: 'Mosque Payment',
+      receiptWording: 'Mosque Giving',
     },
   },
   school: {

@@ -2,10 +2,20 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { resolveConversation } from '@/lib/bot/handoff.service';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { businessId, customerPhone } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'chat-resolve'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { businessId, customerPhone } = body;
     if (!businessId || !customerPhone) {
       return NextResponse.json({ error: 'businessId and customerPhone required' }, { status: 400 });
     }
@@ -28,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('[CHAT] Resolve error:', error);
+    logger.error('[CHAT] Resolve error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

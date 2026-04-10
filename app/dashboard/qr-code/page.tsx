@@ -25,9 +25,12 @@ export default function QRCodePage() {
   const cleanPhone = phone.startsWith('+') ? phone.slice(1) : phone;
   const waLink = `https://wa.me/${cleanPhone}?text=Hi`;
 
+  const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
+  const defaultPrefill = isSharedNumber && business.bot_code ? business.bot_code : 'Hi';
+
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('generic');
   const [copied, setCopied] = useState(false);
-  const [prefillText, setPrefillText] = useState('Hi');
+  const [prefillText, setPrefillText] = useState(defaultPrefill);
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
 
@@ -229,6 +232,11 @@ export default function QRCodePage() {
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
               />
               <p className="mt-1 text-xs text-gray-400">This message auto-fills when customers open the link</p>
+              {isSharedNumber && business.bot_code && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Tip: Keep your bot code &quot;{business.bot_code}&quot; as the pre-filled message so customers get routed to your business automatically.
+                </p>
+              )}
             </div>
           </div>
 

@@ -64,18 +64,28 @@ export function getPaymentReceiptMessage(opts: {
 
 export function getOrderConfirmationMessage(opts: {
   businessName: string;
-  items: Array<{ name: string; quantity: number; price: number; variant_label?: string }>;
+  items: Array<{ name: string; quantity: number; price: number; variant_label?: string; addons?: Array<{ name: string; price: number; quantity?: number }> }>;
   totalAmount: number;
   referenceCode: string;
   deliveryAddress?: string;
   shippingCost?: number;
+  deliveryZoneName?: string;
+  deliveryZonePrice?: number;
+  addonsTotal?: number;
+  volumeDiscountAmount?: number;
   countryCode?: CountryCode;
 }): string {
   const cc = opts.countryCode || 'NG';
-  const itemLines = opts.items.map(i => {
+  const itemLines: string[] = [];
+  for (const i of opts.items) {
     const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
-    return `  \u2022 ${label} x${i.quantity} \u2014 ${formatCurrency(i.price * i.quantity, cc)}`;
-  });
+    itemLines.push(`  \u2022 ${label} x${i.quantity} \u2014 ${formatCurrency(i.price * i.quantity, cc)}`);
+    if (i.addons && i.addons.length > 0) {
+      for (const a of i.addons) {
+        itemLines.push(`    + ${a.name}: ${formatCurrency(a.price * (a.quantity || 1), cc)}`);
+      }
+    }
+  }
 
   const lines = [
     `\u2705 *Order Confirmed!*`,
@@ -87,7 +97,18 @@ export function getOrderConfirmationMessage(opts: {
     ...itemLines,
   ];
 
-  if (opts.shippingCost && opts.shippingCost > 0) {
+  if (opts.addonsTotal && opts.addonsTotal > 0) {
+    lines.push(`  \ud83d\udd27 Add-ons: ${formatCurrency(opts.addonsTotal, cc)}`);
+  }
+
+  if (opts.volumeDiscountAmount && opts.volumeDiscountAmount > 0) {
+    lines.push(`  \ud83c\udf81 Volume Discount: -${formatCurrency(opts.volumeDiscountAmount, cc)}`);
+  }
+
+  if (opts.deliveryZoneName) {
+    const zonePrice = opts.deliveryZonePrice || 0;
+    lines.push(`  \ud83d\ude9a ${opts.deliveryZoneName}: ${zonePrice > 0 ? formatCurrency(zonePrice, cc) : 'FREE'}`);
+  } else if (opts.shippingCost && opts.shippingCost > 0) {
     lines.push(`  \ud83d\ude9a Shipping: ${formatCurrency(opts.shippingCost, cc)}`);
   }
 
@@ -98,6 +119,47 @@ export function getOrderConfirmationMessage(opts: {
   }
 
   lines.push('', 'Thank you for your order! \ud83c\udf89');
+  return lines.join('\n');
+}
+
+export function getQuoteNotificationMessage(opts: {
+  businessName: string;
+  customerName: string;
+  items: Array<{ name: string; quantity: number; price: number; variant_label?: string }>;
+  addons?: Array<{ name: string; price: number; quantity?: number }>;
+  estimatedSubtotal: number;
+  deliveryZoneName?: string;
+  countryCode?: CountryCode;
+}): string {
+  const cc = opts.countryCode || 'NG';
+  const itemLines = opts.items.map(i => {
+    const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
+    return `  \u2022 ${label} x${i.quantity} \u2014 ${formatCurrency(i.price * i.quantity, cc)}`;
+  });
+
+  const lines = [
+    `\ud83d\udccb *New Quote Request*`,
+    '',
+    `\ud83d\udc64 Customer: ${opts.customerName}`,
+    `\ud83d\uded2 ${opts.businessName}`,
+    '',
+    '\ud83d\udce6 *Items:*',
+    ...itemLines,
+  ];
+
+  if (opts.addons && opts.addons.length > 0) {
+    lines.push('', '\ud83d\udd27 *Add-ons:*');
+    for (const a of opts.addons) {
+      lines.push(`  + ${a.name}: ${formatCurrency(a.price * (a.quantity || 1), cc)}`);
+    }
+  }
+
+  if (opts.deliveryZoneName) {
+    lines.push(`\ud83d\ude9a Zone: ${opts.deliveryZoneName}`);
+  }
+
+  lines.push('', `\ud83d\udcb0 Estimated: *${formatCurrency(opts.estimatedSubtotal, cc)}*`);
+  lines.push('', '_Open your dashboard to respond with a price._');
   return lines.join('\n');
 }
 

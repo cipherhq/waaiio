@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import AnimatedSection from '@/components/marketing/AnimatedSection';
+import CounterAnimation from '@/components/marketing/CounterAnimation';
 
 export const metadata: Metadata = {
   title: 'About Waaiio',
@@ -88,16 +90,19 @@ export default function AboutPage() {
       {/* ── 2. The Problem ── */}
       <section className="bg-white py-20 lg:py-24">
         <div className="mx-auto max-w-6xl px-4">
-          <div className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">The Problem</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
-              Businesses are losing money every day
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-              Across Africa and emerging markets, millions of businesses face the same challenges &mdash; and most don&apos;t have the tools to solve them.
-            </p>
-          </div>
+          <AnimatedSection>
+            <div className="text-center">
+              <p className="text-xs font-bold uppercase tracking-widest text-brand">The Problem</p>
+              <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
+                Businesses are losing money every day
+              </h2>
+              <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
+                Across Africa and emerging markets, millions of businesses face the same challenges &mdash; and most don&apos;t have the tools to solve them.
+              </p>
+            </div>
+          </AnimatedSection>
 
+          <AnimatedSection delay={0.15}>
           <div className="mt-16 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {[
               {
@@ -149,8 +154,10 @@ export default function AboutPage() {
               </div>
             ))}
           </div>
+          </AnimatedSection>
 
           {/* Extended pain points */}
+          <AnimatedSection delay={0.25}>
           <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
             {[
               {
@@ -202,22 +209,26 @@ export default function AboutPage() {
               </div>
             ))}
           </div>
+          </AnimatedSection>
         </div>
       </section>
 
       {/* ── 3. Why We Built waaiio ── */}
       <section className="bg-gray-50 py-20 lg:py-24">
         <div className="mx-auto max-w-6xl px-4">
-          <div className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">The Solution</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
-              Why we built waaiio
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-              We built waaiio because every business deserves the power of automation &mdash; not just the ones that can afford expensive software.
-            </p>
-          </div>
+          <AnimatedSection>
+            <div className="text-center">
+              <p className="text-xs font-bold uppercase tracking-widest text-brand">The Solution</p>
+              <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
+                Why we built waaiio
+              </h2>
+              <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
+                We built waaiio because every business deserves the power of automation &mdash; not just the ones that can afford expensive software.
+              </p>
+            </div>
+          </AnimatedSection>
 
+          <AnimatedSection delay={0.15}>
           <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {[
               {
@@ -260,7 +271,7 @@ export default function AboutPage() {
                   </svg>
                 ),
                 title: 'Integrated payments',
-                desc: 'Paystack for Africa (Nigeria, Ghana). Stripe for global markets (US, UK, Canada). Payments happen inside the WhatsApp conversation.',
+                desc: 'Paystack for Africa (Nigeria, Ghana). Square for the US. Stripe for UK and Canada. Payments happen inside the WhatsApp conversation.',
                 color: 'border-green-200 bg-green-50/50',
                 iconBg: 'bg-green-100',
               },
@@ -299,6 +310,7 @@ export default function AboutPage() {
               </div>
             ))}
           </div>
+          </AnimatedSection>
         </div>
       </section>
 
@@ -309,36 +321,41 @@ export default function AboutPage() {
           <div className="pointer-events-none absolute -left-20 top-0 h-40 w-40 rounded-full bg-accent/10 blur-3xl" />
           <div className="pointer-events-none absolute -right-20 bottom-0 h-40 w-40 rounded-full bg-whatsapp/10 blur-3xl" />
 
-          <p className="relative text-xs font-bold uppercase tracking-widest text-brand-200">Our Mission</p>
-          <h2 className="relative mt-6 text-3xl font-extrabold leading-tight text-white lg:text-5xl">
-            Democratizing business automation for every entrepreneur, everywhere.
-          </h2>
-          <p className="relative mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-brand-200">
-            We believe a barber in Lagos deserves the same automation power as a Fortune 500 company in New York. We believe a church in Accra should collect offerings as seamlessly as a tech startup in London collects payments. We believe a school in Abuja should never waste another hour chasing fees manually.
-          </p>
-          <p className="relative mt-6 text-lg font-semibold text-accent">
-            waaiio makes that possible &mdash; on the app the world already uses.
-          </p>
+          <AnimatedSection>
+            <p className="relative text-xs font-bold uppercase tracking-widest text-brand-200">Our Mission</p>
+            <h2 className="relative mt-6 text-3xl font-extrabold leading-tight text-white lg:text-5xl">
+              Democratizing business automation for every entrepreneur, everywhere.
+            </h2>
+            <p className="relative mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-brand-200">
+              We believe a barber in Lagos deserves the same automation power as a Fortune 500 company in New York. We believe a church in Accra should collect offerings as seamlessly as a tech startup in London collects payments. We believe a school in Abuja should never waste another hour chasing fees manually.
+            </p>
+            <p className="relative mt-6 text-lg font-semibold text-accent">
+              waaiio makes that possible &mdash; on the app the world already uses.
+            </p>
+          </AnimatedSection>
         </div>
       </section>
 
       {/* ── 5. Countries & Stats ── */}
       <section className="bg-white py-20 lg:py-24">
         <div className="mx-auto max-w-6xl px-4">
-          <div className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">Global Reach</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
-              Live in 5 countries and growing
-            </h2>
-            <p className="mx-auto mt-4 max-w-2xl text-gray-600">
-              Localized payment gateways, currencies, and language support for every market we serve.
-            </p>
-          </div>
+          <AnimatedSection>
+            <div className="text-center">
+              <p className="text-xs font-bold uppercase tracking-widest text-brand">Global Reach</p>
+              <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
+                Live in 5 countries and growing
+              </h2>
+              <p className="mx-auto mt-4 max-w-2xl text-gray-600">
+                Localized payment gateways, currencies, and language support for every market we serve.
+              </p>
+            </div>
+          </AnimatedSection>
 
+          <AnimatedSection delay={0.15}>
           <div className="mt-14 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[
               { flag: '\ud83c\uddf3\ud83c\uddec', name: 'Nigeria', gateway: 'Paystack', currency: 'NGN', status: 'Live' },
-              { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Stripe', currency: 'USD', status: 'Live' },
+              { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Square', currency: 'USD', status: 'Live' },
               { flag: '\ud83c\uddec\ud83c\udde7', name: 'United Kingdom', gateway: 'Stripe', currency: 'GBP', status: 'Live' },
               { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada', gateway: 'Stripe', currency: 'CAD', status: 'Live' },
               { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana', gateway: 'Paystack', currency: 'GHS', status: 'Live' },
@@ -365,51 +382,65 @@ export default function AboutPage() {
               </div>
             ))}
           </div>
+          </AnimatedSection>
         </div>
       </section>
 
       {/* ── Stats Bar ── */}
       <section className="bg-gray-900 py-14">
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 text-center md:grid-cols-4">
-          {[
-            { value: '38+', label: 'Business Categories' },
-            { value: '5', label: 'Countries Supported' },
-            { value: '4', label: 'Automation Flows' },
-            { value: '24/7', label: 'Always Available' },
-          ].map((s) => (
-            <div key={s.label}>
-              <p className="text-3xl font-extrabold text-white">{s.value}</p>
-              <p className="mt-1 text-sm text-gray-400">{s.label}</p>
+        <AnimatedSection>
+          <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 text-center md:grid-cols-5">
+            <div>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={38} suffix="+" /></p>
+              <p className="mt-1 text-sm text-gray-400">Business Categories</p>
             </div>
-          ))}
-        </div>
+            <div>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={5} /></p>
+              <p className="mt-1 text-sm text-gray-400">Countries Supported</p>
+            </div>
+            <div>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={4} /></p>
+              <p className="mt-1 text-sm text-gray-400">Payment Gateways</p>
+            </div>
+            <div>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={20} suffix="+" /></p>
+              <p className="mt-1 text-sm text-gray-400">Capabilities</p>
+            </div>
+            <div>
+              <p className="text-3xl font-extrabold text-white">24/7</p>
+              <p className="mt-1 text-sm text-gray-400">Always Available</p>
+            </div>
+          </div>
+        </AnimatedSection>
       </section>
 
       {/* ── Final CTA ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4">
-          <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-brand-900 via-brand to-brand-700 p-12 text-center lg:p-16">
-            <h2 className="text-3xl font-bold text-white lg:text-4xl">
-              Ready to automate your business on WhatsApp?
-            </h2>
-            <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-              Join businesses across 5 countries already saving time and growing revenue with waaiio.
-            </p>
-            <div className="mt-8 flex flex-wrap justify-center gap-3">
-              <Link
-                href="/get-started"
-                className="rounded-xl bg-accent px-8 py-4 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400"
-              >
-                Get Started Free
-              </Link>
-              <Link
-                href="/pricing"
-                className="rounded-xl border border-white/30 px-8 py-4 text-sm font-semibold text-white transition hover:bg-white/10"
-              >
-                View Pricing
-              </Link>
+          <AnimatedSection delay={0.1}>
+            <div className="overflow-hidden rounded-3xl bg-gradient-to-br from-brand-900 via-brand to-brand-700 p-12 text-center lg:p-16">
+              <h2 className="text-3xl font-bold text-white lg:text-4xl">
+                Ready to automate your business on WhatsApp?
+              </h2>
+              <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
+                Join businesses across 5 countries already saving time and growing revenue with waaiio.
+              </p>
+              <div className="mt-8 flex flex-wrap justify-center gap-3">
+                <Link
+                  href="/get-started"
+                  className="rounded-xl bg-accent px-8 py-4 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400"
+                >
+                  Get Started Free
+                </Link>
+                <Link
+                  href="/pricing"
+                  className="rounded-xl border border-white/30 px-8 py-4 text-sm font-semibold text-white transition hover:bg-white/10"
+                >
+                  View Pricing
+                </Link>
+              </div>
             </div>
-          </div>
+          </AnimatedSection>
         </div>
       </section>
     </>

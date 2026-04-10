@@ -2,6 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
+import type { CountryCode } from '@/lib/constants';
 
 interface PostCompletionParams {
   supabase: SupabaseClient;
@@ -11,6 +13,12 @@ interface PostCompletionParams {
   serviceType?: string;
   referenceId?: string;
   sender: MessageSender;
+  /** Amount paid (in smallest currency unit) for auto-receipt */
+  amountPaid?: number;
+  /** Service/product name for receipt */
+  serviceName?: string;
+  /** Reference code (e.g. BW-1234) for receipt */
+  referenceCode?: string;
 }
 
 function generateReferralCode(): string {
@@ -27,7 +35,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode } = params;
 
   let capabilities: CapabilityId[];
   try {
@@ -37,6 +45,78 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   }
 
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+
+  // 0. Auto-receipt — send payment confirmation with receipt details
+  if (amountPaid && amountPaid > 0) {
+    try {
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('name, country_code')
+        .eq('id', businessId)
+        .single();
+
+      const cc = (biz?.country_code || 'NG') as string;
+      const currencySymbol = cc === 'NG' ? '\u20a6' : cc === 'GH' ? 'GH\u20b5' : cc === 'GB' ? '\u00a3' : cc === 'US' ? '$' : '$';
+      const bizName = biz?.name || 'Business';
+      const formattedAmount = `${currencySymbol}${amountPaid.toLocaleString()}`;
+      const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+      const receiptLines = [
+        `\u2705 *Payment Receipt*`,
+        ``,
+        `\ud83c\udfe2 *${bizName}*`,
+        serviceName ? `\ud83d\udcce ${serviceName}` : null,
+        referenceCode ? `\ud83d\udd11 Ref: ${referenceCode}` : null,
+        `\ud83d\udcb0 Amount: *${formattedAmount}*`,
+        `\ud83d\udcc5 ${date} at ${time}`,
+        ``,
+        `Thank you for your payment, ${customerName || 'there'}! \ud83d\ude4f`,
+      ].filter(Boolean).join('\n');
+
+      await sender.sendText({ to: phone, text: receiptLines });
+
+      // Send PDF receipt as WhatsApp document attachment
+      try {
+        const pdfBuffer = await generateReceiptPdf({
+          businessName: bizName,
+          referenceCode: referenceCode || '-',
+          date: new Date().toISOString(),
+          serviceName: serviceName || 'Service',
+          amount: amountPaid,
+          paymentStatus: 'paid',
+          customerName: customerName || 'Customer',
+          customerPhone,
+          countryCode: (cc as CountryCode) || 'NG',
+        });
+
+        const uuid = crypto.randomUUID();
+        const filePath = `receipts/${businessId}/${uuid}.pdf`;
+        const filename = `receipt-${referenceCode || uuid.slice(0, 8)}.pdf`;
+
+        await supabase.storage
+          .from('customer-reports')
+          .upload(filePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+
+        const { data: signedUrlData } = await supabase.storage
+          .from('customer-reports')
+          .createSignedUrl(filePath, 3600);
+
+        if (signedUrlData?.signedUrl) {
+          await sender.sendDocument({
+            to: phone,
+            documentUrl: signedUrlData.signedUrl,
+            filename,
+            caption: 'Your payment receipt',
+          });
+        }
+      } catch (pdfErr) {
+        console.error('[POST-COMPLETION] PDF receipt error (non-fatal):', pdfErr);
+      }
+    } catch (err) {
+      console.error('[POST-COMPLETION] Auto-receipt error:', err);
+    }
+  }
 
   // 1. Loyalty — award points
   if (capabilities.includes('loyalty')) {

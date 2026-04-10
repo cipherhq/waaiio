@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
       });
 
     if (uploadError) {
-      console.error('[REPORTS] Upload error:', uploadError);
+      logger.error('[REPORTS] Upload error:', uploadError);
       return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 });
     }
 
@@ -63,13 +64,13 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError) {
-      console.error('[REPORTS] Insert error:', insertError);
+      logger.error('[REPORTS] Insert error:', insertError);
       return NextResponse.json({ error: 'Failed to create report record' }, { status: 500 });
     }
 
     return NextResponse.json({ id: report.id });
   } catch (error) {
-    console.error('[REPORTS] Upload error:', error);
+    logger.error('[REPORTS] Upload error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

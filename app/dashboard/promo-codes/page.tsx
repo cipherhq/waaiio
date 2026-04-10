@@ -18,14 +18,24 @@ interface PromoCode {
   created_at: string;
 }
 
-const EMPTY_FORM = {
+const EMPTY_FORM: {
+  id: string;
+  code: string;
+  description: string;
+  discount_type: 'percentage' | 'fixed';
+  discount_value: number;
+  min_order_amount: number;
+  max_uses: number | null;
+  valid_until: string;
+  is_active: boolean;
+} = {
   id: '',
   code: '',
   description: '',
-  discount_type: 'percentage' as const,
+  discount_type: 'percentage',
   discount_value: 0,
   min_order_amount: 0,
-  max_uses: null as number | null,
+  max_uses: null,
   valid_until: '',
   is_active: true,
 };
@@ -63,7 +73,7 @@ export default function PromoCodesPage() {
       id: promo.id,
       code: promo.code,
       description: promo.description || '',
-      discount_type: promo.discount_type,
+      discount_type: promo.discount_type as 'percentage' | 'fixed',
       discount_value: promo.discount_value,
       min_order_amount: promo.min_order_amount,
       max_uses: promo.max_uses,

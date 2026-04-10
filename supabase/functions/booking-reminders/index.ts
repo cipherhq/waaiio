@@ -13,6 +13,12 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
+const isDev = Deno.env.get('ENVIRONMENT') !== 'production';
+const log = {
+  debug: (...args: unknown[]) => { if (isDev) console.log(...args); },
+  error: (...args: unknown[]) => console.error(...args),
+};
+
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
@@ -20,7 +26,7 @@ const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 
 async function sendWhatsApp(to: string, text: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
-    console.log(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
+    log.debug(`[mock] WhatsApp to ${to}: ${text.slice(0, 100)}...`);
     return true;
   }
 
@@ -44,7 +50,7 @@ async function sendWhatsApp(to: string, text: string): Promise<boolean> {
     );
     return response.ok;
   } catch (err) {
-    console.error(`Failed to send WhatsApp to ${to}:`, err);
+    log.error(`Failed to send WhatsApp to ${to}:`, err);
     return false;
   }
 }
@@ -154,7 +160,7 @@ Deno.serve(async () => {
   }
 
   const summary = `Reminders sent: 24h=${sent24h}, 2h=${sent2h}, follow-ups=${sentFollowUp}`;
-  console.log(summary);
+  log.debug(summary);
 
   return new Response(JSON.stringify({ success: true, summary }), {
     headers: { 'Content-Type': 'application/json' },

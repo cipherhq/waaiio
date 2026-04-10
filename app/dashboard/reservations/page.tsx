@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
+import { RefundModal } from '@/components/dashboard/RefundModal';
 
 interface Booking {
   id: string;
@@ -26,6 +27,7 @@ interface Booking {
   seated_at: string | null;
   completed_at: string | null;
   cancelled_at: string | null;
+  payment_id: string | null;
 }
 
 const allStatuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
@@ -66,13 +68,35 @@ export default function BookingsPage() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  const [refundModalOpen, setRefundModalOpen] = useState(false);
+  const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
+
   const selected = bookings.find((b) => b.id === selectedId) || null;
+
+  async function openRefundModal(booking: Booking) {
+    if (!booking.payment_id) return;
+    const supabase = createClient();
+    const { data: payment } = await supabase
+      .from('payments')
+      .select('id, amount, refund_amount, currency')
+      .eq('id', booking.payment_id)
+      .single();
+    if (payment) {
+      setRefundPayment({
+        id: payment.id,
+        amount: Number(payment.amount),
+        refund_amount: Number(payment.refund_amount || 0),
+        currency: payment.currency || 'NGN',
+      });
+      setRefundModalOpen(true);
+    }
+  }
 
   const fetchBookings = useCallback(async () => {
     const supabase = createClient();
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id')
       .eq('business_id', business.id)
       .order('date', { ascending: false })
       .order('time', { ascending: false })
@@ -237,6 +261,22 @@ export default function BookingsPage() {
         </div>
       )}
 
+      {/* Refund Modal */}
+      {refundPayment && (
+        <RefundModal
+          open={refundModalOpen}
+          onClose={() => { setRefundModalOpen(false); setRefundPayment(null); }}
+          paymentId={refundPayment.id}
+          paymentAmount={refundPayment.amount}
+          existingRefundAmount={refundPayment.refund_amount}
+          currency={refundPayment.currency}
+          businessId={business.id}
+          isDirectSplit={business.payout_mode === 'direct_split'}
+          countryCode={(business.country_code || 'NG') as CountryCode}
+          onSuccess={() => { fetchBookings(); setSelectedId(null); }}
+        />
+      )}
+
       {/* Detail Panel */}
       {selected && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelectedId(null)}>
@@ -307,6 +347,17 @@ export default function BookingsPage() {
                       </button>
                     ))}
                   </div>
+                </div>
+              )}
+              {selected.payment_id && selected.deposit_status === 'paid' && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500">Refund</h3>
+                  <button
+                    onClick={() => openRefundModal(selected)}
+                    className="mt-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                  >
+                    Issue Refund
+                  </button>
                 </div>
               )}
             </div>

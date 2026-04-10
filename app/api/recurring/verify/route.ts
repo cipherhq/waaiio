@@ -1,11 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 // Simple in-memory OTP store (in production, use Redis or DB)
 const otpStore = new Map<string, { code: string; expires: number }>();
 
 export async function POST(request: NextRequest) {
   try {
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'recurring-verify'), 5, 60_000);
+    if (rateLimit) return rateLimit;
+
     const { phone, otp, action } = await request.json();
 
     if (!phone) {
@@ -38,7 +43,7 @@ export async function POST(request: NextRequest) {
           }),
         });
       } else {
-        console.log(`[mock OTP] ${normalizedPhone}: ${code}`);
+        logger.debug(`[mock OTP] ${normalizedPhone}: ${code}`);
       }
 
       return NextResponse.json({ success: true });
@@ -99,7 +104,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (error) {
-    console.error('Recurring verify error:', error);
+    logger.error('Recurring verify error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

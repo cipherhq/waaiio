@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import { logger } from '@/lib/logger';
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -15,7 +16,7 @@ interface SendEmailOptions {
 
 export async function sendEmail({ to, subject, html, from }: SendEmailOptions) {
   if (!resend) {
-    console.log(`[EMAIL-DEV] To: ${to} | Subject: ${subject}`);
+    logger.debug(`[EMAIL-DEV] To: ${to} | Subject: ${subject}`);
     return { success: true, dev: true };
   }
 
@@ -28,13 +29,13 @@ export async function sendEmail({ to, subject, html, from }: SendEmailOptions) {
     });
 
     if (error) {
-      console.error('[EMAIL] Send failed:', error);
+      logger.error('[EMAIL] Send failed:', error);
       return { success: false, error };
     }
 
     return { success: true, id: data?.id };
   } catch (err) {
-    console.error('[EMAIL] Exception:', (err as Error).message);
+    logger.error('[EMAIL] Exception:', (err as Error).message);
     return { success: false, error: (err as Error).message };
   }
 }

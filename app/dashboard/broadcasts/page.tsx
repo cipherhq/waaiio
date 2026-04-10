@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import Link from 'next/link';
 
 interface BroadcastContact {
   phone: string;
@@ -19,6 +20,13 @@ interface BroadcastHistory {
   created_at: string;
 }
 
+interface BroadcastUsage {
+  broadcast_count: number;
+  recipient_count: number;
+  limits: { maxBroadcasts: number; maxRecipients: number };
+  tier: string;
+}
+
 export default function BroadcastsPage() {
   const business = useBusiness();
   const [contacts, setContacts] = useState<BroadcastContact[]>([]);
@@ -28,24 +36,48 @@ export default function BroadcastsPage() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [activeTab, setActiveTab] = useState<'compose' | 'history'>('compose');
+  const [usage, setUsage] = useState<BroadcastUsage | null>(null);
+  const [useTemplate, setUseTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const tier = business.subscription_tier || 'free';
+  const isFreeTier = tier === 'free';
 
   useEffect(() => {
     async function load() {
       const supabase = createClient();
 
+      // Load usage data
+      try {
+        const usageRes = await fetch(`/api/broadcasts/usage?business_id=${business.id}`);
+        if (usageRes.ok) {
+          setUsage(await usageRes.json());
+        }
+      } catch {
+        // Usage fetch failed — non-critical
+      }
+
+      // Skip loading contacts/history for free tier since they can't broadcast
+      if (isFreeTier) {
+        setLoading(false);
+        return;
+      }
+
       // Load unique contacts from bot sessions for this business
       const { data: sessions } = await supabase
         .from('bot_sessions')
-        .select('phone, user_id, created_at')
+        .select('whatsapp_number, user_id, created_at')
         .eq('business_id', business.id)
         .order('created_at', { ascending: false });
 
       // Deduplicate by phone
       const phoneMap = new Map<string, BroadcastContact>();
       for (const session of sessions || []) {
-        if (!phoneMap.has(session.phone)) {
-          phoneMap.set(session.phone, {
-            phone: session.phone,
+        const phone = session.whatsapp_number;
+        if (phone && !phoneMap.has(phone)) {
+          phoneMap.set(phone, {
+            phone,
             first_name: null,
             last_name: null,
             last_interaction: session.created_at,
@@ -103,11 +135,22 @@ export default function BroadcastsPage() {
       setLoading(false);
     }
     load();
-  }, [business.id]);
+  }, [business.id, isFreeTier]);
+
+  // Derived usage state
+  const broadcastsUsed = usage?.broadcast_count ?? 0;
+  const recipientsUsed = usage?.recipient_count ?? 0;
+  const maxBroadcasts = usage?.limits.maxBroadcasts ?? 0;
+  const maxRecipients = usage?.limits.maxRecipients ?? 0;
+  const isUnlimited = maxBroadcasts === null || !isFinite(maxBroadcasts);
+  const broadcastLimitReached = !isUnlimited && broadcastsUsed >= maxBroadcasts;
+  const recipientLimitReached = !isUnlimited && recipientsUsed + contacts.length > maxRecipients;
+  const quotaExceeded = broadcastLimitReached || recipientLimitReached;
 
   async function handleSend() {
     if (!message.trim() || contacts.length === 0) return;
     setSending(true);
+    setSendError(null);
 
     try {
       const res = await fetch('/api/broadcasts/send', {
@@ -117,16 +160,29 @@ export default function BroadcastsPage() {
           business_id: business.id,
           message: message.trim(),
           phones: contacts.map(c => c.phone),
+          ...(useTemplate && templateName ? { template_name: templateName } : {}),
         }),
       });
+
+      const data = await res.json();
 
       if (res.ok) {
         setSent(true);
         setMessage('');
+        // Update usage from response
+        if (data.usage) {
+          setUsage(prev => prev ? {
+            ...prev,
+            broadcast_count: data.usage.broadcasts_used,
+            recipient_count: data.usage.recipients_used,
+          } : prev);
+        }
         setTimeout(() => setSent(false), 3000);
+      } else {
+        setSendError(data.message || 'Failed to send broadcast');
       }
     } catch {
-      // Silently handle
+      setSendError('Network error. Please try again.');
     }
 
     setSending(false);
@@ -140,12 +196,102 @@ export default function BroadcastsPage() {
     );
   }
 
+  // Free tier gate — show upgrade banner
+  if (isFreeTier) {
+    return (
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Broadcasts</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Send messages to all your WhatsApp customers at once
+        </p>
+
+        <div className="mt-8 rounded-xl border border-amber-200 bg-amber-50 p-8 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100">
+            <svg className="h-7 w-7 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+          </div>
+          <h2 className="mt-4 text-lg font-semibold text-gray-900">
+            Broadcast messages are a Growth+ feature
+          </h2>
+          <p className="mt-2 text-sm text-gray-600 max-w-md mx-auto">
+            Upgrade to the Growth plan to send broadcast messages to up to 500 recipients per month, or go Business for unlimited broadcasts.
+          </p>
+          <Link
+            href="/dashboard/settings/billing"
+            className="mt-6 inline-flex items-center gap-2 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition"
+          >
+            Upgrade Plan
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Broadcasts</h1>
       <p className="mt-1 text-sm text-gray-500">
         Send messages to all your WhatsApp customers at once
       </p>
+
+      {/* Usage Quota Display */}
+      {usage && !isUnlimited && (
+        <div className="mt-4 rounded-xl border border-gray-100 bg-white p-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Monthly Usage
+          </div>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            {/* Broadcasts used */}
+            <div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>{broadcastsUsed} of {maxBroadcasts} broadcasts</span>
+                <span>{Math.round((broadcastsUsed / maxBroadcasts) * 100)}%</span>
+              </div>
+              <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    broadcastsUsed >= maxBroadcasts ? 'bg-red-500' : broadcastsUsed >= maxBroadcasts * 0.8 ? 'bg-amber-500' : 'bg-brand'
+                  }`}
+                  style={{ width: `${Math.min((broadcastsUsed / maxBroadcasts) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+            {/* Recipients used */}
+            <div>
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>{recipientsUsed} of {maxRecipients} recipients</span>
+                <span>{Math.round((recipientsUsed / maxRecipients) * 100)}%</span>
+              </div>
+              <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    recipientsUsed >= maxRecipients ? 'bg-red-500' : recipientsUsed >= maxRecipients * 0.8 ? 'bg-amber-500' : 'bg-brand'
+                  }`}
+                  style={{ width: `${Math.min((recipientsUsed / maxRecipients) * 100, 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+          {quotaExceeded && (
+            <div className="mt-3 rounded-lg bg-red-50 px-3 py-2">
+              <p className="text-xs font-medium text-red-700">
+                Monthly limit reached.{' '}
+                <Link href="/dashboard/settings/billing" className="underline hover:text-red-800">
+                  Upgrade your plan
+                </Link>{' '}
+                for more broadcasts.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 p-1 w-fit">
@@ -199,6 +345,61 @@ export default function BroadcastsPage() {
               )}
             </div>
 
+            {/* Template Toggle */}
+            <div className="rounded-xl border border-gray-100 bg-white p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-900">Template Message</h2>
+                  <p className="mt-0.5 text-xs text-gray-500">Recommended for reliable delivery</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUseTemplate(!useTemplate)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                    useTemplate ? 'bg-brand' : 'bg-gray-200'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      useTemplate ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+              {useTemplate && (
+                <div className="mt-3">
+                  <label className="text-xs font-medium text-gray-600">Template Name</label>
+                  <input
+                    type="text"
+                    value={templateName}
+                    onChange={(e) => setTemplateName(e.target.value)}
+                    placeholder="e.g. business_broadcast"
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">
+                    Enter the approved WhatsApp template name from your Meta Business account
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Session message warning */}
+            {!useTemplate && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                <div className="flex gap-2">
+                  <svg className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Sending as session message</p>
+                    <p className="mt-0.5 text-xs text-amber-700">
+                      Only contacts who messaged in the last 24 hours will receive this. Enable template message above for broader delivery.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Message */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">
               <h2 className="text-sm font-semibold text-gray-900">Message</h2>
@@ -229,12 +430,24 @@ export default function BroadcastsPage() {
                 </div>
               </div>
 
+              {sendError && (
+                <div className="mt-3 rounded-lg bg-red-50 p-3">
+                  <p className="text-sm text-red-700">{sendError}</p>
+                </div>
+              )}
+
               <button
                 onClick={handleSend}
-                disabled={sending || !message.trim() || contacts.length === 0}
+                disabled={sending || !message.trim() || contacts.length === 0 || quotaExceeded}
                 className="mt-4 w-full rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
-                {sending ? 'Sending...' : sent ? 'Sent!' : `Send to ${contacts.length} contacts`}
+                {quotaExceeded
+                  ? 'Monthly limit reached'
+                  : sending
+                  ? 'Sending...'
+                  : sent
+                  ? 'Sent!'
+                  : `Send to ${contacts.length} contacts`}
               </button>
 
               {sent && (
@@ -292,7 +505,7 @@ export default function BroadcastsPage() {
               {history.map((broadcast) => (
                 <div key={broadcast.id} className="rounded-xl border border-gray-100 bg-white p-5">
                   <div className="flex items-start justify-between">
-                    <div className="min-w-0 flex-1">
+                    <div className="min-w-0 flex-1 pr-4">
                       <p className="text-sm text-gray-900 line-clamp-2">{broadcast.message}</p>
                       <div className="mt-2 flex items-center gap-3 text-xs text-gray-500">
                         <span className="flex items-center gap-1">

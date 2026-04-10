@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -13,6 +14,7 @@ interface PaymentRecord {
   business_id: string;
   business_name?: string;
   amount: number;
+  refund_amount: number;
   currency: string | null;
   gateway: string | null;
   gateway_ref: string | null;
@@ -39,6 +41,11 @@ export default function Payments() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [selected, setSelected] = useState<PaymentRecord | null>(null);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [refundLoading, setRefundLoading] = useState(false);
+  const [refundError, setRefundError] = useState('');
+  const [refundSuccess, setRefundSuccess] = useState('');
   const perPage = 20;
 
   const loadingRef = useRef(false);
@@ -104,6 +111,67 @@ export default function Payments() {
   const totalAmount = filtered.reduce((s, p) => s + Number(p.amount || 0), 0);
   const successCount = filtered.filter(p => p.status === 'success').length;
   const failedCount = filtered.filter(p => p.status === 'failed').length;
+  const refundedCount = filtered.filter(p => Number(p.refund_amount || 0) > 0).length;
+  const refundedTotal = filtered.reduce((s, p) => s + Number(p.refund_amount || 0), 0);
+
+  async function handleAdminRefund() {
+    if (!selected) return;
+    const amt = parseFloat(refundAmount);
+    const remaining = Number(selected.amount) - Number(selected.refund_amount || 0);
+    if (isNaN(amt) || amt <= 0) { setRefundError('Enter a valid amount'); return; }
+    if (amt > remaining) { setRefundError(`Maximum refundable: ${fmtCurrency(remaining, selected.currency || undefined)}`); return; }
+
+    setRefundLoading(true);
+    setRefundError('');
+    setRefundSuccess('');
+
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) { setRefundError('Not authenticated'); setRefundLoading(false); return; }
+
+      const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          paymentId: selected.id,
+          businessId: selected.business_id,
+          amount: amt,
+          reason: refundReason.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setRefundError(data.error || 'Refund failed');
+        setRefundLoading(false);
+        return;
+      }
+
+      await logAudit({
+        action: 'refund_payment',
+        entity_type: 'payment',
+        entity_id: selected.id,
+        details: { amount: amt, reason: refundReason.trim(), refundId: data.refundId, isDirectSplit: data.isDirectSplit },
+      });
+
+      setRefundSuccess(data.isDirectSplit
+        ? 'Refund recorded (direct split — please return funds manually)'
+        : 'Refund processed successfully');
+      setRefundAmount('');
+      setRefundReason('');
+      loadData();
+    } catch {
+      setRefundError('Network error — please try again');
+    } finally {
+      setRefundLoading(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -121,7 +189,7 @@ export default function Payments() {
       </div>
 
       {/* Summary cards */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+      <div className="mt-6 grid gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
           <p className="text-xs font-medium text-gray-500">Total ({filtered.length})</p>
           <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(totalAmount)}</p>
@@ -133,6 +201,10 @@ export default function Payments() {
         <div className="rounded-xl border border-red-100 bg-red-50 p-4">
           <p className="text-xs font-medium text-gray-500">Failed</p>
           <p className="mt-1 text-xl font-bold text-gray-900">{failedCount}</p>
+        </div>
+        <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
+          <p className="text-xs font-medium text-gray-500">Refunded ({refundedCount})</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(refundedTotal)}</p>
         </div>
       </div>
 
@@ -240,7 +312,7 @@ export default function Payments() {
       {/* Detail Modal */}
       <DetailModal
         open={!!selected}
-        onClose={() => setSelected(null)}
+        onClose={() => { setSelected(null); setRefundAmount(''); setRefundReason(''); setRefundError(''); setRefundSuccess(''); }}
         title="Payment Details"
       >
         {selected && (
@@ -279,6 +351,65 @@ export default function Payments() {
                   <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">
                     {JSON.stringify(selected.metadata, null, 2)}
                   </pre>
+                </div>
+              </>
+            )}
+
+            {/* Refund Section */}
+            {(selected.status === 'success' || (selected.status === 'refunded' && Number(selected.refund_amount || 0) < Number(selected.amount))) && (
+              <>
+                <div className="my-3 border-t border-gray-100" />
+                <div className="rounded-lg border border-red-100 bg-red-50 p-4">
+                  <p className="text-sm font-semibold text-red-800">Issue Refund</p>
+                  {Number(selected.refund_amount || 0) > 0 && (
+                    <p className="mt-1 text-xs text-red-600">
+                      Already refunded: {fmtCurrency(Number(selected.refund_amount), selected.currency || undefined)} of {fmtCurrency(selected.amount, selected.currency || undefined)}
+                    </p>
+                  )}
+                  <div className="mt-3 space-y-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max={Number(selected.amount) - Number(selected.refund_amount || 0)}
+                      value={refundAmount}
+                      onChange={e => setRefundAmount(e.target.value)}
+                      placeholder={`Amount (max ${fmtCurrency(Number(selected.amount) - Number(selected.refund_amount || 0), selected.currency || undefined)})`}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRefundAmount(String(Number(selected.amount) - Number(selected.refund_amount || 0)))}
+                        className="rounded-md bg-white border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Full
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRefundAmount(String(Math.round((Number(selected.amount) - Number(selected.refund_amount || 0)) / 2 * 100) / 100))}
+                        className="rounded-md bg-white border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Half
+                      </button>
+                    </div>
+                    <textarea
+                      value={refundReason}
+                      onChange={e => setRefundReason(e.target.value)}
+                      rows={2}
+                      placeholder="Reason (optional)"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    {refundError && <p className="text-xs text-red-600">{refundError}</p>}
+                    {refundSuccess && <p className="text-xs text-green-600">{refundSuccess}</p>}
+                    <button
+                      onClick={handleAdminRefund}
+                      disabled={refundLoading}
+                      className="w-full rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {refundLoading ? 'Processing...' : 'Confirm Refund'}
+                    </button>
+                  </div>
                 </div>
               </>
             )}

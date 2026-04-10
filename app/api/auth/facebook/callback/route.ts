@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { logger } from '@/lib/logger';
 
 /**
  * POST /api/auth/facebook/callback
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
       longLivedToken = exchanged.access_token;
       tokenExpiresAt = new Date(Date.now() + exchanged.expires_in * 1000).toISOString();
     } catch (err) {
-      console.error('Token exchange failed, using short-lived token:', err);
+      logger.error('Token exchange failed, using short-lived token:', err);
       // Use the short-lived token for now — it lasts ~1 hour
       tokenExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
     }
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
       qualityRating = phoneInfo.quality_rating || '';
       messagingLimit = phoneInfo.messaging_limit || '';
     } catch (err) {
-      console.error('Failed to get phone info:', err);
+      logger.error('Failed to get phone info:', err);
       // Non-fatal — we can still create the channel
     }
 
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (insertError) {
-        console.error('Failed to create channel:', insertError);
+        logger.error('Failed to create channel:', insertError);
         return NextResponse.json(
           { message: 'Failed to create WhatsApp channel', error: insertError.message },
           { status: 500 }
@@ -157,7 +158,7 @@ export async function POST(request: NextRequest) {
     try {
       await cloudService.registerPhoneNumber();
     } catch (err) {
-      console.error('Phone registration warning:', err);
+      logger.error('Phone registration warning:', err);
       // Non-fatal — might already be registered
     }
 
@@ -169,7 +170,7 @@ export async function POST(request: NextRequest) {
       connection_status: 'active',
     });
   } catch (error) {
-    console.error('Facebook callback error:', error);
+    logger.error('Facebook callback error:', error);
     return NextResponse.json(
       { message: 'Internal server error', error: (error as Error).message },
       { status: 500 }

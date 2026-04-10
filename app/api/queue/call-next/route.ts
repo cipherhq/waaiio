@@ -2,10 +2,20 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { handlePostCompletion } from '@/lib/bot/flows/shared/post-completion';
+import { authenticateRequest } from '@/lib/api-auth';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const { businessId } = await request.json();
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'queue-call-next'), 30, 60_000);
+    if (rateLimit) return rateLimit;
+
+    const body = await request.json();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const { businessId } = body;
     if (!businessId) {
       return NextResponse.json({ error: 'businessId required' }, { status: 400 });
     }
@@ -66,7 +76,7 @@ export async function POST(request: NextRequest) {
             });
           }
         } catch (err) {
-          console.error('[QUEUE] Post-completion hook error:', err);
+          logger.error('[QUEUE] Post-completion hook error:', err);
         }
       }
     }
@@ -118,7 +128,7 @@ export async function POST(request: NextRequest) {
         });
       }
     } catch (err) {
-      console.error('[QUEUE] WhatsApp notification error:', err);
+      logger.error('[QUEUE] WhatsApp notification error:', err);
       // Don't fail the whole operation if notification fails
     }
 
@@ -130,7 +140,7 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
-    console.error('[QUEUE] Call next error:', error);
+    logger.error('[QUEUE] Call next error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

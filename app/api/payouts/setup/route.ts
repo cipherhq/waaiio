@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const flutterwaveSecretKey = process.env.FLUTTERWAVE_SECRET_KEY || '';
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (insertError) {
-        console.error('Insert payout account error:', insertError);
+        logger.error('Insert payout account error:', insertError);
         return NextResponse.json({ error: 'Failed to save payout account' }, { status: 500 });
       }
 
@@ -149,13 +150,13 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError) {
-      console.error('Insert payout account error:', insertError);
+      logger.error('Insert payout account error:', insertError);
       return NextResponse.json({ error: 'Failed to save payout account' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, payout_account_id: payout.id });
   } catch (error) {
-    console.error('Setup payout error:', (error as Error).message);
+    logger.error('Setup payout error:', (error as Error).message);
     return NextResponse.json({ error: 'Failed to create payout account' }, { status: 500 });
   }
 }
