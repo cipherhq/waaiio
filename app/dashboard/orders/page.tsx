@@ -12,6 +12,7 @@ interface OrderItem {
   unit_price: number;
   product: { name: string } | null;
   variant_label: string | null;
+  addons: Array<{ name: string; price: number; quantity?: number }> | null;
 }
 
 interface Order {
@@ -28,6 +29,10 @@ interface Order {
   shipping_carrier: string | null;
   tracking_number: string | null;
   shipped_at: string | null;
+  delivery_zone_name: string | null;
+  addons_total: number | null;
+  volume_discount_amount: number | null;
+  discount_amount: number | null;
   user: { first_name: string | null; last_name: string | null; phone: string | null } | null;
   items: OrderItem[];
 }
@@ -92,6 +97,7 @@ export default function OrdersPage() {
         id, reference_code, status, total_amount, shipping_cost, delivery_address,
         delivery_phone, notes, channel, created_at,
         shipping_carrier, tracking_number, shipped_at,
+        delivery_zone_name, addons_total, volume_discount_amount, discount_amount,
         user:profiles!orders_user_id_fkey(first_name, last_name, phone)
       `)
       .eq('business_id', business.id)
@@ -108,7 +114,7 @@ export default function OrdersPage() {
     for (const order of (data || [])) {
       const { data: items } = await supabase
         .from('order_items')
-        .select('id, quantity, unit_price, variant_label, product:products!order_items_product_id_fkey(name)')
+        .select('id, quantity, unit_price, variant_label, addons, product:products!order_items_product_id_fkey(name)')
         .eq('order_id', order.id);
 
       ordersWithItems.push({
@@ -209,26 +215,64 @@ export default function OrdersPage() {
               <h2 className="text-sm font-semibold text-gray-900">Order Items</h2>
               <div className="mt-4 divide-y divide-gray-50">
                 {selectedOrder.items.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between py-3">
-                    <div>
+                  <div key={item.id} className="py-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">
+                          {(item.product as { name: string } | null)?.name || 'Unknown Product'}
+                        </p>
+                        {item.variant_label && (
+                          <p className="text-xs text-purple-600">{item.variant_label}</p>
+                        )}
+                        <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
+                      </div>
                       <p className="text-sm font-medium text-gray-900">
-                        {(item.product as { name: string } | null)?.name || 'Unknown Product'}
+                        {formatCurrency(item.unit_price * item.quantity, country)}
                       </p>
-                      {item.variant_label && (
-                        <p className="text-xs text-purple-600">{item.variant_label}</p>
-                      )}
-                      <p className="text-xs text-gray-500">Qty: {item.quantity}</p>
                     </div>
-                    <p className="text-sm font-medium text-gray-900">
-                      {formatCurrency(item.unit_price * item.quantity, country)}
-                    </p>
+                    {item.addons && item.addons.length > 0 && (
+                      <div className="mt-1.5 ml-3 space-y-0.5">
+                        {item.addons.map((addon, idx) => (
+                          <div key={idx} className="flex items-center justify-between text-xs text-gray-500">
+                            <span>+ {addon.name}{addon.quantity && addon.quantity > 1 ? ` x${addon.quantity}` : ''}</span>
+                            <span>{formatCurrency(addon.price * (addon.quantity || 1), country)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
               <div className="mt-3 space-y-1.5 border-t border-gray-100 pt-3">
+                {!!selectedOrder.addons_total && selectedOrder.addons_total > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm text-gray-500">Add-ons</span>
+                    <span className="text-sm text-gray-700">
+                      {formatCurrency(selectedOrder.addons_total, country)}
+                    </span>
+                  </div>
+                )}
+                {!!selectedOrder.volume_discount_amount && selectedOrder.volume_discount_amount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm text-green-600">Volume Discount</span>
+                    <span className="text-sm text-green-600">
+                      -{formatCurrency(selectedOrder.volume_discount_amount, country)}
+                    </span>
+                  </div>
+                )}
+                {!!selectedOrder.discount_amount && selectedOrder.discount_amount > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-sm text-green-600">Promo Discount</span>
+                    <span className="text-sm text-green-600">
+                      -{formatCurrency(selectedOrder.discount_amount, country)}
+                    </span>
+                  </div>
+                )}
                 {selectedOrder.shipping_cost > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-sm text-gray-500">Shipping</span>
+                    <span className="text-sm text-gray-500">
+                      {selectedOrder.delivery_zone_name || 'Shipping'}
+                    </span>
                     <span className="text-sm text-gray-700">
                       {formatCurrency(selectedOrder.shipping_cost, country)}
                     </span>
