@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const supabase = await createClient();
+  const service = createServiceClient();
 
-  // Fetch contract
-  const { data: contract, error } = await supabase
+  // Fetch contract (use service client to bypass RLS)
+  const { data: contract, error } = await service
     .from('contracts')
     .select('id, business_id, template_url, token')
     .eq('id', id)
@@ -21,22 +22,30 @@ export async function GET(
 
   // Auth: either business owner or signer with valid token
   const signerToken = request.nextUrl.searchParams.get('token');
-  const { data: { user } } = await supabase.auth.getUser();
-
   let authorized = false;
 
-  if (user) {
-    const { data: biz } = await supabase
-      .from('businesses')
-      .select('id')
-      .eq('id', contract.business_id)
-      .eq('owner_id', user.id)
-      .maybeSingle();
-    if (biz) authorized = true;
+  // Check if signer token matches
+  if (signerToken && signerToken === contract.token) {
+    authorized = true;
   }
 
-  if (!authorized && signerToken && signerToken === contract.token) {
-    authorized = true;
+  // Check if authenticated business owner
+  if (!authorized) {
+    try {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: biz } = await service
+          .from('businesses')
+          .select('id')
+          .eq('id', contract.business_id)
+          .eq('owner_id', user.id)
+          .maybeSingle();
+        if (biz) authorized = true;
+      }
+    } catch {
+      // No session available
+    }
   }
 
   if (!authorized) {
@@ -44,7 +53,7 @@ export async function GET(
   }
 
   // Download from storage
-  const { data: fileData, error: downloadError } = await supabase.storage
+  const { data: fileData, error: downloadError } = await service.storage
     .from('contracts')
     .download(contract.template_url);
 

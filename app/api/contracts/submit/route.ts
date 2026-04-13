@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { generateSignedContractPdf } from '@/lib/pdf/contract-pdf-generator';
 
 export async function POST(request: NextRequest) {
@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'token and signature_data are required' }, { status: 400 });
     }
 
-    const supabase = await createClient();
+    const supabase = createServiceClient();
 
     // Look up contract by token
     const { data: contract, error } = await supabase
