@@ -56,5 +56,6 @@ export async function GET(
     status: contract.status,
     expires_at: contract.token_expires_at,
     document_content: contract.document_content,
+    template_url: contract.template_url || null,
   });
 }

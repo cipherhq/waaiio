@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CONTRACT_TEMPLATES, fillTemplatePlaceholders } from '@/lib/contract-templates';
@@ -18,7 +18,10 @@ interface Contract {
   signed_url: string | null;
   audit_trail: Record<string, string> | null;
   signature_data: string | null;
+  template_url: string | null;
 }
+
+type DocTab = 'template' | 'write' | 'upload';
 
 export default function ContractsPage() {
   const business = useBusiness();
@@ -31,10 +34,18 @@ export default function ContractsPage() {
 
   // Form state — Step 1: Document
   const [step, setStep] = useState<1 | 2>(1);
+  const [docTab, setDocTab] = useState<DocTab>('template');
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [title, setTitle] = useState('');
   const [documentContent, setDocumentContent] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+
+  // Upload state
+  const [uploadedFileUrl, setUploadedFileUrl] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Form state — Step 2: Signer
   const [signerName, setSignerName] = useState('');
@@ -46,7 +57,7 @@ export default function ContractsPage() {
   const loadContracts = useCallback(async () => {
     const { data } = await supabase
       .from('contracts')
-      .select('id, title, signer_name, signer_phone, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data')
+      .select('id, title, signer_name, signer_phone, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
 
@@ -60,10 +71,15 @@ export default function ContractsPage() {
 
   function resetForm() {
     setStep(1);
+    setDocTab('template');
     setSelectedTemplate('');
     setTitle('');
     setDocumentContent('');
     setShowPreview(false);
+    setUploadedFileUrl('');
+    setUploadedFileName('');
+    setUploading(false);
+    setUploadError('');
     setSignerName('');
     setSignerPhone('');
     setSignerEmail('');
@@ -77,6 +93,51 @@ export default function ContractsPage() {
         setTitle(tmpl.name);
         setDocumentContent(tmpl.content);
       }
+    }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadError('');
+    setUploading(true);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('business_id', business.id);
+
+    try {
+      const res = await fetch('/api/contracts/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        setUploadError(data.error || 'Upload failed');
+        return;
+      }
+
+      setUploadedFileUrl(data.file_url);
+      setUploadedFileName(data.file_name);
+      if (!title) {
+        setTitle(data.file_name.replace(/\.[^.]+$/, ''));
+      }
+    } catch {
+      setUploadError('Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function removeUploadedFile() {
+    setUploadedFileUrl('');
+    setUploadedFileName('');
+    setUploadError('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   }
 
@@ -105,6 +166,7 @@ export default function ContractsPage() {
           signer_name: signerName || undefined,
           signer_email: signerEmail || undefined,
           document_content: finalContent,
+          template_url: uploadedFileUrl || undefined,
         }),
       });
 
@@ -151,6 +213,9 @@ export default function ContractsPage() {
     }
   }
 
+  // Check if Step 1 can proceed to Step 2
+  const canProceed = title && (docTab !== 'upload' || uploadedFileUrl);
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       {/* Header */}
@@ -196,12 +261,14 @@ export default function ContractsPage() {
                 >
                   <td className="whitespace-nowrap px-4 py-3">
                     <p className="text-sm font-medium text-gray-900">{c.title}</p>
-                    {c.document_content && (
+                    {c.template_url ? (
+                      <p className="text-xs text-gray-400">Uploaded document</p>
+                    ) : c.document_content ? (
                       <p className="text-xs text-gray-400">Has document content</p>
-                    )}
+                    ) : null}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <p className="text-sm text-gray-700">{c.signer_name || '—'}</p>
+                    <p className="text-sm text-gray-700">{c.signer_name || '\u2014'}</p>
                     <p className="text-xs text-gray-400">{c.signer_phone}</p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
@@ -264,6 +331,24 @@ export default function ContractsPage() {
               </div>
             </div>
 
+            {/* Uploaded Document */}
+            {selectedContract.template_url && (
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-medium text-gray-500">Uploaded Document</p>
+                <a
+                  href={`/api/contracts/document/${selectedContract.id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-brand hover:bg-gray-100"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  View uploaded document
+                </a>
+              </div>
+            )}
+
             {/* Document Content */}
             {selectedContract.document_content ? (
               <div className="mb-4 max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
@@ -271,15 +356,15 @@ export default function ContractsPage() {
                   {selectedContract.document_content}
                 </pre>
               </div>
-            ) : (
+            ) : !selectedContract.template_url ? (
               <p className="mb-4 text-sm italic text-gray-400">No document content (title-only contract)</p>
-            )}
+            ) : null}
 
             {/* Signature + Audit (for signed contracts) */}
             {selectedContract.status === 'signed' && (
               <div className="space-y-3 border-t border-gray-200 pt-4">
                 <p className="text-sm font-medium text-gray-700">
-                  Signed on: {selectedContract.signed_at ? new Date(selectedContract.signed_at).toLocaleString() : '—'}
+                  Signed on: {selectedContract.signed_at ? new Date(selectedContract.signed_at).toLocaleString() : '\u2014'}
                 </p>
 
                 {selectedContract.signature_data && (
@@ -337,22 +422,29 @@ export default function ContractsPage() {
             <form onSubmit={handleSendForSignature} className="mt-4">
               {step === 1 && (
                 <div className="space-y-4">
-                  {/* Template selector */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Template</label>
-                    <select
-                      value={selectedTemplate}
-                      onChange={e => handleTemplateChange(e.target.value)}
-                      className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                    >
-                      <option value="">Blank Document</option>
-                      {CONTRACT_TEMPLATES.map(t => (
-                        <option key={t.id} value={t.id}>{t.name}</option>
-                      ))}
-                    </select>
+                  {/* Document source tabs */}
+                  <div className="flex rounded-lg border border-gray-200 p-0.5">
+                    {([
+                      { key: 'template' as DocTab, label: 'Template' },
+                      { key: 'write' as DocTab, label: 'Write Content' },
+                      { key: 'upload' as DocTab, label: 'Upload File' },
+                    ]).map(tab => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setDocTab(tab.key)}
+                        className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                          docTab === tab.key
+                            ? 'bg-brand text-white'
+                            : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
                   </div>
 
-                  {/* Title */}
+                  {/* Title (shown for all tabs) */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Document Title *</label>
                     <input
@@ -365,52 +457,171 @@ export default function ContractsPage() {
                     />
                   </div>
 
-                  {/* Document content */}
-                  {showPreview ? (
-                    <div>
-                      <div className="mb-1 flex items-center justify-between">
-                        <label className="block text-sm font-medium text-gray-700">Preview</label>
-                        <button
-                          type="button"
-                          onClick={() => setShowPreview(false)}
-                          className="text-xs font-medium text-brand hover:underline"
+                  {/* Template tab */}
+                  {docTab === 'template' && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700">Template</label>
+                        <select
+                          value={selectedTemplate}
+                          onChange={e => handleTemplateChange(e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                         >
-                          Edit
-                        </button>
+                          <option value="">Select a template...</option>
+                          {CONTRACT_TEMPLATES.map(t => (
+                            <option key={t.id} value={t.id}>{t.name}</option>
+                          ))}
+                        </select>
                       </div>
-                      <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
-                        <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
-                          {fillTemplatePlaceholders(documentContent, {
-                            business_name: business.name,
-                            signer_name: signerName || '{{signer_name}}',
-                          })}
-                        </pre>
-                      </div>
-                    </div>
-                  ) : (
+
+                      {documentContent && (
+                        showPreview ? (
+                          <div>
+                            <div className="mb-1 flex items-center justify-between">
+                              <label className="block text-sm font-medium text-gray-700">Preview</label>
+                              <button
+                                type="button"
+                                onClick={() => setShowPreview(false)}
+                                className="text-xs font-medium text-brand hover:underline"
+                              >
+                                Edit
+                              </button>
+                            </div>
+                            <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
+                              <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
+                                {fillTemplatePlaceholders(documentContent, {
+                                  business_name: business.name,
+                                  signer_name: signerName || '{{signer_name}}',
+                                })}
+                              </pre>
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <div className="mb-1 flex items-center justify-between">
+                              <label className="block text-sm font-medium text-gray-700">Content</label>
+                              <button
+                                type="button"
+                                onClick={() => setShowPreview(true)}
+                                className="text-xs font-medium text-brand hover:underline"
+                              >
+                                Preview
+                              </button>
+                            </div>
+                            <textarea
+                              value={documentContent}
+                              onChange={e => setDocumentContent(e.target.value)}
+                              rows={10}
+                              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                            />
+                          </div>
+                        )
+                      )}
+                    </>
+                  )}
+
+                  {/* Write content tab */}
+                  {docTab === 'write' && (
                     <div>
                       <div className="mb-1 flex items-center justify-between">
                         <label className="block text-sm font-medium text-gray-700">Document Content</label>
                         {documentContent && (
                           <button
                             type="button"
-                            onClick={() => setShowPreview(true)}
+                            onClick={() => setShowPreview(!showPreview)}
                             className="text-xs font-medium text-brand hover:underline"
                           >
-                            Preview
+                            {showPreview ? 'Edit' : 'Preview'}
                           </button>
                         )}
                       </div>
-                      <textarea
-                        value={documentContent}
-                        onChange={e => setDocumentContent(e.target.value)}
-                        rows={15}
-                        placeholder="Enter the document text that the signer will review..."
-                        className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      {showPreview && documentContent ? (
+                        <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
+                          <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
+                            {fillTemplatePlaceholders(documentContent, {
+                              business_name: business.name,
+                              signer_name: signerName || '{{signer_name}}',
+                            })}
+                          </pre>
+                        </div>
+                      ) : (
+                        <>
+                          <textarea
+                            value={documentContent}
+                            onChange={e => setDocumentContent(e.target.value)}
+                            rows={15}
+                            placeholder="Enter the document text that the signer will review..."
+                            className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                          />
+                          <p className="mt-1 text-xs text-gray-400">
+                            Use {'{{business_name}}'}, {'{{signer_name}}'}, {'{{date}}'} as placeholders
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Upload file tab */}
+                  {docTab === 'upload' && (
+                    <div>
+                      {uploadedFileUrl ? (
+                        <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <div>
+                              <p className="text-sm font-medium text-gray-900">{uploadedFileName}</p>
+                              <p className="text-xs text-green-600">Uploaded successfully</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={removeUploadedFile}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ) : (
+                        <div
+                          onClick={() => !uploading && fileInputRef.current?.click()}
+                          className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-8 text-center transition ${
+                            uploading
+                              ? 'border-gray-200 bg-gray-50'
+                              : 'border-gray-300 hover:border-brand hover:bg-gray-50'
+                          }`}
+                        >
+                          {uploading ? (
+                            <>
+                              <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-brand" />
+                              <p className="mt-3 text-sm text-gray-500">Uploading...</p>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="h-10 w-10 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                              </svg>
+                              <p className="mt-2 text-sm font-medium text-gray-700">Click to upload a document</p>
+                              <p className="mt-1 text-xs text-gray-400">PDF, PNG, JPG up to 10MB</p>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={handleFileUpload}
+                        className="hidden"
                       />
-                      <p className="mt-1 text-xs text-gray-400">
-                        Use {'{{business_name}}'}, {'{{signer_name}}'}, {'{{date}}'} as placeholders
-                      </p>
+
+                      {uploadError && (
+                        <p className="mt-2 text-sm text-red-600">{uploadError}</p>
+                      )}
                     </div>
                   )}
 
@@ -425,7 +636,7 @@ export default function ContractsPage() {
                     <button
                       type="button"
                       onClick={() => setStep(2)}
-                      disabled={!title}
+                      disabled={!canProceed}
                       className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                     >
                       Next

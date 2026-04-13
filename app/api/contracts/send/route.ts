@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { business_id, title, signer_phone, signer_name, signer_email, document_content } = body;
+    const { business_id, title, signer_phone, signer_name, signer_email, document_content, template_url } = body;
 
     if (!business_id || !title || !signer_phone) {
       return NextResponse.json(
@@ -59,7 +59,7 @@ export async function POST(request: NextRequest) {
       .insert({
         business_id,
         title,
-        template_url: null,
+        template_url: template_url || null,
         signer_name: signer_name || null,
         signer_phone,
         signer_email: signer_email || null,

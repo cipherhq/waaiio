@@ -11,6 +11,7 @@ interface ContractInfo {
   status: string;
   expires_at: string;
   document_content: string | null;
+  template_url: string | null;
 }
 
 type PageState = 'loading' | 'ready' | 'signing' | 'submitting' | 'success' | 'error';
@@ -41,8 +42,8 @@ export default function SignPage() {
         }
         const data = await res.json();
         setContract(data);
-        // If no document content, auto-agree (backwards compatible)
-        if (!data.document_content) {
+        // If no document content and no uploaded file, auto-agree (backwards compatible)
+        if (!data.document_content && !data.template_url) {
           setAgreed(true);
         }
         setState('ready');
@@ -151,6 +152,12 @@ export default function SignPage() {
     }
   }
 
+  // Determine file type from template_url
+  function getFileType(url: string): 'pdf' | 'image' {
+    const ext = url.split('.').pop()?.toLowerCase() || '';
+    return ext === 'pdf' ? 'pdf' : 'image';
+  }
+
   if (state === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
@@ -207,6 +214,12 @@ export default function SignPage() {
     );
   }
 
+  const documentUrl = contract?.template_url
+    ? `/api/contracts/document/${contract.id}?token=${token}`
+    : null;
+  const fileType = contract?.template_url ? getFileType(contract.template_url) : null;
+  const hasContent = !!(contract?.document_content || contract?.template_url);
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
       {/* Header */}
@@ -228,29 +241,71 @@ export default function SignPage() {
       <main className="flex flex-1 flex-col items-center px-4 py-6">
         <div className="w-full max-w-lg">
 
-          {/* Document Content Section */}
-          {contract?.document_content && (
+          {/* Uploaded Document Section */}
+          {contract?.template_url && documentUrl && (
             <div className="mb-6">
               <h2 className="mb-2 text-sm font-semibold text-gray-700">Document to Review</h2>
+
+              {fileType === 'pdf' ? (
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                  <iframe
+                    src={documentUrl}
+                    className="h-96 w-full"
+                    title="Contract document"
+                  />
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={documentUrl}
+                    alt="Contract document"
+                    className="w-full"
+                  />
+                </div>
+              )}
+
+              <a
+                href={documentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Download document
+              </a>
+            </div>
+          )}
+
+          {/* Document Content Section (text-based) */}
+          {contract?.document_content && (
+            <div className="mb-6">
+              {!contract.template_url && (
+                <h2 className="mb-2 text-sm font-semibold text-gray-700">Document to Review</h2>
+              )}
               <div className="max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
                 <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700">
                   {contract.document_content}
                 </pre>
               </div>
-
-              {/* Agreement checkbox */}
-              <label className="mt-3 flex items-start gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={agreed}
-                  onChange={e => setAgreed(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-600">
-                  I have read and agree to the above document
-                </span>
-              </label>
             </div>
+          )}
+
+          {/* Agreement checkbox */}
+          {hasContent && (
+            <label className="mb-6 flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={e => setAgreed(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-600">
+                I have read and agree to the above document
+              </span>
+            </label>
           )}
 
           {/* Signature area */}
