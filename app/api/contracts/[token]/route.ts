@@ -15,7 +15,7 @@ export async function GET(
 
   const { data: contract, error } = await supabase
     .from('contracts')
-    .select('id, title, signer_name, status, token_expires_at, template_url, business_id')
+    .select('id, title, signer_name, status, token_expires_at, template_url, business_id, document_content')
     .eq('token', token)
     .single();
 
@@ -55,5 +55,6 @@ export async function GET(
     business_name: business?.name || 'Business',
     status: contract.status,
     expires_at: contract.token_expires_at,
+    document_content: contract.document_content,
   });
 }

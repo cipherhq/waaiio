@@ -10,6 +10,7 @@ interface ContractInfo {
   business_name: string;
   status: string;
   expires_at: string;
+  document_content: string | null;
 }
 
 type PageState = 'loading' | 'ready' | 'signing' | 'submitting' | 'success' | 'error';
@@ -24,6 +25,8 @@ export default function SignPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasDrawn, setHasDrawn] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const [hasPdf, setHasPdf] = useState(false);
 
   // Fetch contract details
   useEffect(() => {
@@ -38,6 +41,10 @@ export default function SignPage() {
         }
         const data = await res.json();
         setContract(data);
+        // If no document content, auto-agree (backwards compatible)
+        if (!data.document_content) {
+          setAgreed(true);
+        }
         setState('ready');
       } catch {
         setErrorMsg('Unable to load document. Please check your link.');
@@ -135,6 +142,8 @@ export default function SignPage() {
         return;
       }
 
+      const data = await res.json();
+      setHasPdf(data.has_pdf === true);
       setState('success');
     } catch {
       setErrorMsg('Failed to submit. Please try again.');
@@ -182,6 +191,16 @@ export default function SignPage() {
           <p className="mt-2 text-gray-600">
             Your signature for &quot;{contract?.title}&quot; has been recorded successfully.
           </p>
+
+          {hasPdf && contract && (
+            <a
+              href={`/api/contracts/pdf/${contract.id}?token=${token}`}
+              className="mt-4 inline-block rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+            >
+              Download Signed Copy
+            </a>
+          )}
+
           <p className="mt-4 text-sm text-gray-400">You can close this page now.</p>
         </div>
       </div>
@@ -205,9 +224,36 @@ export default function SignPage() {
         </div>
       </header>
 
-      {/* Signing area */}
+      {/* Main content */}
       <main className="flex flex-1 flex-col items-center px-4 py-6">
         <div className="w-full max-w-lg">
+
+          {/* Document Content Section */}
+          {contract?.document_content && (
+            <div className="mb-6">
+              <h2 className="mb-2 text-sm font-semibold text-gray-700">Document to Review</h2>
+              <div className="max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700">
+                  {contract.document_content}
+                </pre>
+              </div>
+
+              {/* Agreement checkbox */}
+              <label className="mt-3 flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agreed}
+                  onChange={e => setAgreed(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-600">
+                  I have read and agree to the above document
+                </span>
+              </label>
+            </div>
+          )}
+
+          {/* Signature area */}
           <p className="mb-3 text-center text-sm text-gray-500">
             Draw your signature below using your finger or mouse
           </p>
@@ -244,7 +290,7 @@ export default function SignPage() {
             </button>
             <button
               onClick={submitSignature}
-              disabled={!hasDrawn || state === 'submitting'}
+              disabled={!hasDrawn || !agreed || state === 'submitting'}
               className="flex-1 rounded-lg bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
             >
               {state === 'submitting' ? 'Submitting...' : 'Submit Signature'}
