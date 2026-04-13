@@ -14,7 +14,6 @@ interface ContractPdfData {
     signed_at: string;
   };
   contractId: string;
-  hasUploadedDocument?: boolean;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -139,15 +138,6 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
         y += (Math.ceil(trimmed.length / 90) * 14) + 4;
       }
     }
-  } else if (data.hasUploadedDocument) {
-    // For uploaded documents, add a note referencing the attached file
-    doc.fontSize(11).font('Helvetica').fillColor('#333333')
-      .text('This certificate confirms that the attached document has been reviewed and signed electronically.', 50, y, { width: contentWidth });
-    y += 40;
-
-    doc.fontSize(10).font('Helvetica').fillColor('#666666')
-      .text('The signer has confirmed they have read and agree to the terms of the uploaded document.', 50, y, { width: contentWidth });
-    y += 30;
   }
 
   // ── Signature Block ──

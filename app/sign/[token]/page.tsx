@@ -117,26 +117,46 @@ export default function SignPage() {
       pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
       const arrayBuffer = await blob.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
       const pages: string[] = [];
 
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 1.5 });
+      // Render each page sequentially
+      const totalPages = pdf.numPages;
+      for (let i = 1; i <= totalPages; i++) {
+        try {
+          const page = await pdf.getPage(i);
+          // Use scale 2 for desktops, 1.2 for mobile to avoid memory issues
+          const isMobile = window.innerWidth < 768;
+          const scale = isMobile ? 1.2 : 2;
+          const viewport = page.getViewport({ scale });
 
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d')!;
+          const offscreen = document.createElement('canvas');
+          offscreen.width = viewport.width;
+          offscreen.height = viewport.height;
+          const ctx = offscreen.getContext('2d');
+          if (!ctx) continue;
 
-        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
-        pages.push(canvas.toDataURL('image/png'));
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const renderTask = page.render({ canvasContext: ctx, viewport } as any);
+          await renderTask.promise;
+
+          pages.push(offscreen.toDataURL('image/jpeg', 0.92));
+
+          // Clean up to free memory
+          page.cleanup();
+        } catch (pageErr) {
+          console.warn(`Failed to render page ${i}:`, pageErr);
+        }
       }
 
-      setPdfPages(pages);
+      if (pages.length > 0) {
+        setPdfPages(pages);
+      } else {
+        // No pages rendered, fallback
+        setDocBlobUrl(URL.createObjectURL(blob));
+      }
     } catch (err) {
       console.error('PDF render error:', err);
-      // Fallback: provide blob URL for direct opening
       setDocBlobUrl(URL.createObjectURL(blob));
     }
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateSignedContractPdf } from '@/lib/pdf/contract-pdf-generator';
+import { appendSignatureToUploadedPdf } from '@/lib/pdf/append-signature';
 
 export async function POST(request: NextRequest) {
   try {
@@ -62,19 +63,61 @@ export async function POST(request: NextRequest) {
         upsert: true,
       });
 
-    // Generate signed PDF if document has content or uploaded file
-    let pdfPath: string | null = null;
-    if (contract.document_content || contract.template_url) {
-      try {
-        // Get business name
-        const { data: biz } = await supabase
-          .from('businesses')
-          .select('name')
-          .eq('id', contract.business_id)
-          .single();
+    // Get business name
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('name')
+      .eq('id', contract.business_id)
+      .single();
 
+    const businessName = biz?.name || 'Business';
+
+    // Generate signed PDF
+    let pdfPath: string | null = null;
+
+    if (contract.template_url) {
+      // Uploaded document: download original and append signature page
+      try {
+        const ext = contract.template_url.split('.').pop()?.toLowerCase() || '';
+
+        // Download the original file from storage
+        const { data: originalFile } = await supabase.storage
+          .from('contracts')
+          .download(contract.template_url);
+
+        if (originalFile) {
+          const originalBuffer = Buffer.from(await originalFile.arrayBuffer());
+
+          const pdfBuffer = await appendSignatureToUploadedPdf({
+            originalFileBuffer: originalBuffer,
+            originalFileType: ext === 'pdf' ? 'pdf' : 'image',
+            businessName,
+            title: contract.title,
+            signerName: contract.signer_name || 'Signer',
+            signatureData: signature_data,
+            signedAt: auditTrail.signed_at,
+            auditTrail,
+            contractId: contract.id,
+          });
+
+          pdfPath = `${contract.business_id}/${contract.id}/signed.pdf`;
+          await supabase.storage
+            .from('contracts')
+            .upload(pdfPath, pdfBuffer, {
+              contentType: 'application/pdf',
+              upsert: true,
+            });
+        }
+      } catch (pdfErr) {
+        console.error('Uploaded doc PDF generation failed:', pdfErr);
+      }
+    }
+
+    if (!pdfPath && contract.document_content) {
+      // Text-based contract: generate PDF from content
+      try {
         const pdfBuffer = await generateSignedContractPdf({
-          businessName: biz?.name || 'Business',
+          businessName,
           title: contract.title,
           documentContent: contract.document_content,
           signerName: contract.signer_name || 'Signer',
@@ -82,7 +125,6 @@ export async function POST(request: NextRequest) {
           signedAt: auditTrail.signed_at,
           auditTrail,
           contractId: contract.id,
-          hasUploadedDocument: !!contract.template_url,
         });
 
         pdfPath = `${contract.business_id}/${contract.id}/signed.pdf`;
