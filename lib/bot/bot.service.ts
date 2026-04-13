@@ -9,6 +9,19 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
+import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
+import type { UnifiedKeyword } from './keyword-service';
+import { evaluateRules } from './automation/rules-engine';
+
+// ── Escape hatches: always hardcoded, never overridable ──
+const ESCAPE_HATCH_PATTERNS = [
+  /^cancel$/i,
+  /^exit$/i,
+  /^quit$/i,
+  /^stop$/i,
+  /^restart$/i,
+  /^start\s*over$/i,
+];
 
 interface BotSession {
   id: string;
@@ -289,7 +302,12 @@ export class BotService {
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion'].includes(currentStep);
-    const detectedRestart = !isFreeTextStep ? this.intelligence.detectIntent(text, currentStep) : null;
+
+    // Detect greetings and booking intent for restart detection (without detectIntent)
+    const normalizedForRestart = text.toLowerCase().trim();
+    const isGreetingText = /^(hello|hi|hey|yo|howdy|hiya|sup|how\s*far|howfar|wetin\s*dey|e\s*kaaro|e\s*kaasan|sannu|kedu|ndewo|maakye)$/i.test(normalizedForRestart)
+      || /^good\s+(morning|afternoon|evening)$/i.test(normalizedForRestart);
+    const isBookingText = /\b(book|reserve|table|reservation|appointment|order|buy|ticket|pay|donate)\b/i.test(normalizedForRestart);
 
     // Also treat bot codes as restarts so users can switch businesses mid-session
     let isBotCodeRestart = false;
@@ -309,8 +327,8 @@ export class BotService {
     const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability';
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
-      detectedRestart?.intent === 'greeting' ||
-      (!isMidFlow && detectedRestart?.intent === 'booking') ||
+      isGreetingText ||
+      (!isMidFlow && isBookingText) ||
       isBotCodeRestart
     );
 
@@ -500,6 +518,24 @@ export class BotService {
 
         await this.sendText(from, greeting);
 
+        // ── Welcome Buttons: send interactive menu after greeting ──
+        try {
+          const customConfig = await loadBotCustomConfig(this.supabase, business.id);
+          if (customConfig.welcome_buttons.length > 0) {
+            const buttons = customConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
+              id: `wb_${i}`,
+              title: btn.label.slice(0, 20),
+            }));
+            await this.messageSender.sendButtons({
+              to: from,
+              body: 'How can I help you today?',
+              buttons,
+            });
+          }
+        } catch (err) {
+          logger.error('[BOT] Welcome buttons error (non-fatal):', err);
+        }
+
         // ── Smart Intent: parse first message for entities ──
         // If user said something rich like "I wan barb tomorrow morning",
         // extract service, date, time, quantity and pre-fill session data
@@ -640,135 +676,38 @@ export class BotService {
       return this.handleMessage(from, messageText, messageType, destinationPhone, preResolvedBusinessId);
     }
 
-    // Intent detection
+    // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
-    const detectedIntent = this.intelligence.detectIntent(text, step);
-
-    if (detectedIntent) {
+    const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
+    if (isEscapeHatch && session.business_id) {
       this.intelligence.resetAbuse(from);
+      await this.deactivateSession(session.id);
+      await this.sendText(from, 'Action cancelled. Send *Hi* to start fresh. 🙏');
+      return;
+    }
 
-      if (detectedIntent.action === 'bookings') {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-        const bkPhoneP = from.startsWith('+') ? from : `+${from}`;
-        const bkPhoneN = from.startsWith('+') ? from.slice(1) : from;
-        const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${bkPhoneP},phone.eq.${bkPhoneN}`).limit(1).maybeSingle();
-        if (!profile?.id) {
-          await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
-          return;
-        }
-        const { data: newSession } = await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from, user_id: profile.id, business_id: null,
-          current_step: 'my_bookings', session_data: {}, is_active: true,
-          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-        }).select().single();
-        if (!newSession) { await this.sendText(from, 'Something went wrong.'); return; }
-        await this.handleMyBookings(newSession as BotSession, from, '');
-        return;
+    // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
+    // Only fire on non-free-text steps
+    const isFreeTextStepForKeywords = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion'].includes(step);
+
+    if (!isFreeTextStepForKeywords) {
+      // Load business category for category-scoped keywords
+      let businessCategory: string | null = null;
+      if (session.business_id) {
+        const { data: catBiz } = await this.supabase
+          .from('businesses')
+          .select('category')
+          .eq('id', session.business_id)
+          .single();
+        businessCategory = catBiz?.category || null;
       }
 
-      if (detectedIntent.action === 'transaction_history' || detectedIntent.action === 'transaction_receipt') {
-        if (session) {
-          await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-        }
-        const txPhoneP = from.startsWith('+') ? from : `+${from}`;
-        const txPhoneN = from.startsWith('+') ? from.slice(1) : from;
-        const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${txPhoneP},phone.eq.${txPhoneN}`).limit(1).maybeSingle();
-        if (!profile?.id) {
-          await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
-          return;
-        }
-        const docType = detectedIntent.action === 'transaction_history' ? 'history' : 'receipt';
-        await this.handleTransactionDocument(from, profile.id, docType);
-        return;
-      }
+      const keywords = await loadUnifiedKeywords(this.supabase, session.business_id, businessCategory);
+      const kwMatch = matchUnifiedKeyword(text, keywords);
 
-      if (detectedIntent.action === 'escalate') {
-        if (session.business_id) {
-          const caps = await getEnabledCapabilities(this.supabase, session.business_id);
-          if (caps.includes('chat')) {
-            // Get customer name
-            const escPhoneP = from.startsWith('+') ? from : `+${from}`;
-            const escPhoneN = from.startsWith('+') ? from.slice(1) : from;
-            let escCustomerName: string | null = null;
-            const { data: escProfile } = await this.supabase
-              .from('profiles')
-              .select('first_name, last_name')
-              .or(`phone.eq.${escPhoneP},phone.eq.${escPhoneN}`)
-              .limit(1)
-              .maybeSingle();
-            if (escProfile?.first_name) {
-              escCustomerName = `${escProfile.first_name}${escProfile.last_name ? ' ' + escProfile.last_name : ''}`;
-            }
-            const businessName = (session.session_data.business_name as string) || 'the business';
-            const { escalateToHuman } = await import('@/lib/bot/handoff.service');
-            await escalateToHuman({
-              supabase: this.supabase,
-              sender: this.messageSender,
-              from,
-              businessId: session.business_id,
-              businessName,
-              sessionId: session.id,
-              sessionData: session.session_data,
-              currentStep: step,
-              customerName: escCustomerName,
-            });
-            return;
-          }
-        }
-        await this.sendText(from, "Live chat isn't available for this business. Type *help* for other options.");
-        return;
-      }
-
-      if (detectedIntent.action === 'queue_checkin') {
-        // Check if business has queue capability
-        if (session.business_id) {
-          const caps = await getEnabledCapabilities(this.supabase, session.business_id);
-          if (caps.includes('queue')) {
-            await this.supabase.from('bot_sessions').update({
-              current_step: 'queue_start',
-              session_data: { ...session.session_data, active_capability: 'queue' },
-            }).eq('id', session.id);
-            session.current_step = 'queue_start';
-            session.session_data.active_capability = 'queue';
-            let business: BusinessRecord | null = null;
-            const { data: biz } = await this.supabase
-              .from('businesses')
-              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
-              .eq('id', session.business_id)
-              .single();
-            business = biz as BusinessRecord | null;
-            await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
-            return;
-          }
-        }
-        // No queue capability — treat as regular message
-        await this.sendText(from, "This business doesn't have queue check-in enabled.");
-        return;
-      }
-
-      if (detectedIntent.action === 'help') {
-        const isStandalone = !!session.business_id;
-        const businessName = session.session_data.business_name as string | undefined;
-        let alias: string | null = null;
-        if (isStandalone && session.business_id) {
-          alias = await this.standaloneService.getBotAlias(session.business_id);
-        }
-        await this.sendText(from, this.intelligence.getHelpText(isStandalone, businessName, alias || undefined));
-        const helpNudge = this.intelligence.getContextualHelp(step);
-        await this.sendText(from, `📍 You're currently at: *${step.replace(/_/g, ' ')}*\n${helpNudge}`);
-        return;
-      }
-
-      if (detectedIntent.action === 'acknowledge') {
-        await this.sendText(from, detectedIntent.response!);
-        return;
-      }
-
-      if (detectedIntent.action === null && detectedIntent.response) {
-        await this.sendText(from, detectedIntent.response);
-        const nudge = this.intelligence.getContextualHelp(step);
-        await this.sendText(from, nudge);
-        return;
+      if (kwMatch) {
+        const handled = await this.executeKeywordAction(from, session, kwMatch);
+        if (handled) return;
       }
     }
 
@@ -835,6 +774,45 @@ export class BotService {
       return;
     }
 
+    // ── Welcome button postback handling ──
+    const wbMatch = text.match(/^wb_(\d)$/i);
+    if (wbMatch && session.business_id) {
+      try {
+        const customConfig = await loadBotCustomConfig(this.supabase, session.business_id);
+        const idx = parseInt(wbMatch[1], 10);
+        const btn = customConfig.welcome_buttons[idx];
+        if (btn) {
+          if (btn.action === 'quick_reply' && btn.payload) {
+            const qrMatch = matchQuickReply(btn.payload, customConfig.quick_replies);
+            if (qrMatch) {
+              await this.sendText(from, qrMatch.response);
+              return;
+            }
+          }
+          if (btn.action === 'url' && btn.payload) {
+            await this.sendText(from, btn.payload);
+            return;
+          }
+          // 'start_flow' — fall through to normal flow execution
+        }
+      } catch (err) {
+        logger.error('[BOT] Welcome button handler error (non-fatal):', err);
+      }
+    }
+
+    // ── Default reply fallback (unified keywords already matched above) ──
+    if (session.business_id && (step === 'select_capability' || step === 'greeting')) {
+      try {
+        const customConfig = await loadBotCustomConfig(this.supabase, session.business_id);
+        if (customConfig.default_reply) {
+          await this.sendText(from, customConfig.default_reply);
+          return;
+        }
+      } catch (err) {
+        logger.error('[BOT] Default reply error (non-fatal):', err);
+      }
+    }
+
     // Delegate to flow executor for all flow steps
     let business: BusinessRecord | null = null;
     if (session.business_id) {
@@ -844,6 +822,19 @@ export class BotService {
         .eq('id', session.business_id)
         .single();
       business = biz as BusinessRecord | null;
+    }
+
+    // ── Fire message_received rule (non-blocking) ──
+    if (session.business_id) {
+      const sendMsg = async (to: string, txt: string) => {
+        await this.messageSender.sendText({ to, text: txt });
+      };
+      evaluateRules(this.supabase, session.business_id, 'message_received', {
+        customer_phone: from,
+        message_text: text,
+        current_step: step,
+        business_name: business?.name || '',
+      }, sendMsg).catch(err => logger.error('[BOT] message_received rule error:', err));
     }
 
     // Chat handoff: bot is paused, route messages to human agent
@@ -1636,6 +1627,207 @@ export class BotService {
     } catch (err) {
       logger.error('[BOT] Quote response error:', err);
       await this.sendText(from, 'Sorry, something went wrong. Please try again.');
+    }
+  }
+
+  // ── Unified Keyword Action Executor ──────────────────────
+
+  /**
+   * Execute the action from a unified keyword match.
+   * Returns true if the action was handled, false to continue to flow executor.
+   */
+  private async executeKeywordAction(
+    from: string,
+    session: BotSession,
+    kw: UnifiedKeyword,
+  ): Promise<boolean> {
+    const payload = parseKeywordPayload(kw.payload);
+    const step = session.current_step;
+
+    try {
+      switch (kw.action_type) {
+        case 'reply': {
+          const message = (payload.message as string) || kw.payload;
+          await this.sendText(from, message);
+          return true;
+        }
+
+        case 'acknowledge': {
+          const message = (payload.message as string) || "You're welcome! Is there anything else I can help with?";
+          this.intelligence.resetAbuse(from);
+          await this.sendText(from, message);
+          return true;
+        }
+
+        case 'show_menu': {
+          const menuType = payload.message as string;
+          if (menuType === 'greeting') {
+            // Treat as restart — deactivate and re-greet
+            await this.deactivateSession(session.id);
+            return false; // Let the restart logic handle it
+          }
+          // Generic menu — show help
+          const isStandalone = !!session.business_id;
+          const businessName = session.session_data.business_name as string | undefined;
+          let alias: string | null = null;
+          if (isStandalone && session.business_id) {
+            alias = await this.standaloneService.getBotAlias(session.business_id);
+          }
+          await this.sendText(from, this.intelligence.getHelpText(isStandalone, businessName, alias || undefined));
+          return true;
+        }
+
+        case 'navigate_step': {
+          const action = payload.action as string;
+          this.intelligence.resetAbuse(from);
+
+          if (action === 'show_status' || action === 'show_history') {
+            // Bookings / history
+            await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+            const phoneP = from.startsWith('+') ? from : `+${from}`;
+            const phoneN = from.startsWith('+') ? from.slice(1) : from;
+            const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+            if (!profile?.id) {
+              await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+              return true;
+            }
+            if (action === 'show_history') {
+              await this.handleTransactionDocument(from, profile.id, 'history');
+              return true;
+            }
+            // show_status → my_bookings
+            const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+              whatsapp_number: from, user_id: profile.id, business_id: null,
+              current_step: 'my_bookings', session_data: {}, is_active: true,
+              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            }).select().single();
+            if (!newSession) { await this.sendText(from, 'Something went wrong.'); return true; }
+            await this.handleMyBookings(newSession as BotSession, from, '');
+            return true;
+          }
+
+          if (action === 'show_receipt') {
+            await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+            const phoneP = from.startsWith('+') ? from : `+${from}`;
+            const phoneN = from.startsWith('+') ? from.slice(1) : from;
+            const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+            if (!profile?.id) {
+              await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+              return true;
+            }
+            await this.handleTransactionDocument(from, profile.id, 'receipt');
+            return true;
+          }
+
+          if (action === 'show_pricing') {
+            await this.sendText(from, 'Pricing varies by service. Start a booking to see current prices!');
+            const nudge = this.intelligence.getContextualHelp(step);
+            await this.sendText(from, nudge);
+            return true;
+          }
+
+          if (action === 'escalate') {
+            if (session.business_id) {
+              const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+              if (caps.includes('chat')) {
+                const escPhoneP = from.startsWith('+') ? from : `+${from}`;
+                const escPhoneN = from.startsWith('+') ? from.slice(1) : from;
+                let escCustomerName: string | null = null;
+                const { data: escProfile } = await this.supabase
+                  .from('profiles')
+                  .select('first_name, last_name')
+                  .or(`phone.eq.${escPhoneP},phone.eq.${escPhoneN}`)
+                  .limit(1)
+                  .maybeSingle();
+                if (escProfile?.first_name) {
+                  escCustomerName = `${escProfile.first_name}${escProfile.last_name ? ' ' + escProfile.last_name : ''}`;
+                }
+                const businessName = (session.session_data.business_name as string) || 'the business';
+                const { escalateToHuman } = await import('@/lib/bot/handoff.service');
+                await escalateToHuman({
+                  supabase: this.supabase,
+                  sender: this.messageSender,
+                  from,
+                  businessId: session.business_id,
+                  businessName,
+                  sessionId: session.id,
+                  sessionData: session.session_data,
+                  currentStep: step,
+                  customerName: escCustomerName,
+                });
+                return true;
+              }
+            }
+            await this.sendText(from, "Live chat isn't available for this business. Type *help* for other options.");
+            return true;
+          }
+
+          if (action === 'checkin') {
+            if (session.business_id) {
+              const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+              if (caps.includes('queue')) {
+                await this.supabase.from('bot_sessions').update({
+                  current_step: 'queue_start',
+                  session_data: { ...session.session_data, active_capability: 'queue' },
+                }).eq('id', session.id);
+                session.current_step = 'queue_start';
+                session.session_data.active_capability = 'queue';
+                const { data: biz } = await this.supabase
+                  .from('businesses')
+                  .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+                  .eq('id', session.business_id)
+                  .single();
+                await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
+                return true;
+              }
+            }
+            await this.sendText(from, "This business doesn't have queue check-in enabled.");
+            return true;
+          }
+
+          // Unknown navigate_step action
+          return false;
+        }
+
+        case 'url': {
+          const message = (payload.message as string) || kw.payload;
+          await this.sendText(from, message);
+          return true;
+        }
+
+        case 'start_flow': {
+          await this.deactivateSession(session.id);
+          await this.handleMessage(from, 'Hi', 'text', undefined, session.business_id || undefined);
+          return true;
+        }
+
+        case 'start_capability': {
+          const capability = (payload.capability as string) || kw.payload;
+          if (session.business_id) {
+            session.session_data.active_capability = capability;
+            const capFirstStep = this.capabilityToFirstStep(capability as CapabilityId);
+            await this.supabase.from('bot_sessions').update({
+              current_step: capFirstStep,
+              session_data: session.session_data,
+            }).eq('id', session.id);
+            session.current_step = capFirstStep;
+            const { data: biz } = await this.supabase
+              .from('businesses')
+              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+              .eq('id', session.business_id)
+              .single();
+            await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
+            return true;
+          }
+          return false;
+        }
+
+        default:
+          return false;
+      }
+    } catch (err) {
+      logger.error('[BOT] executeKeywordAction error (non-fatal):', err);
+      return false;
     }
   }
 

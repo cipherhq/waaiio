@@ -163,6 +163,41 @@ export function getQuoteNotificationMessage(opts: {
   return lines.join('\n');
 }
 
+export function getReservationConfirmationMessage(opts: {
+  businessName: string;
+  apartmentName: string;
+  checkInLabel: string;
+  checkOutLabel: string;
+  nights: number;
+  nightlyRate: number;
+  guests: number;
+  totalAmount: number;
+  depositAmount: number;
+  referenceCode: string;
+  countryCode?: CountryCode;
+}): string {
+  const cc = opts.countryCode || 'NG';
+  const lines = [
+    `\ud83c\udfe8 *Reservation Summary*`,
+    '',
+    `\ud83c\udfe8 ${opts.businessName}`,
+    `\ud83c\udfe0 ${opts.apartmentName}`,
+    `\ud83d\udcc5 Check-in: ${opts.checkInLabel}`,
+    `\ud83d\udcc5 Check-out: ${opts.checkOutLabel}`,
+    `\ud83c\udf19 ${opts.nights} night${opts.nights > 1 ? 's' : ''} \u00d7 ${formatCurrency(opts.nightlyRate, cc)}/night`,
+    `\ud83d\udc65 ${opts.guests} guest${opts.guests > 1 ? 's' : ''}`,
+    '',
+    `\ud83d\udcb0 *Total: ${formatCurrency(opts.totalAmount, cc)}*`,
+  ];
+
+  if (opts.depositAmount > 0) {
+    lines.push(`\ud83d\udcb3 Deposit: ${formatCurrency(opts.depositAmount, cc)}`);
+  }
+
+  lines.push(`\ud83d\udd11 Ref: *${opts.referenceCode}*`);
+  return lines.join('\n');
+}
+
 export function getTicketConfirmationMessage(opts: {
   eventName: string;
   dateLabel: string;

@@ -70,13 +70,6 @@ const navItems: NavItem[] = [
     section: 'commerce',
   },
   {
-    href: '/dashboard/products/volume-discounts',
-    label: 'Volume Discounts',
-    icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z',
-    capabilities: ['ordering'],
-    section: 'commerce',
-  },
-  {
     href: '/dashboard/orders',
     label: 'Orders',
     icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2',
@@ -109,6 +102,13 @@ const navItems: NavItem[] = [
     label: 'Reports',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     capabilities: ['reports'],
+    section: 'commerce',
+  },
+  {
+    href: '/dashboard/contracts',
+    label: 'Contracts',
+    icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+    capabilities: ['whatsapp_sign'],
     section: 'commerce',
   },
   {
@@ -170,6 +170,24 @@ const navItems: NavItem[] = [
   },
   // Marketing
   {
+    href: '/dashboard/keywords',
+    label: 'Keywords',
+    icon: 'M7 20l4-16m2 16l4-16M6 9h14M4 15h14',
+    section: 'marketing',
+  },
+  {
+    href: '/dashboard/sequences',
+    label: 'Sequences',
+    icon: 'M13 10V3L4 14h7v7l9-11h-7z',
+    section: 'marketing',
+  },
+  {
+    href: '/dashboard/rules',
+    label: 'Rules',
+    icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
+    section: 'marketing',
+  },
+  {
     href: '/dashboard/referrals',
     label: 'Referrals',
     icon: 'M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z',
@@ -211,6 +229,12 @@ const navItems: NavItem[] = [
     href: '/dashboard/whatsapp',
     label: 'WhatsApp Bot',
     icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
+    section: 'settings',
+  },
+  {
+    href: '/dashboard/flow-editor',
+    label: 'Bot Flows',
+    icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z',
     section: 'settings',
   },
   {

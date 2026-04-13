@@ -198,7 +198,7 @@ export default function VolumeDiscountsPage() {
                   }}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                 >
-                  <option value="">All Products</option>
+                  <option value="">Select a product</option>
                   {products.map(p => (
                     <option key={p.id} value={p.id}>{p.name}</option>
                   ))}

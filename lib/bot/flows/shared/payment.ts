@@ -7,6 +7,7 @@ export async function initializePayment(
   opts: {
     bookingId?: string;
     orderId?: string;
+    reservationId?: string;
     userId: string;
     amount: number;
     referenceCode: string;
@@ -180,6 +181,7 @@ export async function recordPlatformFee(
     businessId: string;
     bookingId?: string;
     orderId?: string;
+    reservationId?: string;
     transactionAmount: number;
     tier: SubscriptionTier;
     isInTrial: boolean;
@@ -191,6 +193,7 @@ export async function recordPlatformFee(
     business_id: opts.businessId,
     booking_id: opts.bookingId || null,
     order_id: opts.orderId || null,
+    reservation_id: opts.reservationId || null,
     transaction_amount: opts.transactionAmount,
     fee_percentage: fee.feePercentage,
     fee_flat: fee.feeFlat,

@@ -4,6 +4,8 @@ import { initializePayment, verifyPayment, recordPlatformFee } from './shared/pa
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { notifyOwnerNewOrder, notifyOwnerNewQuoteRequest } from './shared/notify-owner';
+import { evaluateRules } from '@/lib/bot/automation/rules-engine';
+import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -76,7 +78,7 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: rawProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options, min_order_qty')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .is('deleted_at', null)
@@ -116,7 +118,7 @@ export const orderingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options')
+          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .is('deleted_at', null)
@@ -138,6 +140,7 @@ export const orderingFlow: FlowDefinition = {
             current_product_image_url: product.image_url || null,
             current_product_variant_options: product.variant_options || [],
             current_stock_quantity: product.has_variants ? null : product.stock_quantity,
+            current_min_order_qty: product.min_order_qty || 1,
           },
         };
       },
@@ -375,9 +378,13 @@ export const orderingFlow: FlowDefinition = {
           });
         }
 
+        const minQty = (d.current_min_order_qty as number) || 1;
         let promptText = `*${productName}*${variantInfo} \u2014 ${formatCurrency(d.current_product_price as number, cc)}`;
         if (available !== null && available <= 5) {
           promptText += `\n\n_Only ${available} available_`;
+        }
+        if (minQty > 1) {
+          promptText += `\n\n_Minimum order: ${minQty} units_`;
         }
         promptText += '\n\nHow many would you like? Type a number:';
 
@@ -392,6 +399,11 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const d = ctx.session.session_data;
+        const minQty = (d.current_min_order_qty as number) || 1;
+        if (qty < minQty) {
+          return { valid: false, errorMessage: `Minimum order for this product is ${minQty} units. Please enter ${minQty} or more.` };
+        }
+
         const stockQty = d.current_stock_quantity as number | null;
 
         if (stockQty !== null) {
@@ -431,9 +443,8 @@ export const orderingFlow: FlowDefinition = {
         const { data: addons } = await ctx.supabase
           .from('product_addons')
           .select('id')
-          .eq('business_id', ctx.business.id)
+          .eq('product_id', productId)
           .eq('is_active', true)
-          .or(`product_id.eq.${productId},product_id.is.null`)
           .limit(1);
         if (!addons || addons.length === 0) {
           ctx.session.session_data.current_addons = [];
@@ -453,9 +464,8 @@ export const orderingFlow: FlowDefinition = {
         const { data: addons } = await ctx.supabase
           .from('product_addons')
           .select('id, name, price, price_type, unit_label, is_required, is_negotiable')
-          .eq('business_id', ctx.business!.id)
+          .eq('product_id', productId)
           .eq('is_active', true)
-          .or(`product_id.eq.${productId},product_id.is.null`)
           .order('sort_order')
           .limit(9);
 
@@ -745,7 +755,7 @@ export const orderingFlow: FlowDefinition = {
         // Treat as product selection
         const { data: product } = await ctx.supabase
           .from('products')
-          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options')
+          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .is('deleted_at', null)
@@ -768,6 +778,7 @@ export const orderingFlow: FlowDefinition = {
             current_product_image_url: product.image_url || null,
             current_product_variant_options: product.variant_options || [],
             current_stock_quantity: product.has_variants ? null : product.stock_quantity,
+            current_min_order_qty: product.min_order_qty || 1,
           },
         };
       },
@@ -1416,6 +1427,27 @@ export const orderingFlow: FlowDefinition = {
         d.total_amount = total;
         d.shipping_cost = shippingCost;
 
+        // ── Fire order_created rules + sequences (non-blocking) ──
+        if (ctx.business) {
+          const orderRuleCtx = {
+            customer_phone: ctx.from,
+            customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || undefined,
+            business_name: ctx.business.name,
+            reference_code: order.reference_code,
+            reference_id: order.id,
+            total_amount: total,
+            item_count: cart.length,
+            delivery_type: (d.delivery_type as string) || 'pickup',
+          };
+          const orderSendMsg = async (to: string, txt: string) => {
+            await ctx.sender.sendText({ to, text: txt });
+          };
+          evaluateRules(ctx.supabase, ctx.business.id, 'order_created', orderRuleCtx, orderSendMsg)
+            .catch(err => logger.error('[ORDERING] order_created rule error:', err));
+          triggerSequences(ctx.supabase, ctx.business.id, 'after_order', ctx.from, orderRuleCtx)
+            .catch(err => logger.error('[ORDERING] after_order sequence error:', err));
+        }
+
         // Notify business owner via email + WhatsApp (non-blocking)
         if (ctx.business) {
           notifyOwnerNewOrder({
@@ -1596,6 +1628,20 @@ export const orderingFlow: FlowDefinition = {
                 referenceId: sd.order_id as string,
                 sender: ctx.sender,
               }).catch(err => console.error('[ORDERING] Post-completion error:', err));
+
+              // Fire payment_received rule (non-blocking)
+              const pmtSendMsg = async (to: string, txt: string) => {
+                await ctx.sender.sendText({ to, text: txt });
+              };
+              evaluateRules(ctx.supabase, ctx.business.id, 'payment_received', {
+                customer_phone: ctx.from,
+                customer_name: `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || undefined,
+                business_name: ctx.business.name,
+                reference_code: sd.reference_code as string,
+                reference_id: sd.order_id as string,
+                total_amount: sd.total_amount as number || 0,
+                service_type: 'order',
+              }, pmtSendMsg).catch(err => logger.error('[ORDERING] payment_received rule error:', err));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

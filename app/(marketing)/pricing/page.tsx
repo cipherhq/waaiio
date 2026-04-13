@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
-import { formatCurrency, getPricingTiers, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, getPricingTiers, TIER_FEATURES, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { loadCountries, getCountryList, type CountryRow } from '@/lib/countries';
 
 export default function PricingPage() {
@@ -63,56 +64,110 @@ export default function PricingPage() {
             <div className="grid gap-8 lg:grid-cols-3">
               <TierCard
                 tier="free"
-                name="Starter"
+                name={TIER_FEATURES.free.marketingName}
                 price="Free"
                 priceNote="No monthly fee"
-                description="Perfect for trying out Waaiio with zero risk."
-                features={[
-                  '7-day free trial (no fees at all)',
-                  'Up to 50 bookings/month',
-                  'WhatsApp automation',
-                  'Dashboard & analytics',
-                  `2.5% + ${formatCurrency(tiers.free.feeFlat, country)} per transaction`,
-                ]}
+                description={TIER_FEATURES.free.description}
+                features={tiers.free.features}
                 cta={{ label: 'Start Free Trial', href: '/get-started' }}
                 country={country}
               />
               <TierCard
                 tier="growth"
-                name="Pro"
+                name={TIER_FEATURES.growth.marketingName}
                 price={formatCurrency(tiers.growth.price, country)}
                 priceNote="/month"
-                description="For growing businesses that need more volume and features."
+                description={TIER_FEATURES.growth.description}
                 highlight
-                features={[
-                  'Everything in Starter, plus:',
-                  'Up to 500 bookings/month',
-                  'WhatsApp reminders',
-                  'Recurring payments',
-                  'Broadcast messages',
-                  `1.5% + ${formatCurrency(tiers.growth.feeFlat, country)} per transaction`,
-                ]}
+                features={tiers.growth.features}
                 cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
                 country={country}
               />
               <TierCard
                 tier="business"
-                name="Premium"
+                name={TIER_FEATURES.business.marketingName}
                 price={formatCurrency(tiers.business.price, country)}
                 priceNote="/month"
-                description="For established businesses that want full control and branding."
-                features={[
-                  'Everything in Pro, plus:',
-                  'Unlimited bookings',
-                  'Custom bot persona & greeting',
-                  'Loyalty & referral programs',
-                  'Queue & waitlist management',
-                  'Customer feedback & reviews',
-                  `1% + ${formatCurrency(tiers.business.feeFlat, country)} per transaction`,
-                ]}
+                description={TIER_FEATURES.business.description}
+                features={tiers.business.features}
                 cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
                 country={country}
               />
+            </div>
+          </div>
+        </AnimatedSection>
+      </section>
+
+      {/* Feature Comparison Table */}
+      <section className="border-t border-gray-100 bg-white py-16">
+        <AnimatedSection delay={0.1}>
+          <div className="mx-auto max-w-5xl px-4">
+            <h2 className="text-center text-2xl font-bold text-gray-900">Compare plans</h2>
+            <p className="mt-2 text-center text-gray-600">
+              See what&apos;s included in each plan at a glance
+            </p>
+
+            <div className="mt-10 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="py-3 pr-4 text-left font-medium text-gray-500">Feature</th>
+                    {(['free', 'growth', 'business'] as SubscriptionTier[]).map(tier => (
+                      <th key={tier} className="px-4 py-3 text-center font-semibold text-gray-900">
+                        {TIER_FEATURES[tier].marketingName}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {/* Limits section */}
+                  <tr className="bg-gray-50">
+                    <td colSpan={4} className="px-0 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Limits &amp; Pricing
+                    </td>
+                  </tr>
+                  <CompareRow
+                    label="Monthly bookings"
+                    values={['Up to 50', 'Up to 500', 'Unlimited']}
+                  />
+                  <CompareRow
+                    label="Transaction fee"
+                    values={[
+                      `${TIER_FEATURES.free.feePercentage}% + flat fee`,
+                      `${TIER_FEATURES.growth.feePercentage}% + flat fee`,
+                      `${TIER_FEATURES.business.feePercentage}% + flat fee`,
+                    ]}
+                  />
+                  <CompareRow
+                    label="Broadcasts / month"
+                    values={['—', '10 (500 recipients)', 'Unlimited']}
+                  />
+                  <CompareRow
+                    label="Whitelabel branding"
+                    values={[false, false, true]}
+                  />
+
+                  {/* Capabilities section */}
+                  <tr className="bg-gray-50">
+                    <td colSpan={4} className="px-0 py-2 text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Capabilities
+                    </td>
+                  </tr>
+                  {CAPABILITIES.map(cap => {
+                    const req = CAPABILITY_TIER_REQUIREMENTS[cap.id];
+                    const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
+                    return (
+                      <CompareRow
+                        key={cap.id}
+                        label={`${cap.icon} ${cap.label}`}
+                        values={(['free', 'growth', 'business'] as SubscriptionTier[]).map(
+                          t => tierRank[t] >= tierRank[req]
+                        )}
+                      />
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         </AnimatedSection>
@@ -159,9 +214,9 @@ export default function PricingPage() {
 
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
               {([
-                { tier: 'free' as SubscriptionTier, name: 'Starter', monthly: 0 },
-                { tier: 'growth' as SubscriptionTier, name: 'Pro', monthly: tiers.growth.price },
-                { tier: 'business' as SubscriptionTier, name: 'Premium', monthly: tiers.business.price },
+                { tier: 'free' as SubscriptionTier, name: TIER_FEATURES.free.marketingName, monthly: 0 },
+                { tier: 'growth' as SubscriptionTier, name: TIER_FEATURES.growth.marketingName, monthly: tiers.growth.price },
+                { tier: 'business' as SubscriptionTier, name: TIER_FEATURES.business.marketingName, monthly: tiers.business.price },
               ]).map((plan) => {
                 const fee = feeEstimates[plan.tier];
                 const total = plan.monthly + fee;
@@ -438,6 +493,29 @@ function BillingStep({ number, title, desc }: { number: string; title: string; d
       <h3 className="mt-3 text-sm font-semibold text-gray-900">{title}</h3>
       <p className="mt-2 text-sm leading-relaxed text-gray-600">{desc}</p>
     </div>
+  );
+}
+
+function CompareRow({ label, values }: { label: string; values: (boolean | string)[] }) {
+  return (
+    <tr>
+      <td className="py-2.5 pr-4 text-gray-700">{label}</td>
+      {values.map((v, i) => (
+        <td key={i} className="px-4 py-2.5 text-center">
+          {typeof v === 'boolean' ? (
+            v ? (
+              <svg className="mx-auto h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            ) : (
+              <span className="text-gray-300">—</span>
+            )
+          ) : (
+            <span className="text-gray-600">{v}</span>
+          )}
+        </td>
+      ))}
+    </tr>
   );
 }
 

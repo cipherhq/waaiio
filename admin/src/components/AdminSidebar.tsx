@@ -15,6 +15,7 @@ import {
   ClipboardList,
   ShoppingCart,
   Bot,
+  Hash,
   MessageCircle,
   Bell,
   Megaphone,
@@ -86,6 +87,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     label: 'Communication',
     items: [
       { icon: Bot, label: 'Bot Management', path: '/bot-management' },
+      { icon: Hash, label: 'Bot Keywords', path: '/bot-keywords' },
       { icon: MessageCircle, label: 'WhatsApp Channels', path: '/whatsapp-channels' },
       { icon: Bell, label: 'Notifications', path: '/notifications' },
       { icon: Megaphone, label: 'Broadcasts', path: '/broadcasts' },

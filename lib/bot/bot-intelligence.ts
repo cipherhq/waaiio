@@ -1,5 +1,6 @@
 // ── Types ──────────────────────────────────────────────
 
+/** @deprecated Intents are now handled via bot_keywords table */
 export type BotIntent =
   | 'greeting'
   | 'help'
@@ -16,14 +17,7 @@ export type BotIntent =
   | 'thanks'
   | 'checkin';
 
-interface IntentRule {
-  intent: BotIntent;
-  patterns: RegExp[];
-  /** Step to navigate to, or null for info-only response */
-  action: string | null;
-  response: string | null;
-}
-
+/** @deprecated Use unified keyword system instead */
 export interface IntentResult {
   intent: BotIntent;
   action: string | null;
@@ -44,168 +38,8 @@ interface AbuseRecord {
   cooldownUntil: number;
 }
 
-// ── Free-text steps where we should NOT fire intents ───
-
-const FREE_TEXT_STEPS = new Set([
-  'collect_name',
-  'collect_other_name',
-  'collect_email',
-  'special_requests',
-  'review_text',
-  'enter_amount',
-  'collect_address',
-  'queue_collect_name',
-]);
-
-// ── Intent rules (scored by specificity) ───────────────
-
-const INTENT_RULES: IntentRule[] = [
-  {
-    intent: 'checkin',
-    patterns: [
-      /^check\s*in$/i,
-      /^queue$/i,
-      /^(i'm here|i am here|arrived|i'm waiting|im here|im waiting)$/i,
-    ],
-    action: 'queue_checkin',
-    response: null,
-  },
-  {
-    intent: 'history',
-    patterns: [
-      /^(my\s+)?(transaction\s*|payment\s*)?history$/i,
-      /^(show\s+)?(my\s+)?transaction\s*history$/i,
-      /^(all|past)\s+(transactions?|payments?)$/i,
-    ],
-    action: 'transaction_history',
-    response: null,
-  },
-  {
-    intent: 'receipt',
-    patterns: [
-      /^(my\s+)?receipt$/i,
-      /^(last|latest|recent)\s+(receipt|transaction|payment)$/i,
-      /^send\s+(my\s+)?receipt$/i,
-    ],
-    action: 'transaction_receipt',
-    response: null,
-  },
-  {
-    intent: 'escalate',
-    patterns: [
-      /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone|representative)\b/i,
-      /\b(live\s+(agent|chat|person|support))\b/i,
-      /\b(real\s+person)\b/i,
-      /\b(customer\s+service)\b/i,
-      /\bi\s+need\s+(a\s+)?(human|agent|help|support)\b/i,
-      /^(abeg\s+connect\s+me|wan\s+talk\s+to\s+person|make\s+i\s+talk\s+to\s+person)$/i,
-    ],
-    action: 'escalate',
-    response: null,
-  },
-  {
-    intent: 'cancel',
-    patterns: [/\bcancel\s*(my\s*)?(booking|reservation|appointment|appt|order|session)\b/i],
-    action: 'bookings',
-    response: null,
-  },
-  {
-    intent: 'status',
-    patterns: [
-      /\b(my\s+)?(booking|reservation|appointment|appt)\s*(status)?\b/i,
-      /\b(check|view|show)\s+(my\s+)?(booking|reservation|appointment|appt|order)\b/i,
-      /\bwhere'?s?\s+my\s+(booking|reservation|appointment)\b/i,
-      /^status$/i,
-    ],
-    action: 'bookings',
-    response: null,
-  },
-  {
-    intent: 'booking',
-    patterns: [
-      // Core actions
-      /\b(book|reserve|table|reservation|appointment|order|buy|ticket|pay|donate)\b/i,
-      // Service words (standalone triggers)
-      /\b(tithe|offering|zakat|sadaqah|haircut|barb|massage|facial|manicure|pedicure)\b/i,
-      /\b(seed|first\s*fruit|building\s*fund|welfare|fitrah)\b/i,
-      /\b(school\s*fee|tuition|laundry|car\s*wash|grooming|tattoo)\b/i,
-      /\b(delivery|pickup|ride|parking|hotel|lodge|room|gym|workout)\b/i,
-      // Pidgin
-      /\b(i\s*wan|abeg|make\s*i|biko|jowo)\b.*\b(book|barb|cut|buy|pay|order|chop|come|lodge|wash|give|sow)\b/i,
-      /\b(wan|want|need)\s+(barb|haircut|trim|shave|braid|massage|ticket|food|room|chop)\b/i,
-    ],
-    action: 'city_selection',
-    response: "Let's get you started! 🎉",
-  },
-  {
-    intent: 'help',
-    patterns: [
-      /^help$/i,
-      /\b(what can you do|how does this work|options)\b/i,
-    ],
-    action: 'help',
-    response: null,
-  },
-  {
-    intent: 'greeting',
-    patterns: [
-      /^(hello|hi|hey|yo|howdy|hiya|sup)$/i,
-      /^good\s+(morning|afternoon|evening)$/i,
-      // Pidgin / Nigerian
-      /^(how\s*far|howfar|wetin\s*dey|bros|oga|madam)$/i,
-      // Yoruba
-      /^(e\s*kaaro|e\s*kaasan|e\s*kale|bawo\s*ni|pele\s*o?)$/i,
-      // Hausa
-      /^(sannu|ina\s*kwana|ina\s*wuni|barka\s*dai?)$/i,
-      // Igbo
-      /^(kedu|ndewo|nno)$/i,
-      // Twi / Ghanaian
-      /^(maakye|maaha|maadwo|akwaaba)$/i,
-    ],
-    action: 'restart',
-    response: null,
-  },
-  {
-    intent: 'menu',
-    patterns: [/\b(menu|food|what do you serve|dishes)\b/i],
-    action: null,
-    response: 'You can check the menu once you select a restaurant. \ud83c\udf7d\ufe0f',
-  },
-  {
-    intent: 'pricing',
-    patterns: [/\b(price|cost|how much|deposit|fee|expensive|cheap)\b/i],
-    action: null,
-    response: 'Deposit amounts vary by restaurant. Most are free to book! \ud83d\udcb0',
-  },
-  {
-    intent: 'hours',
-    patterns: [/\b(hours|opening|closing|when are you open)\b/i],
-    action: null,
-    response: "Opening hours depend on the restaurant. Let's pick one first! \ud83d\udd50",
-  },
-  {
-    intent: 'location',
-    patterns: [/\b(where|address|directions|map|location)\b/i],
-    action: null,
-    response: "I'll send directions after you book! Let's get you a table first. \ud83d\udccd",
-  },
-  {
-    intent: 'thanks',
-    patterns: [
-      /^(thanks|thank\s*you|cheers)$/i,
-      /^(cool|great|okay|ok|nice),?\s*(thanks|thank\s*you|cheers)$/i,
-    ],
-    action: 'acknowledge',
-    response: null,
-  },
-];
-
-const THANKS_RESPONSES = [
-  "You're welcome! \ud83d\ude0a",
-  'Happy to help! \ud83c\udf7d\ufe0f',
-  'Anytime! \ud83d\ude0a',
-  'Glad I could help! \ud83d\ude4f',
-];
+// NOTE: Intent rules (INTENT_RULES) have been migrated to the bot_keywords table
+// as system-scope keywords. See migration 041_unified_bot_keywords.sql.
 
 // ── Profanity word list (moderate filter) ──────────────
 
@@ -289,32 +123,8 @@ export class BotIntelligenceService {
   private readonly abuseMap = new Map<string, AbuseRecord>();
 
   // ── 1A. Intent Detection ──────────────────────────────
-
-  detectIntent(text: string, currentStep: string): IntentResult | null {
-    // Don't fire intents on free-text input steps
-    if (FREE_TEXT_STEPS.has(currentStep)) return null;
-
-    const normalized = text.toLowerCase().trim();
-
-    // Special case: bare numbers 1-5 in review_text step -> treat as rating
-    if (currentStep === 'review_text' && /^[1-5]$/.test(normalized)) {
-      return null; // let the handler deal with it
-    }
-
-    for (const rule of INTENT_RULES) {
-      for (const pattern of rule.patterns) {
-        if (pattern.test(normalized)) {
-          let response = rule.response;
-          if (rule.intent === 'thanks') {
-            response = THANKS_RESPONSES[Math.floor(Math.random() * THANKS_RESPONSES.length)];
-          }
-          return { intent: rule.intent, action: rule.action, response };
-        }
-      }
-    }
-
-    return null;
-  }
+  // REMOVED: detectIntent() — now handled by unified bot_keywords system.
+  // See keyword-service.ts: loadUnifiedKeywords() + matchUnifiedKeyword()
 
   // ── 1B. Profanity Detection ───────────────────────────
 

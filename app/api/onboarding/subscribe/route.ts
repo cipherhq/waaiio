@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { business_id, plan } = await request.json();
+    const { business_id, plan, callback } = await request.json();
 
     if (!business_id || !plan) {
       return NextResponse.json(
@@ -61,7 +61,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.waaiio.com`;
-    const callbackUrl = `${(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com').trim()}/get-started?step=success&business_id=${business_id}`;
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com').trim();
+    const callbackUrl = callback
+      ? `${appUrl}${callback}`
+      : `${appUrl}/get-started?step=success&business_id=${business_id}`;
 
     // Paystack path (NG, GH)
     if (gateway === 'paystack') {

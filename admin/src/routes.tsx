@@ -24,6 +24,7 @@ import PlatformSettings from './pages/PlatformSettings';
 import ImpersonationMode from './pages/ImpersonationMode';
 import ImpersonationAudit from './pages/ImpersonationAudit';
 import CategoryTemplates from './pages/CategoryTemplates';
+import BotKeywords from './pages/BotKeywords';
 import Customers from './pages/WhatsAppCustomers';
 import Giving from './pages/Giving';
 import Verification from './pages/Verification';
@@ -62,6 +63,7 @@ export const router = createBrowserRouter([
       { path: 'giving', Component: Giving },
       // Communication
       { path: 'bot-management', Component: BotManagement },
+      { path: 'bot-keywords', Component: BotKeywords },
       { path: 'whatsapp-channels', Component: WhatsAppChannels },
       { path: 'notifications', Component: Notifications },
       { path: 'broadcasts', Component: Broadcasts },

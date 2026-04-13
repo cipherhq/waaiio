@@ -5,6 +5,9 @@ import { initializePayment, verifyPayment, recordPlatformFee } from './shared/pa
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
+import { notifyOwnerNewBooking } from './shared/notify-owner';
+import { evaluateRules } from '@/lib/bot/automation/rules-engine';
+import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { BusinessCategoryKey } from '@/lib/constants';
@@ -668,6 +671,29 @@ export const schedulingFlow: FlowDefinition = {
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
 
+        // ── Fire booking_created rules + sequences (non-blocking) ──
+        if (ctx.business) {
+          const ruleCtx = {
+            customer_phone: ctx.from,
+            customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || undefined,
+            business_name: ctx.business.name,
+            service_name: (d.service_name as string) || undefined,
+            reference_code: booking.reference_code,
+            reference_id: booking.id,
+            total_amount: totalDeposit,
+            date: d.date as string,
+            time: d.time as string,
+            party_size: d.party_size as number,
+          };
+          const sendMsg = async (to: string, txt: string) => {
+            await ctx.sender.sendText({ to, text: txt });
+          };
+          evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
+            .catch(err => console.error('[SCHEDULING] booking_created rule error:', err));
+          triggerSequences(ctx.supabase, ctx.business.id, 'after_booking', ctx.from, ruleCtx)
+            .catch(err => console.error('[SCHEDULING] after_booking sequence error:', err));
+        }
+
         // Reserve booking slot (overbooking prevention)
         if (ctx.business) {
           await ctx.supabase.rpc('reserve_booking_slot', {
@@ -808,6 +834,25 @@ export const schedulingFlow: FlowDefinition = {
             body: `Booking at ${ctx.business.name} on ${dateLabel} at ${d.time} confirmed. Ref: ${booking.reference_code}`,
           });
 
+          // Notify business owner (email always, WhatsApp for dedicated numbers)
+          const customerName = d.book_for_other
+            ? (d.other_name as string)
+            : `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
+          notifyOwnerNewBooking({
+            supabase: ctx.supabase,
+            sender: ctx.sender,
+            businessId: ctx.business.id,
+            businessName: ctx.business.name,
+            countryCode: (ctx.business.country_code || 'NG') as CountryCode,
+            referenceCode: booking.reference_code,
+            customerName,
+            date: dateLabel,
+            time: (d.time as string) || '',
+            quantity: partySize,
+            quantityLabel: labels.quantityLabel,
+            amount: totalDeposit > 0 ? totalDeposit : undefined,
+          }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
+
           // Post-completion: loyalty, feedback, referral
           handlePostCompletion({
             supabase: ctx.supabase,
@@ -881,8 +926,27 @@ export const schedulingFlow: FlowDefinition = {
               ].join('\n'),
             });
 
-            // Post-completion: loyalty, feedback, referral
+            // Notify business owner (email always, WhatsApp for dedicated numbers)
             if (ctx.business) {
+              const custName = d.book_for_other
+                ? (d.other_name as string)
+                : `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
+              notifyOwnerNewBooking({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business.id,
+                businessName: ctx.business.name,
+                countryCode: (ctx.business.country_code || 'NG') as CountryCode,
+                referenceCode: d.reference_code as string,
+                customerName: custName,
+                date: dateLabel,
+                time: (d.time as string) || '',
+                quantity: d.party_size as number,
+                quantityLabel: labels.quantityLabel,
+                amount: d.total_deposit as number || undefined,
+              }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
+
+              // Post-completion: loyalty, feedback, referral
               handlePostCompletion({
                 supabase: ctx.supabase,
                 businessId: ctx.business.id,
@@ -892,6 +956,20 @@ export const schedulingFlow: FlowDefinition = {
                 referenceId: d.booking_id as string,
                 sender: ctx.sender,
               }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
+
+              // Fire payment_received rule (non-blocking)
+              const pmtSendMsg = async (to: string, txt: string) => {
+                await ctx.sender.sendText({ to, text: txt });
+              };
+              evaluateRules(ctx.supabase, ctx.business.id, 'payment_received', {
+                customer_phone: ctx.from,
+                customer_name: custName,
+                business_name: ctx.business.name,
+                reference_code: d.reference_code as string,
+                reference_id: d.booking_id as string,
+                total_amount: d.deposit_amount as number || 0,
+                service_type: 'booking',
+              }, pmtSendMsg).catch(err => console.error('[SCHEDULING] payment_received rule error:', err));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

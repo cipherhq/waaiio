@@ -99,6 +99,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       status: 'success',
       business_id: businessId,
+      plan,
       bot_code: business?.bot_code,
       slug: business?.slug,
     });

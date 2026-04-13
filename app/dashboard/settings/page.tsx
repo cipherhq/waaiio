@@ -2,11 +2,17 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { BUSINESS_CATEGORIES, CATEGORY_LABELS, PRICING_TIERS, formatCurrency, type BusinessCategoryKey, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+import { BUSINESS_CATEGORIES, CATEGORY_LABELS, PRICING_TIERS, getPricingTiers, formatCurrency, type BusinessCategoryKey, type CountryCode, type PaymentGatewayName, type SubscriptionTier } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
+import {
+  CAPABILITIES,
+  CAPABILITY_TIER_REQUIREMENTS,
+  type CapabilityId,
+  TIER_LABELS,
+} from '@/lib/capabilities/types';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 const DAY_LABELS: Record<string, string> = {
@@ -32,8 +38,20 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'account'>('profile');
 
   // Account tab state
+  const searchParams = useSearchParams();
   const [downgrading, setDowngrading] = useState(false);
   const [downgraded, setDowngraded] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
+  const [upgraded, setUpgraded] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null } | null>(null);
+  const [waDisconnecting, setWaDisconnecting] = useState(false);
+  // Post-upgrade capabilities modal state
+  const [showCapModal, setShowCapModal] = useState(false);
+  const [upgradedTier, setUpgradedTier] = useState<SubscriptionTier | null>(null);
+  const [newCapSelections, setNewCapSelections] = useState<CapabilityId[]>([]);
+  const [capSaving, setCapSaving] = useState(false);
+
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -136,6 +154,84 @@ export default function SettingsPage() {
     }
     loadZones();
   }, [business.id]);
+
+  // Load WhatsApp channel info
+  useEffect(() => {
+    fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data) setWaChannel(data); })
+      .catch(() => {});
+  }, [business.id]);
+
+  // Localized pricing tiers for upgrade cards
+  const localTiers = getPricingTiers(country);
+
+  // Verify payment after returning from gateway
+  useEffect(() => {
+    if (searchParams.get('upgraded') !== 'true') return;
+    const reference = searchParams.get('reference') || searchParams.get('trxref');
+    const targetPlan = (searchParams.get('plan') || 'growth') as SubscriptionTier;
+    setActiveTab('account');
+    setVerifying(true);
+
+    fetch('/api/onboarding/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_id: business.id, plan: targetPlan, reference }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.status === 'success') {
+          setUpgraded(true);
+          // Show capabilities modal with newly unlocked capabilities
+          const previousTier = (business.subscription_tier || 'free') as SubscriptionTier;
+          const newTier = (data.plan || targetPlan) as SubscriptionTier;
+          const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
+
+          const newlyUnlocked = CAPABILITIES.filter(cap => {
+            const reqTier = CAPABILITY_TIER_REQUIREMENTS[cap.id];
+            const wasAvailable = tierRank[previousTier] >= tierRank[reqTier];
+            const nowAvailable = tierRank[newTier] >= tierRank[reqTier];
+            return nowAvailable && !wasAvailable;
+          }).map(cap => cap.id);
+
+          if (newlyUnlocked.length > 0) {
+            setUpgradedTier(newTier);
+            setNewCapSelections([...newlyUnlocked]);
+            setShowCapModal(true);
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        setVerifying(false);
+        // Clean URL params
+        window.history.replaceState({}, '', '/dashboard/settings');
+      });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleUpgrade(plan: SubscriptionTier) {
+    setUpgrading(true);
+    try {
+      const res = await fetch('/api/onboarding/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          plan,
+          callback: `/dashboard/settings?upgraded=true&plan=${plan}`,
+        }),
+      });
+      const data = await res.json();
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+      } else {
+        setUpgrading(false);
+      }
+    } catch {
+      setUpgrading(false);
+    }
+  }
 
   async function handleSaveZones() {
     setZonesSaving(true);
@@ -1523,62 +1619,200 @@ export default function SettingsPage() {
       ) : activeTab === 'account' ? (
         /* Account Tab */
         <div className="mt-6 max-w-xl space-y-6">
-          {/* Cancel Subscription Card */}
+          {/* Subscription & Upgrade */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Subscription</h2>
 
-            {business.subscription_tier === 'free' ? (
-              <div className="mt-3">
-                <p className="text-sm text-gray-600">
-                  You&apos;re on the <span className="font-semibold">Free</span> plan.
-                </p>
-                <Link
-                  href="/pricing"
-                  className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
-                >
-                  Upgrade from the pricing page
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </Link>
+            {verifying && (
+              <div className="mt-4 flex items-center gap-2 rounded-lg bg-blue-50 p-3">
+                <svg className="h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="text-sm text-blue-700">Verifying your payment...</span>
               </div>
-            ) : (
-              <div className="mt-3">
-                <p className="text-sm text-gray-600">
+            )}
+
+            {upgraded && (
+              <div className="mt-4 rounded-lg bg-green-50 p-4">
+                <p className="text-sm font-medium text-green-700">
+                  Upgraded successfully!
+                </p>
+                {upgradedTier && (
+                  <button
+                    onClick={() => setShowCapModal(true)}
+                    className="mt-2 text-sm font-semibold text-brand hover:underline"
+                  >
+                    Configure new capabilities &rarr;
+                  </button>
+                )}
+                {!upgradedTier && (
+                  <p className="mt-1 text-xs text-green-600">
+                    Refresh the page to see your new features.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {!verifying && !upgraded && (
+              <>
+                <p className="mt-3 text-sm text-gray-600">
                   Current plan:{' '}
                   <span className="font-semibold">{tier?.name || business.subscription_tier}</span>
                   {tier?.price != null && tier.price > 0 && (
                     <span className="text-gray-400"> ({formatCurrency(tier.price, country)}/month)</span>
                   )}
                 </p>
-                <p className="mt-2 text-xs text-gray-500">
-                  Downgrading removes paid-tier benefits and increases platform fees.
+
+                {/* Upgrade cards */}
+                {business.subscription_tier !== 'business' && (
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    {(['growth', 'business'] as SubscriptionTier[])
+                      .filter((p) => {
+                        if (business.subscription_tier === 'free') return true;
+                        if (business.subscription_tier === 'growth') return p === 'business';
+                        return false;
+                      })
+                      .map((p) => {
+                        const t = localTiers[p];
+                        return (
+                          <div key={p} className="rounded-lg border border-gray-200 p-4">
+                            <h3 className="text-sm font-semibold text-gray-900">{t.name}</h3>
+                            <p className="mt-1 text-lg font-bold text-gray-900">
+                              {formatCurrency(t.price, country)}
+                              <span className="text-sm font-normal text-gray-500">/month</span>
+                            </p>
+                            <ul className="mt-3 space-y-1.5">
+                              {t.features.slice(0, 4).map((f) => (
+                                <li key={f} className="flex items-start gap-1.5 text-xs text-gray-600">
+                                  <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                  {f}
+                                </li>
+                              ))}
+                            </ul>
+                            <button
+                              onClick={() => handleUpgrade(p)}
+                              disabled={upgrading}
+                              className="mt-4 w-full rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                            >
+                              {upgrading ? 'Redirecting...' : `Upgrade to ${t.name}`}
+                            </button>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+
+                {business.subscription_tier === 'business' && (
+                  <p className="mt-3 text-xs text-gray-500">You&apos;re on the highest plan.</p>
+                )}
+
+                {/* Downgrade */}
+                {business.subscription_tier !== 'free' && (
+                  <div className="mt-4 border-t border-gray-100 pt-4">
+                    <p className="text-xs text-gray-500">
+                      Downgrading removes paid-tier benefits and increases platform fees.
+                    </p>
+                    {downgraded ? (
+                      <p className="mt-3 text-sm font-medium text-green-600">
+                        Downgraded to Free plan successfully.
+                      </p>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits.')) return;
+                          setDowngrading(true);
+                          const supabase = createClient();
+                          await supabase
+                            .from('businesses')
+                            .update({ subscription_tier: 'free' })
+                            .eq('id', business.id);
+                          setDowngrading(false);
+                          setDowngraded(true);
+                        }}
+                        disabled={downgrading}
+                        className="mt-3 rounded-lg border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        {downgrading ? 'Downgrading...' : 'Downgrade to Free'}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* WhatsApp Number */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">WhatsApp Number</h2>
+
+            {!waChannel ? (
+              <p className="mt-3 text-sm text-gray-400">Loading...</p>
+            ) : waChannel.channel ? (
+              <>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Phone</span>
+                    <span className="font-medium text-gray-900 font-mono">{waChannel.channel.phone_number}</span>
+                  </div>
+                  {waChannel.channel.display_name && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Display name</span>
+                      <span className="font-medium text-gray-900">{waChannel.channel.display_name}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Status</span>
+                    <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">Connected</span>
+                  </div>
+                </div>
+
+                <p className="mt-4 text-xs text-gray-500">
+                  To change your WhatsApp number, disconnect first, then reconnect with your new number from the onboarding page.
                 </p>
 
-                {downgraded ? (
-                  <p className="mt-4 text-sm font-medium text-green-600">
-                    Downgraded to Free plan successfully.
-                  </p>
-                ) : (
+                <div className="mt-3 flex gap-2">
+                  <Link
+                    href={`/get-started?step=whatsapp&business_id=${business.id}`}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Reconnect with new number
+                  </Link>
                   <button
                     onClick={async () => {
-                      if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits.')) return;
-                      setDowngrading(true);
-                      const supabase = createClient();
-                      await supabase
-                        .from('businesses')
-                        .update({ subscription_tier: 'free' })
-                        .eq('id', business.id);
-                      setDowngrading(false);
-                      setDowngraded(true);
+                      if (!confirm('Disconnect your dedicated WhatsApp number? You will revert to the shared platform number.')) return;
+                      setWaDisconnecting(true);
+                      try {
+                        await fetch(`/api/settings/whatsapp-channel?business_id=${business.id}`, { method: 'DELETE' });
+                        setWaChannel({ wa_method: 'shared', channel: null });
+                      } catch {} finally {
+                        setWaDisconnecting(false);
+                      }
                     }}
-                    disabled={downgrading}
-                    className="mt-4 rounded-lg border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                    disabled={waDisconnecting}
+                    className="rounded-lg border border-red-200 px-4 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
                   >
-                    {downgrading ? 'Downgrading...' : 'Downgrade to Free'}
+                    {waDisconnecting ? 'Disconnecting...' : 'Disconnect'}
                   </button>
-                )}
-              </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm text-gray-600">
+                  Using the shared platform number. Customers reach your business by texting your bot code.
+                </p>
+                <Link
+                  href={`/get-started?step=whatsapp&business_id=${business.id}`}
+                  className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
+                >
+                  Connect your own WhatsApp number
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Link>
+              </>
             )}
           </div>
 
@@ -1637,6 +1871,119 @@ export default function SettingsPage() {
           </div>
         </div>
       ) : null}
+
+      {/* ── Post-Upgrade Capabilities Modal ── */}
+      {showCapModal && upgradedTier && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">
+                  New capabilities unlocked!
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Your {TIER_LABELS[upgradedTier]} plan includes these new features.
+                  Toggle on the ones you want to activate.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowCapModal(false)}
+                className="ml-4 rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="mt-5 space-y-2">
+              {(() => {
+                const previousTier = (business.subscription_tier || 'free') as SubscriptionTier;
+                const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
+
+                return CAPABILITIES.filter(cap => {
+                  const reqTier = CAPABILITY_TIER_REQUIREMENTS[cap.id];
+                  const wasAvailable = tierRank[previousTier] >= tierRank[reqTier];
+                  const nowAvailable = tierRank[upgradedTier] >= tierRank[reqTier];
+                  return nowAvailable && !wasAvailable;
+                }).map(cap => {
+                  const isOn = newCapSelections.includes(cap.id);
+                  return (
+                    <button
+                      key={cap.id}
+                      type="button"
+                      onClick={() => {
+                        setNewCapSelections(prev =>
+                          prev.includes(cap.id)
+                            ? prev.filter(c => c !== cap.id)
+                            : [...prev, cap.id]
+                        );
+                      }}
+                      className={`flex w-full items-center gap-4 rounded-xl border-2 p-4 text-left transition ${
+                        isOn ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <span className="text-2xl">{cap.icon}</span>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-bold text-gray-900">{cap.label}</h3>
+                        <p className="mt-0.5 text-xs text-gray-500">{cap.description}</p>
+                      </div>
+                      <div className={`flex h-6 w-11 flex-shrink-0 items-center rounded-full transition ${
+                        isOn ? 'bg-brand' : 'bg-gray-200'
+                      }`}>
+                        <div className={`h-5 w-5 rounded-full bg-white shadow transition ${
+                          isOn ? 'translate-x-5' : 'translate-x-0.5'
+                        }`} />
+                      </div>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                onClick={async () => {
+                  setCapSaving(true);
+                  const supabase = createClient();
+                  // Merge: keep existing enabled + add newly selected
+                  const allEnabled = [...new Set([...capabilities, ...newCapSelections])];
+                  // Disable all first
+                  await supabase
+                    .from('business_capabilities')
+                    .update({ is_enabled: false })
+                    .eq('business_id', business.id);
+                  // Enable selected
+                  for (const cap of allEnabled) {
+                    await supabase
+                      .from('business_capabilities')
+                      .upsert(
+                        { business_id: business.id, capability: cap, is_enabled: true },
+                        { onConflict: 'business_id,capability' },
+                      );
+                  }
+                  setCapSaving(false);
+                  setShowCapModal(false);
+                }}
+                disabled={capSaving}
+                className="flex-1 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+              >
+                {capSaving ? 'Saving...' : 'Save & Continue'}
+              </button>
+              <button
+                onClick={() => setShowCapModal(false)}
+                className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+              >
+                Skip
+              </button>
+            </div>
+
+            <p className="mt-3 text-xs text-gray-400">
+              You can always change these later in the Capabilities page.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

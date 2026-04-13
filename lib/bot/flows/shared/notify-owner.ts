@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { sendEmail } from '@/lib/email/client';
-import { newOrderEmail } from '@/lib/email/templates';
+import { newOrderEmail, newBookingOwnerEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -28,10 +28,10 @@ interface NotifyOwnerOpts {
 export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> {
   const { supabase, sender, businessId, businessName, countryCode, referenceCode, customerName, items, totalAmount, deliveryAddress } = opts;
 
-  // Fetch owner email and phone from businesses -> profiles join
+  // Fetch owner email, phone, and wa_method from businesses -> profiles join
   const { data: biz } = await supabase
     .from('businesses')
-    .select('phone, owner_id, profiles:owner_id (email, phone)')
+    .select('phone, owner_id, wa_method, profiles:owner_id (email, phone)')
     .eq('id', businessId)
     .single();
 
@@ -40,11 +40,12 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email;
   const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(totalAmount, cc);
   const dashboardUrl = `https://app.waaiio.com/dashboard/orders`;
 
-  // Send email (fire-and-forget)
+  // Always send email
   if (ownerEmail) {
     const { subject, html } = newOrderEmail({
       businessName,
@@ -60,8 +61,8 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
     );
   }
 
-  // Send WhatsApp to owner (fire-and-forget)
-  if (ownerPhone) {
+  // Send WhatsApp only for businesses with their own number
+  if (isDedicated && ownerPhone) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
       return `  \u2022 ${label} x${i.quantity}`;
@@ -110,7 +111,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
 
   const { data: biz } = await supabase
     .from('businesses')
-    .select('phone, owner_id, profiles:owner_id (email, phone)')
+    .select('phone, owner_id, wa_method, profiles:owner_id (email, phone)')
     .eq('id', businessId)
     .single();
 
@@ -119,11 +120,12 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email;
   const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(estimatedSubtotal, cc);
   const dashboardUrl = `https://app.waaiio.com/dashboard/orders/quotes`;
 
-  // Send email
+  // Always send email
   if (ownerEmail) {
     const itemLines = items.map(i => `${i.name} x${i.quantity}`).join(', ');
     sendEmail({
@@ -140,8 +142,8 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
     }).catch(err => logger.error('[NOTIFY-OWNER] Quote email error:', err));
   }
 
-  // Send WhatsApp
-  if (ownerPhone) {
+  // Send WhatsApp only for businesses with their own number
+  if (isDedicated && ownerPhone) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
       return `  \u2022 ${label} x${i.quantity}`;
@@ -173,6 +175,81 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
     const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
     sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
       logger.error('[NOTIFY-OWNER] Quote WhatsApp error:', err),
+    );
+  }
+}
+
+interface NotifyBookingOpts {
+  supabase: SupabaseClient;
+  sender: MessageSender;
+  businessId: string;
+  businessName: string;
+  countryCode: CountryCode;
+  referenceCode: string;
+  customerName: string;
+  date: string;
+  time: string;
+  quantity: number;
+  quantityLabel: string;
+  amount?: number;
+}
+
+export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<void> {
+  const { supabase, sender, businessId, businessName, countryCode, referenceCode, customerName, date, time, quantity, quantityLabel, amount } = opts;
+
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('phone, owner_id, wa_method, profiles:owner_id (email, phone)')
+    .eq('id', businessId)
+    .single();
+
+  if (!biz) return;
+
+  const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
+  const ownerEmail = profile?.email;
+  const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
+  const cc = countryCode || 'NG';
+  const dashboardUrl = `https://app.waaiio.com/dashboard/reservations`;
+
+  // Always send email
+  if (ownerEmail) {
+    const { subject, html } = newBookingOwnerEmail({
+      businessName,
+      referenceCode,
+      customerName,
+      date,
+      time,
+      quantity,
+      quantityLabel,
+      amount: amount ? formatCurrency(amount, cc) : undefined,
+      dashboardUrl,
+    });
+    sendEmail({ to: ownerEmail, subject, html }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Booking email error:', err),
+    );
+  }
+
+  // Send WhatsApp only for businesses with their own number
+  if (isDedicated && ownerPhone) {
+    const lines = [
+      `\uD83D\uDCC5 *New Booking!*`,
+      '',
+      `\uD83D\uDD11 Ref: *${referenceCode}*`,
+      `\uD83D\uDC64 Customer: ${customerName}`,
+      `\uD83D\uDCC6 ${date} at ${time}`,
+      `\uD83D\uDC65 ${quantity} ${quantityLabel}`,
+    ];
+
+    if (amount) {
+      lines.push(`\uD83D\uDCB0 Amount: *${formatCurrency(amount, cc)}*`);
+    }
+
+    lines.push('', `Open your dashboard to manage this booking.`);
+
+    const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Booking WhatsApp error:', err),
     );
   }
 }

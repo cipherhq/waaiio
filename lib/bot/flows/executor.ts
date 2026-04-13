@@ -6,6 +6,7 @@ import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
 import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 
 export class FlowExecutor {
   constructor(
@@ -78,8 +79,20 @@ export class FlowExecutor {
       business,
     };
 
-    // Check if step should be skipped
-    if (step.skipIf && await step.skipIf(ctx)) {
+    // ── Step overrides: load business-level overrides ──
+    let override: StepOverride | undefined;
+    if (business) {
+      try {
+        const overrides = await loadOverrides(this.supabase, business.id, resolvedFlowType);
+        override = overrides.get(stepId);
+      } catch { /* non-fatal */ }
+    }
+
+    // Check if step should be skipped (override or programmatic)
+    const shouldSkip = override?.action === 'skip'
+      || (override?.action !== 'require' && step.skipIf && await step.skipIf(ctx));
+
+    if (shouldSkip) {
       const nextStepId = await step.next(ctx);
       if (nextStepId) {
         await this.advanceToStep(session, nextStepId, from, ctx);
@@ -89,10 +102,15 @@ export class FlowExecutor {
       return;
     }
 
-    // No input = show prompt
+    // No input = show prompt (possibly customized)
     if (!input) {
-      const messages = await step.prompt(ctx);
-      await this.sendMessages(from, messages);
+      if (override?.action === 'custom' && override.customPrompt) {
+        // Send custom prompt text instead of the step's default
+        await this.sendText(from, override.customPrompt);
+      } else {
+        const messages = await step.prompt(ctx);
+        await this.sendMessages(from, messages);
+      }
       return;
     }
 
@@ -169,8 +187,16 @@ export class FlowExecutor {
         .eq('id', session.id);
     }
 
-    // Advance to next step
-    const nextStepId = await step.next(ctx);
+    // ── Branch conditions: check override-based branching before default next() ──
+    let nextStepId: string | null = null;
+    if (override?.branchConditions && override.branchConditions.length > 0) {
+      nextStepId = evaluateBranchConditions(override.branchConditions, session.session_data);
+    }
+    // Fall through to default next() if no branch matched
+    if (!nextStepId) {
+      nextStepId = await step.next(ctx);
+    }
+
     if (nextStepId) {
       await this.advanceToStep(session, nextStepId, from, ctx);
     } else {
@@ -213,8 +239,20 @@ export class FlowExecutor {
       return;
     }
 
-    // Check skip
-    if (nextStep.skipIf && await nextStep.skipIf(ctx)) {
+    // ── Step overrides for the next step ──
+    let nextOverride: StepOverride | undefined;
+    if (ctx.business) {
+      try {
+        const overrides = await loadOverrides(this.supabase, ctx.business.id, primaryFlowType);
+        nextOverride = overrides.get(nextStepId);
+      } catch { /* non-fatal */ }
+    }
+
+    // Check skip (override or programmatic)
+    const shouldSkipNext = nextOverride?.action === 'skip'
+      || (nextOverride?.action !== 'require' && nextStep.skipIf && await nextStep.skipIf(ctx));
+
+    if (shouldSkipNext) {
       const afterNext = await nextStep.next(ctx);
       if (afterNext) {
         await this.advanceToStep(session, afterNext, from, ctx);
@@ -224,9 +262,13 @@ export class FlowExecutor {
       return;
     }
 
-    // Show next step's prompt
-    const messages = await nextStep.prompt(ctx);
-    await this.sendMessages(from, messages);
+    // Show next step's prompt (possibly customized)
+    if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
+      await this.sendText(from, nextOverride.customPrompt);
+    } else {
+      const messages = await nextStep.prompt(ctx);
+      await this.sendMessages(from, messages);
+    }
   }
 
   private async sendMessages(to: string, messages: PromptMessage[]): Promise<void> {
@@ -269,6 +311,8 @@ export class FlowExecutor {
       case 'payment': return 'payment';
       case 'ordering': return 'ordering';
       case 'ticketing': return 'ticketing';
+      case 'reservation': return 'reservation';
+      case 'whatsapp_sign': return 'scheduling'; // no bot flow — dashboard only
       case 'crowdfunding': return 'payment'; // crowdfunding uses payment infrastructure
       case 'reports': return 'scheduling'; // reports don't have their own flow
       case 'queue': return 'scheduling'; // queue uses its own extended flow

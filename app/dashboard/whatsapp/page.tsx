@@ -11,6 +11,12 @@ interface QuickReply {
   response: string;
 }
 
+interface WelcomeButton {
+  label: string;
+  action: 'start_flow' | 'quick_reply' | 'url';
+  payload?: string;
+}
+
 interface WhatsAppConfig {
   id: string;
   bot_greeting: string;
@@ -19,7 +25,12 @@ interface WhatsAppConfig {
   welcome_image_url: string | null;
   bot_confirmation_template: string;
   bot_reminder_template: string;
+  bot_order_confirmation_template: string | null;
+  bot_payment_receipt_template: string | null;
+  bot_order_status_template: string | null;
   quick_replies: QuickReply[];
+  welcome_buttons: WelcomeButton[];
+  default_reply: string | null;
 }
 
 export default function WhatsAppPage() {
@@ -27,15 +38,23 @@ export default function WhatsAppPage() {
   const [config, setConfig] = useState<WhatsAppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savingReplies, setSavingReplies] = useState(false);
   const [form, setForm] = useState({
     bot_greeting: '',
     bot_alias: '',
     auto_confirm: true,
+    default_reply: '',
   });
-  const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
-  const [editingReply, setEditingReply] = useState<QuickReply | null>(null);
-  const [isNewReply, setIsNewReply] = useState(false);
+  const [welcomeButtons, setWelcomeButtons] = useState<WelcomeButton[]>([]);
+  const [templates, setTemplates] = useState({
+    bot_confirmation_template: '',
+    bot_reminder_template: '',
+    bot_order_confirmation_template: '',
+    bot_payment_receipt_template: '',
+    bot_order_status_template: '',
+  });
+  const [savingTemplates, setSavingTemplates] = useState(false);
+  const [savingButtons, setSavingButtons] = useState(false);
+  const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
 
   const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER || '';
   const whatsappLink = business.bot_code
@@ -57,8 +76,16 @@ export default function WhatsAppPage() {
           bot_greeting: data.bot_greeting || '',
           bot_alias: data.bot_alias || '',
           auto_confirm: data.auto_confirm ?? true,
+          default_reply: data.default_reply || '',
         });
-        setQuickReplies((data.quick_replies as QuickReply[]) || []);
+        setWelcomeButtons((data.welcome_buttons as WelcomeButton[]) || []);
+        setTemplates({
+          bot_confirmation_template: data.bot_confirmation_template || '',
+          bot_reminder_template: data.bot_reminder_template || '',
+          bot_order_confirmation_template: data.bot_order_confirmation_template || '',
+          bot_payment_receipt_template: data.bot_payment_receipt_template || '',
+          bot_order_status_template: data.bot_order_status_template || '',
+        });
       }
       setLoading(false);
     }
@@ -74,44 +101,36 @@ export default function WhatsAppPage() {
         bot_greeting: form.bot_greeting,
         bot_alias: form.bot_alias || null,
         auto_confirm: form.auto_confirm,
+        default_reply: form.default_reply || null,
       })
       .eq('business_id', business.id);
     setSaving(false);
   }
 
-  async function handleSaveReplies(replies: QuickReply[]) {
-    setSavingReplies(true);
+  async function handleSaveButtons() {
+    setSavingButtons(true);
     const supabase = createClient();
     await supabase
       .from('whatsapp_config')
-      .update({ quick_replies: replies })
+      .update({ welcome_buttons: welcomeButtons })
       .eq('business_id', business.id);
-    setQuickReplies(replies);
-    setSavingReplies(false);
+    setSavingButtons(false);
   }
 
-  function handleAddReply() {
-    setIsNewReply(true);
-    setEditingReply({ trigger: '', label: '', response: '' });
-  }
-
-  function handleSaveReply() {
-    if (!editingReply) return;
-    let updated: QuickReply[];
-    if (isNewReply) {
-      updated = [...quickReplies, editingReply];
-    } else {
-      updated = quickReplies.map((r) =>
-        r.trigger === editingReply.trigger ? editingReply : r
-      );
-    }
-    handleSaveReplies(updated);
-    setEditingReply(null);
-    setIsNewReply(false);
-  }
-
-  function handleDeleteReply(trigger: string) {
-    handleSaveReplies(quickReplies.filter((r) => r.trigger !== trigger));
+  async function handleSaveTemplates() {
+    setSavingTemplates(true);
+    const supabase = createClient();
+    await supabase
+      .from('whatsapp_config')
+      .update({
+        bot_confirmation_template: templates.bot_confirmation_template || null,
+        bot_reminder_template: templates.bot_reminder_template || null,
+        bot_order_confirmation_template: templates.bot_order_confirmation_template || null,
+        bot_payment_receipt_template: templates.bot_payment_receipt_template || null,
+        bot_order_status_template: templates.bot_order_status_template || null,
+      })
+      .eq('business_id', business.id);
+    setSavingTemplates(false);
   }
 
   if (loading) {
@@ -202,6 +221,18 @@ export default function WhatsAppPage() {
                   </button>
                 </div>
 
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Default Reply</label>
+                  <textarea
+                    value={form.default_reply}
+                    onChange={(e) => setForm({ ...form, default_reply: e.target.value })}
+                    rows={2}
+                    placeholder="I didn't understand that. Type *menu* to see options."
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">Sent when the bot doesn&apos;t understand a message</p>
+                </div>
+
                 <button
                   onClick={handleSave}
                   disabled={saving}
@@ -252,120 +283,216 @@ export default function WhatsAppPage() {
         </div>
       </div>
 
-      {/* Quick Replies Section */}
+      {/* Welcome Buttons Section */}
       <div className="mt-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-bold text-gray-900">Quick Replies</h2>
-            <p className="mt-0.5 text-sm text-gray-500">
-              Canned responses the bot sends when customers ask common questions
-            </p>
+        <div className="rounded-xl border border-gray-100 bg-white p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Welcome Buttons</h2>
+              <p className="mt-0.5 text-sm text-gray-500">Up to 3 buttons shown after the greeting message</p>
+            </div>
+            {welcomeButtons.length < 3 && (
+              <button
+                onClick={() => setWelcomeButtons([...welcomeButtons, { label: '', action: 'start_flow' }])}
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+              >
+                + Add Button
+              </button>
+            )}
           </div>
+
+          {welcomeButtons.length === 0 ? (
+            <p className="mt-4 text-sm text-gray-400">No welcome buttons configured. The bot will send only the greeting text.</p>
+          ) : (
+            <div className="mt-4 space-y-3">
+              {welcomeButtons.map((btn, i) => (
+                <div key={i} className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <div className="flex-1 grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-gray-500">Label</label>
+                      <input
+                        type="text"
+                        value={btn.label}
+                        onChange={(e) => {
+                          const updated = [...welcomeButtons];
+                          updated[i] = { ...btn, label: e.target.value.slice(0, 20) };
+                          setWelcomeButtons(updated);
+                        }}
+                        placeholder="Book Now"
+                        maxLength={20}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-gray-500">Action</label>
+                      <select
+                        value={btn.action}
+                        onChange={(e) => {
+                          const updated = [...welcomeButtons];
+                          updated[i] = { ...btn, action: e.target.value as WelcomeButton['action'] };
+                          setWelcomeButtons(updated);
+                        }}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      >
+                        <option value="start_flow">Start Flow</option>
+                        <option value="quick_reply">Quick Reply</option>
+                        <option value="url">Send URL</option>
+                      </select>
+                    </div>
+                    {btn.action !== 'start_flow' && (
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-gray-500">
+                          {btn.action === 'quick_reply' ? 'Reply Trigger' : 'URL'}
+                        </label>
+                        <input
+                          type="text"
+                          value={btn.payload || ''}
+                          onChange={(e) => {
+                            const updated = [...welcomeButtons];
+                            updated[i] = { ...btn, payload: e.target.value };
+                            setWelcomeButtons(updated);
+                          }}
+                          placeholder={btn.action === 'quick_reply' ? 'hours' : 'https://...'}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setWelcomeButtons(welcomeButtons.filter((_, j) => j !== i))}
+                    className="mt-5 rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <button
-            onClick={handleAddReply}
-            className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+            onClick={handleSaveButtons}
+            disabled={savingButtons}
+            className="mt-4 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
           >
-            + Add Reply
+            {savingButtons ? 'Saving...' : 'Save Buttons'}
           </button>
         </div>
+      </div>
 
-        {/* Edit/Add Reply Form */}
-        {editingReply && (
-          <div className="mt-4 rounded-xl border border-brand/20 bg-brand-50/30 p-5">
-            <h3 className="text-sm font-semibold text-gray-900">
-              {isNewReply ? 'New Quick Reply' : 'Edit Quick Reply'}
-            </h3>
-            <div className="mt-3 space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Trigger Word</label>
-                  <input
-                    type="text"
-                    value={editingReply.trigger}
-                    onChange={(e) => setEditingReply({ ...editingReply, trigger: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
-                    placeholder="e.g. hours, location, menu"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                  />
-                  <p className="mt-1 text-xs text-gray-400">Keyword the bot matches in messages</p>
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Button Label</label>
-                  <input
-                    type="text"
-                    value={editingReply.label}
-                    onChange={(e) => setEditingReply({ ...editingReply, label: e.target.value })}
-                    placeholder="e.g. Business Hours, Our Location"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Response</label>
-                <textarea
-                  value={editingReply.response}
-                  onChange={(e) => setEditingReply({ ...editingReply, response: e.target.value })}
-                  rows={3}
-                  placeholder="The message the bot sends back..."
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                />
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleSaveReply}
-                  disabled={!editingReply.trigger.trim() || !editingReply.response.trim()}
-                  className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-                >
-                  {isNewReply ? 'Add' : 'Save'}
-                </button>
-                <button
-                  onClick={() => { setEditingReply(null); setIsNewReply(false); }}
-                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+      {/* Message Templates Section */}
+      <div className="mt-8">
+        <div className="rounded-xl border border-gray-100 bg-white p-6">
+          <h2 className="text-lg font-bold text-gray-900">Message Templates</h2>
+          <p className="mt-0.5 text-sm text-gray-500">Customize the messages your bot sends at key moments</p>
 
-        {/* Quick Replies List */}
-        {quickReplies.length === 0 && !editingReply ? (
-          <div className="mt-6 rounded-xl border border-dashed border-gray-200 p-8 text-center">
-            <p className="text-sm text-gray-500">No quick replies yet. Add common questions like business hours, location, or pricing.</p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {['{business_name}', '{customer_name}', '{date}', '{time}', '{reference_code}', '{amount}', '{service_name}', '{quantity}', '{status}'].map(v => (
+              <button
+                key={v}
+                onClick={() => navigator.clipboard.writeText(v)}
+                className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200"
+                title="Click to copy"
+              >
+                {v}
+              </button>
+            ))}
           </div>
-        ) : (
+
           <div className="mt-4 space-y-2">
-            {quickReplies.map((reply) => (
-              <div key={reply.trigger} className="flex items-start justify-between rounded-xl border border-gray-100 bg-white p-4">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <code className="rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{reply.trigger}</code>
-                    <span className="text-sm font-medium text-gray-900">{reply.label}</span>
+            {([
+              { key: 'bot_confirmation_template', label: 'Booking Confirmation', desc: 'Sent after a booking is confirmed' },
+              { key: 'bot_reminder_template', label: 'Booking Reminder', desc: 'Sent before the appointment' },
+              { key: 'bot_order_confirmation_template', label: 'Order Confirmation', desc: 'Sent after an order is placed' },
+              { key: 'bot_payment_receipt_template', label: 'Payment Receipt', desc: 'Sent after payment is received' },
+              { key: 'bot_order_status_template', label: 'Order Status Update', desc: 'Sent when order status changes' },
+            ] as const).map(tmpl => (
+              <div key={tmpl.key} className="rounded-lg border border-gray-100">
+                <button
+                  onClick={() => setExpandedTemplate(expandedTemplate === tmpl.key ? null : tmpl.key)}
+                  className="flex w-full items-center justify-between px-4 py-3 text-left"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">{tmpl.label}</p>
+                    <p className="text-xs text-gray-400">{tmpl.desc}</p>
                   </div>
-                  <p className="mt-1 text-sm text-gray-500 line-clamp-2">{reply.response}</p>
-                </div>
-                <div className="flex shrink-0 gap-1 pl-4">
-                  <button
-                    onClick={() => { setEditingReply(reply); setIsNewReply(false); }}
-                    className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </button>
-                  <button
-                    onClick={() => handleDeleteReply(reply.trigger)}
-                    className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                </div>
+                  <svg className={`h-4 w-4 text-gray-400 transition ${expandedTemplate === tmpl.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {expandedTemplate === tmpl.key && (
+                  <div className="border-t border-gray-100 px-4 py-3">
+                    <textarea
+                      value={templates[tmpl.key]}
+                      onChange={(e) => setTemplates({ ...templates, [tmpl.key]: e.target.value })}
+                      rows={4}
+                      placeholder="Leave empty to use the default template"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    {templates[tmpl.key] && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-gray-500">Preview:</p>
+                        <div className="mt-1 whitespace-pre-line rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                          {templates[tmpl.key]
+                            .replace(/\{business_name\}/g, business.name)
+                            .replace(/\{customer_name\}/g, 'John')
+                            .replace(/\{date\}/g, 'Mon 15 Apr')
+                            .replace(/\{time\}/g, '10:00 AM')
+                            .replace(/\{reference_code\}/g, 'BW-1234')
+                            .replace(/\{amount\}/g, '5,000')
+                            .replace(/\{service_name\}/g, 'Haircut')
+                            .replace(/\{quantity\}/g, '2')
+                            .replace(/\{status\}/g, 'Ready')}
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      onClick={() => setTemplates({ ...templates, [tmpl.key]: '' })}
+                      className="mt-2 text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      Reset to Default
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
-        )}
+
+          <button
+            onClick={handleSaveTemplates}
+            disabled={savingTemplates}
+            className="mt-4 w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+          >
+            {savingTemplates ? 'Saving...' : 'Save Templates'}
+          </button>
+        </div>
+      </div>
+
+      {/* Quick Replies Migration Banner */}
+      <div className="mt-8">
+        <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
+          <div className="flex items-start gap-3">
+            <svg className="mt-0.5 h-5 w-5 shrink-0 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <h3 className="text-sm font-semibold text-blue-900">Quick Replies moved to Keywords</h3>
+              <p className="mt-1 text-sm text-blue-700">
+                Quick replies have been migrated to the unified Keywords system. You can now manage all keyword triggers in one place with more powerful matching options.
+              </p>
+              <a
+                href="/dashboard/keywords"
+                className="mt-3 inline-flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition"
+              >
+                Go to Keywords
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

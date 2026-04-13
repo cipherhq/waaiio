@@ -8,7 +8,7 @@ export const BOOKING_REF_PREFIX = 'BW';
 export const TRIAL_DAYS = 7;
 
 // ── Flow Types ──
-export type FlowType = 'scheduling' | 'payment' | 'ordering' | 'ticketing';
+export type FlowType = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation';
 export type BusinessCategoryKey =
   | 'restaurant' | 'barber' | 'spa' | 'salon' | 'gym' | 'clinic'
   | 'consultant' | 'church' | 'mosque' | 'school' | 'ngo'
@@ -18,8 +18,16 @@ export type BusinessCategoryKey =
   | 'crowdfunding_org' | 'laundry' | 'veterinary' | 'dental'
   | 'coworking' | 'tutor' | 'photographer' | 'mall_vendor'
   | 'pharmacy' | 'hotel' | 'car_wash' | 'catering'
-  | 'funeral' | 'tailor' | 'other';
+  | 'funeral' | 'tailor' | 'shortlet' | 'other';
 export type SubscriptionTier = 'free' | 'growth' | 'business';
+
+/** Maps internal tier names to customer-facing marketing names */
+export const TIER_MARKETING_NAMES: Record<SubscriptionTier, string> = {
+  free: 'Starter',
+  growth: 'Pro',
+  business: 'Premium',
+};
+
 export type CountryCode = string;
 export type PaymentGatewayName = 'paystack' | 'stripe' | 'flutterwave' | 'square';
 
@@ -231,6 +239,7 @@ export const BUSINESS_CATEGORIES: Array<{
   { key: 'mall_vendor', label: 'Mall Vendor', icon: '🏪', flow: 'ordering' },
   { key: 'pharmacy', label: 'Pharmacy', icon: '💊', flow: 'ordering' },
   { key: 'hotel', label: 'Hotel & Lodge', icon: '🛏️', flow: 'scheduling' },
+  { key: 'shortlet', label: 'Shortlet / Apartment', icon: '🏘️', flow: 'reservation' },
   { key: 'car_wash', label: 'Car Wash', icon: '🚿', flow: 'scheduling' },
   { key: 'catering', label: 'Catering', icon: '🍳', flow: 'ordering' },
   { key: 'funeral', label: 'Funeral Services', icon: '🌺', flow: 'payment' },
@@ -298,6 +307,7 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   catering: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🍳', receiptTitle: 'Order Confirmed', quantityLabel: 'servings', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Party Package, Corporate Lunch', defaultHasPrice: true },
   funeral: { entityName: 'service', entityNamePlural: 'services', actionVerb: 'Pay', confirmationEmoji: '🌺', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Family', personLabelPlural: 'Families', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Service Fee, Memorial Contribution', defaultHasPrice: false },
   tailor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '✂️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Custom Suit, Alteration', defaultHasPrice: true },
+  shortlet: { entityName: 'stay', entityNamePlural: 'stays', actionVerb: 'Book a Stay', confirmationEmoji: '🏘️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Apartment', serviceNamePlural: 'Apartments', namePlaceholder: 'e.g. Studio Apartment, 2-Bed Flat', defaultHasPrice: true },
   other: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '✅', receiptTitle: 'Booking Confirmed', quantityLabel: 'slots', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. General Booking', defaultHasPrice: true },
 };
 
@@ -368,6 +378,72 @@ export const BROADCAST_LIMITS: Record<SubscriptionTier, {
   free: { maxBroadcasts: 0, maxRecipients: 0 },
   growth: { maxBroadcasts: 10, maxRecipients: 500 },
   business: { maxBroadcasts: Infinity, maxRecipients: Infinity },
+};
+
+// ── Tier Feature Sets (single source of truth) ──
+
+export interface TierFeatureSet {
+  marketingName: string;
+  description: string;
+  feePercentage: number;
+  maxBookings: number;
+  whitelabel: boolean;
+  capabilities: string[];
+  broadcastLimits: { maxBroadcasts: number; maxRecipients: number };
+  highlights: string[];
+}
+
+export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
+  free: {
+    marketingName: 'Starter',
+    description: 'Perfect for trying out Waaiio with zero risk.',
+    feePercentage: 2.5,
+    maxBookings: 50,
+    whitelabel: false,
+    capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
+    broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
+    highlights: [
+      '7-day free trial (no fees)',
+      'Up to 50 bookings/month',
+      'WhatsApp automation',
+      'Dashboard & analytics',
+    ],
+  },
+  growth: {
+    marketingName: 'Pro',
+    description: 'For growing businesses that need more volume and features.',
+    feePercentage: 1.5,
+    maxBookings: 500,
+    whitelabel: false,
+    capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat', 'reservation', 'reminders', 'loyalty', 'referral'],
+    broadcastLimits: { maxBroadcasts: 10, maxRecipients: 500 },
+    highlights: [
+      'Everything in Starter, plus:',
+      'Up to 500 bookings/month',
+      'WhatsApp reminders',
+      'Recurring payments',
+      'Broadcast messages (10/mo, 500 recipients)',
+    ],
+  },
+  business: {
+    marketingName: 'Premium',
+    description: 'For established businesses that want full control and branding.',
+    feePercentage: 1.0,
+    maxBookings: Infinity,
+    whitelabel: true,
+    capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat', 'reservation', 'reminders', 'loyalty', 'referral', 'whatsapp_sign', 'queue', 'waitlist', 'reports', 'staff', 'crowdfunding'],
+    broadcastLimits: { maxBroadcasts: Infinity, maxRecipients: Infinity },
+    highlights: [
+      'Everything in Pro, plus:',
+      'Unlimited bookings',
+      'Custom bot persona & greeting',
+      'Loyalty & referral programs',
+      'Queue & waitlist management',
+      'Customer feedback & reviews',
+      'Whitelabel branding',
+      'Unlimited broadcasts',
+    ],
+  },
 };
 
 // ── Legacy pricing (kept for backward compatibility) ──
@@ -513,6 +589,11 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Memorial Contribution', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
   ],
   tailor: [],
+  shortlet: [
+    { name: 'Studio Apartment', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
+    { name: '1-Bedroom Apartment', price: 45000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
+    { name: '2-Bedroom Apartment', price: 75000, price_is_variable: false, duration_minutes: null, deposit_amount: 25000 },
+  ],
   other: [
     { name: 'General Booking', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
   ],
@@ -551,6 +632,7 @@ export function getMaxQuantity(category: BusinessCategoryKey): number {
     case 'coworking':
       return 10;
     case 'hotel':
+    case 'shortlet':
       return 10;
     case 'restaurant':
     case 'catering':
@@ -720,11 +802,8 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       price: 0,
       feeFlat: cp.free.feeFlat,
       features: [
-        '7-day free trial (no fees)',
-        'Up to 50 bookings/month',
-        'WhatsApp automation',
-        'Dashboard & analytics',
-        `2.5% + ${fmt(cp.free.feeFlat)} per transaction after trial`,
+        ...TIER_FEATURES.free.highlights,
+        `${TIER_FEATURES.free.feePercentage}% + ${fmt(cp.free.feeFlat)} per transaction after trial`,
       ],
     },
     growth: {
@@ -732,12 +811,8 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       price: cp.growth.price,
       feeFlat: cp.growth.feeFlat,
       features: [
-        'Up to 500 bookings/month',
-        'WhatsApp automation',
-        'WhatsApp reminders',
-        'Recurring payments',
-        'Broadcast messages',
-        `1.5% + ${fmt(cp.growth.feeFlat)} per transaction`,
+        ...TIER_FEATURES.growth.highlights,
+        `${TIER_FEATURES.growth.feePercentage}% + ${fmt(cp.growth.feeFlat)} per transaction`,
       ],
     },
     business: {
@@ -745,12 +820,8 @@ export function getPricingTiers(countryCode: CountryCode = 'NG'): Record<Subscri
       price: cp.business.price,
       feeFlat: cp.business.feeFlat,
       features: [
-        'Unlimited bookings',
-        'Custom bot persona & greeting',
-        'Loyalty & referral programs',
-        'Queue & waitlist management',
-        'Customer feedback & reviews',
-        `1% + ${fmt(cp.business.feeFlat)} per transaction`,
+        ...TIER_FEATURES.business.highlights,
+        `${TIER_FEATURES.business.feePercentage}% + ${fmt(cp.business.feeFlat)} per transaction`,
       ],
     },
   };

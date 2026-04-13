@@ -52,6 +52,28 @@ const EMPTY_ADDON: Omit<ProductAddon, 'sort_order'> = {
   is_active: true,
 };
 
+interface VolumeDiscountRule {
+  id?: string;
+  product_id: string | null;
+  name: string;
+  min_quantity: number;
+  max_quantity: number | null;
+  discount_type: 'percentage' | 'fixed_per_unit' | 'fixed_total';
+  discount_value: number;
+  is_active: boolean;
+  sort_order: number;
+}
+
+const EMPTY_DISCOUNT: Omit<VolumeDiscountRule, 'sort_order'> = {
+  product_id: null,
+  name: '',
+  min_quantity: 10,
+  max_quantity: null,
+  discount_type: 'percentage',
+  discount_value: 0,
+  is_active: true,
+};
+
 interface Product {
   id: string;
   name: string;
@@ -68,6 +90,7 @@ interface Product {
   allow_promo: boolean;
   has_variants: boolean;
   shipping_cost: number | null;
+  min_order_qty: number;
   variant_options?: OptionGroup[];
 }
 
@@ -86,6 +109,7 @@ const EMPTY_PRODUCT: Omit<Product, 'id'> = {
   allow_promo: true,
   has_variants: false,
   shipping_cost: null,
+  min_order_qty: 1,
   variant_options: [],
 };
 
@@ -168,7 +192,6 @@ export default function ProductsPage() {
     totalOrders: number;
     totalRevenue: number;
     avgOrderValue: number;
-    topProduct: string;
     bestSellers: { name: string; qty: number; pct: number; revenue: number }[];
   } | null>(null);
 
@@ -190,9 +213,13 @@ export default function ProductsPage() {
 
   // Add-ons
   const [addons, setAddons] = useState<ProductAddon[]>([]);
-  const [businessWideAddons, setBusinessWideAddons] = useState<ProductAddon[]>([]);
   const [deletedAddonIds, setDeletedAddonIds] = useState<string[]>([]);
   const [hasAddons, setHasAddons] = useState(false);
+
+  // Volume Discounts
+  const [volumeDiscounts, setVolumeDiscounts] = useState<VolumeDiscountRule[]>([]);
+  const [deletedDiscountIds, setDeletedDiscountIds] = useState<string[]>([]);
+  const [hasVolumeDiscounts, setHasVolumeDiscounts] = useState(false);
 
   // Bulk
   const [bulkText, setBulkText] = useState('');
@@ -234,9 +261,10 @@ export default function ProductsPage() {
         }
         for (const p of productList) {
           if (priceMap[p.id]) {
-            (p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number })._price_min = priceMap[p.id].min;
-            (p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number })._price_max = priceMap[p.id].max;
-            (p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number })._variant_count = priceMap[p.id].count;
+            const ext = p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number };
+            ext._price_min = priceMap[p.id].min;
+            ext._price_max = priceMap[p.id].max;
+            ext._variant_count = priceMap[p.id].count;
           }
         }
       }
@@ -285,7 +313,6 @@ export default function ProductsPage() {
       totalOrders,
       totalRevenue,
       avgOrderValue,
-      topProduct: '', // resolved below after products load
       bestSellers: sorted.map(([pid, v]) => ({
         name: pid, // placeholder — resolved in render using products array
         qty: v.qty,
@@ -295,19 +322,7 @@ export default function ProductsPage() {
     });
   }, [business.id]);
 
-  // Fetch business-wide addons (product_id IS NULL)
-  const fetchBusinessWideAddons = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('product_addons')
-      .select('*')
-      .eq('business_id', business.id)
-      .is('product_id', null)
-      .order('sort_order', { ascending: true });
-    setBusinessWideAddons((data as ProductAddon[]) || []);
-  }, [business.id]);
-
-  useEffect(() => { fetchProducts(); fetchAnalytics(); fetchBusinessWideAddons(); }, [fetchProducts, fetchAnalytics, fetchBusinessWideAddons]);
+  useEffect(() => { fetchProducts(); fetchAnalytics(); }, [fetchProducts, fetchAnalytics]);
 
   // Get unique categories for suggestions
   const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
@@ -328,6 +343,9 @@ export default function ProductsPage() {
     setAddons([]);
     setDeletedAddonIds([]);
     setHasAddons(false);
+    setVolumeDiscounts([]);
+    setDeletedDiscountIds([]);
+    setHasVolumeDiscounts(false);
     setView('add');
   }
 
@@ -339,6 +357,7 @@ export default function ProductsPage() {
     setBulkPrice('');
     setVariantImageFiles({});
     setDeletedAddonIds([]);
+    setDeletedDiscountIds([]);
 
     // Restore option groups from product
     const groups = (product.variant_options as OptionGroup[]) || [];
@@ -367,6 +386,16 @@ export default function ProductsPage() {
     const productAddons = (addonData as ProductAddon[]) || [];
     setAddons(productAddons);
     setHasAddons(productAddons.length > 0);
+
+    // Fetch product-specific volume discounts
+    const { data: discountData } = await supabase
+      .from('volume_discount_rules')
+      .select('*')
+      .eq('product_id', product.id)
+      .order('sort_order', { ascending: true });
+    const productDiscounts = (discountData as VolumeDiscountRule[]) || [];
+    setVolumeDiscounts(productDiscounts);
+    setHasVolumeDiscounts(productDiscounts.length > 0);
 
     setView('edit');
   }
@@ -488,6 +517,7 @@ export default function ProductsPage() {
       allow_promo: form.allow_promo,
       has_variants: form.has_variants,
       shipping_cost: form.shipping_cost,
+      min_order_qty: form.min_order_qty || 1,
     };
 
     // Only include variant_options if the column exists (migration 032)
@@ -625,6 +655,40 @@ export default function ProductsPage() {
     // If addons were disabled, clean up existing product-specific addons
     if (productId && !hasAddons && view === 'edit') {
       await supabase.from('product_addons').delete().eq('product_id', productId);
+    }
+
+    // Save volume discounts
+    if (productId && hasVolumeDiscounts) {
+      // Delete removed discounts
+      if (deletedDiscountIds.length > 0) {
+        await supabase.from('volume_discount_rules').delete().in('id', deletedDiscountIds);
+      }
+
+      for (let i = 0; i < volumeDiscounts.length; i++) {
+        const rule = volumeDiscounts[i];
+        if (!rule.name.trim()) continue;
+        const discountPayload = {
+          business_id: business.id,
+          product_id: productId,
+          name: rule.name.trim(),
+          min_quantity: rule.min_quantity,
+          max_quantity: rule.max_quantity || null,
+          discount_type: rule.discount_type,
+          discount_value: rule.discount_value,
+          is_active: rule.is_active,
+          sort_order: i,
+        };
+        if (rule.id) {
+          await supabase.from('volume_discount_rules').update(discountPayload).eq('id', rule.id);
+        } else {
+          await supabase.from('volume_discount_rules').insert(discountPayload);
+        }
+      }
+    }
+
+    // If volume discounts were disabled, clean up existing product-specific discounts
+    if (productId && !hasVolumeDiscounts && view === 'edit') {
+      await supabase.from('volume_discount_rules').delete().eq('product_id', productId);
     }
 
     setSaving(false);
@@ -883,24 +947,6 @@ export default function ProductsPage() {
 
               {hasAddons && (
                 <div className="mt-4 space-y-3">
-                  {/* Business-wide addons (read-only) */}
-                  {businessWideAddons.length > 0 && (
-                    <div className="rounded-lg bg-blue-50 p-3">
-                      <p className="text-xs font-medium text-blue-700">Business-wide add-ons (apply to all products)</p>
-                      <div className="mt-2 space-y-1">
-                        {businessWideAddons.map(a => (
-                          <p key={a.id} className="text-xs text-blue-600">
-                            {a.name} — {a.price_type === 'quote' ? 'Quote' : `${curr}${a.price.toLocaleString()}`}
-                            {a.price_type === 'per_unit' && a.unit_label ? ` ${a.unit_label}` : ''}
-                            {a.is_required ? ' (Required)' : ''}
-                            {a.is_negotiable ? ' (Negotiable)' : ''}
-                          </p>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Product-specific addons */}
                   {addons.map((addon, idx) => (
                     <div key={addon.id || idx} className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
                       <div className="grid grid-cols-2 gap-2">
@@ -1055,6 +1101,170 @@ export default function ProductsPage() {
                       className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
                     >
                       + Add Add-on
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Volume Discounts */}
+            <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Volume Discounts</p>
+                  <p className="text-xs text-gray-400">Auto-apply discounts when customers order in bulk</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newHas = !hasVolumeDiscounts;
+                    setHasVolumeDiscounts(newHas);
+                    if (newHas && volumeDiscounts.length === 0) {
+                      setVolumeDiscounts([{ ...EMPTY_DISCOUNT, sort_order: 0 }]);
+                    }
+                  }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${hasVolumeDiscounts ? 'bg-brand' : 'bg-gray-200'}`}
+                >
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: hasVolumeDiscounts ? '22px' : '2px' }} />
+                </button>
+              </div>
+
+              {hasVolumeDiscounts && (
+                <div className="mt-4 space-y-3">
+                  {volumeDiscounts.map((rule, idx) => (
+                    <div key={rule.id || idx} className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                      {/* Preview */}
+                      {rule.name && rule.discount_value > 0 && (
+                        <div className="rounded bg-brand-50 px-2.5 py-1.5">
+                          <p className="text-xs font-medium text-brand">
+                            {rule.min_quantity}{rule.max_quantity ? `\u2013${rule.max_quantity}` : '+'} units {'\u2192'} {rule.discount_type === 'percentage' ? `${rule.discount_value}% off` : rule.discount_type === 'fixed_per_unit' ? `${curr}${rule.discount_value} off each` : `${curr}${rule.discount_value} off total`}
+                          </p>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="mb-0.5 block text-xs font-medium text-gray-600">Rule Name</label>
+                          <input
+                            type="text"
+                            value={rule.name}
+                            onChange={(e) => {
+                              const updated = [...volumeDiscounts];
+                              updated[idx] = { ...updated[idx], name: e.target.value };
+                              setVolumeDiscounts(updated);
+                            }}
+                            placeholder="e.g. Bulk Order Discount"
+                            className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Min Qty</label>
+                            <input
+                              type="number"
+                              min={1}
+                              value={rule.min_quantity}
+                              onChange={(e) => {
+                                const updated = [...volumeDiscounts];
+                                updated[idx] = { ...updated[idx], min_quantity: Number(e.target.value) || 1 };
+                                setVolumeDiscounts(updated);
+                              }}
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-xs font-medium text-gray-600">Max Qty</label>
+                            <input
+                              type="number"
+                              min={0}
+                              value={rule.max_quantity ?? ''}
+                              onChange={(e) => {
+                                const updated = [...volumeDiscounts];
+                                updated[idx] = { ...updated[idx], max_quantity: e.target.value ? Number(e.target.value) : null };
+                                setVolumeDiscounts(updated);
+                              }}
+                              placeholder="No cap"
+                              className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="mb-0.5 block text-xs font-medium text-gray-600">Discount Type</label>
+                          <select
+                            value={rule.discount_type}
+                            onChange={(e) => {
+                              const updated = [...volumeDiscounts];
+                              updated[idx] = { ...updated[idx], discount_type: e.target.value as VolumeDiscountRule['discount_type'] };
+                              setVolumeDiscounts(updated);
+                            }}
+                            className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                          >
+                            <option value="percentage">Percentage (%)</option>
+                            <option value="fixed_per_unit">Fixed per unit ({curr})</option>
+                            <option value="fixed_total">Fixed total ({curr})</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-0.5 block text-xs font-medium text-gray-600">
+                            {rule.discount_type === 'percentage' ? 'Discount (%)' : `Discount (${curr})`}
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={rule.discount_type === 'percentage' ? 0.5 : 1}
+                            value={rule.discount_value || ''}
+                            onChange={(e) => {
+                              const updated = [...volumeDiscounts];
+                              updated[idx] = { ...updated[idx], discount_value: Number(e.target.value) || 0 };
+                              setVolumeDiscounts(updated);
+                            }}
+                            placeholder="0"
+                            className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = [...volumeDiscounts];
+                              updated[idx] = { ...updated[idx], is_active: !updated[idx].is_active };
+                              setVolumeDiscounts(updated);
+                            }}
+                            className={`relative h-5 w-9 shrink-0 rounded-full transition ${rule.is_active ? 'bg-brand' : 'bg-gray-200'}`}
+                          >
+                            <div className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition" style={{ left: rule.is_active ? '18px' : '2px' }} />
+                          </button>
+                          <span className="text-xs text-gray-500">{rule.is_active ? 'Active' : 'Inactive'}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (rule.id) setDeletedDiscountIds(prev => [...prev, rule.id!]);
+                            setVolumeDiscounts(volumeDiscounts.filter((_, i) => i !== idx));
+                          }}
+                          className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {volumeDiscounts.length < 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setVolumeDiscounts([...volumeDiscounts, { ...EMPTY_DISCOUNT, sort_order: volumeDiscounts.length }])}
+                      className="w-full rounded-lg border border-dashed border-gray-300 py-2 text-sm font-medium text-gray-500 hover:border-brand hover:text-brand"
+                    >
+                      + Add Discount Rule
                     </button>
                   )}
                 </div>
@@ -1378,6 +1588,20 @@ export default function ProductsPage() {
               checked={form.is_active}
               onChange={(v) => setForm({ ...form, is_active: v })}
             />
+
+            {/* Min Order Quantity (per product) */}
+            <div className="mt-2 rounded-lg border border-gray-100 bg-white p-3">
+              <label className="mb-1 block text-sm font-medium text-gray-800">Min Order Qty</label>
+              <p className="mb-2 text-xs text-gray-400">Minimum units a customer must buy</p>
+              <input
+                type="number"
+                min={1}
+                value={form.min_order_qty || 1}
+                onChange={(e) => setForm({ ...form, min_order_qty: Number(e.target.value) || 1 })}
+                placeholder="1"
+                className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+            </div>
           </div>
         </div>
 
@@ -1700,11 +1924,13 @@ export default function ProductsPage() {
 
                 <div className="mt-3 flex items-center justify-between">
                   <span className="text-sm font-bold text-gray-900">
-                    {product.has_variants
-                      ? (product as Product & { _variant_count?: number; _price_min?: number; _price_max?: number })._price_min !== undefined
-                        ? `${formatCurrency((product as Product & { _price_min?: number })._price_min!, country)} \u2013 ${formatCurrency((product as Product & { _price_max?: number })._price_max!, country)}`
-                        : 'Variants'
-                      : formatCurrency(product.price, country)}
+                    {(() => {
+                      if (!product.has_variants) return formatCurrency(product.price, country);
+                      const ext = product as Product & { _price_min?: number; _price_max?: number };
+                      return ext._price_min !== undefined
+                        ? `${formatCurrency(ext._price_min, country)} \u2013 ${formatCurrency(ext._price_max!, country)}`
+                        : 'Variants';
+                    })()}
                   </span>
                   <div className="flex items-center gap-2">
                     {product.has_variants && (

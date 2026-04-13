@@ -4,6 +4,7 @@ import { schedulingFlow } from './scheduling.flow';
 import { paymentFlow } from './payment.flow';
 import { orderingFlow } from './ordering.flow';
 import { ticketingFlow } from './ticketing.flow';
+import { reservationFlow } from './reservation.flow';
 import { capabilitySelectionFlow } from './capability-selection.flow';
 import { crowdfundingFlow } from './crowdfunding.flow';
 import { recurringManageFlow } from './recurring-manage.flow';
@@ -17,6 +18,7 @@ const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   payment: paymentFlow,
   ordering: orderingFlow,
   ticketing: ticketingFlow,
+  reservation: reservationFlow,
 };
 
 /** Extended registry including pseudo-flows */

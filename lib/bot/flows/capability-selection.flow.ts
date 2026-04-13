@@ -13,6 +13,8 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
       return 'Place an Order';
     case 'ticketing':
       return 'Buy Tickets';
+    case 'reservation':
+      return 'Book a Stay';
     case 'crowdfunding':
       return 'Give';
     case 'reminders':
@@ -35,6 +37,7 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'payment': return 'select_category';
     case 'ordering': return 'browse_catalog';
     case 'ticketing': return 'select_event';
+    case 'reservation': return 'select_apartment';
     case 'crowdfunding': return 'select_campaign';
     case 'chat': return 'chat_start';
     case 'waitlist': return 'waitlist_join';

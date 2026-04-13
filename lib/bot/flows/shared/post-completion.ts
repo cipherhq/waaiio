@@ -4,6 +4,8 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
 import type { CountryCode } from '@/lib/constants';
+import { triggerSequences } from '@/lib/bot/automation/sequence-service';
+import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 
 interface PostCompletionParams {
   supabase: SupabaseClient;
@@ -226,6 +228,41 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     } catch (err) {
       console.error('[POST-COMPLETION] Feedback error:', err);
     }
+  }
+
+  // 2.5. Sequences & Rules — trigger automation after completion
+  try {
+    const triggerEvent = serviceType === 'order' ? 'after_order' : 'after_booking';
+    const ruleEvent = serviceType === 'order' ? 'order_created' : 'booking_completed';
+
+    const automationContext: Record<string, unknown> = {
+      customer_phone: customerPhone,
+      customer_name: customerName,
+      service_name: serviceName,
+      amount_paid: amountPaid,
+      reference_code: referenceCode,
+      reference_id: referenceId,
+      service_type: serviceType,
+    };
+
+    // Load business name for rule messages
+    const { data: bizInfo } = await supabase
+      .from('businesses')
+      .select('name')
+      .eq('id', businessId)
+      .single();
+    if (bizInfo) automationContext.business_name = bizInfo.name;
+
+    // Trigger sequences
+    await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
+
+    // Evaluate rules
+    const sendMsg = async (to: string, text: string) => {
+      await sender.sendText({ to, text });
+    };
+    await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
+  } catch (err) {
+    console.error('[POST-COMPLETION] Automation error (non-fatal):', err);
   }
 
   // 3. Referral — generate code and send share link

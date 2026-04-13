@@ -306,6 +306,37 @@ export function newOrderEmail(details: {
   };
 }
 
+export function newBookingOwnerEmail(details: {
+  businessName: string;
+  referenceCode: string;
+  customerName: string;
+  date: string;
+  time: string;
+  quantity: number;
+  quantityLabel: string;
+  amount?: string;
+  dashboardUrl: string;
+}) {
+  const { businessName, referenceCode, customerName, date, time, quantity, quantityLabel, amount, dashboardUrl } = details;
+  return {
+    subject: `New booking — ${referenceCode}`,
+    html: wrap(`
+      ${h('New Booking!')}
+      ${p(`<strong>${businessName}</strong> just received a new booking.`)}
+      ${table(
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
+        kv('Customer', customerName) +
+        kv('Date', date) +
+        kv('Time', time) +
+        kv(quantityLabel, String(quantity)) +
+        (amount ? kv('Amount', amount) : '')
+      )}
+      ${btn('View Bookings', dashboardUrl)}
+      ${p('Log in to your dashboard to manage this booking.')}
+    `),
+  };
+}
+
 export function weeklyDigestEmail(businessName: string, stats: {
   bookings: number;
   revenue: string;

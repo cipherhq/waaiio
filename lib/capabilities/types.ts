@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff';
+export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -16,6 +16,8 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'payment', label: 'Payments', description: 'Collect payments, tithes, fees, and donations', icon: '💳' },
   { id: 'ordering', label: 'Online Store', description: 'Product catalog, cart, and order management', icon: '🛒' },
   { id: 'ticketing', label: 'Ticketing', description: 'Sell event tickets and manage attendance', icon: '🎟️' },
+  { id: 'reservation', label: 'Reservations', description: 'Duration-based stay bookings with check-in/out dates', icon: '🏘️' },
+  { id: 'whatsapp_sign', label: 'WhatsApp Sign', description: 'Send documents for e-signature via WhatsApp', icon: '✍️' },
   { id: 'reminders', label: 'Reminders', description: 'Automated appointment and payment reminders', icon: '🔔' },
   { id: 'crowdfunding', label: 'Crowdfunding', description: 'Run campaigns with goals and donor tracking', icon: '❤️' },
   { id: 'reports', label: 'Reports', description: 'Upload and send PDF reports to customers via WhatsApp', icon: '📄' },
@@ -45,9 +47,11 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   ticketing: 'free',
   feedback: 'free',
   chat: 'free',
+  reservation: 'growth',
   reminders: 'growth',
   loyalty: 'growth',
   referral: 'growth',
+  whatsapp_sign: 'business',
   queue: 'business',
   waitlist: 'business',
   reports: 'business',
@@ -103,7 +107,7 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   cinema: ['ticketing', 'feedback', 'waitlist', 'loyalty'],
   car_park: ['payment', 'feedback'],
   tattoo: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'staff'],
-  real_estate: ['scheduling', 'payment', 'feedback', 'chat', 'referral'],
+  real_estate: ['scheduling', 'payment', 'whatsapp_sign', 'feedback', 'chat', 'referral'],
   travel_agency: ['scheduling', 'payment', 'ticketing', 'feedback', 'chat', 'referral'],
   logistics: ['ordering', 'payment', 'feedback', 'chat'],
   taxi: ['payment', 'feedback', 'referral'],
@@ -123,5 +127,6 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   catering: ['ordering', 'payment', 'feedback', 'chat', 'referral'],
   funeral: ['payment', 'scheduling', 'feedback', 'chat'],
   tailor: ['ordering', 'scheduling', 'payment', 'feedback', 'loyalty', 'chat'],
+  shortlet: ['reservation', 'payment', 'feedback', 'chat'],
   other: ['scheduling', 'feedback', 'chat'],
 };

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
 
     await loadCountries();
     const body = await request.json();
-    const { name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
+    const { first_name, last_name, name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
     if (!name || !city || !neighborhood || !address || !phone || !category) {
@@ -216,7 +216,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update profile role
+    // Update profile: role + owner name
     const { data: profile } = await service
       .from('profiles')
       .select('role')
@@ -224,10 +224,15 @@ export async function POST(request: NextRequest) {
       .single();
 
     const isFirstBusiness = !profile?.role || profile.role === 'diner';
-    if (isFirstBusiness) {
+    const profileUpdate: Record<string, string> = {};
+    if (isFirstBusiness) profileUpdate.role = 'restaurant_owner';
+    if (first_name) profileUpdate.first_name = String(first_name).trim();
+    if (last_name) profileUpdate.last_name = String(last_name).trim();
+
+    if (Object.keys(profileUpdate).length > 0) {
       await service
         .from('profiles')
-        .update({ role: 'restaurant_owner' })
+        .update(profileUpdate)
         .eq('id', user.id);
     }
 

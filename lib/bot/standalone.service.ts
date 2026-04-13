@@ -14,6 +14,9 @@ export interface BotTemplates {
   greeting: string;
   confirmation: string;
   reminder: string;
+  orderConfirmation: string;
+  paymentReceipt: string;
+  orderStatus: string;
 }
 
 export class StandaloneService {
@@ -64,7 +67,7 @@ export class StandaloneService {
   async getBotTemplates(businessId: string): Promise<BotTemplates> {
     const { data } = await this.supabase
       .from('whatsapp_config')
-      .select('bot_greeting, bot_confirmation_template, bot_reminder_template')
+      .select('bot_greeting, bot_confirmation_template, bot_reminder_template, bot_order_confirmation_template, bot_payment_receipt_template, bot_order_status_template')
       .eq('business_id', businessId)
       .maybeSingle();
 
@@ -74,6 +77,12 @@ export class StandaloneService {
         '✅ *Confirmed!*\n\n{business_name}\n📅 {date}\n🕐 {time}\n👥 {quantity} {quantity_label}\n🔑 Ref: *{reference_code}*\n\nThank you! 🎉',
       reminder: data?.bot_reminder_template ||
         '⏰ *Reminder*\n\nYour booking at {business_name} is tomorrow at {time}.\n\nRef: {reference_code}\n\nSee you there! 🎉',
+      orderConfirmation: data?.bot_order_confirmation_template ||
+        '✅ *Order Confirmed!*\n\n🏢 {business_name}\n📦 {service_name}\n💰 {amount}\n🔑 Ref: *{reference_code}*\n\nWe\'ll notify you when it\'s ready!',
+      paymentReceipt: data?.bot_payment_receipt_template ||
+        '🧾 *Payment Receipt*\n\n🏢 {business_name}\n💰 {amount}\n📅 {date} at {time}\n🔑 Ref: *{reference_code}*\n\nThank you for your payment! 🙏',
+      orderStatus: data?.bot_order_status_template ||
+        '📦 *Order Update*\n\nYour order at {business_name} is now: *{status}*\n🔑 Ref: {reference_code}',
     };
   }
 

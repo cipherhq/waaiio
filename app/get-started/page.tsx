@@ -41,7 +41,7 @@ const WHATSAPP_NUMBERS: Record<CountryCode, string> = {
 const CATEGORY_GROUPS: { label: string; keys: BusinessCategoryKey[] }[] = [
   {
     label: 'Food & Hospitality',
-    keys: ['restaurant', 'food_delivery', 'catering', 'hotel'],
+    keys: ['restaurant', 'food_delivery', 'catering', 'hotel', 'shortlet'],
   },
   {
     label: 'Health & Beauty',
@@ -274,6 +274,10 @@ function OnboardingWizard() {
   const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
   const [showCapabilities, setShowCapabilities] = useState(false);
   const [selectedCapabilities, setSelectedCapabilities] = useState<CapabilityId[]>([]);
+
+  // Owner details
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
 
   // Business details
   const [name, setName] = useState('');
@@ -695,6 +699,8 @@ function OnboardingWizard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
           name,
           city,
           neighborhood,
@@ -1114,6 +1120,20 @@ function OnboardingWizard() {
                 <h2 className="text-2xl font-bold text-gray-900">{categoryInfo ? `${categoryInfo.label} Details` : 'Business Details'}</h2>
                 <p className="mt-1 text-sm text-gray-500">Tell us about your {categoryInfo?.label.toLowerCase() || 'business'}</p>
                 <div className="mt-6 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700">First Name *</label>
+                      <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)}
+                        placeholder="e.g. Ayodeji"
+                        className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Last Name *</label>
+                      <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)}
+                        placeholder="e.g. Ogunleye"
+                        className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
+                    </div>
+                  </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700">{categoryInfo?.label || 'Business'} Name *</label>
                     <input type="text" value={name} onChange={(e) => handleNameChange(e.target.value)}
@@ -1203,7 +1223,7 @@ function OnboardingWizard() {
                 </div>
                 <div className="mt-8 flex gap-3">
                   <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="submit" disabled={!name || !city || !neighborhood || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
+                  <button type="submit" disabled={!firstName || !lastName || !name || !city || !neighborhood || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
                 </div>
               </form>
             )}
