@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 
 interface ContractInfo {
@@ -29,6 +29,12 @@ export default function SignPage() {
   const [agreed, setAgreed] = useState(false);
   const [hasPdf, setHasPdf] = useState(false);
 
+  // Document display state
+  const [docBlobUrl, setDocBlobUrl] = useState<string | null>(null);
+  const [pdfPages, setPdfPages] = useState<string[]>([]);
+  const [docLoading, setDocLoading] = useState(false);
+  const [docError, setDocError] = useState('');
+
   // Fetch contract details
   useEffect(() => {
     async function fetchContract() {
@@ -55,7 +61,87 @@ export default function SignPage() {
     if (token) fetchContract();
   }, [token]);
 
-  // Initialize canvas
+  // Load uploaded document for inline display
+  const loadDocument = useCallback(async () => {
+    if (!contract?.template_url || !contract.id) return;
+
+    setDocLoading(true);
+    setDocError('');
+
+    const url = `/api/contracts/document/${contract.id}?token=${token}`;
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        setDocError('Could not load document');
+        setDocLoading(false);
+        return;
+      }
+
+      const contentType = res.headers.get('content-type') || '';
+      const blob = await res.blob();
+
+      if (contentType.startsWith('image/')) {
+        // Images: create blob URL and display directly
+        setDocBlobUrl(URL.createObjectURL(blob));
+        setDocLoading(false);
+      } else if (contentType === 'application/pdf') {
+        // PDFs: render pages using pdf.js
+        await renderPdfPages(blob);
+        setDocLoading(false);
+      } else {
+        // Fallback: download link
+        setDocBlobUrl(URL.createObjectURL(blob));
+        setDocLoading(false);
+      }
+    } catch {
+      setDocError('Failed to load document');
+      setDocLoading(false);
+    }
+  }, [contract?.template_url, contract?.id, token]);
+
+  useEffect(() => {
+    if (contract?.template_url) {
+      loadDocument();
+    }
+    // Cleanup blob URLs on unmount
+    return () => {
+      if (docBlobUrl) URL.revokeObjectURL(docBlobUrl);
+    };
+  }, [contract?.template_url, loadDocument]);
+
+  async function renderPdfPages(blob: Blob) {
+    try {
+      // Load pdf.js from CDN
+      const pdfjsLib = await import('pdfjs-dist');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+
+      const arrayBuffer = await blob.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pages: string[] = [];
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.5 });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d')!;
+
+        await page.render({ canvasContext: ctx, viewport, canvas }).promise;
+        pages.push(canvas.toDataURL('image/png'));
+      }
+
+      setPdfPages(pages);
+    } catch (err) {
+      console.error('PDF render error:', err);
+      // Fallback: provide blob URL for direct opening
+      setDocBlobUrl(URL.createObjectURL(blob));
+    }
+  }
+
+  // Initialize signature canvas
   useEffect(() => {
     if (state !== 'ready' && state !== 'signing') return;
     const canvas = canvasRef.current;
@@ -64,7 +150,6 @@ export default function SignPage() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas size for mobile
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * 2;
     canvas.height = rect.height * 2;
@@ -152,12 +237,6 @@ export default function SignPage() {
     }
   }
 
-  // Determine file type from template_url
-  function getFileType(url: string): 'pdf' | 'image' {
-    const ext = url.split('.').pop()?.toLowerCase() || '';
-    return ext === 'pdf' ? 'pdf' : 'image';
-  }
-
   if (state === 'loading') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50">
@@ -214,11 +293,10 @@ export default function SignPage() {
     );
   }
 
-  const documentUrl = contract?.template_url
+  const hasContent = !!(contract?.document_content || contract?.template_url);
+  const documentApiUrl = contract?.template_url
     ? `/api/contracts/document/${contract.id}?token=${token}`
     : null;
-  const fileType = contract?.template_url ? getFileType(contract.template_url) : null;
-  const hasContent = !!(contract?.document_content || contract?.template_url);
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-50">
@@ -242,40 +320,76 @@ export default function SignPage() {
         <div className="w-full max-w-lg">
 
           {/* Uploaded Document Section */}
-          {contract?.template_url && documentUrl && (
+          {contract?.template_url && (
             <div className="mb-6">
               <h2 className="mb-2 text-sm font-semibold text-gray-700">Document to Review</h2>
 
-              {fileType === 'pdf' ? (
-                <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-                  <iframe
-                    src={documentUrl}
-                    className="h-96 w-full"
-                    title="Contract document"
-                  />
+              {docLoading && (
+                <div className="flex items-center justify-center rounded-xl border border-gray-200 bg-white py-16 shadow-sm">
+                  <div className="text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-gray-200 border-t-blue-600" />
+                    <p className="mt-3 text-sm text-gray-500">Loading document...</p>
+                  </div>
                 </div>
-              ) : (
+              )}
+
+              {docError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
+                  <p className="text-sm text-red-600">{docError}</p>
+                  {documentApiUrl && (
+                    <a
+                      href={documentApiUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-block text-sm font-medium text-blue-600 hover:underline"
+                    >
+                      Open document in new tab
+                    </a>
+                  )}
+                </div>
+              )}
+
+              {/* Rendered PDF pages */}
+              {pdfPages.length > 0 && (
+                <div className="space-y-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm">
+                  {pdfPages.map((pageDataUrl, i) => (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      key={i}
+                      src={pageDataUrl}
+                      alt={`Page ${i + 1}`}
+                      className="w-full rounded border border-gray-100"
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* Image display */}
+              {docBlobUrl && pdfPages.length === 0 && !docLoading && (
                 <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={documentUrl}
+                    src={docBlobUrl}
                     alt="Contract document"
                     className="w-full"
                   />
                 </div>
               )}
 
-              <a
-                href={documentUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Download document
-              </a>
+              {/* Download link */}
+              {documentApiUrl && !docLoading && !docError && (
+                <a
+                  href={documentApiUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-2 inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:underline"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Download document
+                </a>
+              )}
             </div>
           )}
 

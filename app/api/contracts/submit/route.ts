@@ -62,9 +62,9 @@ export async function POST(request: NextRequest) {
         upsert: true,
       });
 
-    // Generate signed PDF if document has content
+    // Generate signed PDF if document has content or uploaded file
     let pdfPath: string | null = null;
-    if (contract.document_content) {
+    if (contract.document_content || contract.template_url) {
       try {
         // Get business name
         const { data: biz } = await supabase
@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
           signedAt: auditTrail.signed_at,
           auditTrail,
           contractId: contract.id,
+          hasUploadedDocument: !!contract.template_url,
         });
 
         pdfPath = `${contract.business_id}/${contract.id}/signed.pdf`;

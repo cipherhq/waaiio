@@ -3,7 +3,7 @@ import PDFDocument from 'pdfkit';
 interface ContractPdfData {
   businessName: string;
   title: string;
-  documentContent: string;
+  documentContent: string | null;
   signerName: string;
   signatureData: string; // base64 data URI
   signedAt: string;      // ISO date
@@ -14,6 +14,7 @@ interface ContractPdfData {
     signed_at: string;
   };
   contractId: string;
+  hasUploadedDocument?: boolean;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -38,6 +39,48 @@ function formatDate(iso: string): string {
   }
 }
 
+function drawWaaiioBranding(doc: PDFDocument, pageWidth: number) {
+  const brandColor = '#1a56db';
+
+  // Top-right Waaiio badge
+  const badgeX = pageWidth - 160;
+  const badgeY = 30;
+
+  // Brand mark
+  doc.fontSize(16).font('Helvetica-Bold').fillColor(brandColor)
+    .text('waaiio', badgeX, badgeY, { width: 110, align: 'right' });
+  doc.fontSize(7).font('Helvetica').fillColor('#888888')
+    .text('Electronic Signature', badgeX, badgeY + 18, { width: 110, align: 'right' });
+}
+
+function drawWaaiioFooter(doc: PDFDocument, pageWidth: number, y: number, data: ContractPdfData) {
+  const contentWidth = pageWidth - 100;
+  const brandColor = '#1a56db';
+
+  // Divider
+  doc.moveTo(50, y).lineTo(pageWidth - 50, y).strokeColor('#e0e0e0').stroke();
+  y += 15;
+
+  // Waaiio verification badge
+  doc.fontSize(9).font('Helvetica-Bold').fillColor(brandColor)
+    .text('Verified by waaiio', 50, y);
+  y += 14;
+
+  doc.fontSize(7).font('Helvetica').fillColor('#999999');
+  doc.text('This document was electronically signed and verified through waaiio\'s secure signing platform.', 50, y, { width: contentWidth });
+  y += 18;
+  doc.text(`Document ID: ${data.contractId}`, 50, y);
+  y += 10;
+  doc.text(`IP Address: ${data.auditTrail.ip}  |  Device: ${data.auditTrail.device_type}`, 50, y);
+  y += 10;
+  doc.text(`User Agent: ${data.auditTrail.user_agent.slice(0, 100)}`, 50, y);
+  y += 14;
+  doc.fontSize(6).fillColor('#bbbbbb')
+    .text('waaiio.com  |  Legally binding electronic signature', 50, y, { width: contentWidth, align: 'center' });
+
+  return y;
+}
+
 export async function generateSignedContractPdf(data: ContractPdfData): Promise<Buffer> {
   const doc = new PDFDocument({ size: 'A4', margin: 50 });
   const bufferPromise = collectPdfBuffer(doc);
@@ -45,12 +88,15 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   const pageWidth = doc.page.width;
   const contentWidth = pageWidth - 100; // 50px margins
 
+  // ── Waaiio Branding (top-right) ──
+  drawWaaiioBranding(doc, pageWidth);
+
   // ── Header ──
   doc.fontSize(10).font('Helvetica').fillColor('#666666')
-    .text(data.businessName, 50, 50, { width: contentWidth });
+    .text(data.businessName, 50, 50, { width: contentWidth - 120 });
 
   doc.fontSize(18).font('Helvetica-Bold').fillColor('#000000')
-    .text(data.title, 50, 70, { width: contentWidth });
+    .text(data.title, 50, 70, { width: contentWidth - 120 });
 
   doc.fontSize(9).font('Helvetica').fillColor('#888888')
     .text(`Date: ${formatDate(data.signedAt)}  |  Ref: ${data.contractId}`, 50, 95, { width: contentWidth });
@@ -60,43 +106,55 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
 
   // ── Document Body ──
   let y = 130;
-  doc.fontSize(10).font('Helvetica').fillColor('#000000');
 
-  const paragraphs = data.documentContent.split('\n');
-  for (const paragraph of paragraphs) {
-    const trimmed = paragraph.trim();
+  if (data.documentContent) {
+    doc.fontSize(10).font('Helvetica').fillColor('#000000');
 
-    // Check page space — estimate line count for pagination
-    const estimatedHeight = trimmed.length === 0 ? 10 : (Math.ceil(trimmed.length / 90) * 14) + 4;
-    if (y + estimatedHeight > doc.page.height - 120) {
-      doc.addPage();
-      y = 50;
+    const paragraphs = data.documentContent.split('\n');
+    for (const paragraph of paragraphs) {
+      const trimmed = paragraph.trim();
+
+      const estimatedHeight = trimmed.length === 0 ? 10 : (Math.ceil(trimmed.length / 90) * 14) + 4;
+      if (y + estimatedHeight > doc.page.height - 120) {
+        doc.addPage();
+        drawWaaiioBranding(doc, pageWidth);
+        y = 50;
+      }
+
+      if (trimmed.length === 0) {
+        y += 10;
+        continue;
+      }
+
+      const isHeading = trimmed === trimmed.toUpperCase() && trimmed.length > 3 && /[A-Z]/.test(trimmed);
+
+      if (isHeading) {
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#000000');
+        doc.text(trimmed, 50, y, { width: contentWidth });
+        y += (Math.ceil(trimmed.length / 75) * 16) + 8;
+        doc.fontSize(10).font('Helvetica');
+      } else {
+        doc.fontSize(10).font('Helvetica').fillColor('#000000');
+        doc.text(trimmed, 50, y, { width: contentWidth });
+        y += (Math.ceil(trimmed.length / 90) * 14) + 4;
+      }
     }
+  } else if (data.hasUploadedDocument) {
+    // For uploaded documents, add a note referencing the attached file
+    doc.fontSize(11).font('Helvetica').fillColor('#333333')
+      .text('This certificate confirms that the attached document has been reviewed and signed electronically.', 50, y, { width: contentWidth });
+    y += 40;
 
-    if (trimmed.length === 0) {
-      y += 10;
-      continue;
-    }
-
-    // Detect headings (all-caps lines or numbered section headers)
-    const isHeading = trimmed === trimmed.toUpperCase() && trimmed.length > 3 && /[A-Z]/.test(trimmed);
-
-    if (isHeading) {
-      doc.fontSize(12).font('Helvetica-Bold').fillColor('#000000');
-      doc.text(trimmed, 50, y, { width: contentWidth });
-      y += (Math.ceil(trimmed.length / 75) * 16) + 8;
-      doc.fontSize(10).font('Helvetica');
-    } else {
-      doc.fontSize(10).font('Helvetica').fillColor('#000000');
-      doc.text(trimmed, 50, y, { width: contentWidth });
-      y += (Math.ceil(trimmed.length / 90) * 14) + 4;
-    }
+    doc.fontSize(10).font('Helvetica').fillColor('#666666')
+      .text('The signer has confirmed they have read and agree to the terms of the uploaded document.', 50, y, { width: contentWidth });
+    y += 30;
   }
 
   // ── Signature Block ──
   y += 20;
-  if (y + 160 > doc.page.height - 60) {
+  if (y + 180 > doc.page.height - 80) {
     doc.addPage();
+    drawWaaiioBranding(doc, pageWidth);
     y = 50;
   }
 
@@ -133,25 +191,16 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   y += 5;
   doc.fontSize(8).font('Helvetica').fillColor('#666666')
     .text(data.signerName, 50, y);
-  y += 20;
+  y += 25;
 
-  // ── Audit Trail Footer ──
-  if (y + 60 > doc.page.height - 40) {
+  // ── Waaiio Verification Footer ──
+  if (y + 100 > doc.page.height - 40) {
     doc.addPage();
+    drawWaaiioBranding(doc, pageWidth);
     y = 50;
   }
 
-  doc.moveTo(50, y).lineTo(pageWidth - 50, y).strokeColor('#eeeeee').stroke();
-  y += 10;
-
-  doc.fontSize(7).font('Helvetica').fillColor('#999999');
-  doc.text(`Electronically signed via waaiio WhatsApp Sign`, 50, y, { width: contentWidth });
-  y += 12;
-  doc.text(`IP Address: ${data.auditTrail.ip}`, 50, y);
-  y += 10;
-  doc.text(`Device: ${data.auditTrail.device_type} | User Agent: ${data.auditTrail.user_agent.slice(0, 80)}`, 50, y);
-  y += 10;
-  doc.text(`Document ID: ${data.contractId}`, 50, y);
+  drawWaaiioFooter(doc, pageWidth, y, data);
 
   doc.end();
   return bufferPromise;
