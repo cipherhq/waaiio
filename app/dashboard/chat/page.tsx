@@ -108,21 +108,50 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Load conversations and messages via API (server-side auth)
+  // Load conversations and messages via API (server-side auth) + poll for new messages
   useEffect(() => {
-    async function load() {
+    let interval: ReturnType<typeof setInterval>;
+
+    async function load(isInitial = false) {
       try {
         const res = await fetch(`/api/chat/list?businessId=${business.id}`);
         const data = await res.json();
-        setConversations(data.conversations || []);
-        setMessages(data.messages || []);
+        const convs = data.conversations || [];
+        const msgs = data.messages || [];
+
+        if (isInitial) {
+          setConversations(convs);
+          setMessages(msgs);
+          setLoading(false);
+        } else {
+          // Merge: update existing + add new conversations
+          setConversations((prev) => {
+            const map = new Map(prev.map((c) => [c.id, c]));
+            for (const c of convs) map.set(c.id, c);
+            return Array.from(map.values());
+          });
+          // Merge: keep optimistic messages + add new from server
+          setMessages((prev) => {
+            const map = new Map(prev.map((m) => [m.id, m]));
+            for (const m of msgs) map.set(m.id, m);
+            if (map.size === prev.length) return prev; // no change
+            return Array.from(map.values()).sort(
+              (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            );
+          });
+        }
       } catch {
-        setConversations([]);
-        setMessages([]);
+        if (isInitial) {
+          setConversations([]);
+          setMessages([]);
+          setLoading(false);
+        }
       }
-      setLoading(false);
     }
-    load();
+
+    load(true);
+    interval = setInterval(() => load(false), 5000);
+    return () => clearInterval(interval);
   }, [business.id]);
 
   // Load canned responses
