@@ -960,7 +960,13 @@ export class BotService {
         // Forward message to business owner's phone
         await this.forwardToBusinessOwner(session.business_id, from, customerName, text);
 
-        await this.sendText(from, "Thanks for your message! A team member will respond shortly.");
+        // Only send acknowledgment on the first message in this chat session
+        if (!session.session_data.chat_ack_sent) {
+          await this.sendText(from, "Thanks for your message! A team member will respond shortly.");
+          await this.supabase.from('bot_sessions').update({
+            session_data: { ...session.session_data, chat_ack_sent: true },
+          }).eq('id', session.id);
+        }
         return;
       }
     }
