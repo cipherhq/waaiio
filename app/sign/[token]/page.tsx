@@ -76,9 +76,15 @@ export default function SignPage() {
           setAgreed(true);
         }
 
-        // Check if OTP is required and not yet verified
+        // Check if OTP is required and not yet verified — auto-send OTP
         if (data.require_otp && !data.otp_verified) {
           setState('otp_required');
+          // Auto-send OTP code
+          fetch('/api/contracts/otp/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token }),
+          }).catch(() => {});
           return;
         }
 
@@ -487,7 +493,7 @@ export default function SignPage() {
                 disabled={otpSending}
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
               >
-                {otpSending ? 'Sending...' : 'Send Code'}
+                {otpSending ? 'Sending...' : 'Resend Code'}
               </button>
             </div>
           </div>
