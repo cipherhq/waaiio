@@ -83,10 +83,12 @@ export async function POST(request: NextRequest) {
       text = (payload.text || '') as string;
     }
 
-    // Audio extraction: Gupshup sends innerPayload.type = 'audio' with innerPayload.url
+    // Audio extraction: Gupshup nests type on payload (not innerPayload), URL inside innerPayload
+    // payload = { source, type: "audio", payload: { url, contentType } }
     // The Gupshup URL expires, so download and re-upload to Supabase Storage
     let mediaUrl: string | undefined;
-    if (typeof innerPayload === 'object' && innerPayload && innerPayload.type === 'audio' && innerPayload.url) {
+    const payloadType = (payload.type as string) || '';
+    if (payloadType === 'audio' && typeof innerPayload === 'object' && innerPayload && innerPayload.url) {
       if (!text) text = '[Voice message]';
       try {
         const gupshupAudioUrl = innerPayload.url as string;
