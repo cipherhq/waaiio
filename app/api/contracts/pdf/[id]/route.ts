@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 
 export async function GET(
   request: NextRequest,
@@ -10,10 +11,10 @@ export async function GET(
     const { searchParams } = new URL(request.url);
     const signerToken = searchParams.get('token');
 
-    const supabase = await createClient();
+    const service = createServiceClient();
 
-    // Fetch contract
-    const { data: contract, error } = await supabase
+    // Fetch contract (service client to bypass RLS for unauthenticated signers)
+    const { data: contract, error } = await service
       .from('contracts')
       .select('id, business_id, title, signed_url, status, token')
       .eq('id', id)
@@ -32,17 +33,23 @@ export async function GET(
 
     if (signerToken && contract.token === signerToken) {
       authorized = true;
-    } else {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { data: biz } = await supabase
-          .from('businesses')
-          .select('owner_id')
-          .eq('id', contract.business_id)
-          .single();
-        if (biz && biz.owner_id === user.id) {
-          authorized = true;
+    }
+
+    if (!authorized) {
+      try {
+        const supabase = await createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { data: biz } = await service
+            .from('businesses')
+            .select('id')
+            .eq('id', contract.business_id)
+            .eq('owner_id', user.id)
+            .maybeSingle();
+          if (biz) authorized = true;
         }
+      } catch {
+        // No session available
       }
     }
 
@@ -56,7 +63,7 @@ export async function GET(
     }
 
     // Download from storage
-    const { data: file, error: downloadError } = await supabase.storage
+    const { data: file, error: downloadError } = await service.storage
       .from('contracts')
       .download(contract.signed_url);
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateSignedContractPdf } from '@/lib/pdf/contract-pdf-generator';
 import { appendSignatureToUploadedPdf } from '@/lib/pdf/append-signature';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { GupshupService } from '@/lib/channels/gupshup';
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,7 +19,7 @@ export async function POST(request: NextRequest) {
     // Look up contract by token
     const { data: contract, error } = await supabase
       .from('contracts')
-      .select('id, status, token_expires_at, business_id, title, template_url, document_content, signer_name')
+      .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone')
       .eq('token', token)
       .single();
 
@@ -63,10 +65,10 @@ export async function POST(request: NextRequest) {
         upsert: true,
       });
 
-    // Get business name
+    // Get business info
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name')
+      .select('name, country_code')
       .eq('id', contract.business_id)
       .single();
 
@@ -154,6 +156,53 @@ export async function POST(request: NextRequest) {
     if (updateError) {
       console.error('Failed to update contract:', updateError);
       return NextResponse.json({ error: 'Failed to save signature' }, { status: 500 });
+    }
+
+    // Send WhatsApp confirmation with download link to signer
+    if (contract.signer_phone) {
+      try {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
+        const downloadUrl = `${appUrl}/sign/${contract.token}`;
+
+        const confirmMsg = [
+          `\u2705 *Document Signed Successfully*`,
+          '',
+          `You have signed "${contract.title}" from ${businessName}.`,
+          '',
+          pdfPath
+            ? `Your signed copy is ready. Tap the link below to download it anytime:`
+            : `You can view your signature confirmation at:`,
+          downloadUrl,
+          '',
+          `\ud83d\udd12 Keep this link for your records.`,
+        ].join('\n');
+
+        const phone = contract.signer_phone.replace(/\D/g, '');
+        const resolver = new ChannelResolver(supabase);
+        const resolved =
+          (await resolver.resolveByBusinessId(contract.business_id)) ||
+          (await resolver.getSharedChannelForCountry(biz?.country_code || 'NG'));
+
+        let sent = false;
+        if (resolved) {
+          try {
+            const result = await resolved.sender.sendText({ to: phone, text: confirmMsg });
+            sent = result.success !== false;
+          } catch (chErr) {
+            console.warn('Confirmation channel send failed:', chErr);
+          }
+        }
+
+        if (!sent) {
+          const gupshup = new GupshupService();
+          if (gupshup.isConfigured) {
+            await gupshup.sendText({ to: phone, text: confirmMsg });
+          }
+        }
+      } catch (msgErr) {
+        // Don't fail the signing if confirmation message fails
+        console.warn('Failed to send signing confirmation:', msgErr);
+      }
     }
 
     return NextResponse.json({ success: true, contract_id: contract.id, has_pdf: !!pdfPath });

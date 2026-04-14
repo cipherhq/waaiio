@@ -15,12 +15,32 @@ export async function GET(
 
   const { data: contract, error } = await supabase
     .from('contracts')
-    .select('id, title, signer_name, status, token_expires_at, template_url, business_id, document_content')
+    .select('id, title, signer_name, status, token_expires_at, template_url, business_id, document_content, signed_at, signed_url')
     .eq('token', token)
     .single();
 
   if (error || !contract) {
     return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+  }
+
+  // Get business name
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('name')
+    .eq('id', contract.business_id)
+    .single();
+
+  // If already signed, return signed view data
+  if (contract.status === 'signed') {
+    return NextResponse.json({
+      id: contract.id,
+      title: contract.title,
+      signer_name: contract.signer_name,
+      business_name: business?.name || 'Business',
+      status: 'signed',
+      signed_at: contract.signed_at,
+      has_pdf: !!contract.signed_url?.endsWith('.pdf'),
+    });
   }
 
   // Check if expired
@@ -35,18 +55,9 @@ export async function GET(
 
   if (contract.status !== 'pending') {
     return NextResponse.json({
-      error: contract.status === 'signed'
-        ? 'This document has already been signed'
-        : 'This signing link is no longer valid',
+      error: 'This signing link is no longer valid',
     }, { status: 410 });
   }
-
-  // Get business name
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('name')
-    .eq('id', contract.business_id)
-    .single();
 
   return NextResponse.json({
     id: contract.id,

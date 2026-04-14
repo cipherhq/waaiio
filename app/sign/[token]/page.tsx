@@ -12,9 +12,11 @@ interface ContractInfo {
   expires_at: string;
   document_content: string | null;
   template_url: string | null;
+  signed_at?: string;
+  has_pdf?: boolean;
 }
 
-type PageState = 'loading' | 'ready' | 'signing' | 'submitting' | 'success' | 'error';
+type PageState = 'loading' | 'ready' | 'signing' | 'submitting' | 'success' | 'already_signed' | 'error';
 
 export default function SignPage() {
   const params = useParams();
@@ -48,6 +50,14 @@ export default function SignPage() {
         }
         const data = await res.json();
         setContract(data);
+
+        // If already signed, show the signed view
+        if (data.status === 'signed') {
+          setHasPdf(data.has_pdf === true);
+          setState('already_signed');
+          return;
+        }
+
         // If no document content and no uploaded file, auto-agree (backwards compatible)
         if (!data.document_content && !data.template_url) {
           setAgreed(true);
@@ -279,6 +289,49 @@ export default function SignPage() {
           </div>
           <h1 className="text-xl font-bold text-gray-900">Unable to Sign</h1>
           <p className="mt-2 text-gray-600">{errorMsg}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === 'already_signed') {
+    const signedDate = contract?.signed_at
+      ? new Date(contract.signed_at).toLocaleDateString('en-US', {
+          year: 'numeric', month: 'long', day: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        })
+      : null;
+
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
+        <div className="max-w-sm text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
+            <svg className="h-8 w-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-gray-900">Document Already Signed</h1>
+          <p className="mt-2 text-gray-600">
+            &quot;{contract?.title}&quot; was signed
+            {contract?.signer_name && <> by <span className="font-medium">{contract.signer_name}</span></>}
+            {signedDate && <> on {signedDate}</>}.
+          </p>
+
+          {hasPdf && contract && (
+            <a
+              href={`/api/contracts/pdf/${contract.id}?token=${token}`}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-blue-700"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Download Signed Copy
+            </a>
+          )}
+
+          <p className="mt-4 text-sm text-gray-400">
+            You can revisit this link anytime to download your copy.
+          </p>
         </div>
       </div>
     );
