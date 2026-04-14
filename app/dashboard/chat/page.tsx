@@ -1037,8 +1037,8 @@ export default function ChatPage() {
                         new Date(msg.created_at).toDateString() !==
                           new Date(prevMsg.created_at).toDateString();
 
-                      // System messages (escalation markers)
-                      const isSystem = msg.message_text.startsWith('[') && msg.message_text.endsWith(']');
+                      // System messages (escalation markers) — skip for media messages
+                      const isSystem = !msg.media_type && msg.message_text.startsWith('[') && msg.message_text.endsWith(']');
 
                       return (
                         <div key={msg.id}>
