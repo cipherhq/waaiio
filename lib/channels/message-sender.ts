@@ -33,6 +33,10 @@ export interface MessageSender {
     filename: string;
     caption?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
+  sendAudio(msg: {
+    to: string;
+    audioUrl: string;
+  }): Promise<{ success?: boolean; messageId?: string }>;
   sendTemplate?(msg: {
     to: string;
     templateName: string;
@@ -115,6 +119,17 @@ export class MetaCloudSender implements MessageSender {
       documentUrl: msg.documentUrl,
       filename: msg.filename,
       caption: msg.caption,
+    });
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendAudio(msg: {
+    to: string;
+    audioUrl: string;
+  }) {
+    const result = await this.cloud.sendAudio({
+      to: msg.to,
+      audioUrl: msg.audioUrl,
     });
     return { success: true, messageId: result.messageId };
   }

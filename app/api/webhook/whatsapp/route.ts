@@ -83,6 +83,13 @@ export async function POST(request: NextRequest) {
       text = (payload.text || '') as string;
     }
 
+    // Audio extraction: Gupshup sends innerPayload.type = 'audio' with innerPayload.url
+    let mediaUrl: string | undefined;
+    if (typeof innerPayload === 'object' && innerPayload && innerPayload.type === 'audio' && innerPayload.url) {
+      mediaUrl = innerPayload.url as string;
+      if (!text) text = '[Voice message]';
+    }
+
     const msgType = (innerPayload?.type || payload.type || 'text') as string;
 
     logger.debug('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
@@ -128,7 +135,7 @@ export async function POST(request: NextRequest) {
     const bot = new BotService(supabase, sender as MessageSender, standalone, intelligenceSvc);
 
     // Process message
-    await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId);
+    await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId, mediaUrl);
 
     logger.debug('[WEBHOOK] Message processed successfully');
     return NextResponse.json({ status: 'ok' });

@@ -15,9 +15,9 @@ export async function POST(request: NextRequest) {
     const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
     if (auth instanceof NextResponse) return auth;
 
-    const { businessId, customerPhone, messageText } = body;
-    if (!businessId || !customerPhone || !messageText) {
-      return NextResponse.json({ error: 'businessId, customerPhone, and messageText required' }, { status: 400 });
+    const { businessId, customerPhone, messageText, audioUrl } = body;
+    if (!businessId || !customerPhone || (!messageText && !audioUrl)) {
+      return NextResponse.json({ error: 'businessId, customerPhone, and messageText (or audioUrl) required' }, { status: 400 });
     }
 
     const supabase = createServiceClient();
@@ -35,10 +35,11 @@ export async function POST(request: NextRequest) {
       ? customerPhone.slice(1)
       : customerPhone;
 
-    await sender.sendText({
-      to: phone,
-      text: messageText,
-    });
+    if (audioUrl) {
+      await sender.sendAudio({ to: phone, audioUrl });
+    } else {
+      await sender.sendText({ to: phone, text: messageText });
+    }
 
     // Upsert conversation and get conversation_id
     await supabase.from('chat_conversations').upsert({
@@ -60,9 +61,11 @@ export async function POST(request: NextRequest) {
       business_id: businessId,
       customer_phone: customerPhone,
       direction: 'outbound',
-      message_text: messageText,
+      message_text: audioUrl ? '[Voice message]' : messageText,
       is_read: true,
       conversation_id: conv?.id || null,
+      media_url: audioUrl || null,
+      media_type: audioUrl ? 'audio' : null,
     }).select().single();
 
     return NextResponse.json({ success: true, message: inserted });

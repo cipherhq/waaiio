@@ -15,6 +15,8 @@ interface ChatMessage {
   staff_id: string | null;
   conversation_id: string | null;
   created_at: string;
+  media_url?: string | null;
+  media_type?: string | null;
 }
 
 interface ChatConversation {
@@ -97,6 +99,13 @@ export default function ChatPage() {
   const [forwardToggling, setForwardToggling] = useState(false);
   const [forwardUsage, setForwardUsage] = useState<{ count: number; month: string } | null>(null);
   const [businessTier, setBusinessTier] = useState<string>('free');
+  // Audio recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [sendingAudio, setSendingAudio] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const cannedRef = useRef<HTMLDivElement>(null);
@@ -487,6 +496,118 @@ export default function ChatPage() {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  // ── Audio Recording ──────────────────────────────────
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4',
+      });
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((t) => t + 1);
+      }, 1000);
+    } catch {
+      // Microphone permission denied or not available
+    }
+  }
+
+  function cancelRecording() {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach((t) => t.stop());
+    }
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+    setIsRecording(false);
+    setRecordingTime(0);
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+  }
+
+  async function stopAndSendRecording() {
+    if (!mediaRecorderRef.current || !selectedPhone) return;
+
+    setSendingAudio(true);
+    const recorder = mediaRecorderRef.current;
+
+    // Wait for the recorder to finish
+    const audioBlob = await new Promise<Blob>((resolve) => {
+      recorder.onstop = () => {
+        const mimeType = recorder.mimeType || 'audio/webm';
+        resolve(new Blob(audioChunksRef.current, { type: mimeType }));
+      };
+      if (recorder.state !== 'inactive') recorder.stop();
+    });
+
+    // Stop all tracks
+    recorder.stream.getTracks().forEach((t) => t.stop());
+
+    setIsRecording(false);
+    setRecordingTime(0);
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    mediaRecorderRef.current = null;
+
+    try {
+      // Upload audio
+      const formData = new FormData();
+      const ext = audioBlob.type.includes('webm') ? 'webm' : 'mp4';
+      formData.append('file', audioBlob, `recording.${ext}`);
+      formData.append('businessId', business.id);
+
+      const uploadRes = await fetch('/api/chat/upload-audio', {
+        method: 'POST',
+        body: formData,
+      });
+      const uploadData = await uploadRes.json();
+
+      if (!uploadData.success || !uploadData.url) {
+        throw new Error(uploadData.error || 'Upload failed');
+      }
+
+      // Send audio message
+      const sendRes = await fetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          customerPhone: selectedPhone,
+          audioUrl: uploadData.url,
+        }),
+      });
+
+      if (sendRes.ok) {
+        const data = await sendRes.json();
+        if (data.message) {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === data.message.id)) return prev;
+            return [...prev, data.message];
+          });
+        }
+      }
+    } catch {
+      // Silent fail
+    } finally {
+      setSendingAudio(false);
+      audioChunksRef.current = [];
+    }
+  }
+
+  function formatRecordingTime(seconds: number) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
   // ── Canned Responses CRUD ──────────────────────────────
@@ -949,9 +1070,25 @@ export default function ChatPage() {
                                     : 'bg-gray-100 text-gray-800'
                                 }`}
                               >
-                                <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                                  {msg.message_text}
-                                </p>
+                                {msg.media_type === 'audio' && msg.media_url ? (
+                                  <div className="flex items-center gap-2">
+                                    <svg className={`h-4 w-4 shrink-0 ${msg.direction === 'outbound' ? 'text-white/80' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                    </svg>
+                                    <audio
+                                      controls
+                                      preload="metadata"
+                                      className="h-8 max-w-[240px]"
+                                      style={{ filter: msg.direction === 'outbound' ? 'invert(1) brightness(2)' : 'none' }}
+                                    >
+                                      <source src={msg.media_url} />
+                                    </audio>
+                                  </div>
+                                ) : (
+                                  <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                                    {msg.message_text}
+                                  </p>
+                                )}
                                 <p
                                   className={`mt-1 text-right text-[10px] ${
                                     msg.direction === 'outbound'
@@ -974,87 +1111,136 @@ export default function ChatPage() {
 
               {/* Reply input */}
               <div className="border-t border-gray-100 px-4 py-3">
-                <div className="flex items-end gap-2">
-                  {/* Canned responses button */}
-                  <div className="relative" ref={cannedRef}>
+                {isRecording ? (
+                  /* Recording UI */
+                  <div className="flex items-center gap-3">
                     <button
-                      onClick={() => setShowCanned(!showCanned)}
+                      onClick={cancelRecording}
                       className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700"
-                      title="Quick replies"
+                      title="Cancel recording"
                     >
                       <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                    <div className="flex flex-1 items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5">
+                      <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" />
+                      <span className="text-sm font-medium text-red-700">
+                        Recording {formatRecordingTime(recordingTime)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={stopAndSendRecording}
+                      disabled={sendingAudio}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition hover:bg-brand-600 disabled:opacity-40"
+                      title="Send recording"
+                    >
+                      {sendingAudio ? (
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      ) : (
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  /* Normal compose UI */
+                  <div className="flex items-end gap-2">
+                    {/* Canned responses button */}
+                    <div className="relative" ref={cannedRef}>
+                      <button
+                        onClick={() => setShowCanned(!showCanned)}
+                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700"
+                        title="Quick replies"
+                      >
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                      </button>
+
+                      {/* Canned responses popover */}
+                      {showCanned && cannedResponses.length > 0 && (
+                        <div className="absolute bottom-12 left-0 z-10 w-64 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                          <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                            Quick Replies
+                          </p>
+                          {cannedResponses.map((cr) => (
+                            <button
+                              key={cr.id}
+                              onClick={() => {
+                                setReplyText(cr.message_text);
+                                setShowCanned(false);
+                              }}
+                              className="flex w-full flex-col px-3 py-2 text-left transition hover:bg-gray-50"
+                            >
+                              <span className="text-sm font-medium text-gray-900">
+                                {cr.title}
+                              </span>
+                              <span className="mt-0.5 truncate text-xs text-gray-500">
+                                {cr.message_text}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <textarea
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Type a message..."
+                      rows={1}
+                      className="max-h-32 min-h-[40px] flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none focus:border-brand"
+                      style={{
+                        height: 'auto',
+                        minHeight: '40px',
+                      }}
+                      onInput={(e) => {
+                        const target = e.target as HTMLTextAreaElement;
+                        target.style.height = 'auto';
+                        target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
+                      }}
+                    />
+
+                    {/* Microphone button */}
+                    <button
+                      onClick={startRecording}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-200 text-gray-500 transition hover:bg-gray-50 hover:text-gray-700"
+                      title="Record voice message"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                       </svg>
                     </button>
 
-                    {/* Canned responses popover */}
-                    {showCanned && cannedResponses.length > 0 && (
-                      <div className="absolute bottom-12 left-0 z-10 w-64 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
-                        <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                          Quick Replies
-                        </p>
-                        {cannedResponses.map((cr) => (
-                          <button
-                            key={cr.id}
-                            onClick={() => {
-                              setReplyText(cr.message_text);
-                              setShowCanned(false);
-                            }}
-                            className="flex w-full flex-col px-3 py-2 text-left transition hover:bg-gray-50"
-                          >
-                            <span className="text-sm font-medium text-gray-900">
-                              {cr.title}
-                            </span>
-                            <span className="mt-0.5 truncate text-xs text-gray-500">
-                              {cr.message_text}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                    {/* Send button */}
+                    <button
+                      onClick={handleSend}
+                      disabled={!replyText.trim() || sending}
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition hover:bg-brand-600 disabled:opacity-40"
+                    >
+                      {sending ? (
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                      ) : (
+                        <svg
+                          className="h-5 w-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                          />
+                        </svg>
+                      )}
+                    </button>
                   </div>
-
-                  <textarea
-                    value={replyText}
-                    onChange={(e) => setReplyText(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Type a message..."
-                    rows={1}
-                    className="max-h-32 min-h-[40px] flex-1 resize-none rounded-xl border border-gray-200 px-4 py-2.5 text-sm outline-none focus:border-brand"
-                    style={{
-                      height: 'auto',
-                      minHeight: '40px',
-                    }}
-                    onInput={(e) => {
-                      const target = e.target as HTMLTextAreaElement;
-                      target.style.height = 'auto';
-                      target.style.height = `${Math.min(target.scrollHeight, 128)}px`;
-                    }}
-                  />
-                  <button
-                    onClick={handleSend}
-                    disabled={!replyText.trim() || sending}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition hover:bg-brand-600 disabled:opacity-40"
-                  >
-                    {sending ? (
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                    ) : (
-                      <svg
-                        className="h-5 w-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                        />
-                      </svg>
-                    )}
-                  </button>
-                </div>
+                )}
               </div>
             </>
           )}

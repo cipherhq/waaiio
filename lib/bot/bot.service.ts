@@ -64,6 +64,7 @@ export class BotService {
     messageType: string,
     destinationPhone?: string,
     preResolvedBusinessId?: string,
+    mediaUrl?: string,
   ): Promise<void> {
     try {
     const text = messageText.trim();
@@ -876,6 +877,8 @@ export class BotService {
         message_text: text,
         is_read: false,
         conversation_id: conv?.id || null,
+        media_url: mediaUrl || null,
+        media_type: mediaUrl ? 'audio' : null,
       });
 
       // Update last_message_at on conversation
@@ -935,6 +938,8 @@ export class BotService {
           message_text: text,
           is_read: false,
           conversation_id: chatConv?.id || null,
+          media_url: mediaUrl || null,
+          media_type: mediaUrl ? 'audio' : null,
         });
 
         // Try FAQ auto-response first

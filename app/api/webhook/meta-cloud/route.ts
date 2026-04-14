@@ -79,6 +79,7 @@ export async function POST(request: NextRequest) {
               button_reply?: { id: string; title: string };
               list_reply?: { id: string; title: string; description?: string };
             };
+            audio?: { id: string; mime_type?: string };
             image?: { id: string; caption?: string };
           }>;
           statuses?: Array<{ id: string; status: string; timestamp: string }>;
@@ -183,7 +184,45 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          if (!source || !text) continue;
+          // Handle audio messages: download from Meta, upload to Supabase Storage
+          let mediaUrl: string | undefined;
+          if (msg.type === 'audio' && msg.audio?.id) {
+            try {
+              const metaToken = resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
+              // Get media URL from Meta
+              const mediaRes = await fetch(`https://graph.facebook.com/v21.0/${msg.audio.id}`, {
+                headers: { Authorization: `Bearer ${metaToken}` },
+              });
+              const mediaData = await mediaRes.json();
+              if (mediaData.url) {
+                // Download the audio binary
+                const audioRes = await fetch(mediaData.url, {
+                  headers: { Authorization: `Bearer ${metaToken}` },
+                });
+                const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+                const ext = (msg.audio.mime_type || 'audio/ogg').includes('ogg') ? 'ogg' : 'webm';
+                const storagePath = `chat-audio/${preResolvedBusinessId || 'unknown'}/${Date.now()}.${ext}`;
+
+                const storageSupabase = createServiceClient();
+                await storageSupabase.storage
+                  .from('business-documents')
+                  .upload(storagePath, audioBuffer, {
+                    contentType: msg.audio.mime_type || 'audio/ogg',
+                    upsert: false,
+                  });
+
+                const { data: urlData } = storageSupabase.storage
+                  .from('business-documents')
+                  .getPublicUrl(storagePath);
+                mediaUrl = urlData.publicUrl;
+              }
+            } catch (err) {
+              logger.error('[META-WEBHOOK] Audio download/upload error:', err);
+            }
+            if (!text) text = '[Voice message]';
+          }
+
+          if (!source || (!text && !mediaUrl)) continue;
 
           // Replay protection: atomic dedup via ON CONFLICT
           const metaMsgId = msg.id || `${source}-${msg.timestamp}`;
@@ -205,7 +244,7 @@ export async function POST(request: NextRequest) {
           const standalone = new StandaloneService(supabase);
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
-          await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId);
+          await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
 
           // Already marked as processed via upsert above
         }

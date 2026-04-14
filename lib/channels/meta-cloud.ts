@@ -151,6 +151,21 @@ export class MetaCloudService {
     return { messageId: response.messages[0].id };
   }
 
+  // ── Send Audio Message ──
+
+  async sendAudio(message: { to: string; audioUrl: string }): Promise<{ messageId: string }> {
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: message.to,
+      type: 'audio',
+      audio: {
+        link: message.audioUrl,
+      },
+    });
+    return { messageId: response.messages[0].id };
+  }
+
   // ── Send Image Message ──
 
   async sendImage(message: CloudImageMessage): Promise<{ messageId: string }> {

@@ -292,6 +292,48 @@ export class GupshupService {
     }
   }
 
+  async sendAudio(message: {
+    to: string;
+    audioUrl: string;
+  }): Promise<{ success: boolean; messageId?: string }> {
+    if (!this.isConfigured) {
+      logger.debug(`[DEV] WhatsApp audio to ${message.to}: ${message.audioUrl}`);
+      return { success: true, messageId: `mock_wa_${Date.now()}` };
+    }
+
+    try {
+      const body = new URLSearchParams({
+        channel: 'whatsapp',
+        source: this.phoneNumber,
+        destination: message.to.replace('+', ''),
+        'src.name': this.appName,
+        message: JSON.stringify({
+          type: 'audio',
+          url: message.audioUrl,
+        }),
+      });
+
+      const response = await fetch(`${this.baseUrl}/msg`, {
+        method: 'POST',
+        headers: {
+          apikey: this.apiKey,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: body.toString(),
+      });
+
+      const data = await response.json();
+      if (data.status === 'submitted') {
+        return { success: true, messageId: data.messageId };
+      }
+      logger.error('Gupshup audio send failed', data);
+      return { success: false };
+    } catch (error) {
+      logger.error('Gupshup API error', error);
+      return { success: false };
+    }
+  }
+
   async sendImage(message: WhatsAppImageMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
       logger.debug(`[DEV] WhatsApp image to ${message.to}: ${message.imageUrl}`);
