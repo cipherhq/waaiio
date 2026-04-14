@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { BotService } from '@/lib/bot/bot.service';
@@ -34,19 +34,31 @@ export async function POST(request: NextRequest) {
     // Read raw body for signature verification
     const rawBody = await request.text();
 
-    // X-Hub-Signature-256 verification
+    // X-Hub-Signature-256 verification (fail-closed)
     const signature = request.headers.get('x-hub-signature-256');
     const appSecret = process.env.META_APP_SECRET;
 
-    if (appSecret && signature) {
-      const expectedSignature = 'sha256=' + createHmac('sha256', appSecret)
-        .update(rawBody)
-        .digest('hex');
+    if (!appSecret) {
+      console.warn('[META-WEBHOOK] META_APP_SECRET not configured');
+      return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 500 });
+    }
 
-      if (signature !== expectedSignature) {
+    if (!signature) {
+      return NextResponse.json({ error: 'Missing signature' }, { status: 401 });
+    }
+
+    const expectedSignature = 'sha256=' + createHmac('sha256', appSecret)
+      .update(rawBody)
+      .digest('hex');
+
+    try {
+      if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
         console.warn('[META-WEBHOOK] Invalid signature');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
+    } catch {
+      console.warn('[META-WEBHOOK] Signature comparison failed');
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
     const body = JSON.parse(rawBody);
@@ -89,6 +101,60 @@ export async function POST(request: NextRequest) {
         const value = change.value;
         const phoneNumberId = value.metadata?.phone_number_id;
         const messages = value.messages || [];
+        const statuses = value.statuses || [];
+
+        // Process delivery/read status updates for contract tracking
+        if (statuses.length > 0) {
+          const supabase = createServiceClient();
+          const statusOrder: Record<string, number> = { sent: 1, delivered: 2, read: 3 };
+
+          for (const status of statuses) {
+            const wamid = status.id;
+            const newStatus = status.status; // 'sent' | 'delivered' | 'read' | 'failed'
+            if (!wamid || !statusOrder[newStatus]) continue;
+
+            // Check contracts table
+            const { data: contract } = await supabase
+              .from('contracts')
+              .select('id, wa_delivery_status')
+              .eq('wa_message_id', wamid)
+              .maybeSingle();
+
+            if (contract) {
+              // Atomic progressive update: only advance status forward using WHERE clause
+              const lowerStatuses = Object.entries(statusOrder)
+                .filter(([, order]) => order < statusOrder[newStatus])
+                .map(([s]) => s);
+              if (lowerStatuses.length > 0) {
+                await supabase
+                  .from('contracts')
+                  .update({ wa_delivery_status: newStatus, wa_status_updated_at: new Date().toISOString() })
+                  .eq('id', contract.id)
+                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string]);
+              }
+            }
+
+            // Check contract_signers table
+            const { data: signer } = await supabase
+              .from('contract_signers')
+              .select('id, wa_delivery_status')
+              .eq('wa_message_id', wamid)
+              .maybeSingle();
+
+            if (signer) {
+              const lowerStatuses = Object.entries(statusOrder)
+                .filter(([, order]) => order < statusOrder[newStatus])
+                .map(([s]) => s);
+              if (lowerStatuses.length > 0) {
+                await supabase
+                  .from('contract_signers')
+                  .update({ wa_delivery_status: newStatus, wa_status_updated_at: new Date().toISOString() })
+                  .eq('id', signer.id)
+                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string]);
+              }
+            }
+          }
+        }
 
         if (messages.length === 0) continue;
 
@@ -126,15 +192,17 @@ export async function POST(request: NextRequest) {
 
           if (!source || !text) continue;
 
-          // Replay protection: check for duplicate message
+          // Replay protection: atomic dedup via ON CONFLICT
           const metaMsgId = msg.id || `${source}-${msg.timestamp}`;
-          const { data: existingMsg } = await supabase
+          const { data: dedupInserted } = await supabase
             .from('processed_webhook_events')
-            .select('id')
-            .eq('event_id', `meta-${metaMsgId}`)
-            .maybeSingle();
+            .upsert(
+              { event_id: `meta-${metaMsgId}`, event_type: 'meta_cloud_message', processed_at: new Date().toISOString() },
+              { onConflict: 'event_id', ignoreDuplicates: true },
+            )
+            .select('id');
 
-          if (existingMsg) {
+          if (!dedupInserted || dedupInserted.length === 0) {
             logger.debug('[META-WEBHOOK] Duplicate message, skipping:', metaMsgId);
             continue;
           }
@@ -146,14 +214,7 @@ export async function POST(request: NextRequest) {
 
           await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId);
 
-          // Mark message as processed for replay protection
-          try {
-            await supabase.from('processed_webhook_events').insert({
-              event_id: `meta-${metaMsgId}`,
-              event_type: 'meta_cloud_message',
-              processed_at: new Date().toISOString(),
-            });
-          } catch { /* Don't fail if insert fails */ }
+          // Already marked as processed via upsert above
         }
       }
     }

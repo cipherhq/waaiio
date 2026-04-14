@@ -12,9 +12,9 @@ export async function POST(request: NextRequest) {
       if (blocked) return blocked;
     }
 
-    if (!phone || !otp || otp.length !== 6) {
+    if (!phone || !otp || !/^\d{6}$/.test(otp)) {
       return NextResponse.json(
-        { message: 'Phone number and 6-digit OTP are required' },
+        { message: 'Phone number and 6-digit numeric OTP are required' },
         { status: 400 },
       );
     }

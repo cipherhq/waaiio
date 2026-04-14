@@ -5,7 +5,7 @@ import Footer from '@/components/marketing/Footer';
 export const metadata: Metadata = {
   title: 'Waaiio — WhatsApp Automation for Every Business',
   description:
-    'AI-powered WhatsApp automation for 38+ industries with 20+ capabilities — bookings, payments, orders, ticketing, loyalty, broadcasts, and more. Paystack, Square, Stripe & Flutterwave gateways. Available in Nigeria, US, UK, Canada & Ghana.',
+    'AI-powered WhatsApp automation for 40+ industries with 20+ capabilities — bookings, payments, orders, ticketing, loyalty, broadcasts, and more. Paystack, Square, Stripe & Flutterwave gateways. Available in Nigeria, US, UK, Canada & Ghana.',
 };
 
 export default function MarketingLayout({

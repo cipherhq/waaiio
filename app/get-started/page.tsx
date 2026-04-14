@@ -379,22 +379,26 @@ function OnboardingWizard() {
 
     window.addEventListener('message', handleMessage);
 
-    window.fbAsyncInit = function () {
-      window.FB.init({
-        appId,
-        autoLogAppEvents: true,
-        xfbml: true,
-        version: 'v21.0',
-      });
-      fbSdkLoaded.current = true;
-    };
+    // Only load Facebook SDK if cookie consent has been accepted
+    const consent = localStorage.getItem('waaiio_cookie_consent');
+    if (consent === 'accepted') {
+      window.fbAsyncInit = function () {
+        window.FB.init({
+          appId,
+          autoLogAppEvents: true,
+          xfbml: true,
+          version: 'v21.0',
+        });
+        fbSdkLoaded.current = true;
+      };
 
-    const script = document.createElement('script');
-    script.src = 'https://connect.facebook.net/en_US/sdk.js';
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = 'anonymous';
-    document.body.appendChild(script);
+      const script = document.createElement('script');
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = 'anonymous';
+      document.body.appendChild(script);
+    }
 
     return () => {
       window.removeEventListener('message', handleMessage);

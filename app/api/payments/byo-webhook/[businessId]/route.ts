@@ -61,23 +61,19 @@ export async function POST(
       return NextResponse.json({ received: true });
     }
 
-    // Idempotency check
+    // Idempotency: atomic dedup via ON CONFLICT
     const eventId = `byo:${businessId}:${event}:${reference}`;
-    const { data: alreadyProcessed } = await supabase
+    const { data: inserted } = await supabase
       .from('processed_webhook_events')
-      .select('id')
-      .eq('event_id', eventId)
-      .maybeSingle();
+      .upsert(
+        { event_id: eventId, event_type: `byo_${event}`, processed_at: new Date().toISOString() },
+        { onConflict: 'event_id', ignoreDuplicates: true },
+      )
+      .select('id');
 
-    if (alreadyProcessed) {
-      return NextResponse.json({ received: true });
+    if (!inserted || inserted.length === 0) {
+      return NextResponse.json({ received: true, duplicate: true });
     }
-
-    await supabase.from('processed_webhook_events').insert({
-      event_id: eventId,
-      gateway: creds.gateway,
-      event_type: event,
-    });
 
     // Delegate to shared handlers (payment events only — no subscription events for BYO)
     if (event === 'charge.success') {

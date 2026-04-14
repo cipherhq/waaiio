@@ -30,10 +30,14 @@ function getChannelResolver() {
 
 export async function POST(request: NextRequest) {
   try {
-    // Webhook secret verification
+    // Webhook secret verification (fail-closed)
     const webhookSecret = request.headers.get('x-webhook-secret');
     const expectedSecret = process.env.GUPSHUP_WEBHOOK_SECRET;
-    if (expectedSecret && webhookSecret !== expectedSecret) {
+    if (!expectedSecret) {
+      console.warn('[WEBHOOK] GUPSHUP_WEBHOOK_SECRET not configured');
+      return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 500 });
+    }
+    if (webhookSecret !== expectedSecret) {
       console.warn('[WEBHOOK] Invalid webhook secret');
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -93,15 +97,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Replay protection: check for duplicate message
-    const messageId = (body.messageId || (body.response as Record<string, unknown>)?.id || `${source}-${Date.now()}`) as string;
+    // Use crypto hash as fallback ID when Gupshup doesn't provide messageId (survives retries)
+    const rawMsgId = (body.messageId || (body.response as Record<string, unknown>)?.id) as string | undefined;
+    const messageId = rawMsgId || `${source}-${text?.slice(0, 50)}-${body.timestamp || ''}`;
     const supabaseForDedup = createServiceClient();
-    const { data: existing } = await supabaseForDedup
-      .from('processed_webhook_events')
-      .select('id')
-      .eq('event_id', `gupshup-${messageId}`)
-      .maybeSingle();
 
-    if (existing) {
+    // Use INSERT ON CONFLICT for atomic dedup (no race condition)
+    const { data: inserted } = await supabaseForDedup
+      .from('processed_webhook_events')
+      .upsert(
+        { event_id: `gupshup-${messageId}`, event_type: 'whatsapp_message', processed_at: new Date().toISOString() },
+        { onConflict: 'event_id', ignoreDuplicates: true },
+      )
+      .select('id');
+
+    if (!inserted || inserted.length === 0) {
       logger.debug('[WEBHOOK] Duplicate message, skipping:', messageId);
       return NextResponse.json({ success: true, duplicate: true });
     }
@@ -123,15 +133,6 @@ export async function POST(request: NextRequest) {
 
     // Process message
     await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId);
-
-    // Mark message as processed for replay protection
-    try {
-      await supabase.from('processed_webhook_events').insert({
-        event_id: `gupshup-${messageId}`,
-        event_type: 'whatsapp_message',
-        processed_at: new Date().toISOString(),
-      });
-    } catch { /* Don't fail if insert fails */ }
 
     logger.debug('[WEBHOOK] Message processed successfully');
     return NextResponse.json({ status: 'ok' });

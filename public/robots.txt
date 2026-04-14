@@ -1,8 +1,0 @@
-User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /dashboard/
-Disallow: /get-started
-Disallow: /login
-
-Sitemap: https://waaiio.com/sitemap.xml

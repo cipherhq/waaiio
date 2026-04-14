@@ -25,7 +25,16 @@ interface Contract {
   declined_at: string | null;
   require_otp: boolean;
   signing_mode: string;
-  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null }[];
+  wa_delivery_status: string | null;
+  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null; wa_delivery_status: string | null }[];
+}
+
+interface CustomTemplate {
+  id: string;
+  title: string;
+  content: string | null;
+  template_url: string | null;
+  category: string;
 }
 
 type DocTab = 'template' | 'write' | 'upload';
@@ -78,12 +87,16 @@ export default function ContractsPage() {
   // CC recipients
   const [ccRecipients, setCcRecipients] = useState<{ phone: string }[]>([]);
 
+  // Custom templates
+  const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+
   const supabase = createClient();
 
   const loadContracts = useCallback(async () => {
     const { data } = await supabase
       .from('contracts')
-      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, contract_signers(id, signer_name, signer_phone, status, signed_at)')
+      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status)')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
 
@@ -91,9 +104,22 @@ export default function ContractsPage() {
     setLoading(false);
   }, [business.id, supabase]);
 
+  const loadCustomTemplates = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/contracts/templates?business_id=${business.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCustomTemplates(data.templates || []);
+      }
+    } catch {
+      // Silent fail — custom templates are supplementary
+    }
+  }, [business.id]);
+
   useEffect(() => {
     loadContracts();
-  }, [loadContracts]);
+    loadCustomTemplates();
+  }, [loadContracts, loadCustomTemplates]);
 
   function resetForm() {
     setStep(1);
@@ -118,11 +144,57 @@ export default function ContractsPage() {
   function handleTemplateChange(templateId: string) {
     setSelectedTemplate(templateId);
     if (templateId) {
+      // Check custom templates first
+      const custom = customTemplates.find(t => t.id === templateId);
+      if (custom) {
+        setTitle(custom.title);
+        setDocumentContent(custom.content || '');
+        return;
+      }
+      // Then built-in templates
       const tmpl = CONTRACT_TEMPLATES.find(t => t.id === templateId);
       if (tmpl) {
         setTitle(tmpl.name);
         setDocumentContent(tmpl.content);
       }
+    }
+  }
+
+  async function handleSaveAsTemplate() {
+    if (!title && !documentContent) return;
+    setSavingTemplate(true);
+    try {
+      const res = await fetch('/api/contracts/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          title: title || 'Untitled Template',
+          content: documentContent || null,
+        }),
+      });
+      if (res.ok) {
+        setToastMsg('Saved as template');
+        setTimeout(() => setToastMsg(''), 3000);
+        await loadCustomTemplates();
+      }
+    } catch {
+      console.error('Failed to save template');
+    } finally {
+      setSavingTemplate(false);
+    }
+  }
+
+  async function handleDeleteCustomTemplate(templateId: string) {
+    try {
+      const res = await fetch(`/api/contracts/templates?id=${templateId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setToastMsg('Template deleted');
+        setTimeout(() => setToastMsg(''), 3000);
+        await loadCustomTemplates();
+      }
+    } catch {
+      console.error('Failed to delete template');
     }
   }
 
@@ -304,6 +376,19 @@ export default function ContractsPage() {
     }
   }
 
+  function getDeliveryIndicator(waStatus: string | null) {
+    if (!waStatus || waStatus === 'sent') {
+      return <span className="text-gray-400" title="Sent">&#10003;</span>;
+    }
+    if (waStatus === 'delivered') {
+      return <span className="text-gray-400" title="Delivered">&#10003;&#10003;</span>;
+    }
+    if (waStatus === 'read') {
+      return <span className="text-blue-500" title="Read">&#10003;&#10003;</span>;
+    }
+    return null;
+  }
+
   function getStatusBadge(status: string) {
     switch (status) {
       case 'signed':
@@ -403,13 +488,16 @@ export default function ContractsPage() {
                     {c.contract_signers && c.contract_signers.length > 0 ? (
                       <>
                         <p className="text-sm text-gray-700">{c.contract_signers.length} signers</p>
-                        <p className="text-xs text-gray-400">
+                        <p className="flex items-center gap-1 text-xs text-gray-400">
                           {c.contract_signers.filter(s => s.status === 'signed').length}/{c.contract_signers.length} signed
                         </p>
                       </>
                     ) : (
                       <>
-                        <p className="text-sm text-gray-700">{c.signer_name || '\u2014'}</p>
+                        <p className="flex items-center gap-1.5 text-sm text-gray-700">
+                          {c.signer_name || '\u2014'}
+                          {c.status === 'pending' && getDeliveryIndicator(c.wa_delivery_status)}
+                        </p>
                         <p className="text-xs text-gray-400">{c.signer_phone}</p>
                       </>
                     )}
@@ -538,6 +626,39 @@ export default function ContractsPage() {
               <p className="mb-4 text-sm italic text-gray-400">No document content (title-only)</p>
             ) : null}
 
+            {/* Save as Template (detail modal) */}
+            {selectedContract.document_content && (
+              <div className="mb-4">
+                <button
+                  onClick={async () => {
+                    setSavingTemplate(true);
+                    try {
+                      const res = await fetch('/api/contracts/templates', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          business_id: business.id,
+                          title: selectedContract.title,
+                          content: selectedContract.document_content,
+                        }),
+                      });
+                      if (res.ok) {
+                        setToastMsg('Saved as template');
+                        setTimeout(() => setToastMsg(''), 3000);
+                        await loadCustomTemplates();
+                      }
+                    } catch { /* ignore */ } finally {
+                      setSavingTemplate(false);
+                    }
+                  }}
+                  disabled={savingTemplate}
+                  className="text-xs font-medium text-brand hover:underline disabled:opacity-50"
+                >
+                  {savingTemplate ? 'Saving...' : 'Save as Template'}
+                </button>
+              </div>
+            )}
+
             {/* Multi-signer list */}
             {selectedContract.contract_signers && selectedContract.contract_signers.length > 0 && (
               <div className="mb-4">
@@ -545,9 +666,12 @@ export default function ContractsPage() {
                 <div className="space-y-1.5">
                   {selectedContract.contract_signers.map(s => (
                     <div key={s.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                      <div>
-                        <p className="text-sm font-medium text-gray-700">{s.signer_name || 'No name'}</p>
-                        <p className="text-xs text-gray-400">{s.signer_phone}</p>
+                      <div className="flex items-center gap-2">
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">{s.signer_name || 'No name'}</p>
+                          <p className="text-xs text-gray-400">{s.signer_phone}</p>
+                        </div>
+                        {s.status === 'pending' && getDeliveryIndicator(s.wa_delivery_status)}
                       </div>
                       {getStatusBadge(s.status)}
                     </div>
@@ -693,10 +817,29 @@ export default function ContractsPage() {
                           className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                         >
                           <option value="">Select a template...</option>
-                          {CONTRACT_TEMPLATES.map(t => (
-                            <option key={t.id} value={t.id}>{t.name}</option>
-                          ))}
+                          {customTemplates.length > 0 && (
+                            <optgroup label="My Templates">
+                              {customTemplates.map(t => (
+                                <option key={t.id} value={t.id}>{t.title}</option>
+                              ))}
+                            </optgroup>
+                          )}
+                          <optgroup label="Built-in">
+                            {CONTRACT_TEMPLATES.map(t => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </optgroup>
                         </select>
+                        {/* Delete custom template button */}
+                        {selectedTemplate && customTemplates.some(t => t.id === selectedTemplate) && (
+                          <button
+                            type="button"
+                            onClick={() => { handleDeleteCustomTemplate(selectedTemplate); setSelectedTemplate(''); setDocumentContent(''); setTitle(''); }}
+                            className="mt-1 text-xs text-red-500 hover:underline"
+                          >
+                            Delete this template
+                          </button>
+                        )}
                       </div>
 
                       {documentContent && (
@@ -848,6 +991,18 @@ export default function ContractsPage() {
                         <p className="mt-2 text-sm text-red-600">{uploadError}</p>
                       )}
                     </div>
+                  )}
+
+                  {/* Save as Template */}
+                  {(documentContent || uploadedFileUrl) && title && (
+                    <button
+                      type="button"
+                      onClick={handleSaveAsTemplate}
+                      disabled={savingTemplate}
+                      className="w-full rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-500 transition hover:border-brand hover:text-brand disabled:opacity-50"
+                    >
+                      {savingTemplate ? 'Saving...' : 'Save as Template'}
+                    </button>
                   )}
 
                   <div className="flex gap-3 pt-2">

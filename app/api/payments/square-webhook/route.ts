@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 
 const squareWebhookSignatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '';
@@ -14,7 +14,9 @@ function verifySquareSignature(rawBody: string, signature: string): boolean {
     .update(payload)
     .digest('base64');
 
-  return expected === signature;
+  try {
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+  } catch { return false; }
 }
 
 export async function POST(request: NextRequest) {
@@ -22,7 +24,12 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('x-square-hmacsha256-signature') || '';
 
-    if (squareWebhookSignatureKey && !verifySquareSignature(rawBody, signature)) {
+    // Fail-closed: reject if webhook secret is not configured
+    if (!squareWebhookSignatureKey) {
+      return NextResponse.json({ message: 'Webhook secret not configured' }, { status: 500 });
+    }
+
+    if (!verifySquareSignature(rawBody, signature)) {
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
 
@@ -36,24 +43,20 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Idempotency: skip if already processed
+    // Idempotency: atomic dedup via ON CONFLICT
     const eventId = body.event_id as string | undefined;
     if (eventId) {
-      const { data: alreadyProcessed } = await supabase
+      const { data: inserted } = await supabase
         .from('processed_webhook_events')
-        .select('id')
-        .eq('event_id', eventId)
-        .maybeSingle();
+        .upsert(
+          { event_id: eventId, event_type: `square_${eventType}`, processed_at: new Date().toISOString() },
+          { onConflict: 'event_id', ignoreDuplicates: true },
+        )
+        .select('id');
 
-      if (alreadyProcessed) {
-        return NextResponse.json({ received: true });
+      if (!inserted || inserted.length === 0) {
+        return NextResponse.json({ received: true, duplicate: true });
       }
-
-      await supabase.from('processed_webhook_events').insert({
-        event_id: eventId,
-        gateway: 'square',
-        event_type: eventType,
-      });
     }
 
     // Square fires payment.updated when status transitions (COMPLETED, FAILED, etc.)

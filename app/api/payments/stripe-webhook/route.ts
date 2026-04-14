@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -19,7 +19,11 @@ function verifyStripeSignature(rawBody: string, signature: string): boolean {
     .update(payload)
     .digest('hex');
 
-  return sigs.some(sig => sig === expected);
+  return sigs.some(sig => {
+    try {
+      return timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+    } catch { return false; }
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -27,12 +31,18 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('stripe-signature') || '';
 
-    if (stripeWebhookSecret && !verifyStripeSignature(rawBody, signature)) {
+    // Fail-closed: reject if webhook secret is not configured
+    if (!stripeWebhookSecret) {
+      return NextResponse.json({ message: 'Webhook secret not configured' }, { status: 500 });
+    }
+
+    if (!verifyStripeSignature(rawBody, signature)) {
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
 
     const body = JSON.parse(rawBody);
     const event = body.type as string;
+    const eventId = body.id as string;
     const data = body.data?.object as Record<string, unknown>;
 
     if (!data) {
@@ -40,6 +50,21 @@ export async function POST(request: NextRequest) {
     }
 
     const supabase = createServiceClient();
+
+    // Idempotency: atomic dedup via ON CONFLICT
+    if (eventId) {
+      const { data: inserted } = await supabase
+        .from('processed_webhook_events')
+        .upsert(
+          { event_id: `stripe-${eventId}`, event_type: `stripe_${event}`, processed_at: new Date().toISOString() },
+          { onConflict: 'event_id', ignoreDuplicates: true },
+        )
+        .select('id');
+
+      if (!inserted || inserted.length === 0) {
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+    }
 
     if (event === 'checkout.session.completed') {
       const sessionId = data.id as string;
@@ -284,6 +309,8 @@ export async function POST(request: NextRequest) {
           .in('status', ['active', 'paused', 'past_due']);
       }
     }
+
+    // Already marked as processed via upsert above
 
     return NextResponse.json({ received: true });
   } catch {

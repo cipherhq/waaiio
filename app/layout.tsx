@@ -11,11 +11,23 @@ export const metadata: Metadata = {
     template: '%s | Waaiio',
   },
   description:
-    'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 35+ industries — churches, salons, clinics, restaurants, schools, shops, and more.',
+    'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries — churches, salons, clinics, restaurants, schools, shops, and more.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'),
   openGraph: {
     siteName: 'Waaiio',
     type: 'website',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    images: ['/og-image.png'],
   },
 };
 

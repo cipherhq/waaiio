@@ -238,6 +238,30 @@ export function bookingConfirmationEmail(details: {
   };
 }
 
+export function bookingReminderEmail(
+  businessName: string,
+  guestName: string,
+  serviceName: string,
+  date: string,
+  time: string,
+  referenceCode: string,
+) {
+  return {
+    subject: `Reminder: Your booking at ${businessName} is tomorrow`,
+    html: wrap(`
+      ${h('Booking Reminder')}
+      ${p(`Hi ${guestName}, this is a friendly reminder that your appointment at <strong>${businessName}</strong> is tomorrow.`)}
+      ${table(
+        kv('Service', serviceName) +
+        kv('Date', date) +
+        (time ? kv('Time', time) : '') +
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`)
+      )}
+      ${p('If you need to reschedule or cancel, please contact the business directly.')}
+    `),
+  };
+}
+
 export function paymentReceivedEmail(businessName: string, amount: string, service: string) {
   return {
     subject: `Payment received — ${amount}`,
@@ -333,6 +357,53 @@ export function newBookingOwnerEmail(details: {
       )}
       ${btn('View Bookings', dashboardUrl)}
       ${p('Log in to your dashboard to manage this booking.')}
+    `),
+  };
+}
+
+export function trialExpiringEmail(businessName: string, daysLeft: number) {
+  return {
+    subject: `Your free trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
+    html: wrap(`
+      ${h('Your Trial Is Ending Soon')}
+      ${p(`The 7-day free trial for <strong>${businessName}</strong> ends in <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong>.`)}
+      ${p('After the trial, a small per-transaction fee will apply on the Free plan. Upgrade to Growth or Business to reduce fees and unlock more features.')}
+      ${table(
+        kv('Free Plan', '2.5% + flat fee per transaction') +
+        kv('Growth Plan', '1.5% + flat fee — lower fees, more features') +
+        kv('Business Plan', '1.0% + flat fee — lowest fees, all features')
+      )}
+      ${btn('Upgrade Now', 'https://app.waaiio.com/dashboard/settings')}
+      ${p('Your bot will continue working on the Free plan — nothing breaks. You just start paying per-transaction fees.')}
+    `),
+  };
+}
+
+export function trialEndedEmail(businessName: string) {
+  return {
+    subject: `Your free trial has ended — ${businessName}`,
+    html: wrap(`
+      ${h('Free Trial Ended')}
+      ${p(`The 7-day free trial for <strong>${businessName}</strong> has ended.`)}
+      ${p('Your bot is still active on the <strong>Free plan</strong>. A 2.5% + flat fee now applies to each transaction.')}
+      ${p('Upgrade to reduce your fees and unlock premium features like loyalty programs, broadcasts, e-signatures, and more.')}
+      ${btn('Upgrade Plan', 'https://app.waaiio.com/dashboard/settings')}
+    `),
+  };
+}
+
+export function paymentFailedEmail(businessName: string, amount: string, reason: string) {
+  return {
+    subject: `Payment failed — ${businessName}`,
+    html: wrap(`
+      ${h('Payment Failed')}
+      ${p(`A payment attempt for <strong>${businessName}</strong> was unsuccessful.`)}
+      ${table(
+        kv('Amount', amount) +
+        kv('Reason', reason || 'Payment was declined')
+      )}
+      ${p('The customer may need to retry with a different payment method. No action is required from you — the customer has been notified.')}
+      ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
     `),
   };
 }

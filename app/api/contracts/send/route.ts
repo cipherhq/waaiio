@@ -18,7 +18,7 @@ async function sendWhatsAppMessage(
   countryCode: string,
   phone: string,
   message: string,
-) {
+): Promise<string | null> {
   const resolver = new ChannelResolver(service);
   const resolved =
     (await resolver.resolveByBusinessId(businessId)) ||
@@ -26,11 +26,13 @@ async function sendWhatsAppMessage(
 
   const cleanPhone = phone.replace(/\D/g, '');
   let sent = false;
+  let messageId: string | null = null;
 
   if (resolved) {
     try {
       const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
       sent = result.success !== false;
+      if (sent && result.messageId) messageId = result.messageId;
     } catch (waErr) {
       console.warn('Primary channel send failed, trying Gupshup fallback:', waErr);
     }
@@ -40,6 +42,7 @@ async function sendWhatsAppMessage(
     const gupshup = new GupshupService();
     if (gupshup.isConfigured) {
       const result = await gupshup.sendText({ to: cleanPhone, text: message });
+      if (result.success && result.messageId) messageId = result.messageId;
       if (!result.success) {
         console.warn('Gupshup fallback also failed');
       }
@@ -47,6 +50,8 @@ async function sendWhatsAppMessage(
       console.log(`[mock] WhatsApp to ${cleanPhone}: ${message.slice(0, 80)}...`);
     }
   }
+
+  return messageId;
 }
 
 interface SignerInput {
@@ -186,7 +191,13 @@ export async function POST(request: NextRequest) {
           `\u23f0 This link expires in 72 hours.`,
         ].join('\n');
 
-        await sendWhatsAppMessage(service, business_id, biz.country_code, signer.signer_phone, message);
+        const waMessageId = await sendWhatsAppMessage(service, business_id, biz.country_code, signer.signer_phone, message);
+        if (waMessageId) {
+          await service
+            .from('contract_signers')
+            .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
+            .eq('id', signer.id);
+        }
       }
 
       return NextResponse.json({
@@ -212,7 +223,13 @@ export async function POST(request: NextRequest) {
       `\u23f0 This link expires in 72 hours.`,
     ].join('\n');
 
-    await sendWhatsAppMessage(service, business_id, biz.country_code, signer_phone, message);
+    const waMessageId = await sendWhatsAppMessage(service, business_id, biz.country_code, signer_phone, message);
+    if (waMessageId) {
+      await service
+        .from('contracts')
+        .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
+        .eq('id', contract.id);
+    }
 
     return NextResponse.json({
       sign_url: signUrl,

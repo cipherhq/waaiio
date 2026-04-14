@@ -21,7 +21,7 @@ export default function DPAPage() {
 
       <AnimatedSection>
         <div className="mx-auto max-w-3xl px-4 py-16">
-          <p className="mt-2 text-sm text-gray-400">Last updated: April 2026</p>
+          <p className="mt-2 text-sm text-gray-400">Last updated: April 14, 2026</p>
 
           <div className="prose-pages mt-10 space-y-8 text-gray-700">
             <section>

@@ -33,24 +33,19 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Idempotency check: skip if we've already processed this event
+    // Idempotency: atomic dedup via ON CONFLICT
     const eventId = `${event}:${reference}`;
-    const { data: alreadyProcessed } = await supabase
+    const { data: inserted } = await supabase
       .from('processed_webhook_events')
-      .select('id')
-      .eq('event_id', eventId)
-      .maybeSingle();
+      .upsert(
+        { event_id: eventId, event_type: `paystack_${event}`, processed_at: new Date().toISOString() },
+        { onConflict: 'event_id', ignoreDuplicates: true },
+      )
+      .select('id');
 
-    if (alreadyProcessed) {
-      return NextResponse.json({ received: true });
+    if (!inserted || inserted.length === 0) {
+      return NextResponse.json({ received: true, duplicate: true });
     }
-
-    // Record this event as processed
-    await supabase.from('processed_webhook_events').insert({
-      event_id: eventId,
-      gateway: 'paystack',
-      event_type: event,
-    });
 
     // ── Payment events (deposit bookings) — delegated to shared handler ──
     const { data: existingPayment } = await supabase

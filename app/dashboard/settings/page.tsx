@@ -1722,13 +1722,27 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         onClick={async () => {
-                          if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits.')) return;
+                          if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits and capabilities that require Growth or Business plans.')) return;
                           setDowngrading(true);
                           const supabase = createClient();
+                          // Update subscription tier
                           await supabase
                             .from('businesses')
                             .update({ subscription_tier: 'free' })
                             .eq('id', business.id);
+                          // Remove capabilities that require a higher tier
+                          const freeCaps: CapabilityId[] = (Object.entries(CAPABILITY_TIER_REQUIREMENTS) as [CapabilityId, string][])
+                            .filter(([, tier]) => tier === 'free')
+                            .map(([cap]) => cap);
+                          const currentCaps = capabilities || [];
+                          const capsToRemove = currentCaps.filter((c: string) => !freeCaps.includes(c as CapabilityId));
+                          if (capsToRemove.length > 0) {
+                            await supabase
+                              .from('business_capabilities')
+                              .delete()
+                              .eq('business_id', business.id)
+                              .in('capability', capsToRemove);
+                          }
                           setDowngrading(false);
                           setDowngraded(true);
                         }}
