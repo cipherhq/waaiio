@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CONTRACT_TEMPLATES, fillTemplatePlaceholders } from '@/lib/contract-templates';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface Contract {
   id: string;
@@ -710,14 +711,10 @@ export default function ContractsPage() {
               {step === 2 && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700">Signer Phone *</label>
-                    <input
-                      type="tel"
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Signer Phone *</label>
+                    <PhoneInput
                       value={signerPhone}
-                      onChange={e => setSignerPhone(e.target.value)}
-                      placeholder="e.g. 2348012345678"
-                      required
-                      className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      onChange={setSignerPhone}
                     />
                   </div>
                   <div>
@@ -792,14 +789,10 @@ export default function ContractsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700">Signer Phone *</label>
-                <input
-                  type="tel"
+                <label className="mb-1 block text-sm font-medium text-gray-700">Signer Phone *</label>
+                <PhoneInput
                   value={editSignerPhone}
-                  onChange={e => setEditSignerPhone(e.target.value)}
-                  placeholder="e.g. 2348012345678"
-                  required
-                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                  onChange={setEditSignerPhone}
                 />
               </div>
               <div>
