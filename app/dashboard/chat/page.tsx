@@ -108,26 +108,18 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Load conversations and messages
+  // Load conversations and messages via API (server-side auth)
   useEffect(() => {
     async function load() {
-      const supabase = createClient();
-
-      const [convRes, msgRes] = await Promise.all([
-        supabase
-          .from('chat_conversations')
-          .select('*')
-          .eq('business_id', business.id)
-          .order('last_message_at', { ascending: false }),
-        supabase
-          .from('chat_messages')
-          .select('*')
-          .eq('business_id', business.id)
-          .order('created_at', { ascending: true }),
-      ]);
-
-      setConversations(convRes.data || []);
-      setMessages(msgRes.data || []);
+      try {
+        const res = await fetch(`/api/chat/list?businessId=${business.id}`);
+        const data = await res.json();
+        setConversations(data.conversations || []);
+        setMessages(data.messages || []);
+      } catch {
+        setConversations([]);
+        setMessages([]);
+      }
       setLoading(false);
     }
     load();
