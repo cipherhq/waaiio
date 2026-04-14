@@ -56,16 +56,16 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     // Insert outbound chat message linked to conversation
-    await supabase.from('chat_messages').insert({
+    const { data: inserted } = await supabase.from('chat_messages').insert({
       business_id: businessId,
       customer_phone: customerPhone,
       direction: 'outbound',
       message_text: messageText,
       is_read: true,
       conversation_id: conv?.id || null,
-    });
+    }).select().single();
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, message: inserted });
   } catch (error) {
     logger.error('[CHAT] Send error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -412,6 +412,13 @@ export default function ChatPage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
+        if (data.message) {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === data.message.id)) return prev;
+            return [...prev, data.message];
+          });
+        }
         setReplyText('');
       }
     } catch {
