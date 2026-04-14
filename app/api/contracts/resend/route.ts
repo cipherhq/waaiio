@@ -4,6 +4,50 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 
+function generateToken(): string {
+  const tokenBytes = new Uint8Array(48);
+  crypto.getRandomValues(tokenBytes);
+  return Array.from(tokenBytes, b =>
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b % 62]
+  ).join('');
+}
+
+async function sendWhatsAppMessage(
+  service: ReturnType<typeof createServiceClient>,
+  businessId: string,
+  countryCode: string,
+  phone: string,
+  message: string,
+) {
+  const cleanPhone = phone.replace(/\D/g, '');
+  const resolver = new ChannelResolver(service);
+  const resolved =
+    (await resolver.resolveByBusinessId(businessId)) ||
+    (await resolver.getSharedChannelForCountry(countryCode || 'NG'));
+
+  let sent = false;
+  if (resolved) {
+    try {
+      const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
+      sent = result.success !== false;
+    } catch (waErr) {
+      console.warn('Primary channel send failed, trying Gupshup fallback:', waErr);
+    }
+  }
+
+  if (!sent) {
+    const gupshup = new GupshupService();
+    if (gupshup.isConfigured) {
+      const result = await gupshup.sendText({ to: cleanPhone, text: message });
+      if (!result.success) {
+        console.warn('Gupshup fallback also failed');
+      }
+    } else {
+      console.log(`[mock] WhatsApp to ${cleanPhone}: ${message.slice(0, 80)}...`);
+    }
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -25,7 +69,7 @@ export async function POST(request: NextRequest) {
     // Fetch existing contract
     const { data: contract, error } = await service
       .from('contracts')
-      .select('id, business_id, title, signer_phone, signer_name, status')
+      .select('id, business_id, title, signer_phone, signer_name, status, signing_mode')
       .eq('id', contract_id)
       .single();
 
@@ -48,16 +92,72 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'This contract has already been signed' }, { status: 400 });
     }
 
-    // Generate new token
-    const tokenBytes = new Uint8Array(48);
-    crypto.getRandomValues(tokenBytes);
-    const token = Array.from(tokenBytes, b =>
-      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b % 62]
-    ).join('');
-
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
-    // Update existing contract with new token (no new row)
+    // Check if this is a multi-signer contract
+    const { data: signers } = await service
+      .from('contract_signers')
+      .select('id, signer_phone, signer_name, status, token')
+      .eq('contract_id', contract.id);
+
+    if (signers && signers.length > 0) {
+      // Multi-signer: regenerate tokens for pending/expired signers and re-send
+      let resent = 0;
+      for (const signer of signers) {
+        if (signer.status === 'signed' || signer.status === 'declined') continue;
+
+        const newToken = generateToken();
+        await service
+          .from('contract_signers')
+          .update({
+            token: newToken,
+            token_expires_at: expiresAt,
+            status: signer.status === 'waiting' ? 'waiting' : 'pending',
+          })
+          .eq('id', signer.id);
+
+        // Only send WhatsApp to pending (not waiting) signers
+        if (signer.status !== 'waiting') {
+          const signUrl = `${appUrl}/sign/${newToken}`;
+          const message = [
+            `\ud83d\udcdd *Document for Signature*`,
+            '',
+            `${biz.name} has sent you a document to sign:`,
+            `\ud83d\udcc4 ${contract.title}`,
+            '',
+            `Please tap the link below to review and sign:`,
+            signUrl,
+            '',
+            `\u23f0 This link expires in 72 hours.`,
+          ].join('\n');
+
+          await sendWhatsAppMessage(service, contract.business_id, biz.country_code, signer.signer_phone, message);
+          resent++;
+        }
+      }
+
+      // Update parent contract expiry too
+      const newParentToken = generateToken();
+      await service
+        .from('contracts')
+        .update({ token: newParentToken, token_expires_at: expiresAt, status: 'pending' })
+        .eq('id', contract.id);
+
+      return NextResponse.json({
+        contract_id: contract.id,
+        resent_count: resent,
+        expires_at: expiresAt,
+      });
+    }
+
+    // Single signer flow
+    if (!contract.signer_phone) {
+      return NextResponse.json({ error: 'No signer phone number on this contract' }, { status: 400 });
+    }
+
+    const token = generateToken();
+
     const { error: updateError } = await service
       .from('contracts')
       .update({
@@ -72,7 +172,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to regenerate link' }, { status: 500 });
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
     const signUrl = `${appUrl}/sign/${token}`;
 
     const message = [
@@ -87,35 +186,7 @@ export async function POST(request: NextRequest) {
       `\u23f0 This link expires in 72 hours.`,
     ].join('\n');
 
-    // Send WhatsApp message
-    const resolver = new ChannelResolver(service);
-    const resolved =
-      (await resolver.resolveByBusinessId(contract.business_id)) ||
-      (await resolver.getSharedChannelForCountry(biz.country_code || 'NG'));
-
-    const phone = contract.signer_phone.replace(/\D/g, '');
-    let sent = false;
-
-    if (resolved) {
-      try {
-        const result = await resolved.sender.sendText({ to: phone, text: message });
-        sent = result.success !== false;
-      } catch (waErr) {
-        console.warn('Primary channel send failed, trying Gupshup fallback:', waErr);
-      }
-    }
-
-    if (!sent) {
-      const gupshup = new GupshupService();
-      if (gupshup.isConfigured) {
-        const result = await gupshup.sendText({ to: phone, text: message });
-        if (!result.success) {
-          console.warn('Gupshup fallback also failed (contract token updated)');
-        }
-      } else {
-        console.log(`[mock] WhatsApp to ${phone}: Re-sign "${contract.title}" at ${signUrl}`);
-      }
-    }
+    await sendWhatsAppMessage(service, contract.business_id, biz.country_code, contract.signer_phone, message);
 
     return NextResponse.json({
       sign_url: signUrl,

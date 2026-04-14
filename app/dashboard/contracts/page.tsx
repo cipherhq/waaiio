@@ -20,6 +20,7 @@ interface Contract {
   audit_trail: Record<string, string> | null;
   signature_data: string | null;
   template_url: string | null;
+  signer_email: string | null;
   decline_reason: string | null;
   declined_at: string | null;
   require_otp: boolean;
@@ -81,7 +82,7 @@ export default function ContractsPage() {
   const loadContracts = useCallback(async () => {
     const { data } = await supabase
       .from('contracts')
-      .select('id, title, signer_name, signer_phone, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, contract_signers(id, signer_name, signer_phone, status, signed_at)')
+      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, contract_signers(id, signer_name, signer_phone, status, signed_at)')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
 
@@ -265,7 +266,7 @@ export default function ContractsPage() {
     setEditTitle(c.title);
     setEditSignerName(c.signer_name || '');
     setEditSignerPhone(c.signer_phone || '');
-    setEditSignerEmail('');
+    setEditSignerEmail(c.signer_email || '');
   }
 
   async function handleSaveEdit(e: React.FormEvent) {
