@@ -301,7 +301,8 @@ export class BotService {
 
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
-    const isFreeTextStep = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion'].includes(currentStep);
+    const isChatStep = currentStep === 'chat_handoff' || currentStep === 'chat_start';
+    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion'].includes(currentStep);
 
     // Detect greetings and booking intent for restart detection (without detectIntent)
     const normalizedForRestart = text.toLowerCase().trim();
@@ -678,8 +679,9 @@ export class BotService {
 
     // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
+    const isChatMode = step === 'chat_handoff' || step === 'chat_start';
     const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
-    if (isEscapeHatch && session.business_id) {
+    if (isEscapeHatch && session.business_id && !isChatMode) {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
       await this.sendText(from, 'Action cancelled. Send *Hi* to start fresh. 🙏');
@@ -688,7 +690,7 @@ export class BotService {
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
-    const isFreeTextStepForKeywords = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion'].includes(step);
+    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
       // Load business category for category-scoped keywords
@@ -839,7 +841,7 @@ export class BotService {
 
     // Chat handoff: bot is paused, route messages to human agent
     if (session.business_id && step === 'chat_handoff') {
-      const restartMatch = /^(restart|hi|start\s*over)$/i.test(text);
+      const restartMatch = /^(restart|start\s*over)$/i.test(text);
       if (restartMatch) {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
