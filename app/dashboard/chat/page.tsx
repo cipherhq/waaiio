@@ -1086,7 +1086,7 @@ export default function ChatPage() {
                                   </div>
                                 ) : (
                                   <p className="whitespace-pre-wrap text-sm leading-relaxed">
-                                    {msg.message_text}
+                                    {msg.message_text || (msg.direction === 'inbound' ? '[Voice message]' : '')}
                                   </p>
                                 )}
                                 <p

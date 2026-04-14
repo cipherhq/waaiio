@@ -84,10 +84,34 @@ export async function POST(request: NextRequest) {
     }
 
     // Audio extraction: Gupshup sends innerPayload.type = 'audio' with innerPayload.url
+    // The Gupshup URL expires, so download and re-upload to Supabase Storage
     let mediaUrl: string | undefined;
     if (typeof innerPayload === 'object' && innerPayload && innerPayload.type === 'audio' && innerPayload.url) {
-      mediaUrl = innerPayload.url as string;
       if (!text) text = '[Voice message]';
+      try {
+        const gupshupAudioUrl = innerPayload.url as string;
+        const audioRes = await fetch(gupshupAudioUrl);
+        if (audioRes.ok) {
+          const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+          const contentType = (innerPayload.contentType as string) || 'audio/ogg';
+          const ext = contentType.includes('ogg') ? 'ogg' : 'webm';
+          const storagePath = `chat-audio/${destination || 'shared'}/${Date.now()}.${ext}`;
+
+          const storageClient = createServiceClient();
+          await storageClient.storage
+            .from('business-documents')
+            .upload(storagePath, audioBuffer, { contentType, upsert: false });
+
+          const { data: urlData } = storageClient.storage
+            .from('business-documents')
+            .getPublicUrl(storagePath);
+          mediaUrl = urlData.publicUrl;
+        }
+      } catch (err) {
+        logger.error('[WEBHOOK] Gupshup audio download/upload error:', err);
+        // Fallback: use the expiring Gupshup URL directly
+        mediaUrl = innerPayload.url as string;
+      }
     }
 
     const msgType = (innerPayload?.type || payload.type || 'text') as string;
