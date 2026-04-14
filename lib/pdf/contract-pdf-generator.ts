@@ -14,6 +14,7 @@ interface ContractPdfData {
     signed_at: string;
   };
   contractId: string;
+  logoBuffer?: Buffer;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -90,9 +91,20 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   // ── Waaiio Branding (top-right) ──
   drawWaaiioBranding(doc, pageWidth);
 
+  // ── Business logo (if provided) ──
+  if (data.logoBuffer) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (doc as any).image(data.logoBuffer, 50, 35, { width: 40, height: 40 });
+    } catch {
+      // Skip logo if embedding fails
+    }
+  }
+
   // ── Header ──
+  const headerX = data.logoBuffer ? 100 : 50;
   doc.fontSize(10).font('Helvetica').fillColor('#666666')
-    .text(data.businessName, 50, 50, { width: contentWidth - 120 });
+    .text(data.businessName, headerX, 50, { width: contentWidth - 120 });
 
   doc.fontSize(18).font('Helvetica-Bold').fillColor('#000000')
     .text(data.title, 50, 70, { width: contentWidth - 120 });

@@ -20,6 +20,11 @@ interface Contract {
   audit_trail: Record<string, string> | null;
   signature_data: string | null;
   template_url: string | null;
+  decline_reason: string | null;
+  declined_at: string | null;
+  require_otp: boolean;
+  signing_mode: string;
+  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null }[];
 }
 
 type DocTab = 'template' | 'write' | 'upload';
@@ -31,6 +36,8 @@ export default function ContractsPage() {
   const [showModal, setShowModal] = useState(false);
   const [sending, setSending] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
 
   // Edit state
@@ -60,13 +67,21 @@ export default function ContractsPage() {
   const [signerName, setSignerName] = useState('');
   const [signerPhone, setSignerPhone] = useState('');
   const [signerEmail, setSignerEmail] = useState('');
+  const [requireOtp, setRequireOtp] = useState(false);
+
+  // Multi-signer state
+  const [additionalSigners, setAdditionalSigners] = useState<{ name: string; phone: string; email: string }[]>([]);
+  const [signingMode, setSigningMode] = useState<'parallel' | 'sequential'>('parallel');
+
+  // CC recipients
+  const [ccRecipients, setCcRecipients] = useState<{ phone: string }[]>([]);
 
   const supabase = createClient();
 
   const loadContracts = useCallback(async () => {
     const { data } = await supabase
       .from('contracts')
-      .select('id, title, signer_name, signer_phone, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url')
+      .select('id, title, signer_name, signer_phone, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, contract_signers(id, signer_name, signer_phone, status, signed_at)')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
 
@@ -92,6 +107,10 @@ export default function ContractsPage() {
     setSignerName('');
     setSignerPhone('');
     setSignerEmail('');
+    setRequireOtp(false);
+    setAdditionalSigners([]);
+    setSigningMode('parallel');
+    setCcRecipients([]);
   }
 
   function handleTemplateChange(templateId: string) {
@@ -164,6 +183,18 @@ export default function ContractsPage() {
         })
       : undefined;
 
+    // Build signers list if multi-signer
+    const allSigners = [
+      { name: signerName || undefined, phone: signerPhone, email: signerEmail || undefined },
+      ...additionalSigners.filter(s => s.phone).map(s => ({
+        name: s.name || undefined,
+        phone: s.phone,
+        email: s.email || undefined,
+      })),
+    ];
+
+    const isMulti = allSigners.length > 1;
+
     try {
       const res = await fetch('/api/contracts/send', {
         method: 'POST',
@@ -171,11 +202,14 @@ export default function ContractsPage() {
         body: JSON.stringify({
           business_id: business.id,
           title,
-          signer_phone: signerPhone,
-          signer_name: signerName || undefined,
-          signer_email: signerEmail || undefined,
+          ...(isMulti
+            ? { signers: allSigners, signing_mode: signingMode }
+            : { signer_phone: signerPhone, signer_name: signerName || undefined, signer_email: signerEmail || undefined }
+          ),
           document_content: finalContent,
           template_url: uploadedFileUrl || undefined,
+          require_otp: requireOtp || undefined,
+          cc_recipients: ccRecipients.filter(cc => cc.phone) || undefined,
         }),
       });
 
@@ -204,6 +238,25 @@ export default function ContractsPage() {
       console.error('Failed to resend:', err);
     } finally {
       setResendingId(null);
+    }
+  }
+
+  async function handleRevoke(contractId: string) {
+    setRevokingId(contractId);
+    try {
+      const res = await fetch('/api/contracts/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contract_id: contractId }),
+      });
+      if (res.ok) {
+        await loadContracts();
+      }
+    } catch (err) {
+      console.error('Failed to revoke:', err);
+    } finally {
+      setRevokingId(null);
+      setConfirmRevokeId(null);
     }
   }
 
@@ -255,6 +308,8 @@ export default function ContractsPage() {
         return <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">Expired</span>;
       case 'revoked':
         return <span className="inline-flex items-center rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-medium text-red-700">Revoked</span>;
+      case 'declined':
+        return <span className="inline-flex items-center rounded-full bg-orange-100 px-2.5 py-0.5 text-xs font-medium text-orange-700">Declined</span>;
       default:
         return <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600">{status}</span>;
     }
@@ -278,6 +333,30 @@ export default function ContractsPage() {
           Send for Signature
         </button>
       </div>
+
+      {/* Stats Cards */}
+      {!loading && contracts.length > 0 && (() => {
+        const total = contracts.length;
+        const pending = contracts.filter(c => c.status === 'pending').length;
+        const signed = contracts.filter(c => c.status === 'signed').length;
+        const expired = contracts.filter(c => c.status === 'expired').length;
+        const stats = [
+          { label: 'Total', value: total, color: 'bg-blue-50 text-blue-700' },
+          { label: 'Pending', value: pending, color: 'bg-yellow-50 text-yellow-700' },
+          { label: 'Signed', value: signed, color: 'bg-green-50 text-green-700' },
+          { label: 'Expired', value: expired, color: 'bg-gray-50 text-gray-600' },
+        ];
+        return (
+          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {stats.map(s => (
+              <div key={s.label} className={`rounded-xl border border-gray-200 p-4 ${s.color}`}>
+                <p className="text-2xl font-bold">{s.value}</p>
+                <p className="text-xs font-medium opacity-70">{s.label}</p>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Contracts table */}
       {loading ? (
@@ -315,8 +394,19 @@ export default function ContractsPage() {
                     ) : null}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <p className="text-sm text-gray-700">{c.signer_name || '\u2014'}</p>
-                    <p className="text-xs text-gray-400">{c.signer_phone}</p>
+                    {c.contract_signers && c.contract_signers.length > 0 ? (
+                      <>
+                        <p className="text-sm text-gray-700">{c.contract_signers.length} signers</p>
+                        <p className="text-xs text-gray-400">
+                          {c.contract_signers.filter(s => s.status === 'signed').length}/{c.contract_signers.length} signed
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm text-gray-700">{c.signer_name || '\u2014'}</p>
+                        <p className="text-xs text-gray-400">{c.signer_phone}</p>
+                      </>
+                    )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     {getStatusBadge(c.status)}
@@ -344,6 +434,15 @@ export default function ContractsPage() {
                             {resendingId === c.id ? 'Sending...' : 'Re-send'}
                           </button>
                         </>
+                      )}
+                      {c.status === 'pending' && (
+                        <button
+                          onClick={() => setConfirmRevokeId(c.id)}
+                          disabled={revokingId === c.id}
+                          className="text-sm font-medium text-red-600 hover:underline disabled:opacity-50"
+                        >
+                          {revokingId === c.id ? 'Voiding...' : 'Void'}
+                        </button>
                       )}
                       {c.status === 'signed' && c.signed_url?.endsWith('.pdf') && (
                         <>
@@ -432,6 +531,36 @@ export default function ContractsPage() {
             ) : !selectedContract.template_url ? (
               <p className="mb-4 text-sm italic text-gray-400">No document content (title-only)</p>
             ) : null}
+
+            {/* Multi-signer list */}
+            {selectedContract.contract_signers && selectedContract.contract_signers.length > 0 && (
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-medium text-gray-500">Signers</p>
+                <div className="space-y-1.5">
+                  {selectedContract.contract_signers.map(s => (
+                    <div key={s.id} className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">{s.signer_name || 'No name'}</p>
+                        <p className="text-xs text-gray-400">{s.signer_phone}</p>
+                      </div>
+                      {getStatusBadge(s.status)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Decline info */}
+            {selectedContract.status === 'declined' && (
+              <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 p-3">
+                <p className="text-sm font-medium text-orange-700">
+                  Declined{selectedContract.declined_at ? ` on ${new Date(selectedContract.declined_at).toLocaleDateString()}` : ''}
+                </p>
+                {selectedContract.decline_reason && (
+                  <p className="mt-1 text-sm text-orange-600">Reason: {selectedContract.decline_reason}</p>
+                )}
+              </div>
+            )}
 
             {/* Signature + Audit (for signed contracts) */}
             {selectedContract.status === 'signed' && (
@@ -765,6 +894,108 @@ export default function ContractsPage() {
                     />
                   </div>
 
+                  {/* Additional Signers */}
+                  {additionalSigners.map((s, i) => (
+                    <div key={i} className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium text-gray-500">Signer {i + 2}</p>
+                        <button
+                          type="button"
+                          onClick={() => setAdditionalSigners(prev => prev.filter((_, j) => j !== i))}
+                          className="text-xs text-red-500 hover:underline"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <PhoneInput
+                        value={s.phone}
+                        onChange={val => setAdditionalSigners(prev => prev.map((x, j) => j === i ? { ...x, phone: val } : x))}
+                      />
+                      <input
+                        type="text"
+                        value={s.name}
+                        onChange={e => setAdditionalSigners(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
+                        placeholder="Name"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      />
+                    </div>
+                  ))}
+
+                  <button
+                    type="button"
+                    onClick={() => setAdditionalSigners(prev => [...prev, { name: '', phone: '', email: '' }])}
+                    className="w-full rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-500 transition hover:border-brand hover:text-brand"
+                  >
+                    + Add Another Signer
+                  </button>
+
+                  {/* Signing mode (only if multiple signers) */}
+                  {additionalSigners.length > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Signing Order</label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSigningMode('parallel')}
+                          className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                            signingMode === 'parallel' ? 'border-brand bg-brand/5 text-brand' : 'border-gray-200 text-gray-600'
+                          }`}
+                        >
+                          All at once
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSigningMode('sequential')}
+                          className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                            signingMode === 'sequential' ? 'border-brand bg-brand/5 text-brand' : 'border-gray-200 text-gray-600'
+                          }`}
+                        >
+                          In order
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OTP toggle */}
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={requireOtp}
+                      onChange={e => setRequireOtp(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Require OTP Verification</p>
+                      <p className="text-xs text-gray-400">Signer must verify via WhatsApp code before signing</p>
+                    </div>
+                  </label>
+
+                  {/* CC Recipients */}
+                  {ccRecipients.map((cc, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <PhoneInput
+                          value={cc.phone}
+                          onChange={val => setCcRecipients(prev => prev.map((x, j) => j === i ? { ...x, phone: val } : x))}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setCcRecipients(prev => prev.filter((_, j) => j !== i))}
+                        className="text-xs text-red-500 hover:underline"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setCcRecipients(prev => [...prev, { phone: '' }])}
+                    className="text-xs font-medium text-gray-500 hover:text-brand"
+                  >
+                    + Add CC Recipient
+                  </button>
+
                   <div className="flex gap-3 pt-2">
                     <button
                       type="button"
@@ -784,6 +1015,33 @@ export default function ContractsPage() {
                 </div>
               )}
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Revoke Confirmation Dialog */}
+      {confirmRevokeId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-gray-900">Void Document?</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              This will cancel the signing link and notify the signer. This action cannot be undone.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => setConfirmRevokeId(null)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleRevoke(confirmRevokeId)}
+                disabled={!!revokingId}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+              >
+                {revokingId ? 'Voiding...' : 'Void Document'}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -15,6 +15,7 @@ interface AppendSignatureData {
     signed_at: string;
   };
   contractId: string;
+  logoBuffer?: Buffer;
 }
 
 function formatDate(iso: string): string {
@@ -92,9 +93,25 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
     x: 440, y: 785, size: 7, font, color: lightGray,
   });
 
+  // ── Business logo (if provided) ──
+  if (data.logoBuffer) {
+    try {
+      const isPng = data.logoBuffer[0] === 0x89;
+      const logoImage = isPng
+        ? await pdfDoc.embedPng(data.logoBuffer)
+        : await pdfDoc.embedJpg(data.logoBuffer);
+      const logoScale = Math.min(40 / logoImage.width, 40 / logoImage.height, 1);
+      sigPage.drawImage(logoImage, {
+        x: 50, y: y - 30, width: logoImage.width * logoScale, height: logoImage.height * logoScale,
+      });
+    } catch {
+      // Skip logo if embedding fails
+    }
+  }
+
   // ── Header ──
   sigPage.drawText(data.businessName, {
-    x: 50, y, size: 10, font, color: gray,
+    x: data.logoBuffer ? 100 : 50, y, size: 10, font, color: gray,
   });
   y -= 22;
 

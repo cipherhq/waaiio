@@ -14,9 +14,12 @@ interface ContractInfo {
   template_url: string | null;
   signed_at?: string;
   has_pdf?: boolean;
+  require_otp?: boolean;
+  otp_verified?: boolean;
+  logo_url?: string | null;
 }
 
-type PageState = 'loading' | 'ready' | 'signing' | 'submitting' | 'success' | 'already_signed' | 'error';
+type PageState = 'loading' | 'otp_required' | 'otp_verifying' | 'ready' | 'signing' | 'submitting' | 'success' | 'already_signed' | 'declined' | 'error';
 
 export default function SignPage() {
   const params = useParams();
@@ -30,6 +33,16 @@ export default function SignPage() {
   const [hasDrawn, setHasDrawn] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [hasPdf, setHasPdf] = useState(false);
+
+  // Decline state
+  const [showDeclineModal, setShowDeclineModal] = useState(false);
+  const [declineReason, setDeclineReason] = useState('');
+  const [declining, setDeclining] = useState(false);
+
+  // OTP state
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpError, setOtpError] = useState('');
 
   // Document display state
   const [docBlobUrl, setDocBlobUrl] = useState<string | null>(null);
@@ -62,6 +75,13 @@ export default function SignPage() {
         if (!data.document_content && !data.template_url) {
           setAgreed(true);
         }
+
+        // Check if OTP is required and not yet verified
+        if (data.require_otp && !data.otp_verified) {
+          setState('otp_required');
+          return;
+        }
+
         setState('ready');
       } catch {
         setErrorMsg('Unable to load document. Please check your link.');
@@ -237,6 +257,72 @@ export default function SignPage() {
     setState('ready');
   }
 
+  async function handleDecline() {
+    setDeclining(true);
+    try {
+      const res = await fetch('/api/contracts/decline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, reason: declineReason || undefined }),
+      });
+      if (res.ok) {
+        setShowDeclineModal(false);
+        setState('declined');
+      } else {
+        const data = await res.json();
+        setErrorMsg(data.error || 'Failed to decline');
+        setState('error');
+      }
+    } catch {
+      setErrorMsg('Failed to decline. Please try again.');
+      setState('error');
+    } finally {
+      setDeclining(false);
+    }
+  }
+
+  async function sendOtp() {
+    setOtpSending(true);
+    setOtpError('');
+    try {
+      const res = await fetch('/api/contracts/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setOtpError(data.error || 'Failed to send code');
+      }
+    } catch {
+      setOtpError('Failed to send code');
+    } finally {
+      setOtpSending(false);
+    }
+  }
+
+  async function verifyOtp() {
+    setState('otp_verifying');
+    setOtpError('');
+    try {
+      const res = await fetch('/api/contracts/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, otp: otpCode }),
+      });
+      if (res.ok) {
+        setState('ready');
+      } else {
+        const data = await res.json();
+        setOtpError(data.error || 'Verification failed');
+        setState('otp_required');
+      }
+    } catch {
+      setOtpError('Verification failed');
+      setState('otp_required');
+    }
+  }
+
   async function submitSignature() {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -337,6 +423,79 @@ export default function SignPage() {
     );
   }
 
+  if (state === 'declined') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
+        <div className="max-w-sm text-center">
+          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-orange-100">
+            <svg className="h-8 w-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+          </div>
+          <h1 className="text-xl font-bold text-gray-900">Document Declined</h1>
+          <p className="mt-2 text-gray-600">
+            You have declined to sign &quot;{contract?.title}&quot;. The sender has been notified.
+          </p>
+          <p className="mt-4 text-sm text-gray-400">You can close this page now.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (state === 'otp_required' || state === 'otp_verifying') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
+        <div className="w-full max-w-sm">
+          <div className="rounded-xl bg-white p-6 shadow-lg">
+            <div className="mb-4 text-center">
+              <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-100">
+                <svg className="h-7 w-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h1 className="text-lg font-bold text-gray-900">Verify Your Identity</h1>
+              <p className="mt-1 text-sm text-gray-500">
+                Enter the 6-digit code sent to your WhatsApp to continue signing &quot;{contract?.title}&quot;.
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                value={otpCode}
+                onChange={e => setOtpCode(e.target.value.replace(/\D/g, ''))}
+                placeholder="000000"
+                className="w-full rounded-lg border border-gray-300 px-4 py-3 text-center text-2xl font-bold tracking-[0.5em] focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+
+              {otpError && (
+                <p className="text-center text-sm text-red-600">{otpError}</p>
+              )}
+
+              <button
+                onClick={verifyOtp}
+                disabled={otpCode.length !== 6 || state === 'otp_verifying'}
+                className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+              >
+                {state === 'otp_verifying' ? 'Verifying...' : 'Verify'}
+              </button>
+
+              <button
+                onClick={sendOtp}
+                disabled={otpSending}
+                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+              >
+                {otpSending ? 'Sending...' : 'Send Code'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (state === 'success') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gray-50 p-6">
@@ -376,9 +535,19 @@ export default function SignPage() {
       {/* Header */}
       <header className="border-b bg-white px-4 py-4 shadow-sm">
         <div className="mx-auto max-w-lg">
-          <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
-            {contract?.business_name}
-          </p>
+          <div className="flex items-center gap-3">
+            {contract?.logo_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={contract.logo_url}
+                alt={contract.business_name}
+                className="h-10 w-10 rounded-lg object-contain"
+              />
+            )}
+            <p className="text-xs font-medium uppercase tracking-wider text-gray-400">
+              {contract?.business_name}
+            </p>
+          </div>
           <h1 className="mt-1 text-lg font-bold text-gray-900">{contract?.title}</h1>
           {contract?.signer_name && (
             <p className="mt-1 text-sm text-gray-500">
@@ -539,12 +708,56 @@ export default function SignPage() {
             </button>
           </div>
 
+          {/* Decline button */}
+          <div className="mt-4 text-center">
+            <button
+              onClick={() => setShowDeclineModal(true)}
+              className="text-sm font-medium text-red-500 hover:text-red-600 hover:underline"
+            >
+              Decline to Sign
+            </button>
+          </div>
+
           {/* Legal note */}
           <p className="mt-6 text-center text-xs text-gray-400">
             By signing, you agree that this electronic signature is as valid as a handwritten signature.
           </p>
         </div>
       </main>
+
+      {/* Decline Modal */}
+      {showDeclineModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="text-lg font-bold text-gray-900">Decline Document</h2>
+            <p className="mt-1 text-sm text-gray-500">
+              Are you sure you want to decline &quot;{contract?.title}&quot;? The sender will be notified.
+            </p>
+            <textarea
+              value={declineReason}
+              onChange={e => setDeclineReason(e.target.value)}
+              placeholder="Reason for declining (optional)"
+              rows={3}
+              className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+            />
+            <div className="mt-4 flex gap-3">
+              <button
+                onClick={() => setShowDeclineModal(false)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDecline}
+                disabled={declining}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
+              >
+                {declining ? 'Declining...' : 'Confirm Decline'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
