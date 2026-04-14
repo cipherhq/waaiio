@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { GupshupService } from '@/lib/channels/gupshup';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -24,8 +25,9 @@ export async function POST(request: NextRequest) {
     // Send WhatsApp message via channel resolver (dedicated first, fallback to shared)
     const resolver = new ChannelResolver(supabase);
     const resolved = await resolver.resolveByBusinessId(businessId);
+    const sender = resolved?.sender || new GupshupService();
 
-    if (!resolved) {
+    if (!sender) {
       return NextResponse.json({ error: 'No messaging channel configured' }, { status: 400 });
     }
 
@@ -33,7 +35,7 @@ export async function POST(request: NextRequest) {
       ? customerPhone.slice(1)
       : customerPhone;
 
-    await resolved.sender.sendText({
+    await sender.sendText({
       to: phone,
       text: messageText,
     });

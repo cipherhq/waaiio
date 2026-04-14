@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { GupshupService } from '@/lib/channels/gupshup';
 import { resolveConversation } from '@/lib/bot/handoff.service';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
@@ -24,14 +25,11 @@ export async function POST(request: NextRequest) {
 
     const resolver = new ChannelResolver(supabase);
     const resolved = await resolver.resolveByBusinessId(businessId);
-
-    if (!resolved) {
-      return NextResponse.json({ error: 'No messaging channel configured' }, { status: 400 });
-    }
+    const sender = resolved?.sender || new GupshupService();
 
     await resolveConversation({
       supabase,
-      sender: resolved.sender,
+      sender,
       businessId,
       customerPhone,
     });
