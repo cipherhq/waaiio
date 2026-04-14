@@ -159,7 +159,7 @@ export default function ChatPage() {
     }
 
     load(true);
-    interval = setInterval(() => load(false), 5000);
+    interval = setInterval(() => load(false), 2000);
     return () => clearInterval(interval);
   }, [business.id]);
 
