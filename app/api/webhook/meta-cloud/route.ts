@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
           const { data: dedupInserted } = await supabase
             .from('processed_webhook_events')
             .upsert(
-              { event_id: `meta-${metaMsgId}`, event_type: 'meta_cloud_message', processed_at: new Date().toISOString() },
+              { event_id: `meta-${metaMsgId}`, gateway: 'meta_cloud', event_type: 'meta_cloud_message', processed_at: new Date().toISOString() },
               { onConflict: 'event_id', ignoreDuplicates: true },
             )
             .select('id');

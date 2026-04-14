@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
     const { data: inserted } = await supabaseForDedup
       .from('processed_webhook_events')
       .upsert(
-        { event_id: `gupshup-${messageId}`, event_type: 'whatsapp_message', processed_at: new Date().toISOString() },
+        { event_id: `gupshup-${messageId}`, gateway: 'gupshup', event_type: 'whatsapp_message', processed_at: new Date().toISOString() },
         { onConflict: 'event_id', ignoreDuplicates: true },
       )
       .select('id');

@@ -66,7 +66,7 @@ export async function POST(
     const { data: inserted } = await supabase
       .from('processed_webhook_events')
       .upsert(
-        { event_id: eventId, event_type: `byo_${event}`, processed_at: new Date().toISOString() },
+        { event_id: eventId, gateway: 'byo', event_type: `byo_${event}`, processed_at: new Date().toISOString() },
         { onConflict: 'event_id', ignoreDuplicates: true },
       )
       .select('id');
