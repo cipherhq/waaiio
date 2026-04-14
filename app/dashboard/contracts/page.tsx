@@ -32,6 +32,14 @@ export default function ContractsPage() {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
 
+  // Edit state
+  const [editingContract, setEditingContract] = useState<Contract | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editSignerName, setEditSignerName] = useState('');
+  const [editSignerPhone, setEditSignerPhone] = useState('');
+  const [editSignerEmail, setEditSignerEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+
   // Form state — Step 1: Document
   const [step, setStep] = useState<1 | 2>(1);
   const [docTab, setDocTab] = useState<DocTab>('template');
@@ -198,6 +206,44 @@ export default function ContractsPage() {
     }
   }
 
+  function openEditModal(c: Contract) {
+    setEditingContract(c);
+    setEditTitle(c.title);
+    setEditSignerName(c.signer_name || '');
+    setEditSignerPhone(c.signer_phone || '');
+    setEditSignerEmail('');
+  }
+
+  async function handleSaveEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingContract || !editTitle || !editSignerPhone) return;
+
+    setSaving(true);
+    try {
+      const res = await fetch('/api/contracts/update', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contract_id: editingContract.id,
+          title: editTitle,
+          signer_name: editSignerName || null,
+          signer_phone: editSignerPhone,
+          signer_email: editSignerEmail || null,
+        }),
+      });
+
+      if (res.ok) {
+        setEditingContract(null);
+        setSelectedContract(null);
+        await loadContracts();
+      }
+    } catch (err) {
+      console.error('Failed to update:', err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function getStatusBadge(status: string) {
     switch (status) {
       case 'signed':
@@ -282,13 +328,21 @@ export default function ContractsPage() {
                   <td className="whitespace-nowrap px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
                       {(c.status === 'expired' || c.status === 'pending') && (
-                        <button
-                          onClick={() => handleResend(c.id)}
-                          disabled={resendingId === c.id}
-                          className="text-sm font-medium text-brand hover:underline disabled:opacity-50"
-                        >
-                          {resendingId === c.id ? 'Sending...' : 'Re-send'}
-                        </button>
+                        <>
+                          <button
+                            onClick={() => openEditModal(c)}
+                            className="text-sm font-medium text-gray-600 hover:underline"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => handleResend(c.id)}
+                            disabled={resendingId === c.id}
+                            className="text-sm font-medium text-brand hover:underline disabled:opacity-50"
+                          >
+                            {resendingId === c.id ? 'Sending...' : 'Re-send'}
+                          </button>
+                        </>
                       )}
                       {c.status === 'signed' && c.signed_url?.endsWith('.pdf') && (
                         <a
@@ -320,6 +374,14 @@ export default function ContractsPage() {
               </div>
               <div className="flex items-center gap-3">
                 {getStatusBadge(selectedContract.status)}
+                {(selectedContract.status === 'pending' || selectedContract.status === 'expired') && (
+                  <button
+                    onClick={() => openEditModal(selectedContract)}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                  >
+                    Edit
+                  </button>
+                )}
                 <button
                   onClick={() => setSelectedContract(null)}
                   className="text-gray-400 hover:text-gray-600"
@@ -697,6 +759,86 @@ export default function ContractsPage() {
                   </div>
                 </div>
               )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Modal */}
+      {editingContract && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
+          <div className="mx-4 w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Edit Contract</h2>
+              <button
+                onClick={() => setEditingContract(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Document Title *</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value)}
+                  required
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Signer Phone *</label>
+                <input
+                  type="tel"
+                  value={editSignerPhone}
+                  onChange={e => setEditSignerPhone(e.target.value)}
+                  placeholder="e.g. 2348012345678"
+                  required
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Signer Name</label>
+                <input
+                  type="text"
+                  value={editSignerName}
+                  onChange={e => setEditSignerName(e.target.value)}
+                  placeholder="e.g. John Doe"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Signer Email</label>
+                <input
+                  type="email"
+                  value={editSignerEmail}
+                  onChange={e => setEditSignerEmail(e.target.value)}
+                  placeholder="e.g. john@example.com"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingContract(null)}
+                  className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving || !editTitle || !editSignerPhone}
+                  className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
             </form>
           </div>
         </div>
