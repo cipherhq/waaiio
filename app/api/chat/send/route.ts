@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Send WhatsApp message via channel resolver
+    // Send WhatsApp message via channel resolver (dedicated first, fallback to shared)
     const resolver = new ChannelResolver(supabase);
     const resolved = await resolver.resolveByBusinessId(businessId);
 

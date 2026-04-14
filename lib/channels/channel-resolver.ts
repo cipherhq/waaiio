@@ -107,8 +107,8 @@ export class ChannelResolver {
   }
 
   /**
-   * Resolve a channel by business_id (for dedicated channels).
-   * Falls back to the shared channel for the business's country.
+   * Resolve a channel by business_id.
+   * Tries dedicated channel first, then falls back to the shared channel for the business's country.
    */
   async resolveByBusinessId(businessId: string): Promise<ResolvedChannel | null> {
     if (!businessId) return null;
@@ -129,11 +129,29 @@ export class ChannelResolver {
       .eq('is_active', true)
       .maybeSingle();
 
-    const record = data as ChannelRecord | null;
-    this.cache.set(cacheKey, { data: record, ts: Date.now() });
+    if (data) {
+      const record = data as ChannelRecord;
+      this.cache.set(cacheKey, { data: record, ts: Date.now() });
+      return { channel: record, sender: this.buildSender(record) };
+    }
 
-    if (!record) return null;
-    return { channel: record, sender: this.buildSender(record) };
+    // Fallback: shared channel for the business's country
+    const { data: biz } = await this.supabase
+      .from('businesses')
+      .select('country_code')
+      .eq('id', businessId)
+      .single();
+
+    if (biz?.country_code) {
+      const shared = await this.getSharedChannelForCountry(biz.country_code as CountryCode);
+      if (shared) {
+        this.cache.set(cacheKey, { data: shared.channel, ts: Date.now() });
+        return shared;
+      }
+    }
+
+    this.cache.set(cacheKey, { data: null, ts: Date.now() });
+    return null;
   }
 
   /**
