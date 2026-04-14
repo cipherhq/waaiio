@@ -1071,18 +1071,22 @@ export default function ChatPage() {
                                 }`}
                               >
                                 {msg.media_type === 'audio' && msg.media_url ? (
-                                  <div className="flex items-center gap-2">
-                                    <svg className={`h-4 w-4 shrink-0 ${msg.direction === 'outbound' ? 'text-white/80' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                                    </svg>
+                                  <div>
+                                    <div className="mb-1 flex items-center gap-1.5">
+                                      <svg className={`h-3.5 w-3.5 shrink-0 ${msg.direction === 'outbound' ? 'text-white/80' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                                      </svg>
+                                      <span className={`text-xs font-medium ${msg.direction === 'outbound' ? 'text-white/80' : 'text-gray-500'}`}>
+                                        Voice message
+                                      </span>
+                                    </div>
                                     <audio
                                       controls
                                       preload="metadata"
-                                      className="h-8 max-w-[240px]"
-                                      style={{ filter: msg.direction === 'outbound' ? 'invert(1) brightness(2)' : 'none' }}
-                                    >
-                                      <source src={msg.media_url} />
-                                    </audio>
+                                      src={msg.media_url}
+                                      className="w-full min-w-[200px]"
+                                      style={msg.direction === 'outbound' ? { filter: 'invert(1) brightness(1.8)', height: '36px' } : { height: '36px' }}
+                                    />
                                   </div>
                                 ) : (
                                   <p className="whitespace-pre-wrap text-sm leading-relaxed">
