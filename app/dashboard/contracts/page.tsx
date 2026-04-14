@@ -268,7 +268,7 @@ export default function ContractsPage() {
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Contracts</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Waaiio Sign</h1>
           <p className="mt-1 text-sm text-gray-500">Send documents for e-signature via WhatsApp</p>
         </div>
         <button
@@ -281,10 +281,10 @@ export default function ContractsPage() {
 
       {/* Contracts table */}
       {loading ? (
-        <div className="py-20 text-center text-gray-400">Loading contracts...</div>
+        <div className="py-20 text-center text-gray-400">Loading documents...</div>
       ) : contracts.length === 0 ? (
         <div className="rounded-xl border border-dashed border-gray-200 py-20 text-center">
-          <p className="text-gray-500">No contracts yet</p>
+          <p className="text-gray-500">No documents yet</p>
           <p className="mt-1 text-sm text-gray-400">Send your first document for signature</p>
         </div>
       ) : (
@@ -430,7 +430,7 @@ export default function ContractsPage() {
                 </pre>
               </div>
             ) : !selectedContract.template_url ? (
-              <p className="mb-4 text-sm italic text-gray-400">No document content (title-only contract)</p>
+              <p className="mb-4 text-sm italic text-gray-400">No document content (title-only)</p>
             ) : null}
 
             {/* Signature + Audit (for signed contracts) */}
@@ -793,7 +793,7 @@ export default function ContractsPage() {
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40">
           <div className="mx-4 w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-lg font-bold text-gray-900">Edit Contract</h2>
+              <h2 className="text-lg font-bold text-gray-900">Edit Document</h2>
               <button
                 onClick={() => setEditingContract(null)}
                 className="text-gray-400 hover:text-gray-600"

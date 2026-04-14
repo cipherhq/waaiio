@@ -443,7 +443,7 @@ export default function SignPage() {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={docBlobUrl}
-                    alt="Contract document"
+                    alt="Document"
                     className="w-full"
                   />
                 </div>
