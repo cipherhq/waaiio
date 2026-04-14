@@ -14,45 +14,79 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    const { data: contract, error } = await supabase
+    // Try contracts table first
+    const { data: contract } = await supabase
       .from('contracts')
       .select('id, status, token_expires_at, business_id, title, signer_phone, require_otp')
       .eq('token', token)
       .single();
 
-    if (error || !contract) {
-      return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+    // Try contract_signers if not found
+    let signerRow: { id: string; signer_phone: string; status: string; contract_id: string } | null = null;
+    let parentContract: typeof contract = null;
+
+    if (!contract) {
+      const { data: signer } = await supabase
+        .from('contract_signers')
+        .select('id, signer_phone, status, contract_id')
+        .eq('token', token)
+        .single();
+
+      if (!signer) {
+        return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+      }
+
+      signerRow = signer;
+
+      const { data: parent } = await supabase
+        .from('contracts')
+        .select('id, status, token_expires_at, business_id, title, signer_phone, require_otp')
+        .eq('id', signer.contract_id)
+        .single();
+
+      if (!parent) {
+        return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+      }
+
+      parentContract = parent;
     }
 
-    if (contract.status !== 'pending') {
+    const activeContract = contract || parentContract!;
+    const signerStatus = signerRow ? signerRow.status : activeContract.status;
+    const signerPhone = signerRow ? signerRow.signer_phone : activeContract.signer_phone;
+
+    if (signerStatus !== 'pending') {
       return NextResponse.json({ error: 'Contract is not pending' }, { status: 410 });
     }
 
-    if (!contract.require_otp) {
+    if (!activeContract.require_otp) {
       return NextResponse.json({ error: 'OTP not required for this contract' }, { status: 400 });
     }
 
     // Generate 6-digit OTP
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 minutes
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
-    await supabase
-      .from('contracts')
-      .update({
-        otp_code: otp,
-        otp_expires_at: otpExpiresAt,
-        otp_attempts: 0,
-      })
-      .eq('id', contract.id);
+    if (signerRow) {
+      await supabase
+        .from('contract_signers')
+        .update({ otp_code: otp, otp_expires_at: otpExpiresAt, otp_attempts: 0 })
+        .eq('id', signerRow.id);
+    } else {
+      await supabase
+        .from('contracts')
+        .update({ otp_code: otp, otp_expires_at: otpExpiresAt, otp_attempts: 0 })
+        .eq('id', activeContract.id);
+    }
 
     // Send OTP via WhatsApp
-    if (contract.signer_phone) {
-      const message = `Your verification code for signing "${contract.title}" is: *${otp}*\n\nValid for 10 minutes. Do not share this code.`;
-      const phone = contract.signer_phone.replace(/\D/g, '');
+    if (signerPhone) {
+      const message = `Your verification code for signing "${activeContract.title}" is: *${otp}*\n\nValid for 10 minutes. Do not share this code.`;
+      const phone = signerPhone.replace(/\D/g, '');
 
       const resolver = new ChannelResolver(supabase);
       const resolved =
-        (await resolver.resolveByBusinessId(contract.business_id)) ||
+        (await resolver.resolveByBusinessId(activeContract.business_id)) ||
         (await resolver.getSharedChannelForCountry('NG'));
 
       let sent = false;

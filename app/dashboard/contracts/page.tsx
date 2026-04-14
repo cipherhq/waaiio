@@ -39,6 +39,7 @@ export default function ContractsPage() {
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
+  const [toastMsg, setToastMsg] = useState('');
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
 
   // Edit state
@@ -229,11 +230,15 @@ export default function ContractsPage() {
   async function handleResend(contractId: string) {
     setResendingId(contractId);
     try {
-      await fetch('/api/contracts/resend', {
+      const res = await fetch('/api/contracts/resend', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contract_id: contractId }),
       });
+      if (res.ok) {
+        setToastMsg('Signing link re-sent via WhatsApp');
+        setTimeout(() => setToastMsg(''), 3000);
+      }
       await loadContracts();
     } catch (err) {
       console.error('Failed to resend:', err);
@@ -1120,6 +1125,13 @@ export default function ContractsPage() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+
+      {/* Toast */}
+      {toastMsg && (
+        <div className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-gray-900 px-5 py-3 text-sm text-white shadow-lg">
+          {toastMsg}
         </div>
       )}
     </div>
