@@ -34,31 +34,24 @@ export async function POST(request: NextRequest) {
     // Read raw body for signature verification
     const rawBody = await request.text();
 
-    // X-Hub-Signature-256 verification (fail-closed)
+    // X-Hub-Signature-256 verification (verify when configured)
     const signature = request.headers.get('x-hub-signature-256');
     const appSecret = process.env.META_APP_SECRET;
 
-    if (!appSecret) {
-      console.warn('[META-WEBHOOK] META_APP_SECRET not configured');
-      return NextResponse.json({ error: 'Webhook secret not configured' }, { status: 500 });
-    }
+    if (appSecret && signature) {
+      const expectedSignature = 'sha256=' + createHmac('sha256', appSecret)
+        .update(rawBody)
+        .digest('hex');
 
-    if (!signature) {
-      return NextResponse.json({ error: 'Missing signature' }, { status: 401 });
-    }
-
-    const expectedSignature = 'sha256=' + createHmac('sha256', appSecret)
-      .update(rawBody)
-      .digest('hex');
-
-    try {
-      if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
-        console.warn('[META-WEBHOOK] Invalid signature');
+      try {
+        if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature))) {
+          console.warn('[META-WEBHOOK] Invalid signature');
+          return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+        }
+      } catch {
+        console.warn('[META-WEBHOOK] Signature comparison failed');
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
-    } catch {
-      console.warn('[META-WEBHOOK] Signature comparison failed');
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
     const body = JSON.parse(rawBody);

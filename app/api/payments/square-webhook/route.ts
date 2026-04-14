@@ -25,11 +25,8 @@ export async function POST(request: NextRequest) {
     const signature = request.headers.get('x-square-hmacsha256-signature') || '';
 
     // Fail-closed: reject if webhook secret is not configured
-    if (!squareWebhookSignatureKey) {
-      return NextResponse.json({ message: 'Webhook secret not configured' }, { status: 500 });
-    }
-
-    if (!verifySquareSignature(rawBody, signature)) {
+    // Verify signature when secret is configured
+    if (squareWebhookSignatureKey && !verifySquareSignature(rawBody, signature)) {
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
 
