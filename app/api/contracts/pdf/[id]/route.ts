@@ -74,11 +74,12 @@ export async function GET(
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const filename = `${contract.title.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-')}-signed.pdf`;
+    const viewInline = searchParams.get('view') === 'true';
 
     return new NextResponse(buffer, {
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': `${viewInline ? 'inline' : 'attachment'}; filename="${filename}"`,
         'Content-Length': String(buffer.length),
       },
     });
