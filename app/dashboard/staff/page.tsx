@@ -55,6 +55,8 @@ export default function StaffPage() {
 
   // Form state
   const [form, setForm] = useState<Omit<StaffMember, 'business_id' | 'user_id'>>({ id: '', ...EMPTY_STAFF });
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [scheduleEnabled, setScheduleEnabled] = useState<Record<string, boolean>>({});
   const [showSchedule, setShowSchedule] = useState(false);
 
@@ -84,6 +86,8 @@ export default function StaffPage() {
 
   function openAdd() {
     setForm({ id: '', ...EMPTY_STAFF });
+    setFirstName('');
+    setLastName('');
     setScheduleEnabled({});
     setShowSchedule(false);
     setView('add');
@@ -91,6 +95,9 @@ export default function StaffPage() {
 
   function openEdit(member: StaffMember) {
     setForm({ ...member });
+    const parts = member.name.split(' ');
+    setFirstName(parts[0] || '');
+    setLastName(parts.slice(1).join(' ') || '');
     const enabled: Record<string, boolean> = {};
     if (member.schedule) {
       for (const day of DAYS) {
@@ -131,11 +138,12 @@ export default function StaffPage() {
   }
 
   async function handleSave() {
-    if (!form.name.trim()) return;
+    if (!firstName.trim()) return;
     setSaving(true);
+    const fullName = lastName.trim() ? `${firstName.trim()} ${lastName.trim()}` : firstName.trim();
     const payload = {
       business_id: business.id,
-      name: form.name.trim(),
+      name: fullName,
       phone: form.phone || null,
       email: form.email || null,
       role: form.role,
@@ -213,16 +221,28 @@ export default function StaffPage() {
         <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
           {/* Left: Main fields */}
           <div className="space-y-4">
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Name <span className="text-red-400">*</span></label>
-              <input
-                type="text"
-                value={form.name}
-                onChange={e => setForm({ ...form, name: e.target.value })}
-                placeholder="Full name"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-                autoFocus
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">First Name <span className="text-red-400">*</span></label>
+                <input
+                  type="text"
+                  value={firstName}
+                  onChange={e => setFirstName(e.target.value)}
+                  placeholder="First name"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Last Name</label>
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={e => setLastName(e.target.value)}
+                  placeholder="Last name"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -390,7 +410,7 @@ export default function StaffPage() {
         <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
           <button
             onClick={handleSave}
-            disabled={saving || !form.name.trim()}
+            disabled={saving || !firstName.trim()}
             className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
           >
             {saving ? 'Saving...' : view === 'add' ? 'Add Staff' : 'Save Changes'}
