@@ -54,7 +54,7 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
   // 3. Send customer message
   await sender.sendText({
     to: from,
-    text: `Connecting you to a team member at *${businessName}*... 🙋\n\nType *restart* to go back to the bot.`,
+    text: `Connecting you to a team member at *${businessName}*... 🙋\n\nType *end chat* to close this session and return to the menu.`,
   });
 
   // 4. Insert system message in chat_messages
@@ -115,19 +115,19 @@ export async function resolveConversation(params: ResolveParams): Promise<void> 
     .eq('business_id', businessId)
     .eq('customer_phone', customerPhone);
 
-  // 2. Deactivate handed-off bot session
+  // 2. Deactivate any active bot session for this customer+business (chat_handoff or chat_start)
   await supabase.from('bot_sessions').update({
     is_active: false,
     handed_off: false,
   })
     .eq('whatsapp_number', customerPhone)
     .eq('business_id', businessId)
-    .eq('handed_off', true);
+    .eq('is_active', true);
 
   // 3. Send resolution message to customer
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
   await sender.sendText({
     to: phone,
-    text: "Your conversation has been resolved. Send *Hi* to start again. 🙏",
+    text: "This chat session has been closed. ✅\n\nSend *Hi* to continue with bookings, payments, and other services. 🙏",
   });
 }

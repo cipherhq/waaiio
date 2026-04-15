@@ -12,7 +12,7 @@ export async function processPaystackChargeSuccess(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status, amount, booking_id, gateway')
+    .select('id, status, amount, booking_id, invoice_id, gateway')
     .eq('gateway_reference', reference)
     .single();
 
@@ -54,6 +54,19 @@ export async function processPaystackChargeSuccess(
 
     // Record platform fee for confirmed payment
     await recordPlatformFeeForBooking(supabase, existingPayment.booking_id, existingPayment.amount);
+  }
+
+  if (existingPayment.invoice_id) {
+    await supabase
+      .from('invoices')
+      .update({
+        status: 'paid',
+        amount_paid: existingPayment.amount,
+        paid_at: new Date().toISOString(),
+      })
+      .eq('id', existingPayment.invoice_id);
+
+    await recordPlatformFeeForInvoice(supabase, existingPayment.invoice_id, existingPayment.amount);
   }
 }
 
@@ -111,6 +124,46 @@ async function recordPlatformFeeForBooking(
   await supabase.from('platform_fees').insert({
     business_id: booking.business_id,
     booking_id: bookingId,
+    transaction_amount: amount,
+    fee_percentage: feePercentage,
+    fee_flat: feeFlat,
+    fee_total: feeTotal,
+    tier,
+  });
+}
+
+async function recordPlatformFeeForInvoice(
+  supabase: SupabaseClient,
+  invoiceId: string,
+  paymentAmount: number,
+): Promise<void> {
+  const { data: invoice } = await supabase
+    .from('invoices')
+    .select('business_id, total_amount')
+    .eq('id', invoiceId)
+    .single();
+
+  if (!invoice?.business_id) return;
+
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('subscription_tier, trial_ends_at')
+    .eq('id', invoice.business_id)
+    .single();
+
+  if (!business) return;
+
+  const isInTrial = new Date(business.trial_ends_at) > new Date();
+  const tier = business.subscription_tier || 'free';
+
+  const feePercentage = isInTrial ? 0 : (tier === 'business' ? 1.0 : tier === 'growth' ? 1.5 : 2.5);
+  const feeFlat = isInTrial ? 0 : (tier === 'business' ? 50 : tier === 'growth' ? 50 : 100);
+  const amount = invoice.total_amount || paymentAmount;
+  const feeTotal = isInTrial ? 0 : Math.round(amount * feePercentage / 100) + feeFlat;
+
+  await supabase.from('platform_fees').insert({
+    business_id: invoice.business_id,
+    invoice_id: invoiceId,
     transaction_amount: amount,
     fee_percentage: feePercentage,
     fee_flat: feeFlat,

@@ -137,13 +137,8 @@ export function AdminSidebar() {
       {/* Logo */}
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-sm font-bold text-white">
-            S
-          </div>
-          <div className="text-left">
-            <p className="text-sm font-bold text-gray-900">Waaiio</p>
-            <p className="text-[10px] text-gray-400">Admin Console</p>
-          </div>
+          <img src="/logo.png" alt="Waaiio" className="h-8" />
+          <p className="text-[10px] text-gray-400">Admin Console</p>
         </div>
       </div>
 

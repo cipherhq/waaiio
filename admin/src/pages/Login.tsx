@@ -50,10 +50,8 @@ export default function Login() {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-brand text-lg font-bold text-white">
-            S
-          </div>
-          <h1 className="mt-4 text-xl font-bold text-gray-900">Waaiio Admin</h1>
+          <img src="/logo.png" alt="Waaiio" className="mx-auto h-10" />
+          <h1 className="mt-4 text-xl font-bold text-gray-900">Admin Console</h1>
           <p className="mt-1 text-sm text-gray-500">Sign in to the admin console</p>
         </div>
 

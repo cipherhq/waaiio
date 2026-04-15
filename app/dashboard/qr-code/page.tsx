@@ -169,17 +169,22 @@ export default function QRCodePage() {
     ctx.textAlign = 'center';
     ctx.fillText('Powered by', cx, footerY + 90);
 
-    // Waaiio logo text (large, bold, white)
-    ctx.fillStyle = '#FFFFFF';
+    // Waaiio logo text (large, bold, colored)
     ctx.font = 'bold 80px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('Waaiio', cx, footerY + 190);
-
-    // Small accent dot after logo
-    ctx.fillStyle = template.color;
-    const logoTextWidth = ctx.measureText('Waaiio').width;
-    ctx.beginPath();
-    ctx.arc(cx + logoTextWidth / 2 + 25, footerY + 175, 12, 0, Math.PI * 2);
-    ctx.fill();
+    const parts = [
+      { text: 'wa', color: '#25D366' },
+      { text: 'ai', color: '#E5993E' },
+      { text: 'io', color: '#B5A3E0' },
+    ];
+    const fullWidth = ctx.measureText('waaiio').width;
+    let logoX = cx - fullWidth / 2;
+    for (const part of parts) {
+      ctx.fillStyle = part.color;
+      ctx.textAlign = 'left';
+      ctx.fillText(part.text, logoX, footerY + 190);
+      logoX += ctx.measureText(part.text).width;
+    }
+    ctx.textAlign = 'center';
 
     // ── Download ──
     const url = canvas.toDataURL('image/png');

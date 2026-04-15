@@ -7,6 +7,7 @@ export async function initializePayment(
   opts: {
     bookingId?: string;
     orderId?: string;
+    invoiceId?: string;
     reservationId?: string;
     userId: string;
     amount: number;
@@ -137,6 +138,7 @@ export async function initializePayment(
       supabase,
       bookingId: opts.bookingId,
       orderId: opts.orderId,
+      invoiceId: opts.invoiceId,
       userId: opts.userId,
       amount: opts.amount,
       currency: currencyCode,
@@ -181,6 +183,7 @@ export async function recordPlatformFee(
     businessId: string;
     bookingId?: string;
     orderId?: string;
+    invoiceId?: string;
     reservationId?: string;
     transactionAmount: number;
     tier: SubscriptionTier;
@@ -193,6 +196,7 @@ export async function recordPlatformFee(
     business_id: opts.businessId,
     booking_id: opts.bookingId || null,
     order_id: opts.orderId || null,
+    invoice_id: opts.invoiceId || null,
     reservation_id: opts.reservationId || null,
     transaction_amount: opts.transactionAmount,
     fee_percentage: fee.feePercentage,

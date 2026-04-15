@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff';
+export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -28,6 +28,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'waitlist', label: 'Waitlist', description: 'Waitlist management for fully-booked services or events', icon: '📝' },
   { id: 'referral', label: 'Referral', description: 'Customer referral program with reward tracking', icon: '🤝' },
   { id: 'staff', label: 'Staff', description: 'Staff management with service assignments and scheduling', icon: '👥' },
+  { id: 'invoice', label: 'Invoices', description: 'Create and send invoices with online payment links', icon: '🧾' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -57,6 +58,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   reports: 'business',
   staff: 'business',
   crowdfunding: 'business',
+  invoice: 'business',
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };

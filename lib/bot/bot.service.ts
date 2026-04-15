@@ -842,10 +842,21 @@ export class BotService {
 
     // Chat handoff: bot is paused, route messages to human agent
     if (session.business_id && step === 'chat_handoff') {
-      const restartMatch = /^(restart|start\s*over)$/i.test(text);
+      const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
       if (restartMatch) {
         await this.deactivateSession(session.id);
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+        // Also resolve the conversation so the dashboard shows it as resolved
+        try {
+          await this.supabase.from('chat_conversations').update({
+            status: 'resolved',
+            resolved_at: new Date().toISOString(),
+          })
+            .eq('business_id', session.business_id)
+            .eq('customer_phone', from)
+            .eq('status', 'open');
+        } catch { /* non-critical */ }
+        await this.sendText(from, "Chat session ended. ✅\n\nSend *Hi* to continue with bookings, payments, and other services.");
+        return;
       }
       // Store message for human agent, update conversation
       const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
@@ -896,6 +907,22 @@ export class BotService {
     // Chat fallback: if message doesn't match any flow step and chat is enabled,
     // store as inbound chat message
     if (session.business_id && step === 'chat_start') {
+      // Allow user to exit chat_start mode
+      const chatExitMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
+      if (chatExitMatch) {
+        await this.deactivateSession(session.id);
+        try {
+          await this.supabase.from('chat_conversations').update({
+            status: 'resolved',
+            resolved_at: new Date().toISOString(),
+          })
+            .eq('business_id', session.business_id)
+            .eq('customer_phone', from)
+            .eq('status', 'open');
+        } catch { /* non-critical */ }
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+      }
+
       // This is a chat session — store message and acknowledge
       const caps = await getEnabledCapabilities(this.supabase, session.business_id);
       if (caps.includes('chat')) {
@@ -967,7 +994,7 @@ export class BotService {
 
         // Only send acknowledgment on the first message in this chat session
         if (!session.session_data.chat_ack_sent) {
-          await this.sendText(from, "Thanks for your message! A team member will respond shortly.");
+          await this.sendText(from, "Thanks for your message! A team member will respond shortly.\n\nType *end chat* anytime to return to the menu.");
           await this.supabase.from('bot_sessions').update({
             session_data: { ...session.session_data, chat_ack_sent: true },
           }).eq('id', session.id);

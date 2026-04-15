@@ -50,6 +50,7 @@ export class SquareGateway implements PaymentGateway {
         const mockRef = `mock_square_${idempotencyKey}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
+          invoice_id: opts.invoiceId || null,
           user_id: opts.userId,
           amount: opts.amount,
           currency: opts.currency,
@@ -102,6 +103,7 @@ export class SquareGateway implements PaymentGateway {
 
       const { data: payment } = await opts.supabase.from('payments').insert({
         booking_id: opts.bookingId || null,
+        invoice_id: opts.invoiceId || null,
         user_id: opts.userId,
         amount: opts.amount,
         currency: opts.currency,
@@ -119,6 +121,9 @@ export class SquareGateway implements PaymentGateway {
 
       if (payment && opts.bookingId) {
         await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
+      }
+      if (payment && opts.invoiceId) {
+        await opts.supabase.from('invoices').update({ payment_id: payment.id }).eq('id', opts.invoiceId);
       }
 
       return { url: paymentLink.url as string, reference: squareRef };

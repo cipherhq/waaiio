@@ -29,6 +29,18 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
+    // Role suggestions endpoint
+    const roles = searchParams.get('roles');
+    if (roles === 'true') {
+      const serviceClient = createServiceClient();
+      const { data: roleData } = await serviceClient
+        .from('business_staff')
+        .select('role')
+        .eq('business_id', businessId);
+      const uniqueRoles = [...new Set((roleData || []).map(r => r.role).filter(Boolean))];
+      return NextResponse.json({ roles: uniqueRoles });
+    }
+
     const serviceClient = createServiceClient();
     const { data, error } = await serviceClient
       .from('business_staff')
@@ -56,7 +68,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { businessId, name, phone, email, role, services, schedule } = body;
+    const { businessId, name, phone, email, role, services, schedule, commission_rate, notes, start_date, color } = body;
 
     if (!businessId || !name) {
       return NextResponse.json({ error: 'businessId and name required' }, { status: 400 });
@@ -82,10 +94,14 @@ export async function POST(request: NextRequest) {
         name,
         phone: phone || null,
         email: email || null,
-        role: role || 'staff',
+        role: role || 'Staff',
         services: services || [],
         schedule: schedule || {},
         is_active: true,
+        commission_rate: commission_rate ?? null,
+        notes: notes || null,
+        start_date: start_date || null,
+        color: color || null,
       })
       .select()
       .single();
@@ -111,7 +127,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { staffId, businessId, name, phone, email, role, services, schedule, is_active } = body;
+    const { staffId, businessId, name, phone, email, role, services, schedule, is_active, commission_rate, notes, start_date, color, photo_url } = body;
 
     if (!staffId || !businessId) {
       return NextResponse.json({ error: 'staffId and businessId required' }, { status: 400 });
@@ -138,6 +154,11 @@ export async function PUT(request: NextRequest) {
     if (services !== undefined) updateData.services = services;
     if (schedule !== undefined) updateData.schedule = schedule;
     if (is_active !== undefined) updateData.is_active = is_active;
+    if (commission_rate !== undefined) updateData.commission_rate = commission_rate;
+    if (notes !== undefined) updateData.notes = notes || null;
+    if (start_date !== undefined) updateData.start_date = start_date || null;
+    if (color !== undefined) updateData.color = color || null;
+    if (photo_url !== undefined) updateData.photo_url = photo_url;
 
     const { error } = await serviceClient
       .from('business_staff')
@@ -165,9 +186,8 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url);
-    const staffId = searchParams.get('staffId');
-    const businessId = searchParams.get('businessId');
+    const body = await request.json();
+    const { staffId, businessId } = body;
 
     if (!staffId || !businessId) {
       return NextResponse.json({ error: 'staffId and businessId required' }, { status: 400 });

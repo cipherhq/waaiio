@@ -24,35 +24,20 @@ export default async function Image() {
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '16px',
+            gap: '4px',
             marginBottom: '32px',
           }}
         >
-          <div
-            style={{
-              width: '56px',
-              height: '56px',
-              borderRadius: '14px',
-              background: 'rgba(255,255,255,0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '28px',
-              color: 'white',
-              fontWeight: 700,
-            }}
-          >
-            W
-          </div>
           <span
             style={{
-              fontSize: '48px',
+              fontSize: '56px',
               fontWeight: 700,
-              color: 'white',
               letterSpacing: '-1px',
             }}
           >
-            waaiio
+            <span style={{ color: '#25D366' }}>wa</span>
+            <span style={{ color: '#E5993E' }}>ai</span>
+            <span style={{ color: '#B5A3E0' }}>io</span>
           </span>
         </div>
 

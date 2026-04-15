@@ -16,8 +16,7 @@ function wrap(body: string): string {
   <tr>
     <td style="background:#7c3aed;padding:24px 32px">
       <table cellpadding="0" cellspacing="0"><tr>
-        <td style="background:#ffffff;width:32px;height:32px;border-radius:8px;text-align:center;line-height:32px;font-weight:700;font-size:14px;color:#7c3aed">S</td>
-        <td style="padding-left:12px;font-size:18px;font-weight:700;color:#ffffff">Waaiio</td>
+        <td style="font-size:18px;font-weight:700"><span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
       </tr></table>
     </td>
   </tr>
@@ -427,6 +426,54 @@ export function weeklyDigestEmail(businessName: string, stats: {
       )}
       ${btn('View Full Analytics', 'https://app.waaiio.com/dashboard/analytics')}
       ${p('Keep up the great work!')}
+    `),
+  };
+}
+
+export function invoiceEmail(details: {
+  businessName: string;
+  referenceCode: string;
+  totalAmount: string;
+  dueDate: string;
+  customerName: string;
+  items: Array<{ description: string; quantity: number; unitPrice: number; amount: number }>;
+  invoiceUrl: string;
+  currency: string;
+}) {
+  const { businessName, referenceCode, totalAmount, dueDate, customerName, items, invoiceUrl } = details;
+
+  const itemRows = items.map(i =>
+    `<tr>
+      <td style="padding:6px 0;font-size:13px;color:#3f3f46;border-bottom:1px solid #f4f4f5">${i.description}</td>
+      <td style="padding:6px 0;font-size:13px;color:#3f3f46;text-align:center;border-bottom:1px solid #f4f4f5">x${i.quantity}</td>
+      <td style="padding:6px 0;font-size:13px;color:#3f3f46;text-align:right;border-bottom:1px solid #f4f4f5">${i.amount.toLocaleString()}</td>
+    </tr>`
+  ).join('');
+
+  return {
+    subject: `Invoice ${referenceCode} from ${businessName}`,
+    html: wrap(`
+      ${h(`Invoice from ${businessName}`)}
+      ${p(`Hi ${customerName}, you have received an invoice from <strong>${businessName}</strong>.`)}
+      ${table(
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
+        kv('Amount', `<strong>${totalAmount}</strong>`) +
+        kv('Due Date', dueDate)
+      )}
+      ${items.length > 0 ? `
+        ${p('<strong>Items:</strong>')}
+        <table cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px">
+          <tr>
+            <td style="padding:6px 0;font-size:11px;font-weight:600;color:#71717a;border-bottom:1px solid #e4e4e7">Item</td>
+            <td style="padding:6px 0;font-size:11px;font-weight:600;color:#71717a;text-align:center;border-bottom:1px solid #e4e4e7">Qty</td>
+            <td style="padding:6px 0;font-size:11px;font-weight:600;color:#71717a;text-align:right;border-bottom:1px solid #e4e4e7">Amount</td>
+          </tr>
+          ${itemRows}
+        </table>
+      ` : ''}
+      ${btn('View & Pay Invoice', invoiceUrl)}
+      ${p('You can also copy and paste this link into your browser:')}
+      ${p(`<a href="${invoiceUrl}" style="color:#7c3aed;word-break:break-all">${invoiceUrl}</a>`)}
     `),
   };
 }

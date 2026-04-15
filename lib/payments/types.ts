@@ -4,6 +4,7 @@ export interface InitPaymentOpts {
   supabase: SupabaseClient;
   bookingId?: string;
   orderId?: string;
+  invoiceId?: string;
   userId: string;
   amount: number;
   currency: string;

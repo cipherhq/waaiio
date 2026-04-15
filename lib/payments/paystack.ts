@@ -26,6 +26,7 @@ export class PaystackGateway implements PaymentGateway {
         const mockRef = `mock_ps_${idempotencyKey}`;
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
+          invoice_id: opts.invoiceId || null,
           user_id: opts.userId,
           amount: opts.amount,
           currency: opts.currency,
@@ -96,6 +97,7 @@ export class PaystackGateway implements PaymentGateway {
 
       const { data: payment } = await opts.supabase.from('payments').insert({
         booking_id: opts.bookingId || null,
+        invoice_id: opts.invoiceId || null,
         user_id: opts.userId,
         amount: opts.amount,
         currency: opts.currency,
@@ -114,6 +116,9 @@ export class PaystackGateway implements PaymentGateway {
 
       if (payment && opts.bookingId) {
         await opts.supabase.from('bookings').update({ payment_id: payment.id }).eq('id', opts.bookingId);
+      }
+      if (payment && opts.invoiceId) {
+        await opts.supabase.from('invoices').update({ payment_id: payment.id }).eq('id', opts.invoiceId);
       }
 
       return { url: data.data.authorization_url, reference: data.data.reference };
