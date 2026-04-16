@@ -18,7 +18,6 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
     [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://js.squareup.com https://js.paystack.co https://connect.facebook.net",
-      "script-src-elem 'self' 'unsafe-inline' https://js.stripe.com https://js.squareup.com https://js.paystack.co https://connect.facebook.net",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' https: data: blob:",
       "font-src 'self' data:",
