@@ -579,9 +579,22 @@ function OnboardingWizard() {
   // ── Facebook Embedded Signup ──
 
   function launchWhatsAppSignup() {
-    if (!fbSdkLoaded.current || !window.FB) {
+    if (!window.FB) {
       setError('Facebook is still loading. Please wait a moment and try again.');
       return;
+    }
+
+    // Ensure FB.init() has been called — safety net for race conditions
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID || '';
+    if (appId && !fbSdkLoaded.current) {
+      try {
+        window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
+        fbSdkLoaded.current = true;
+        setFbSdkReady(true);
+      } catch {
+        setError('Failed to initialize Facebook. Please refresh and try again.');
+        return;
+      }
     }
 
     setFbConnecting(true);
