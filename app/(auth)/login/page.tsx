@@ -35,7 +35,7 @@ function LoginForm() {
 
     try {
       const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
@@ -43,6 +43,19 @@ function LoginForm() {
       if (signInError) {
         setError('Invalid email or password');
         return;
+      }
+
+      // If user has no business yet, send them to onboarding
+      if (signInData.user) {
+        const { count } = await supabase
+          .from('businesses')
+          .select('id', { count: 'exact', head: true })
+          .eq('owner_id', signInData.user.id);
+        if (count === 0) {
+          router.push('/get-started');
+          router.refresh();
+          return;
+        }
       }
 
       router.push(redirect);

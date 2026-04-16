@@ -260,6 +260,7 @@ function OnboardingWizard() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
 
   // Country
   const [selectedCountry, setSelectedCountry] = useState<CountryCode>('NG');
@@ -333,6 +334,9 @@ function OnboardingWizard() {
         if (successStep === 'success' && successBusinessId) {
           setBusinessId(successBusinessId);
           setStep('success');
+        } else if (successStep === 'whatsapp' && successBusinessId) {
+          setBusinessId(successBusinessId);
+          setStep('connect');
         } else {
           setStep('category');
         }
@@ -545,13 +549,19 @@ function OnboardingWizard() {
     setError('');
     try {
       const supabase = createClient();
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/get-started`,
+        },
+      });
       if (signUpError) { setError(signUpError.message); return; }
       if (signUpData.session) {
         setUser(signUpData.user);
         setStep('category');
       } else if (signUpData.user) {
-        setError('We sent a confirmation link to your email. Please verify, then sign in.');
+        setEmailSent(true);
       } else {
         setError('Something went wrong. Please try again.');
       }
@@ -950,7 +960,38 @@ function OnboardingWizard() {
                   {authMode === 'email' ? 'Sign up with your email and password' : authStep === 'phone' ? 'Enter your phone number to get started' : `We sent a 6-digit code to ${phone}`}
                 </p>
 
-                {authMode === 'email' ? (
+                {authMode === 'email' && emailSent ? (
+                  <div className="mt-6 rounded-xl border border-brand-100 bg-brand-50 p-6 text-center">
+                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 text-2xl">
+                      &#9993;
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900">Check your inbox</h3>
+                    <p className="mt-2 text-sm text-gray-600">
+                      We sent a confirmation link to <span className="font-medium text-gray-900">{email}</span>.
+                      Click the link to verify your email and continue setup.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true);
+                        const supabase = createClient();
+                        await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/get-started` } });
+                        setAuthLoading(false);
+                      }}
+                      className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {authLoading ? 'Sending...' : 'Resend email'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setEmailSent(false); setEmail(''); setPassword(''); }}
+                      className="mt-3 block w-full text-center text-sm text-gray-500 hover:text-brand"
+                    >
+                      Use a different email
+                    </button>
+                  </div>
+                ) : authMode === 'email' ? (
                   <form onSubmit={handleEmailSignup} className="mt-6 space-y-4">
                     <div>
                       <label className="mb-1.5 block text-sm font-medium text-gray-700">Email</label>
