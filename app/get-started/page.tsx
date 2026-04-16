@@ -354,13 +354,8 @@ function OnboardingWizard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, successBusinessId]);
 
-  // Load Facebook SDK for Embedded Signup
+  // Listen for Facebook Embedded Signup messages
   useEffect(() => {
-    if (fbSdkLoaded.current) return;
-
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID;
-    if (!appId) return;
-
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
       try {
@@ -382,32 +377,30 @@ function OnboardingWizard() {
     };
 
     window.addEventListener('message', handleMessage);
-
-    // Only load Facebook SDK if cookie consent has been accepted
-    const consent = localStorage.getItem('waaiio_cookie_consent');
-    if (consent === 'accepted') {
-      window.fbAsyncInit = function () {
-        window.FB.init({
-          appId,
-          autoLogAppEvents: true,
-          xfbml: true,
-          version: 'v21.0',
-        });
-        fbSdkLoaded.current = true;
-      };
-
-      const script = document.createElement('script');
-      script.src = 'https://connect.facebook.net/en_US/sdk.js';
-      script.async = true;
-      script.defer = true;
-      script.crossOrigin = 'anonymous';
-      document.body.appendChild(script);
-    }
-
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
+    return () => { window.removeEventListener('message', handleMessage); };
   }, []);
+
+  // Load Facebook SDK when user reaches the connect step
+  useEffect(() => {
+    if (step !== 'connect') return;
+    if (fbSdkLoaded.current) return;
+    if (document.querySelector('script[src*="connect.facebook.net"]')) return;
+
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+    if (!appId) return;
+
+    window.fbAsyncInit = function () {
+      window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
+      fbSdkLoaded.current = true;
+    };
+
+    const script = document.createElement('script');
+    script.src = 'https://connect.facebook.net/en_US/sdk.js';
+    script.async = true;
+    script.defer = true;
+    script.crossOrigin = 'anonymous';
+    document.body.appendChild(script);
+  }, [step]);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -574,45 +567,14 @@ function OnboardingWizard() {
 
   // ── Facebook Embedded Signup ──
 
-  function loadFbSdk(): Promise<void> {
-    return new Promise((resolve) => {
-      if (fbSdkLoaded.current) { resolve(); return; }
-      const appId = process.env.NEXT_PUBLIC_META_APP_ID;
-      if (!appId) { resolve(); return; }
-      // If script already exists, wait for FB.init() to complete (fbSdkLoaded flag)
-      if (document.querySelector('script[src*="connect.facebook.net"]')) {
-        const check = setInterval(() => { if (fbSdkLoaded.current) { clearInterval(check); resolve(); } }, 200);
-        setTimeout(() => { clearInterval(check); resolve(); }, 5000);
-        return;
-      }
-      window.fbAsyncInit = function () {
-        window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
-        fbSdkLoaded.current = true;
-        resolve();
-      };
-      const script = document.createElement('script');
-      script.src = 'https://connect.facebook.net/en_US/sdk.js';
-      script.async = true;
-      script.defer = true;
-      script.crossOrigin = 'anonymous';
-      script.onerror = () => resolve();
-      document.body.appendChild(script);
-    });
-  }
-
-  async function launchWhatsAppSignup() {
-    setFbConnecting(true);
-    setError('');
-
-    if (!fbSdkLoaded.current) {
-      await loadFbSdk();
-    }
-
-    if (!fbSdkLoaded.current) {
-      setFbConnecting(false);
-      setError('Facebook SDK not loaded. Please refresh the page and try again.');
+  function launchWhatsAppSignup() {
+    if (!fbSdkLoaded.current || !window.FB) {
+      setError('Facebook is still loading. Please wait a moment and try again.');
       return;
     }
+
+    setFbConnecting(true);
+    setError('');
     fbWabaIdRef.current = '';
     fbPhoneNumberIdRef.current = '';
 
