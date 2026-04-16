@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import Script from 'next/script';
 import { createClient } from '@/lib/supabase/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { OtpInput } from '@/components/auth/OtpInput';
@@ -382,8 +381,10 @@ function OnboardingWizard() {
     return () => { window.removeEventListener('message', handleMessage); };
   }, []);
 
-  // Facebook SDK init via fbAsyncInit — the official Meta pattern.
-  // The SDK calls window.fbAsyncInit after it finishes loading internally.
+  // Facebook SDK — manual injection following Meta's official pattern.
+  // 1. Set window.fbAsyncInit FIRST
+  // 2. Then inject the <script> tag
+  // 3. When the SDK finishes loading, it calls fbAsyncInit automatically
   useEffect(() => {
     const appId = process.env.NEXT_PUBLIC_META_APP_ID;
     if (!appId || fbSdkLoaded.current) return;
@@ -395,9 +396,21 @@ function OnboardingWizard() {
       setFbSdkReady(true);
     };
 
-    // If SDK already loaded (e.g. page revisit), init now
+    // If SDK already loaded (hot reload / page revisit), init now
     if (window.FB) {
       window.fbAsyncInit();
+      return;
+    }
+
+    // Only inject if not already present
+    if (!document.getElementById('facebook-jssdk')) {
+      const script = document.createElement('script');
+      script.id = 'facebook-jssdk';
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = 'anonymous';
+      document.body.appendChild(script);
     }
   }, []);
 
@@ -1759,13 +1772,7 @@ function OnboardingWizard() {
           </div>
         </div>
       </div>
-      {/* Facebook SDK — loaded via next/script, initialized via window.fbAsyncInit */}
-      <Script
-        id="facebook-jssdk"
-        src="https://connect.facebook.net/en_US/sdk.js"
-        strategy="afterInteractive"
-        crossOrigin="anonymous"
-      />
+      {/* Facebook SDK is injected via useEffect above (Meta's official pattern) */}
     </div>
   );
 }
