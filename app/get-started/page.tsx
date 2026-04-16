@@ -1499,6 +1499,13 @@ function OnboardingWizard() {
                         <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
                         <p className="mt-4 text-sm font-medium text-gray-700">Connecting to Facebook...</p>
                         <p className="mt-1 text-xs text-gray-500">Complete the signup in the popup window</p>
+                        <button
+                          type="button"
+                          onClick={() => setFbConnecting(false)}
+                          className="mt-4 text-sm text-gray-500 hover:text-brand underline"
+                        >
+                          Cancel
+                        </button>
                       </div>
                     )}
 
