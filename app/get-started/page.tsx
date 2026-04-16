@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, Suspense, useCallback } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Script from 'next/script';
@@ -382,14 +382,23 @@ function OnboardingWizard() {
     return () => { window.removeEventListener('message', handleMessage); };
   }, []);
 
-  // Facebook SDK onReady callback — called after script loads and on every re-mount
-  const handleFbSdkReady = useCallback(() => {
-    if (fbSdkLoaded.current || !window.FB) return;
+  // Facebook SDK init via fbAsyncInit — the official Meta pattern.
+  // The SDK calls window.fbAsyncInit after it finishes loading internally.
+  useEffect(() => {
     const appId = process.env.NEXT_PUBLIC_META_APP_ID;
-    if (!appId) return;
-    window.FB.init({ appId, cookie: true, xfbml: true, version: 'v22.0' });
-    fbSdkLoaded.current = true;
-    setFbSdkReady(true);
+    if (!appId || fbSdkLoaded.current) return;
+
+    window.fbAsyncInit = function () {
+      if (fbSdkLoaded.current) return;
+      window.FB.init({ appId, cookie: true, xfbml: true, version: 'v22.0' });
+      fbSdkLoaded.current = true;
+      setFbSdkReady(true);
+    };
+
+    // If SDK already loaded (e.g. page revisit), init now
+    if (window.FB) {
+      window.fbAsyncInit();
+    }
   }, []);
 
   // Cleanup timeouts on unmount
@@ -1750,13 +1759,12 @@ function OnboardingWizard() {
           </div>
         </div>
       </div>
-      {/* Facebook SDK — loaded via next/script, initialized via onReady */}
+      {/* Facebook SDK — loaded via next/script, initialized via window.fbAsyncInit */}
       <Script
         id="facebook-jssdk"
         src="https://connect.facebook.net/en_US/sdk.js"
         strategy="afterInteractive"
         crossOrigin="anonymous"
-        onReady={handleFbSdkReady}
       />
     </div>
   );
