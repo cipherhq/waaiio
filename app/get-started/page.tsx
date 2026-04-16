@@ -582,7 +582,7 @@ function OnboardingWizard() {
       // If script already exists, wait for FB.init() to complete (fbSdkLoaded flag)
       if (document.querySelector('script[src*="connect.facebook.net"]')) {
         const check = setInterval(() => { if (fbSdkLoaded.current) { clearInterval(check); resolve(); } }, 200);
-        setTimeout(() => { clearInterval(check); resolve(); }, 10000);
+        setTimeout(() => { clearInterval(check); resolve(); }, 5000);
         return;
       }
       window.fbAsyncInit = function () {
@@ -595,6 +595,7 @@ function OnboardingWizard() {
       script.async = true;
       script.defer = true;
       script.crossOrigin = 'anonymous';
+      script.onerror = () => resolve();
       document.body.appendChild(script);
     });
   }
