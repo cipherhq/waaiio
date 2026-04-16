@@ -8,12 +8,12 @@ import { logger } from '@/lib/logger';
  * POST /api/auth/facebook/callback
  *
  * Called after the Facebook Embedded Signup flow completes.
- * Receives the short-lived user token and WABA details from the frontend,
- * exchanges for a long-lived token, and stores the channel credentials.
+ * Receives the authorization code and WABA details from the frontend,
+ * exchanges the code for a System User Access Token, and stores the channel credentials.
  *
  * Body: {
  *   business_id: string,
- *   access_token: string,       // Short-lived token from FB.login
+ *   code: string,               // Authorization code from FB.login (response_type: 'code')
  *   waba_id: string,            // WhatsApp Business Account ID
  *   phone_number_id: string,    // Phone Number ID from Embedded Signup
  *   connection_method: 'transfer' | 'coexist',
@@ -30,15 +30,15 @@ export async function POST(request: NextRequest) {
 
     const {
       business_id,
-      access_token,
+      code,
       waba_id,
       phone_number_id,
       connection_method,
     } = await request.json();
 
-    if (!business_id || !access_token || !waba_id || !phone_number_id) {
+    if (!business_id || !code || !waba_id || !phone_number_id) {
       return NextResponse.json(
-        { message: 'Missing required fields: business_id, access_token, waba_id, phone_number_id' },
+        { message: 'Missing required fields: business_id, code, waba_id, phone_number_id' },
         { status: 400 }
       );
     }
@@ -54,18 +54,45 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Business not found or not owned by you' }, { status: 403 });
     }
 
-    // Exchange short-lived token for long-lived token
-    let longLivedToken = access_token;
+    // Exchange the authorization code for an access token
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '';
+    const appSecret = process.env.META_APP_SECRET || '';
+
+    if (!appId || !appSecret) {
+      logger.error('Missing META_APP_ID or META_APP_SECRET env vars');
+      return NextResponse.json(
+        { message: 'Server configuration error: missing Meta app credentials' },
+        { status: 500 }
+      );
+    }
+
+    let longLivedToken: string;
     let tokenExpiresAt: string | null = null;
 
     try {
-      const exchanged = await MetaCloudService.exchangeToken(access_token);
-      longLivedToken = exchanged.access_token;
-      tokenExpiresAt = new Date(Date.now() + exchanged.expires_in * 1000).toISOString();
+      const tokenRes = await fetch(
+        `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`
+      );
+      if (!tokenRes.ok) {
+        const errData = await tokenRes.json().catch(() => ({}));
+        logger.error('Code exchange failed:', errData);
+        return NextResponse.json(
+          { message: 'Failed to exchange Facebook authorization code', error: errData },
+          { status: 400 }
+        );
+      }
+      const tokenData = await tokenRes.json();
+      longLivedToken = tokenData.access_token;
+      // Code exchange returns a long-lived token (60 days) or System User Access Token (never expires)
+      tokenExpiresAt = tokenData.expires_in
+        ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+        : null;
     } catch (err) {
-      logger.error('Token exchange failed, using short-lived token:', err);
-      // Use the short-lived token for now — it lasts ~1 hour
-      tokenExpiresAt = new Date(Date.now() + 3600 * 1000).toISOString();
+      logger.error('Code exchange network error:', err);
+      return NextResponse.json(
+        { message: 'Failed to exchange authorization code' },
+        { status: 500 }
+      );
     }
 
     // Get phone number info from Meta

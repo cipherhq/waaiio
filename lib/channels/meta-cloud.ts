@@ -247,7 +247,7 @@ export class MetaCloudService {
     token_type: string;
     expires_in: number;
   }> {
-    const appId = process.env.META_APP_ID || '';
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '';
     const appSecret = process.env.META_APP_SECRET || '';
     const res = await fetch(
       `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`

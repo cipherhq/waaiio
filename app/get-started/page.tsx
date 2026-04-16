@@ -313,7 +313,7 @@ function OnboardingWizard() {
   const [fbConnectionData, setFbConnectionData] = useState<{
     waba_id: string;
     phone_number_id: string;
-    access_token: string;
+    code: string;
     display_name?: string;
     phone_number?: string;
   } | null>(null);
@@ -573,7 +573,7 @@ function OnboardingWizard() {
     window.FB.login(
       function (response: any) {
         if (response.authResponse) {
-          const accessToken = response.authResponse.accessToken;
+          const code = response.authResponse.code;
 
           // The message event with WABA/phone IDs may arrive before or after this callback
           const tryResolve = () => {
@@ -583,7 +583,7 @@ function OnboardingWizard() {
               setFbConnectionData({
                 waba_id: wabaId,
                 phone_number_id: phoneNumberId,
-                access_token: accessToken,
+                code,
               });
               setFbConnected(true);
               setFbConnecting(false);
@@ -596,7 +596,7 @@ function OnboardingWizard() {
                   setFbConnectionData({
                     waba_id: retryWabaId,
                     phone_number_id: retryPhoneId,
-                    access_token: accessToken,
+                    code,
                   });
                   setFbConnected(true);
                   setFbConnecting(false);
@@ -664,7 +664,7 @@ function OnboardingWizard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           business_id: registerData.business_id,
-          access_token: fbConnectionData.access_token,
+          code: fbConnectionData.code,
           waba_id: fbConnectionData.waba_id,
           phone_number_id: fbConnectionData.phone_number_id,
           connection_method: waMethod,
