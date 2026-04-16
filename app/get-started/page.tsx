@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import Script from 'next/script';
 import { createClient } from '@/lib/supabase/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { OtpInput } from '@/components/auth/OtpInput';
@@ -358,7 +359,7 @@ function OnboardingWizard() {
   // Listen for Facebook Embedded Signup messages
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== 'https://www.facebook.com' && event.origin !== 'https://web.facebook.com') return;
+      if (!event.origin?.endsWith('facebook.com')) return;
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'WA_EMBEDDED_SIGNUP') {
@@ -381,37 +382,15 @@ function OnboardingWizard() {
     return () => { window.removeEventListener('message', handleMessage); };
   }, []);
 
-  // Load Facebook SDK when user reaches the connect step
-  useEffect(() => {
-    if (step !== 'connect') return;
-    if (fbSdkLoaded.current) { setFbSdkReady(true); return; }
-
+  // Facebook SDK onReady callback — called after script loads and on every re-mount
+  const handleFbSdkReady = useCallback(() => {
+    if (fbSdkLoaded.current || !window.FB) return;
     const appId = process.env.NEXT_PUBLIC_META_APP_ID;
     if (!appId) return;
-
-    const initFb = () => {
-      if (fbSdkLoaded.current) return;
-      window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
-      fbSdkLoaded.current = true;
-      setFbSdkReady(true);
-    };
-
-    // SDK script already on the page — either init now or wait for it
-    if (document.querySelector('script[src*="connect.facebook.net"]')) {
-      if (window.FB) { initFb(); }
-      else { window.fbAsyncInit = initFb; }
-      return;
-    }
-
-    window.fbAsyncInit = initFb;
-
-    const script = document.createElement('script');
-    script.src = 'https://connect.facebook.net/en_US/sdk.js';
-    script.async = true;
-    script.defer = true;
-    script.crossOrigin = 'anonymous';
-    document.body.appendChild(script);
-  }, [step]);
+    window.FB.init({ appId, cookie: true, xfbml: true, version: 'v22.0' });
+    fbSdkLoaded.current = true;
+    setFbSdkReady(true);
+  }, []);
 
   // Cleanup timeouts on unmount
   useEffect(() => {
@@ -579,22 +558,9 @@ function OnboardingWizard() {
   // ── Facebook Embedded Signup ──
 
   function launchWhatsAppSignup() {
-    if (!window.FB) {
+    if (!window.FB || !fbSdkLoaded.current) {
       setError('Facebook is still loading. Please wait a moment and try again.');
       return;
-    }
-
-    // Ensure FB.init() has been called — safety net for race conditions
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID || '';
-    if (appId && !fbSdkLoaded.current) {
-      try {
-        window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
-        fbSdkLoaded.current = true;
-        setFbSdkReady(true);
-      } catch {
-        setError('Failed to initialize Facebook. Please refresh and try again.');
-        return;
-      }
     }
 
     setFbConnecting(true);
@@ -1777,6 +1743,14 @@ function OnboardingWizard() {
           </div>
         </div>
       </div>
+      {/* Facebook SDK — loaded via next/script, initialized via onReady */}
+      <Script
+        id="facebook-jssdk"
+        src="https://connect.facebook.net/en_US/sdk.js"
+        strategy="afterInteractive"
+        crossOrigin="anonymous"
+        onReady={handleFbSdkReady}
+      />
     </div>
   );
 }
