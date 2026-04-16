@@ -574,14 +574,44 @@ function OnboardingWizard() {
 
   // ── Facebook Embedded Signup ──
 
-  function launchWhatsAppSignup() {
+  function loadFbSdk(): Promise<void> {
+    return new Promise((resolve) => {
+      if (window.FB) { resolve(); return; }
+      const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+      if (!appId) { resolve(); return; }
+      // If script already exists, just wait for it
+      if (document.querySelector('script[src*="connect.facebook.net"]')) {
+        const check = setInterval(() => { if (window.FB) { clearInterval(check); resolve(); } }, 200);
+        setTimeout(() => { clearInterval(check); resolve(); }, 10000);
+        return;
+      }
+      window.fbAsyncInit = function () {
+        window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
+        fbSdkLoaded.current = true;
+        resolve();
+      };
+      const script = document.createElement('script');
+      script.src = 'https://connect.facebook.net/en_US/sdk.js';
+      script.async = true;
+      script.defer = true;
+      script.crossOrigin = 'anonymous';
+      document.body.appendChild(script);
+    });
+  }
+
+  async function launchWhatsAppSignup() {
+    setFbConnecting(true);
+    setError('');
+
     if (!window.FB) {
+      await loadFbSdk();
+    }
+
+    if (!window.FB) {
+      setFbConnecting(false);
       setError('Facebook SDK not loaded. Please refresh the page and try again.');
       return;
     }
-
-    setFbConnecting(true);
-    setError('');
     fbWabaIdRef.current = '';
     fbPhoneNumberIdRef.current = '';
 
