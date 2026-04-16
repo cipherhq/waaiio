@@ -576,12 +576,12 @@ function OnboardingWizard() {
 
   function loadFbSdk(): Promise<void> {
     return new Promise((resolve) => {
-      if (window.FB) { resolve(); return; }
+      if (fbSdkLoaded.current) { resolve(); return; }
       const appId = process.env.NEXT_PUBLIC_META_APP_ID;
       if (!appId) { resolve(); return; }
-      // If script already exists, just wait for it
+      // If script already exists, wait for FB.init() to complete (fbSdkLoaded flag)
       if (document.querySelector('script[src*="connect.facebook.net"]')) {
-        const check = setInterval(() => { if (window.FB) { clearInterval(check); resolve(); } }, 200);
+        const check = setInterval(() => { if (fbSdkLoaded.current) { clearInterval(check); resolve(); } }, 200);
         setTimeout(() => { clearInterval(check); resolve(); }, 10000);
         return;
       }
@@ -603,11 +603,11 @@ function OnboardingWizard() {
     setFbConnecting(true);
     setError('');
 
-    if (!window.FB) {
+    if (!fbSdkLoaded.current) {
       await loadFbSdk();
     }
 
-    if (!window.FB) {
+    if (!fbSdkLoaded.current) {
       setFbConnecting(false);
       setError('Facebook SDK not loaded. Please refresh the page and try again.');
       return;
