@@ -381,14 +381,13 @@ function OnboardingWizard() {
     return () => { window.removeEventListener('message', handleMessage); };
   }, []);
 
-  // Facebook SDK — manual injection following Meta's official pattern.
-  // 1. Set window.fbAsyncInit FIRST
-  // 2. Then inject the <script> tag
-  // 3. When the SDK finishes loading, it calls fbAsyncInit automatically
+  // Facebook SDK — clean load following Meta's official pattern.
+  // We remove any stale script/state first to guarantee fbAsyncInit fires.
   useEffect(() => {
     const appId = process.env.NEXT_PUBLIC_META_APP_ID;
     if (!appId || fbSdkLoaded.current) return;
 
+    // 1. Define the callback the SDK will invoke when fully ready
     window.fbAsyncInit = function () {
       if (fbSdkLoaded.current) return;
       window.FB.init({ appId, cookie: true, xfbml: true, version: 'v22.0' });
@@ -396,22 +395,21 @@ function OnboardingWizard() {
       setFbSdkReady(true);
     };
 
-    // If SDK already loaded (hot reload / page revisit), init now
-    if (window.FB) {
-      window.fbAsyncInit();
-      return;
+    // 2. Remove any stale FB SDK script (e.g. from prior next/script or cached page)
+    //    so the fresh script triggers fbAsyncInit when it loads
+    const stale = document.getElementById('facebook-jssdk');
+    if (stale) {
+      stale.remove();
+      (window as any).FB = undefined;
     }
 
-    // Only inject if not already present
-    if (!document.getElementById('facebook-jssdk')) {
-      const script = document.createElement('script');
-      script.id = 'facebook-jssdk';
-      script.src = 'https://connect.facebook.net/en_US/sdk.js';
-      script.async = true;
-      script.defer = true;
-      script.crossOrigin = 'anonymous';
-      document.body.appendChild(script);
-    }
+    // 3. Inject a fresh script tag
+    const script = document.createElement('script');
+    script.id = 'facebook-jssdk';
+    script.src = 'https://connect.facebook.net/en_US/sdk.js';
+    script.async = true;
+    script.crossOrigin = 'anonymous';
+    document.body.appendChild(script);
   }, []);
 
   // Cleanup timeouts on unmount
