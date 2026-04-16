@@ -306,6 +306,7 @@ function OnboardingWizard() {
   const [fbConnected, setFbConnected] = useState(false);
   const [showManualGuide, setShowManualGuide] = useState(false);
   const fbSdkLoaded = useRef(false);
+  const [fbSdkReady, setFbSdkReady] = useState(false);
   const fbWabaIdRef = useRef('');
   const fbPhoneNumberIdRef = useRef('');
   const [fbConnectionData, setFbConnectionData] = useState<{
@@ -383,16 +384,26 @@ function OnboardingWizard() {
   // Load Facebook SDK when user reaches the connect step
   useEffect(() => {
     if (step !== 'connect') return;
-    if (fbSdkLoaded.current) return;
-    if (document.querySelector('script[src*="connect.facebook.net"]')) return;
+    if (fbSdkLoaded.current) { setFbSdkReady(true); return; }
 
     const appId = process.env.NEXT_PUBLIC_META_APP_ID;
     if (!appId) return;
 
-    window.fbAsyncInit = function () {
+    const initFb = () => {
+      if (fbSdkLoaded.current) return;
       window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' });
       fbSdkLoaded.current = true;
+      setFbSdkReady(true);
     };
+
+    // SDK script already on the page — either init now or wait for it
+    if (document.querySelector('script[src*="connect.facebook.net"]')) {
+      if (window.FB) { initFb(); }
+      else { window.fbAsyncInit = initFb; }
+      return;
+    }
+
+    window.fbAsyncInit = initFb;
 
     const script = document.createElement('script');
     script.src = 'https://connect.facebook.net/en_US/sdk.js';
@@ -1536,12 +1547,13 @@ function OnboardingWizard() {
                             <button
                               type="button"
                               onClick={launchWhatsAppSignup}
-                              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877F2] py-3.5 text-sm font-bold text-white transition hover:bg-[#166FE5]"
+                              disabled={!fbSdkReady}
+                              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877F2] py-3.5 text-sm font-bold text-white transition hover:bg-[#166FE5] disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
                               </svg>
-                              Connect with Facebook
+                              {fbSdkReady ? 'Connect with Facebook' : 'Loading Facebook...'}
                             </button>
                           </div>
                         </div>
