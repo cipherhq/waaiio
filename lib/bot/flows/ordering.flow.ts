@@ -176,7 +176,32 @@ export const orderingFlow: FlowDefinition = {
         };
       },
       async next(ctx: FlowContext) {
-        return routeAfterProductSelection(ctx.session.session_data);
+        const d = ctx.session.session_data;
+
+        // Quick-add: simple products (no variants) with no required addons
+        // get auto-added with qty 1 in a single tap
+        if (!d.current_product_has_variants) {
+          const minQty = (d.current_min_order_qty as number) || 1;
+          if (minQty <= 1) {
+            const productId = d.current_product_id as string;
+            const { data: requiredAddons } = await ctx.supabase
+              .from('product_addons')
+              .select('id')
+              .eq('product_id', productId)
+              .eq('is_active', true)
+              .eq('is_required', true)
+              .limit(1);
+
+            if (!requiredAddons || requiredAddons.length === 0) {
+              d.current_quantity = 1;
+              d.current_addons = [];
+              d._addon_action = 'skip';
+              return 'add_to_cart';
+            }
+          }
+        }
+
+        return routeAfterProductSelection(d);
       },
     },
 
@@ -894,8 +919,32 @@ export const orderingFlow: FlowDefinition = {
         };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._action === 'checkout') return 'apply_promo';
-        return routeAfterProductSelection(ctx.session.session_data);
+        const d = ctx.session.session_data;
+        if (d._action === 'checkout') return 'apply_promo';
+
+        // Quick-add: simple products with no variants and no required addons
+        if (!d.current_product_has_variants) {
+          const minQty = (d.current_min_order_qty as number) || 1;
+          if (minQty <= 1) {
+            const productId = d.current_product_id as string;
+            const { data: requiredAddons } = await ctx.supabase
+              .from('product_addons')
+              .select('id')
+              .eq('product_id', productId)
+              .eq('is_active', true)
+              .eq('is_required', true)
+              .limit(1);
+
+            if (!requiredAddons || requiredAddons.length === 0) {
+              d.current_quantity = 1;
+              d.current_addons = [];
+              d._addon_action = 'skip';
+              return 'add_to_cart';
+            }
+          }
+        }
+
+        return routeAfterProductSelection(d);
       },
     },
 
