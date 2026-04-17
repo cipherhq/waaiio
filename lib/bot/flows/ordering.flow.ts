@@ -1540,18 +1540,25 @@ export const orderingFlow: FlowDefinition = {
 
         summary.push('', `\uD83D\uDCB0 *Total: ${formatCurrency(total, cc)}*`);
 
-        if (d.delivery_address) {
-          summary.push('', `\uD83D\uDCCD ${d.delivery_address}`);
-        }
+        // Customer details
+        summary.push('');
+        const name = `${d.first_name || ''} ${d.last_name || ''}`.trim();
+        if (name) summary.push(`\uD83D\uDC64 ${name}`);
+        if (d.customer_email) summary.push(`\uD83D\uDCE7 ${d.customer_email}`);
+        if (d.delivery_address) summary.push(`\uD83D\uDCCD ${d.delivery_address}`);
+        if (d.delivery_type === 'pickup') summary.push(`\uD83C\uDFEA Pickup`);
 
         const hasNegotiable = !!d._has_negotiable_addon;
         const buttons = hasNegotiable
           ? [
               { id: 'confirm_order', title: 'Confirm Order' },
               { id: 'request_quote', title: 'Request Quote' },
+              { id: 'edit_order', title: 'Edit Order' },
             ]
           : [
               { id: 'confirm_order', title: 'Confirm Order \u2705' },
+              { id: 'add_more_items', title: 'Add Items' },
+              { id: 'edit_order', title: 'Edit Order' },
             ];
 
         return [
@@ -1569,14 +1576,143 @@ export const orderingFlow: FlowDefinition = {
         if (input === 'confirm_order') return { valid: true, data: { _order_action: 'confirm' } };
         if (input === 'request_quote') return { valid: true, data: { _order_action: 'quote' } };
         if (input === 'add_more_items') return { valid: true, data: { _order_action: 'add_more' } };
+        if (input === 'edit_order') return { valid: true, data: { _order_action: 'edit' } };
         return { valid: false, errorMessage: 'Please select an option.' };
       },
       async next(ctx: FlowContext) {
         const action = ctx.session.session_data._order_action;
         if (action === 'add_more') return 'browse_catalog';
         if (action === 'quote') return 'submit_quote_request';
+        if (action === 'edit') return 'edit_order_menu';
         return 'process_order';
       },
+    },
+
+    // ── Edit Order Menu ──
+    {
+      id: 'edit_order_menu',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const cart = (d.cart as CartItem[]) || [];
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        const items: Array<{ title: string; description: string; postbackText: string }> = [];
+
+        // Cart items (removable)
+        for (let i = 0; i < cart.length && i < 7; i++) {
+          const item = cart[i];
+          const label = item.variant_label ? `${item.name} (${item.variant_label})` : item.name;
+          items.push({
+            title: truncTitle(`\u274C ${label}`),
+            description: `Remove \u2014 x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`,
+            postbackText: `remove:${i}`,
+          });
+        }
+
+        // Edit options
+        items.push({ title: '\u270F\uFE0F Change Name', description: `Current: ${d.first_name || ''} ${d.last_name || ''}`.trim(), postbackText: 'edit_name' });
+        if (d.delivery_address) {
+          items.push({ title: '\uD83D\uDCCD Change Address', description: `${(d.delivery_address as string).slice(0, 60)}`, postbackText: 'edit_address' });
+        }
+        items.push({ title: '\u2B05 Back to Summary', description: 'Return to order review', postbackText: 'back_to_summary' });
+
+        return [{
+          type: 'list',
+          title: 'Edit Order',
+          body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
+          buttonLabel: 'Edit Options',
+          items: items.slice(0, 10),
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'back_to_summary') {
+          return { valid: true, data: { _edit_action: 'back' } };
+        }
+        if (input === 'edit_name') {
+          return { valid: true, data: { _edit_action: 'name' } };
+        }
+        if (input === 'edit_address') {
+          return { valid: true, data: { _edit_action: 'address' } };
+        }
+        if (input.startsWith('remove:')) {
+          const idx = parseInt(input.slice(7), 10);
+          const cart = (ctx.session.session_data.cart as CartItem[]) || [];
+          if (idx >= 0 && idx < cart.length) {
+            const removed = cart[idx];
+            cart.splice(idx, 1);
+            ctx.session.session_data.cart = cart;
+
+            if (cart.length === 0) {
+              return { valid: true, data: { _edit_action: 'cart_empty', _removed_name: removed.name } };
+            }
+            return { valid: true, data: { _edit_action: 'removed', _removed_name: removed.name } };
+          }
+          return { valid: false, errorMessage: 'Invalid item. Please select from the list.' };
+        }
+        return { valid: false, errorMessage: 'Please select an option from the list.' };
+      },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        const action = d._edit_action as string;
+        delete d._edit_action;
+
+        if (action === 'back' || action === 'removed') {
+          if (action === 'removed') {
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            const cart = (d.cart as CartItem[]) || [];
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: `\u274C *${d._removed_name}* removed.\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`,
+            });
+            delete d._removed_name;
+          }
+          return 'review_order_summary';
+        }
+        if (action === 'cart_empty') {
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: `\u274C *${d._removed_name}* removed. Your cart is now empty.\n\nSend *Hi* to start a new order.`,
+          });
+          delete d._removed_name;
+          return null; // deactivate session
+        }
+        if (action === 'name') return 'edit_name';
+        if (action === 'address') return 'edit_address';
+        return 'review_order_summary';
+      },
+    },
+
+    // ── Edit Name ──
+    {
+      id: 'edit_name',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        return [{ type: 'text', text: `Current name: *${d.first_name || ''} ${d.last_name || ''}*\n\nType your new name:` }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const parts = input.trim().split(/\s+/);
+        if (!parts[0] || parts[0].length < 2) {
+          return { valid: false, errorMessage: 'Please enter a valid name.' };
+        }
+        return { valid: true, data: { first_name: parts[0], last_name: parts.slice(1).join(' ') || '' } };
+      },
+      async next() { return 'review_order_summary'; },
+    },
+
+    // ── Edit Address ──
+    {
+      id: 'edit_address',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        return [{ type: 'text', text: `Current address: *${d.delivery_address}*\n\nType your new delivery address:` }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input.trim().length < 5) {
+          return { valid: false, errorMessage: 'Please enter a valid address.' };
+        }
+        return { valid: true, data: { delivery_address: input.trim() } };
+      },
+      async next() { return 'review_order_summary'; },
     },
 
     // ── Submit Quote Request ──
