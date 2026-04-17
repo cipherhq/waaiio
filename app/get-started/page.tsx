@@ -73,7 +73,7 @@ type WizardStep = 'auth' | 'category' | 'details' | 'persona' | 'connect' | 'pla
 type AuthSubStep = 'phone' | 'otp';
 type AuthMode = 'phone' | 'email';
 type WhatsAppMethod = 'shared' | 'transfer' | 'coexist';
-type ConnectSubStep = 'choose' | 'warnings' | 'setup';
+type ConnectSubStep = 'choose' | 'warnings' | 'setup' | 'phone_select';
 
 /* ─── Side Panel Content per Step ─── */
 
@@ -312,10 +312,25 @@ function OnboardingWizard() {
   const [fbConnectionData, setFbConnectionData] = useState<{
     waba_id: string;
     phone_number_id: string;
-    code: string;
+    access_token: string;
+    token_expires_at: string | null;
     display_name?: string;
     phone_number?: string;
   } | null>(null);
+
+  // Discovered WABAs and phones from Facebook
+  const [discoveredWabas, setDiscoveredWabas] = useState<Array<{
+    waba_id: string;
+    waba_name: string;
+    phones: Array<{
+      id: string;
+      display_phone_number: string;
+      verified_name: string;
+      quality_rating: string;
+    }>;
+  }>>([]);
+  const [selectedWabaId, setSelectedWabaId] = useState('');
+  const [selectedPhoneId, setSelectedPhoneId] = useState('');
 
   // Plan & payment
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier>(
@@ -595,48 +610,46 @@ function OnboardingWizard() {
         if (response.authResponse) {
           const code = response.authResponse.code;
 
-          // Wait briefly for the postMessage with WABA/phone IDs, then proceed
-          const finalize = () => {
-            const wabaId = fbWabaIdRef.current || '';
-            const phoneNumberId = fbPhoneNumberIdRef.current || '';
-
-            // For existing businesses, exchange the code immediately (codes expire fast)
-            if (successStep === 'whatsapp' && successBusinessId) {
-              fetch('/api/auth/facebook/callback', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  business_id: successBusinessId,
-                  code,
-                  waba_id: wabaId,
-                  phone_number_id: phoneNumberId,
-                  connection_method: waMethod,
-                }),
-              })
-                .then((res) => res.json())
-                .then((data) => {
-                  setFbConnecting(false);
-                  if (data.channel_id) {
-                    router.push('/dashboard/settings');
-                    router.refresh();
-                  } else {
-                    setError(data.message || 'Failed to connect WhatsApp number');
-                  }
-                })
-                .catch(() => {
-                  setFbConnecting(false);
-                  setError('Network error. Please try again.');
+          // Exchange code immediately (codes expire fast) and discover WABAs/phones
+          fetch('/api/auth/facebook/discover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code }),
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.access_token && data.wabas?.length > 0) {
+                setDiscoveredWabas(data.wabas);
+                // Auto-select first WABA and first phone
+                const firstWaba = data.wabas[0];
+                setSelectedWabaId(firstWaba.waba_id);
+                if (firstWaba.phones.length > 0) {
+                  const lastPhone = firstWaba.phones[firstWaba.phones.length - 1];
+                  setSelectedPhoneId(lastPhone.id);
+                }
+                // Store the access token for later use in callback
+                fbWabaIdRef.current = firstWaba.waba_id;
+                fbPhoneNumberIdRef.current = firstWaba.phones.length > 0
+                  ? firstWaba.phones[firstWaba.phones.length - 1].id
+                  : '';
+                // Store token data temporarily
+                setFbConnectionData({
+                  waba_id: firstWaba.waba_id,
+                  phone_number_id: firstWaba.phones.length > 0 ? firstWaba.phones[firstWaba.phones.length - 1].id : '',
+                  access_token: data.access_token,
+                  token_expires_at: data.token_expires_at,
                 });
-              return;
-            }
-
-            // New business onboarding — store data for later use
-            setFbConnectionData({ waba_id: wabaId, phone_number_id: phoneNumberId, code });
-            setFbConnected(true);
-            setFbConnecting(false);
-          };
-
-          setTimeout(finalize, fbWabaIdRef.current ? 0 : 2000);
+                setFbConnecting(false);
+                setConnectSubStep('phone_select');
+              } else {
+                setFbConnecting(false);
+                setError(data.message || 'No WhatsApp Business Account found. Please try again.');
+              }
+            })
+            .catch(() => {
+              setFbConnecting(false);
+              setError('Network error exchanging Facebook code. Please try again.');
+            });
         } else {
           setFbConnecting(false);
         }
@@ -659,6 +672,14 @@ function OnboardingWizard() {
   async function handleFbConnectAndRegister() {
     if (!fbConnectionData) return;
 
+    // Use selected WABA/phone from the phone_select step
+    const wabaId = selectedWabaId || fbConnectionData.waba_id;
+    const phoneId = selectedPhoneId || fbConnectionData.phone_number_id;
+
+    // Find the selected phone's display info
+    const selectedWaba = discoveredWabas.find(w => w.waba_id === wabaId);
+    const selectedPhone = selectedWaba?.phones.find(p => p.id === phoneId);
+
     // Existing business upgrading from shared number — just connect WhatsApp
     if (successStep === 'whatsapp' && successBusinessId) {
       setLoading(true);
@@ -669,9 +690,10 @@ function OnboardingWizard() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             business_id: successBusinessId,
-            code: fbConnectionData.code,
-            waba_id: fbConnectionData.waba_id,
-            phone_number_id: fbConnectionData.phone_number_id,
+            access_token: fbConnectionData.access_token,
+            token_expires_at: fbConnectionData.token_expires_at,
+            waba_id: wabaId,
+            phone_number_id: phoneId,
             connection_method: waMethod,
           }),
         });
@@ -707,7 +729,7 @@ function OnboardingWizard() {
           bot_greeting: botGreeting || undefined,
           bot_code: customBotCode || undefined,
           wa_method: waMethod,
-          wa_own_phone: fbConnectionData.phone_number || ownPhone || undefined,
+          wa_own_phone: selectedPhone?.display_phone_number || ownPhone || undefined,
           capabilities: selectedCapabilities.length > 0 ? selectedCapabilities : undefined,
         }),
       });
@@ -720,15 +742,16 @@ function OnboardingWizard() {
       setBusinessId(registerData.business_id);
       setBotCode(registerData.bot_code);
 
-      // Step 2: Connect the WhatsApp channel via FB callback
+      // Step 2: Connect the WhatsApp channel
       const fbRes = await fetch('/api/auth/facebook/callback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           business_id: registerData.business_id,
-          code: fbConnectionData.code,
-          waba_id: fbConnectionData.waba_id,
-          phone_number_id: fbConnectionData.phone_number_id,
+          access_token: fbConnectionData.access_token,
+          token_expires_at: fbConnectionData.token_expires_at,
+          waba_id: wabaId,
+          phone_number_id: phoneId,
           connection_method: waMethod,
         }),
       });
@@ -1708,6 +1731,191 @@ function OnboardingWizard() {
                         </p>
                       </>
                     )}
+                  </>
+                )}
+
+                {/* Sub-step: WABA Phone Selection */}
+                {connectSubStep === 'phone_select' && discoveredWabas.length > 0 && (
+                  <>
+                    <button type="button" onClick={() => { setConnectSubStep('setup'); setDiscoveredWabas([]); setFbConnectionData(null); }} className="mb-6 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                      Back
+                    </button>
+
+                    <h2 className="text-2xl font-bold text-gray-900">Select your WhatsApp number</h2>
+                    <p className="mt-1 text-sm text-gray-500">
+                      Confirm which WhatsApp Business Account and phone number to connect with Waaiio.
+                    </p>
+
+                    {/* WABA Selection (if multiple) */}
+                    {discoveredWabas.length > 1 && (
+                      <div className="mt-6">
+                        <label className="mb-2 block text-sm font-medium text-gray-700">WhatsApp Business Account</label>
+                        <div className="space-y-2">
+                          {discoveredWabas.map((waba) => (
+                            <button
+                              key={waba.waba_id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedWabaId(waba.waba_id);
+                                if (waba.phones.length > 0) {
+                                  setSelectedPhoneId(waba.phones[0].id);
+                                } else {
+                                  setSelectedPhoneId('');
+                                }
+                              }}
+                              className={`flex w-full items-center gap-3 rounded-xl border-2 p-4 text-left transition ${
+                                selectedWabaId === waba.waba_id ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
+                              }`}
+                            >
+                              <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                                selectedWabaId === waba.waba_id ? 'border-brand bg-brand' : 'border-gray-300'
+                              }`}>
+                                {selectedWabaId === waba.waba_id && (
+                                  <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                )}
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold text-gray-900">{waba.waba_name}</p>
+                                <p className="text-xs text-gray-500">ID: {waba.waba_id} &middot; {waba.phones.length} phone{waba.phones.length !== 1 ? 's' : ''}</p>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Single WABA display */}
+                    {discoveredWabas.length === 1 && (
+                      <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+                            <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">{discoveredWabas[0].waba_name}</p>
+                            <p className="text-xs text-gray-500">WhatsApp Business Account ID: {discoveredWabas[0].waba_id}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Phone Number Selection */}
+                    {(() => {
+                      const currentWaba = discoveredWabas.find(w => w.waba_id === selectedWabaId);
+                      const phones = currentWaba?.phones || [];
+                      return (
+                        <div className="mt-6">
+                          <label className="mb-2 block text-sm font-medium text-gray-700">
+                            Phone Number {phones.length > 1 ? '(select one)' : ''}
+                          </label>
+                          {phones.length === 0 ? (
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                              <p className="text-sm text-amber-800">No phone numbers found for this account.</p>
+                              <p className="mt-1 text-xs text-amber-600">
+                                Please add a phone number in the Facebook Embedded Signup flow or try again.
+                              </p>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {phones.map((phone) => (
+                                <button
+                                  key={phone.id}
+                                  type="button"
+                                  onClick={() => setSelectedPhoneId(phone.id)}
+                                  className={`flex w-full items-center gap-4 rounded-xl border-2 p-4 text-left transition ${
+                                    selectedPhoneId === phone.id ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
+                                  }`}
+                                >
+                                  <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
+                                    selectedPhoneId === phone.id ? 'border-brand bg-brand' : 'border-gray-300'
+                                  }`}>
+                                    {selectedPhoneId === phone.id && (
+                                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-2">
+                                      <p className="text-sm font-semibold text-gray-900">{phone.display_phone_number}</p>
+                                      {phone.quality_rating && (
+                                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                          phone.quality_rating === 'GREEN' ? 'bg-green-100 text-green-700' :
+                                          phone.quality_rating === 'YELLOW' ? 'bg-amber-100 text-amber-700' :
+                                          'bg-red-100 text-red-700'
+                                        }`}>
+                                          {phone.quality_rating === 'GREEN' ? 'High Quality' :
+                                           phone.quality_rating === 'YELLOW' ? 'Medium Quality' :
+                                           phone.quality_rating}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {phone.verified_name && (
+                                      <p className="text-xs text-gray-500">{phone.verified_name}</p>
+                                    )}
+                                    <p className="text-[11px] text-gray-400">ID: {phone.id}</p>
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Warning */}
+                    <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <div className="flex gap-3">
+                        <svg className="h-5 w-5 flex-shrink-0 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div>
+                          <p className="text-sm font-semibold text-amber-800">Important</p>
+                          <p className="mt-1 text-xs leading-relaxed text-amber-700">
+                            This phone number will be connected to Waaiio for WhatsApp Business API messaging.
+                            {waMethod === 'transfer' && ' You will no longer be able to use this number for personal WhatsApp.'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-8 flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => { setConnectSubStep('setup'); setDiscoveredWabas([]); setFbConnectionData(null); }}
+                        className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Update connection data with selected values
+                          if (fbConnectionData) {
+                            const selectedWaba = discoveredWabas.find(w => w.waba_id === selectedWabaId);
+                            const selectedPhone = selectedWaba?.phones.find(p => p.id === selectedPhoneId);
+                            setFbConnectionData({
+                              ...fbConnectionData,
+                              waba_id: selectedWabaId,
+                              phone_number_id: selectedPhoneId,
+                              display_name: selectedPhone?.verified_name,
+                              phone_number: selectedPhone?.display_phone_number,
+                            });
+                          }
+                          setFbConnected(true);
+                          setConnectSubStep('setup');
+                        }}
+                        disabled={!selectedWabaId || !selectedPhoneId}
+                        className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                      >
+                        {(successStep === 'whatsapp' && successBusinessId) ? 'Connect Number' : 'Confirm & Continue'}
+                      </button>
+                    </div>
                   </>
                 )}
               </div>

@@ -8,14 +8,17 @@ import { logger } from '@/lib/logger';
  * POST /api/auth/facebook/callback
  *
  * Called after the Facebook Embedded Signup flow completes.
- * Receives the authorization code and WABA details from the frontend,
- * exchanges the code for a System User Access Token, and stores the channel credentials.
+ * Accepts either:
+ *   - access_token (already exchanged by /api/auth/facebook/discover)
+ *   - code (legacy: will be exchanged here)
  *
  * Body: {
  *   business_id: string,
- *   code: string,               // Authorization code from FB.login (response_type: 'code')
- *   waba_id: string,            // WhatsApp Business Account ID
- *   phone_number_id: string,    // Phone Number ID from Embedded Signup
+ *   access_token?: string,        // Pre-exchanged token from discover endpoint
+ *   token_expires_at?: string,    // Token expiry from discover endpoint
+ *   code?: string,                // Legacy: authorization code from FB.login
+ *   waba_id: string,              // WhatsApp Business Account ID
+ *   phone_number_id: string,      // Phone Number ID
  *   connection_method: 'transfer' | 'coexist',
  * }
  */
@@ -30,15 +33,17 @@ export async function POST(request: NextRequest) {
 
     const {
       business_id,
+      access_token: providedAccessToken,
+      token_expires_at: providedTokenExpiresAt,
       code,
       waba_id: providedWabaId,
       phone_number_id: providedPhoneNumberId,
       connection_method,
     } = await request.json();
 
-    if (!business_id || !code) {
+    if (!business_id || (!code && !providedAccessToken)) {
       return NextResponse.json(
-        { message: 'Missing required fields: business_id, code' },
+        { message: 'Missing required fields: business_id and (access_token or code)' },
         { status: 400 }
       );
     }
@@ -57,53 +62,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Business not found or not owned by you' }, { status: 403 });
     }
 
-    // Exchange the authorization code for an access token
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '';
-    const appSecret = process.env.META_APP_SECRET || '';
-
-    if (!appId || !appSecret) {
-      logger.error('Missing META_APP_ID or META_APP_SECRET env vars');
-      return NextResponse.json(
-        { message: 'Server configuration error: missing Meta app credentials' },
-        { status: 500 }
-      );
-    }
-
+    // Get access token — either pre-exchanged or from code
     let longLivedToken: string;
     let tokenExpiresAt: string | null = null;
 
-    try {
-      const tokenRes = await fetch(
-        `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`
-      );
-      if (!tokenRes.ok) {
-        const errData = await tokenRes.json().catch(() => ({}));
-        logger.error('Code exchange failed:', errData);
+    if (providedAccessToken) {
+      // Token already exchanged by /api/auth/facebook/discover
+      longLivedToken = providedAccessToken;
+      tokenExpiresAt = providedTokenExpiresAt || null;
+    } else {
+      // Legacy path: exchange authorization code for access token
+      const appId = (process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '').trim();
+      const appSecret = (process.env.META_APP_SECRET || '').trim();
+
+      if (!appId || !appSecret) {
+        logger.error('Missing META_APP_ID or META_APP_SECRET env vars');
         return NextResponse.json(
-          { message: 'Failed to exchange Facebook authorization code', error: errData },
-          { status: 400 }
+          { message: 'Server configuration error: missing Meta app credentials' },
+          { status: 500 }
         );
       }
-      const tokenData = await tokenRes.json();
-      longLivedToken = tokenData.access_token;
-      // Code exchange returns a long-lived token (60 days) or System User Access Token (never expires)
-      tokenExpiresAt = tokenData.expires_in
-        ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
-        : null;
-    } catch (err) {
-      logger.error('Code exchange network error:', err);
-      return NextResponse.json(
-        { message: 'Failed to exchange authorization code' },
-        { status: 500 }
-      );
+
+      try {
+        const tokenRes = await fetch(
+          `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`
+        );
+        if (!tokenRes.ok) {
+          const errData = await tokenRes.json().catch(() => ({}));
+          logger.error('Code exchange failed:', errData);
+          return NextResponse.json(
+            { message: 'Failed to exchange Facebook authorization code', error: errData },
+            { status: 400 }
+          );
+        }
+        const tokenData = await tokenRes.json();
+        longLivedToken = tokenData.access_token;
+        tokenExpiresAt = tokenData.expires_in
+          ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+          : null;
+      } catch (err) {
+        logger.error('Code exchange network error:', err);
+        return NextResponse.json(
+          { message: 'Failed to exchange authorization code' },
+          { status: 500 }
+        );
+      }
     }
 
     // Auto-discover WABA/phone IDs if not provided (e.g. popup opened as new tab)
     if (!waba_id || !phone_number_id) {
+      const fallbackAppId = (process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '').trim();
+      const fallbackAppSecret = (process.env.META_APP_SECRET || '').trim();
       try {
         // Use debug_token to find which WABAs were shared with our app
         const debugRes = await fetch(
-          `https://graph.facebook.com/v22.0/debug_token?input_token=${longLivedToken}&access_token=${appId.trim()}|${appSecret.trim()}`
+          `https://graph.facebook.com/v22.0/debug_token?input_token=${longLivedToken}&access_token=${fallbackAppId}|${fallbackAppSecret}`
         );
         if (debugRes.ok) {
           const debugData = await debugRes.json();
