@@ -595,17 +595,48 @@ function OnboardingWizard() {
         if (response.authResponse) {
           const code = response.authResponse.code;
 
-          // Wait briefly for the postMessage with WABA/phone IDs, then proceed regardless.
-          // If IDs don't arrive (e.g. popup opened as new tab), the backend auto-discovers them.
-          setTimeout(() => {
-            setFbConnectionData({
-              waba_id: fbWabaIdRef.current || '',
-              phone_number_id: fbPhoneNumberIdRef.current || '',
-              code,
-            });
+          // Wait briefly for the postMessage with WABA/phone IDs, then proceed
+          const finalize = () => {
+            const wabaId = fbWabaIdRef.current || '';
+            const phoneNumberId = fbPhoneNumberIdRef.current || '';
+
+            // For existing businesses, exchange the code immediately (codes expire fast)
+            if (successStep === 'whatsapp' && successBusinessId) {
+              fetch('/api/auth/facebook/callback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  business_id: successBusinessId,
+                  code,
+                  waba_id: wabaId,
+                  phone_number_id: phoneNumberId,
+                  connection_method: waMethod,
+                }),
+              })
+                .then((res) => res.json())
+                .then((data) => {
+                  setFbConnecting(false);
+                  if (data.channel_id) {
+                    router.push('/dashboard/settings');
+                    router.refresh();
+                  } else {
+                    setError(data.message || 'Failed to connect WhatsApp number');
+                  }
+                })
+                .catch(() => {
+                  setFbConnecting(false);
+                  setError('Network error. Please try again.');
+                });
+              return;
+            }
+
+            // New business onboarding — store data for later use
+            setFbConnectionData({ waba_id: wabaId, phone_number_id: phoneNumberId, code });
             setFbConnected(true);
             setFbConnecting(false);
-          }, fbWabaIdRef.current ? 0 : 2000);
+          };
+
+          setTimeout(finalize, fbWabaIdRef.current ? 0 : 2000);
         } else {
           setFbConnecting(false);
         }
