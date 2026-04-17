@@ -76,6 +76,9 @@ export const orderingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
+        const meta = (ctx.business.metadata || {}) as Record<string, unknown>;
+        const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
+
         const { data: rawProducts } = await ctx.supabase
           .from('products')
           .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options, min_order_qty')
@@ -110,19 +113,35 @@ export const orderingFlow: FlowDefinition = {
           return { title: p.name, description: desc, postbackText: p.id };
         };
 
-        // Group by category into sections (WhatsApp supports up to 10 sections, 10 rows each)
+        // Group products by category
         const categoryMap = new Map<string, typeof products>();
         for (const p of products) {
           const cat = p.category || 'Menu';
           if (!categoryMap.has(cat)) categoryMap.set(cat, []);
           categoryMap.get(cat)!.push(p);
         }
-
         const categories = Array.from(categoryMap.entries());
+
+        // Browse-by-category mode: show category list first
+        if (browseByCategory && categories.length > 1) {
+          ctx.session.session_data._category_list = categories.map(([cat, items]) => cat);
+          return [{
+            type: 'list',
+            title: 'Categories',
+            body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nChoose a category to browse:`,
+            buttonLabel: 'View Categories',
+            items: categories.slice(0, 10).map(([cat, items]) => ({
+              title: cat,
+              description: `${items.length} item${items.length !== 1 ? 's' : ''}`,
+              postbackText: `cat:${cat}`,
+            })),
+          }];
+        }
+
+        // All-at-once mode: show products with sections
         const needsSections = categories.length > 1 && products.length > 10;
 
         if (needsSections) {
-          // Build sections capped at 10 sections, 10 items each
           const sections = categories.slice(0, 10).map(([cat, items]) => ({
             title: cat,
             items: items.slice(0, 10).map(formatItem),
@@ -147,6 +166,12 @@ export const orderingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Handle category selection in browse-by-category mode
+        if (input.startsWith('cat:')) {
+          const selectedCat = input.slice(4);
+          return { valid: true, data: { _selected_category: selectedCat } };
+        }
+
         const { data: product } = await ctx.supabase
           .from('products')
           .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
@@ -155,7 +180,7 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .single();
 
-        if (!product) return { valid: false, errorMessage: 'Please select a valid product.' };
+        if (!product) return { valid: false, errorMessage: 'Please select a valid option.' };
 
         if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
@@ -178,9 +203,140 @@ export const orderingFlow: FlowDefinition = {
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
 
+        // Category selected → show products in that category
+        if (d._selected_category) {
+          return 'browse_category_items';
+        }
+
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const quickAdd = meta.ordering_quick_add !== false;
+
         // Quick-add: simple products (no variants) with no required addons
-        // get auto-added with qty 1 in a single tap
-        if (!d.current_product_has_variants) {
+        if (quickAdd && !d.current_product_has_variants) {
+          const minQty = (d.current_min_order_qty as number) || 1;
+          if (minQty <= 1) {
+            const productId = d.current_product_id as string;
+            const { data: requiredAddons } = await ctx.supabase
+              .from('product_addons')
+              .select('id')
+              .eq('product_id', productId)
+              .eq('is_active', true)
+              .eq('is_required', true)
+              .limit(1);
+
+            if (!requiredAddons || requiredAddons.length === 0) {
+              d.current_quantity = 1;
+              d.current_addons = [];
+              d._addon_action = 'skip';
+              return 'add_to_cart';
+            }
+          }
+        }
+
+        return routeAfterProductSelection(d);
+      },
+    },
+
+    // ── Browse Category Items (shows products within a selected category) ──
+    {
+      id: 'browse_category_items',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        const selectedCat = d._selected_category as string;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        const { data: rawProducts } = await ctx.supabase
+          .from('products')
+          .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants')
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
+          .eq('category', selectedCat)
+          .is('deleted_at', null)
+          .order('sort_order')
+          .limit(10);
+
+        const products = (rawProducts || []).filter(p =>
+          !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
+        );
+
+        if (!products || products.length === 0) {
+          delete d._selected_category;
+          return [{ type: 'text', text: `Nothing available in ${selectedCat} right now. Send *Hi* to start over.` }];
+        }
+
+        const items = [
+          { title: '\u2B05 Back to Categories', description: 'Browse other categories', postbackText: 'back_to_categories' },
+          ...products.map(p => {
+            let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
+            if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
+              desc += ` (${p.stock_quantity} left)`;
+            }
+            return { title: p.name, description: desc, postbackText: p.id };
+          }),
+        ];
+
+        const cart = (d.cart as CartItem[]) || [];
+        const cartInfo = cart.length > 0
+          ? `\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`
+          : '';
+
+        return [{
+          type: 'list',
+          title: selectedCat,
+          body: `*${selectedCat}*${cartInfo}\n\nSelect an item:`,
+          buttonLabel: 'View Items',
+          items: items.slice(0, 10),
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'back_to_categories') {
+          delete ctx.session.session_data._selected_category;
+          return { valid: true, data: { _back_to_categories: true } };
+        }
+
+        const { data: product } = await ctx.supabase
+          .from('products')
+          .select('id, name, price, stock_quantity, has_variants, image_url, variant_options, min_order_qty')
+          .eq('id', input)
+          .eq('business_id', ctx.business!.id)
+          .is('deleted_at', null)
+          .single();
+
+        if (!product) return { valid: false, errorMessage: 'Please select a valid item.' };
+
+        if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
+          return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
+        }
+
+        delete ctx.session.session_data._selected_category;
+
+        return {
+          valid: true,
+          data: {
+            current_product_id: product.id,
+            current_product_name: product.name,
+            current_product_price: product.price,
+            current_product_has_variants: product.has_variants,
+            current_product_image_url: product.image_url || null,
+            current_product_variant_options: product.variant_options || [],
+            current_stock_quantity: product.has_variants ? null : product.stock_quantity,
+            current_min_order_qty: product.min_order_qty || 1,
+          },
+        };
+      },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+
+        if (d._back_to_categories) {
+          delete d._back_to_categories;
+          return 'browse_catalog';
+        }
+
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const quickAdd = meta.ordering_quick_add !== false;
+
+        // Quick-add for simple products
+        if (quickAdd && !d.current_product_has_variants) {
           const minQty = (d.current_min_order_qty as number) || 1;
           if (minQty <= 1) {
             const productId = d.current_product_id as string;
@@ -922,8 +1078,11 @@ export const orderingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         if (d._action === 'checkout') return 'apply_promo';
 
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const quickAdd = meta.ordering_quick_add !== false;
+
         // Quick-add: simple products with no variants and no required addons
-        if (!d.current_product_has_variants) {
+        if (quickAdd && !d.current_product_has_variants) {
           const minQty = (d.current_min_order_qty as number) || 1;
           if (minQty <= 1) {
             const productId = d.current_product_id as string;

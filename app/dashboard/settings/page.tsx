@@ -35,7 +35,7 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'account'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'account'>('profile');
 
   // Account tab state
   const searchParams = useSearchParams();
@@ -68,6 +68,10 @@ export default function SettingsPage() {
   const [shippingMode, setShippingMode] = useState<'none' | 'flat' | 'per_product'>((meta.shipping_mode as 'none' | 'flat' | 'per_product') || 'none');
   const [defaultShippingFee, setDefaultShippingFee] = useState<number>((meta.default_shipping_fee as number) || 0);
   const [minOrderAmount, setMinOrderAmount] = useState<number>((meta.min_order_amount as number) || 0);
+
+  // Ordering settings from business.metadata
+  const [orderingQuickAdd, setOrderingQuickAdd] = useState<boolean>(meta.ordering_quick_add !== false);
+  const [orderingBrowseByCategory, setOrderingBrowseByCategory] = useState<boolean>((meta.ordering_browse_by_category as boolean) || false);
 
   // Delivery Zones state
   interface DeliveryZone {
@@ -618,6 +622,16 @@ export default function SettingsPage() {
             }`}
           >
             Delivery Zones
+          </button>
+        )}
+        {capabilities.includes('ordering') && (
+          <button
+            onClick={() => setActiveTab('ordering')}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              activeTab === 'ordering' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Ordering
           </button>
         )}
         <button
@@ -1613,6 +1627,102 @@ export default function SettingsPage() {
               className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
             >
               {zonesSaving ? 'Saving...' : zonesSaved ? 'Saved!' : 'Save Delivery Zones'}
+            </button>
+          </div>
+        </div>
+      ) : activeTab === 'ordering' ? (
+        /* Ordering Tab */
+        <div className="mt-6 max-w-xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Ordering Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Control how customers browse and order from your WhatsApp bot.
+            </p>
+
+            <div className="mt-5 space-y-6">
+              {/* Quick Add Toggle */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="pr-8">
+                    <p className="text-sm font-medium text-gray-700">Quick Add</p>
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      {orderingQuickAdd
+                        ? 'Customers tap a product to instantly add 1 to cart. Great for restaurants and food ordering.'
+                        : 'Customers select a product, then type the quantity they want. Better for bulk or wholesale orders.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setOrderingQuickAdd(!orderingQuickAdd)}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${orderingQuickAdd ? 'bg-brand' : 'bg-gray-200'}`}
+                  >
+                    <div
+                      className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                      style={{ left: orderingQuickAdd ? '22px' : '2px' }}
+                    />
+                  </button>
+                </div>
+                <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2">
+                  <p className="text-xs text-gray-500">
+                    {orderingQuickAdd
+                      ? 'Customer taps "Jollof Rice" \u2192 added to cart \u2192 menu shown again. Fast!'
+                      : 'Customer taps "Jollof Rice" \u2192 "How many?" \u2192 types "3" \u2192 added to cart.'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Browse by Category Toggle */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="pr-8">
+                    <p className="text-sm font-medium text-gray-700">Browse by Category</p>
+                    <p className="mt-0.5 text-xs text-gray-400">
+                      {orderingBrowseByCategory
+                        ? 'Customers pick a category first, then see products in that category. Best for large menus.'
+                        : 'All products shown at once, grouped by category in sections. Best for smaller menus.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setOrderingBrowseByCategory(!orderingBrowseByCategory)}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${orderingBrowseByCategory ? 'bg-brand' : 'bg-gray-200'}`}
+                  >
+                    <div
+                      className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                      style={{ left: orderingBrowseByCategory ? '22px' : '2px' }}
+                    />
+                  </button>
+                </div>
+                <div className="mt-2 rounded-lg bg-gray-50 px-3 py-2">
+                  <p className="text-xs text-gray-500">
+                    {orderingBrowseByCategory
+                      ? 'Customer sees categories (Grill, Sides, Drinks...) \u2192 taps one \u2192 sees items in that category.'
+                      : 'Customer sees full menu with all products in one list, organized by category sections.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({
+                    metadata: {
+                      ...meta,
+                      ordering_quick_add: orderingQuickAdd,
+                      ordering_browse_by_category: orderingBrowseByCategory,
+                    },
+                  })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Ordering Settings'}
             </button>
           </div>
         </div>
