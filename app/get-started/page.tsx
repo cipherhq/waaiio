@@ -936,9 +936,9 @@ function OnboardingWizard() {
       {/* ── Left Side: Branded Panel ── */}
       <div className="hidden w-[420px] flex-shrink-0 bg-gradient-to-br from-brand-900 via-brand to-brand-700 lg:flex lg:flex-col">
         <div className="flex flex-1 flex-col justify-between p-10">
-          <Link href="/" className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 text-sm font-bold text-white">S</span>
-            <span className="text-lg font-bold text-white">Waaiio</span>
+          <Link href="/">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="Waaiio" className="h-8 brightness-0 invert" />
           </Link>
 
           <div className="flex-1 flex flex-col justify-center">
@@ -972,9 +972,9 @@ function OnboardingWizard() {
         {/* Mobile header */}
         <header className="border-b border-gray-100 bg-white lg:hidden">
           <div className="flex items-center justify-between px-4 py-3">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand text-xs font-bold text-white">S</span>
-              <span className="text-base font-bold text-gray-900">Waaiio</span>
+            <Link href="/">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/logo.png" alt="Waaiio" className="h-7" />
             </Link>
             <span className="text-xs text-gray-400">Step {stepIndex + 1} of {steps.length}</span>
           </div>
