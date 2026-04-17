@@ -883,24 +883,21 @@ export const orderingFlow: FlowDefinition = {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
 
-        // Browse-by-category mode: simple buttons to keep the category flow
+        // Browse-by-category mode: single buttons message to keep the category flow
         if (browseByCategory) {
           await ctx.supabase
             .from('bot_sessions')
             .update({ session_data: d, current_step: 'continue_or_checkout' })
             .eq('id', ctx.session.id);
 
-          return [
-            { type: 'text' as const, text: addedText },
-            {
-              type: 'buttons' as const,
-              body: `What would you like to do?`,
-              buttons: [
-                { id: 'browse_more', title: 'Browse Menu' },
-                { id: 'checkout', title: 'Checkout' },
-              ],
-            },
-          ];
+          return [{
+            type: 'buttons' as const,
+            body: addedText + '\n\nWhat would you like to do?',
+            buttons: [
+              { id: 'browse_more', title: 'Browse Menu' },
+              { id: 'checkout', title: 'Checkout' },
+            ],
+          }];
         }
 
         // All-at-once mode: show integrated catalog+checkout list
@@ -991,6 +988,22 @@ export const orderingFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const total = calculateCartTotal(cart);
 
+        // Browse-by-category mode: simple buttons
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
+
+        if (browseByCategory) {
+          return [{
+            type: 'buttons' as const,
+            body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 *${formatCurrency(total, cc)}*\n\nAdd more items or checkout:`,
+            buttons: [
+              { id: 'browse_more', title: 'Browse Menu' },
+              { id: 'checkout', title: 'Checkout' },
+            ],
+          }];
+        }
+
+        // All-at-once mode: product list
         const { data: rawProducts } = await ctx.supabase
           .from('products')
           .select('id, name, price, category, has_variants, track_inventory, stock_quantity')
