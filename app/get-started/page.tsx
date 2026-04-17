@@ -626,7 +626,42 @@ function OnboardingWizard() {
   }
 
   async function handleFbConnectAndRegister() {
-    if (!name || !city || !neighborhood || !address || !businessPhone || !category || !fbConnectionData) return;
+    if (!fbConnectionData) return;
+
+    // Existing business upgrading from shared number — just connect WhatsApp
+    if (successStep === 'whatsapp' && successBusinessId) {
+      setLoading(true);
+      setError('');
+      try {
+        const fbRes = await fetch('/api/auth/facebook/callback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: successBusinessId,
+            code: fbConnectionData.code,
+            waba_id: fbConnectionData.waba_id,
+            phone_number_id: fbConnectionData.phone_number_id,
+            connection_method: waMethod,
+          }),
+        });
+        const fbData = await fbRes.json();
+        if (!fbRes.ok) {
+          setError(fbData.message || 'Failed to connect WhatsApp number');
+          return;
+        }
+        // Redirect back to dashboard
+        router.push('/dashboard/settings');
+        router.refresh();
+      } catch {
+        setError('Network error. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    // New business onboarding — register first, then connect
+    if (!name || !city || !neighborhood || !address || !businessPhone || !category) return;
     setLoading(true);
     setError('');
     try {
@@ -1483,7 +1518,7 @@ function OnboardingWizard() {
                             disabled={loading}
                             className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                           >
-                            {loading ? 'Setting up...' : 'Continue to Plan'}
+                            {loading ? 'Setting up...' : (successStep === 'whatsapp' && successBusinessId) ? 'Save & Go to Dashboard' : 'Continue to Plan'}
                           </button>
                         </div>
                       </div>
