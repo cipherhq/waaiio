@@ -31,17 +31,20 @@ export async function POST(request: NextRequest) {
     const {
       business_id,
       code,
-      waba_id,
-      phone_number_id,
+      waba_id: providedWabaId,
+      phone_number_id: providedPhoneNumberId,
       connection_method,
     } = await request.json();
 
-    if (!business_id || !code || !waba_id || !phone_number_id) {
+    if (!business_id || !code) {
       return NextResponse.json(
-        { message: 'Missing required fields: business_id, code, waba_id, phone_number_id' },
+        { message: 'Missing required fields: business_id, code' },
         { status: 400 }
       );
     }
+
+    let waba_id = providedWabaId || '';
+    let phone_number_id = providedPhoneNumberId || '';
 
     // Verify business ownership
     const { data: business } = await supabase
@@ -93,6 +96,49 @@ export async function POST(request: NextRequest) {
         { message: 'Failed to exchange authorization code' },
         { status: 500 }
       );
+    }
+
+    // Auto-discover WABA/phone IDs if not provided (e.g. popup opened as new tab)
+    if (!waba_id || !phone_number_id) {
+      try {
+        // Use debug_token to find which WABAs were shared with our app
+        const debugRes = await fetch(
+          `https://graph.facebook.com/v22.0/debug_token?input_token=${longLivedToken}&access_token=${appId.trim()}|${appSecret.trim()}`
+        );
+        if (debugRes.ok) {
+          const debugData = await debugRes.json();
+          const scopes = debugData.data?.granular_scopes || [];
+          const wabaScope = scopes.find(
+            (s: any) => s.scope === 'whatsapp_business_management' && s.target_ids?.length > 0
+          );
+          if (wabaScope) {
+            waba_id = waba_id || wabaScope.target_ids[wabaScope.target_ids.length - 1];
+          }
+        }
+
+        // If we have a WABA ID, get the phone numbers
+        if (waba_id && !phone_number_id) {
+          const phonesRes = await fetch(
+            `https://graph.facebook.com/v22.0/${waba_id}/phone_numbers?access_token=${longLivedToken}`
+          );
+          if (phonesRes.ok) {
+            const phonesData = await phonesRes.json();
+            const phones = phonesData.data || [];
+            if (phones.length > 0) {
+              phone_number_id = phones[phones.length - 1].id;
+            }
+          }
+        }
+      } catch (err) {
+        logger.error('WABA auto-discovery failed:', err);
+      }
+
+      if (!waba_id || !phone_number_id) {
+        return NextResponse.json(
+          { message: 'Could not discover WhatsApp account. Please try again or use manual setup.' },
+          { status: 400 }
+        );
+      }
     }
 
     // Get phone number info from Meta

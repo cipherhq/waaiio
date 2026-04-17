@@ -595,41 +595,17 @@ function OnboardingWizard() {
         if (response.authResponse) {
           const code = response.authResponse.code;
 
-          // The message event with WABA/phone IDs may arrive before or after this callback
-          const tryResolve = () => {
-            const wabaId = fbWabaIdRef.current;
-            const phoneNumberId = fbPhoneNumberIdRef.current;
-            if (wabaId && phoneNumberId) {
-              setFbConnectionData({
-                waba_id: wabaId,
-                phone_number_id: phoneNumberId,
-                code,
-              });
-              setFbConnected(true);
-              setFbConnecting(false);
-            } else {
-              // Retry after a short delay for the message event to arrive
-              setTimeout(() => {
-                const retryWabaId = fbWabaIdRef.current;
-                const retryPhoneId = fbPhoneNumberIdRef.current;
-                if (retryWabaId && retryPhoneId) {
-                  setFbConnectionData({
-                    waba_id: retryWabaId,
-                    phone_number_id: retryPhoneId,
-                    code,
-                  });
-                  setFbConnected(true);
-                  setFbConnecting(false);
-                } else {
-                  setFbConnecting(false);
-                  setError('Could not retrieve WhatsApp account details. Please try the manual setup below.');
-                  setShowManualGuide(true);
-                }
-              }, 3000);
-            }
-          };
-
-          tryResolve();
+          // Wait briefly for the postMessage with WABA/phone IDs, then proceed regardless.
+          // If IDs don't arrive (e.g. popup opened as new tab), the backend auto-discovers them.
+          setTimeout(() => {
+            setFbConnectionData({
+              waba_id: fbWabaIdRef.current || '',
+              phone_number_id: fbPhoneNumberIdRef.current || '',
+              code,
+            });
+            setFbConnected(true);
+            setFbConnecting(false);
+          }, fbWabaIdRef.current ? 0 : 2000);
         } else {
           setFbConnecting(false);
         }
