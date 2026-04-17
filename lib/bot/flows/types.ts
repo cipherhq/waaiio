@@ -17,6 +17,11 @@ export interface PromptList {
   body: string;
   buttonLabel: string;
   items: Array<{ title: string; description?: string; postbackText: string }>;
+  /** Optional sections for grouping items (e.g. by category). Max 10 sections, 10 rows each. */
+  sections?: Array<{
+    title: string;
+    items: Array<{ title: string; description?: string; postbackText: string }>;
+  }>;
 }
 
 export interface PromptButtons {

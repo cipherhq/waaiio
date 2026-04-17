@@ -278,7 +278,7 @@ export class FlowExecutor {
           await this.sender.sendText({ to, text: msg.text });
           break;
         case 'list':
-          await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items });
+          await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections });
           break;
         case 'buttons':
           await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });

@@ -83,7 +83,7 @@ export const orderingFlow: FlowDefinition = {
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('sort_order')
-          .limit(10);
+          .limit(100);
 
         // Filter out out-of-stock items that track inventory
         const products = (rawProducts || []).filter(p =>
@@ -101,18 +101,49 @@ export const orderingFlow: FlowDefinition = {
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
         const labels = getOrderingLabels(ctx.business.category);
+
+        const formatItem = (p: typeof products[0]) => {
+          let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
+          if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
+            desc += ` (${p.stock_quantity} left)`;
+          }
+          return { title: p.name, description: desc, postbackText: p.id };
+        };
+
+        // Group by category into sections (WhatsApp supports up to 10 sections, 10 rows each)
+        const categoryMap = new Map<string, typeof products>();
+        for (const p of products) {
+          const cat = p.category || 'Menu';
+          if (!categoryMap.has(cat)) categoryMap.set(cat, []);
+          categoryMap.get(cat)!.push(p);
+        }
+
+        const categories = Array.from(categoryMap.entries());
+        const needsSections = categories.length > 1 && products.length > 10;
+
+        if (needsSections) {
+          // Build sections capped at 10 sections, 10 items each
+          const sections = categories.slice(0, 10).map(([cat, items]) => ({
+            title: cat,
+            items: items.slice(0, 10).map(formatItem),
+          }));
+
+          return [{
+            type: 'list' as const,
+            title: `Our ${labels.noun.charAt(0).toUpperCase() + labels.noun.slice(1)}`,
+            body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nBrowse our ${labels.noun}:`,
+            buttonLabel: labels.browseLabel,
+            items: products.slice(0, 10).map(formatItem),
+            sections,
+          }];
+        }
+
         return [{
           type: 'list',
           title: `Our ${labels.noun.charAt(0).toUpperCase() + labels.noun.slice(1)}`,
           body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nBrowse our ${labels.noun}:`,
           buttonLabel: labels.browseLabel,
-          items: products.map(p => {
-            let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
-            if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
-              desc += ` (${p.stock_quantity} left)`;
-            }
-            return { title: p.name, description: desc, postbackText: p.id };
-          }),
+          items: products.slice(0, 10).map(formatItem),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -664,25 +695,18 @@ export const orderingFlow: FlowDefinition = {
         // Fetch products for integrated catalog+checkout list
         const { data: rawProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, has_variants, track_inventory, stock_quantity')
+          .select('id, name, price, category, has_variants, track_inventory, stock_quantity')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('sort_order')
-          .limit(9);
+          .limit(100);
 
         const products = (rawProducts || []).filter(p =>
           !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
         );
 
-        const listItems = [
-          { title: 'Checkout \u2705', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' },
-          ...products.map(p => ({
-            title: p.name,
-            description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
-            postbackText: p.id,
-          })),
-        ];
+        const checkoutItem = { title: 'Checkout \u2705', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
 
         await ctx.supabase
           .from('bot_sessions')
@@ -690,13 +714,60 @@ export const orderingFlow: FlowDefinition = {
           .eq('id', ctx.session.id);
 
         const variantInfo = cartItem.variant_label ? ` (${cartItem.variant_label})` : '';
+
+        // Group by category into sections
+        const catMap = new Map<string, typeof products>();
+        for (const p of products) {
+          const cat = p.category || 'Menu';
+          if (!catMap.has(cat)) catMap.set(cat, []);
+          catMap.get(cat)!.push(p);
+        }
+        const cats = Array.from(catMap.entries());
+        const useSections = cats.length > 1 && products.length > 9;
+
+        const formatProd = (p: typeof products[0]) => ({
+          title: p.name,
+          description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+          postbackText: p.id,
+        });
+
+        if (useSections) {
+          const sections = [
+            { title: 'Your Order', items: [checkoutItem] },
+            ...cats.slice(0, 9).map(([cat, items]) => ({
+              title: cat,
+              items: items.slice(0, 10).map(formatProd),
+            })),
+          ];
+
+          return [
+            {
+              type: 'text' as const,
+              text: `\u2705 *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`,
+            },
+            {
+              type: 'list' as const,
+              title: 'Continue',
+              body: 'Add more items or checkout:',
+              buttonLabel: 'View Options',
+              items: [checkoutItem, ...products.slice(0, 9).map(formatProd)],
+              sections,
+            },
+          ];
+        }
+
+        const listItems = [
+          checkoutItem,
+          ...products.slice(0, 9).map(formatProd),
+        ];
+
         return [
           {
-            type: 'text',
+            type: 'text' as const,
             text: `\u2705 *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`,
           },
           {
-            type: 'list',
+            type: 'list' as const,
             title: 'Continue',
             body: 'Add more items or checkout:',
             buttonLabel: 'View Options',
@@ -719,20 +790,60 @@ export const orderingFlow: FlowDefinition = {
 
         const { data: rawProducts } = await ctx.supabase
           .from('products')
-          .select('id, name, price, has_variants, track_inventory, stock_quantity')
+          .select('id, name, price, category, has_variants, track_inventory, stock_quantity')
           .eq('business_id', ctx.business!.id)
           .eq('is_active', true)
           .is('deleted_at', null)
           .order('sort_order')
-          .limit(9);
+          .limit(100);
 
         const products = (rawProducts || []).filter(p =>
           !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
         );
 
+        const checkoutItem = { title: 'Checkout \u2705', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
+
+        // Group by category into sections
+        const categoryMap = new Map<string, typeof products>();
+        for (const p of products) {
+          const cat = p.category || 'Menu';
+          if (!categoryMap.has(cat)) categoryMap.set(cat, []);
+          categoryMap.get(cat)!.push(p);
+        }
+
+        const categories = Array.from(categoryMap.entries());
+        const needsSections = categories.length > 1 && products.length > 9;
+
+        if (needsSections) {
+          const sections = [
+            { title: 'Your Order', items: [checkoutItem] },
+            ...categories.slice(0, 9).map(([cat, items]) => ({
+              title: cat,
+              items: items.slice(0, 10).map(p => ({
+                title: p.name,
+                description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+                postbackText: p.id,
+              })),
+            })),
+          ];
+
+          return [{
+            type: 'list' as const,
+            title: 'Your Cart',
+            body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
+            buttonLabel: 'View Options',
+            items: [checkoutItem, ...products.slice(0, 9).map(p => ({
+              title: p.name,
+              description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
+              postbackText: p.id,
+            }))],
+            sections,
+          }];
+        }
+
         const listItems = [
-          { title: 'Checkout \u2705', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' },
-          ...products.map(p => ({
+          checkoutItem,
+          ...products.slice(0, 9).map(p => ({
             title: p.name,
             description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
             postbackText: p.id,

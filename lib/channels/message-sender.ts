@@ -16,6 +16,10 @@ export interface MessageSender {
     body: string;
     buttonLabel: string;
     items: Array<{ title: string; description?: string; postbackText: string }>;
+    sections?: Array<{
+      title: string;
+      items: Array<{ title: string; description?: string; postbackText: string }>;
+    }>;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendButtons(msg: {
     to: string;
@@ -62,22 +66,35 @@ export class MetaCloudSender implements MessageSender {
     body: string;
     buttonLabel: string;
     items: Array<{ title: string; description?: string; postbackText: string }>;
+    sections?: Array<{
+      title: string;
+      items: Array<{ title: string; description?: string; postbackText: string }>;
+    }>;
   }) {
+    const sections = msg.sections
+      ? msg.sections.map(s => ({
+          title: s.title,
+          rows: s.items.map(item => ({
+            id: item.postbackText,
+            title: item.title,
+            description: item.description,
+          })),
+        }))
+      : [{
+          title: msg.title,
+          rows: msg.items.map(item => ({
+            id: item.postbackText,
+            title: item.title,
+            description: item.description,
+          })),
+        }];
+
     const result = await this.cloud.sendList({
       to: msg.to,
       headerText: msg.title,
       bodyText: msg.body,
       buttonText: msg.buttonLabel,
-      sections: [
-        {
-          title: msg.title,
-          rows: msg.items.map((item) => ({
-            id: item.postbackText,
-            title: item.title,
-            description: item.description,
-          })),
-        },
-      ],
+      sections,
     });
     return { success: true, messageId: result.messageId };
   }

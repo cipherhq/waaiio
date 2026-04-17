@@ -19,6 +19,10 @@ export interface WhatsAppListMessage {
   body: string;
   buttonLabel: string;
   items: WhatsAppListItem[];
+  sections?: Array<{
+    title: string;
+    items: WhatsAppListItem[];
+  }>;
 }
 
 export interface WhatsAppButtonMessage {
@@ -150,24 +154,35 @@ export class GupshupService {
     }
 
     try {
+      const gupshupSections = message.sections
+        ? message.sections.map(s => ({
+            title: s.title,
+            subtitle: '',
+            options: s.items.map(item => ({
+              type: 'text',
+              title: item.title,
+              description: item.description || '',
+              postbackText: item.postbackText,
+            })),
+          }))
+        : [{
+            title: message.title,
+            subtitle: '',
+            options: message.items.map(item => ({
+              type: 'text',
+              title: item.title,
+              description: item.description || '',
+              postbackText: item.postbackText,
+            })),
+          }];
+
       const interactive = {
         type: 'list',
         title: message.title,
         body: message.body,
         msgid: `list_${Date.now()}`,
         globalButtons: [{ type: 'text', title: message.buttonLabel }],
-        items: [
-          {
-            title: message.title,
-            subtitle: '',
-            options: message.items.map((item) => ({
-              type: 'text',
-              title: item.title,
-              description: item.description || '',
-              postbackText: item.postbackText,
-            })),
-          },
-        ],
+        items: gupshupSections,
       };
 
       const body = new URLSearchParams({
