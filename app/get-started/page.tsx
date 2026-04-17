@@ -384,7 +384,7 @@ function OnboardingWizard() {
   // Facebook SDK — clean load following Meta's official pattern.
   // We remove any stale script/state first to guarantee fbAsyncInit fires.
   useEffect(() => {
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID;
+    const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
     if (!appId || fbSdkLoaded.current) return;
 
     // 1. Define the callback the SDK will invoke when fully ready
@@ -588,7 +588,7 @@ function OnboardingWizard() {
     fbWabaIdRef.current = '';
     fbPhoneNumberIdRef.current = '';
 
-    const configId = process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '';
+    const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
 
     window.FB.login(
       function (response: any) {
