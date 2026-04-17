@@ -877,8 +877,33 @@ export const orderingFlow: FlowDefinition = {
         d.cart = cart;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const total = calculateCartTotal(cart);
+        const variantInfo = cartItem.variant_label ? ` (${cartItem.variant_label})` : '';
+        const addedText = `\u2705 *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`;
 
-        // Fetch products for integrated catalog+checkout list
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
+
+        // Browse-by-category mode: simple buttons to keep the category flow
+        if (browseByCategory) {
+          await ctx.supabase
+            .from('bot_sessions')
+            .update({ session_data: d, current_step: 'continue_or_checkout' })
+            .eq('id', ctx.session.id);
+
+          return [
+            { type: 'text' as const, text: addedText },
+            {
+              type: 'buttons' as const,
+              body: `What would you like to do?`,
+              buttons: [
+                { id: 'browse_more', title: 'Browse Menu' },
+                { id: 'checkout', title: 'Checkout' },
+              ],
+            },
+          ];
+        }
+
+        // All-at-once mode: show integrated catalog+checkout list
         const { data: rawProducts } = await ctx.supabase
           .from('products')
           .select('id, name, price, category, has_variants, track_inventory, stock_quantity')
@@ -898,8 +923,6 @@ export const orderingFlow: FlowDefinition = {
           .from('bot_sessions')
           .update({ session_data: d, current_step: 'continue_or_checkout' })
           .eq('id', ctx.session.id);
-
-        const variantInfo = cartItem.variant_label ? ` (${cartItem.variant_label})` : '';
 
         // Group by category into sections
         const catMap = new Map<string, typeof products>();
@@ -927,10 +950,7 @@ export const orderingFlow: FlowDefinition = {
           ];
 
           return [
-            {
-              type: 'text' as const,
-              text: `\u2705 *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`,
-            },
+            { type: 'text' as const, text: addedText },
             {
               type: 'list' as const,
               title: 'Continue',
@@ -948,10 +968,7 @@ export const orderingFlow: FlowDefinition = {
         ];
 
         return [
-          {
-            type: 'text' as const,
-            text: `\u2705 *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`,
-          },
+          { type: 'text' as const, text: addedText },
           {
             type: 'list' as const,
             title: 'Continue',
@@ -1048,6 +1065,9 @@ export const orderingFlow: FlowDefinition = {
         if (input.toLowerCase() === 'checkout') {
           return { valid: true, data: { _action: 'checkout' } };
         }
+        if (input === 'browse_more') {
+          return { valid: true, data: { _action: 'browse_more' } };
+        }
 
         // Treat as product selection
         const { data: product } = await ctx.supabase
@@ -1082,6 +1102,7 @@ export const orderingFlow: FlowDefinition = {
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
         if (d._action === 'checkout') return 'apply_promo';
+        if (d._action === 'browse_more') return 'browse_catalog';
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const quickAdd = meta.ordering_quick_add !== false;
