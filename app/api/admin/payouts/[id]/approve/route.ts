@@ -199,19 +199,35 @@ export async function POST(
       .eq('id', payout.business_id)
       .single();
     if (biz) {
+      const cc = (biz.country_code || 'NG') as CountryCode;
+      const amountStr = formatCurrency(Number(payout.net_amount), cc);
+
       const { data: ownerProfile } = await supabase
         .from('profiles')
         .select('email')
         .eq('id', biz.owner_id)
         .single();
       if (ownerProfile?.email) {
-        const cc = (biz.country_code || 'NG') as CountryCode;
-        const amountStr = formatCurrency(Number(payout.net_amount), cc);
         const email = finalStatus === 'paid'
           ? payoutPaidEmail(biz.name, amountStr, reference || '')
           : payoutApprovedEmail(biz.name, amountStr, transfer_method);
         sendEmail({ to: ownerProfile.email, ...email }).catch(() => {});
       }
+
+      // Create in-app notification
+      try {
+        await supabase.from('notifications').insert({
+          business_id: payout.business_id,
+          type: 'payment',
+          channel: 'email',
+          status: 'sent',
+          subject: finalStatus === 'paid' ? `Payout sent — ${amountStr}` : `Payout approved — ${amountStr}`,
+          body: finalStatus === 'paid'
+            ? `Your payout of ${amountStr} for ${biz.name} has been sent to your bank account.`
+            : `Your payout of ${amountStr} for ${biz.name} has been approved and is being processed.`,
+          sent_at: new Date().toISOString(),
+        });
+      } catch { /* non-critical */ }
     }
 
     return NextResponse.json({ success: true, status: finalStatus });

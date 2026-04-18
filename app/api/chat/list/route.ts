@@ -20,12 +20,14 @@ export async function GET(request: NextRequest) {
       .from('chat_conversations')
       .select('*')
       .eq('business_id', businessId)
-      .order('last_message_at', { ascending: false }),
+      .order('last_message_at', { ascending: false })
+      .limit(50),
     service
       .from('chat_messages')
       .select('*')
       .eq('business_id', businessId)
-      .order('created_at', { ascending: true }),
+      .order('created_at', { ascending: false })
+      .limit(500),
   ]);
 
   return NextResponse.json({

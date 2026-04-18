@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  const rl = rateLimitResponse(getRateLimitKey(_request, 'public-contract'), 30, 60_000);
+  if (rl) return rl;
+
   const { token } = await params;
 
   if (!token || token.length < 32) {

@@ -19,10 +19,13 @@ interface Stats {
   totalBookings: number;
   todayBookings: number;
   pendingBookings: number;
+  completedBookings: number;
   totalRevenue: number;
   totalServices: number;
   hasHours: boolean;
   hasWhatsAppConfig: boolean;
+  outstandingInvoiceCount: number;
+  outstandingInvoiceAmount: number;
 }
 
 interface RecentBooking {
@@ -51,8 +54,9 @@ export default function DashboardOverview() {
   const business = useBusiness();
   const { hasCapability } = useCapabilities();
   const [stats, setStats] = useState<Stats>({
-    totalBookings: 0, todayBookings: 0, pendingBookings: 0,
+    totalBookings: 0, todayBookings: 0, pendingBookings: 0, completedBookings: 0,
     totalRevenue: 0, totalServices: 0, hasHours: false, hasWhatsAppConfig: false,
+    outstandingInvoiceCount: 0, outstandingInvoiceAmount: 0,
   });
   const [recent, setRecent] = useState<RecentBooking[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
@@ -77,7 +81,7 @@ export default function DashboardOverview() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
 
-      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes] = await Promise.all([
+      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
@@ -96,19 +100,27 @@ export default function DashboardOverview() {
         supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id).is('deleted_at', null),
         supabase.from('orders').select('total_amount').eq('business_id', business.id).is('deleted_at', null).in('status', ['confirmed', 'processing', 'ready', 'shipped', 'delivered']),
         supabase.from('orders').select('id, reference_code, total_amount, status, created_at').eq('business_id', business.id).is('deleted_at', null).order('created_at', { ascending: false }).limit(5),
+        // Completion rate
+        supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'completed'),
+        // Outstanding invoices
+        supabase.from('invoices').select('total_amount').eq('business_id', business.id).in('status', ['sent', 'viewed', 'overdue']),
       ]);
 
       const revenue = (revenueRes.data || []).reduce((sum, p) => sum + (p.amount || 0), 0);
       const hours = business.operating_hours as Record<string, unknown> | null;
 
+      const outstandingInvoices = outstandingInvRes.data || [];
       setStats({
         totalBookings: totalRes.count || 0,
         todayBookings: todayRes.count || 0,
         pendingBookings: pendingRes.count || 0,
+        completedBookings: completedRes.count || 0,
         totalRevenue: revenue,
         totalServices: servicesRes.count || 0,
         hasHours: !!hours && Object.keys(hours).length > 0,
         hasWhatsAppConfig: !!waConfigRes.data?.bot_greeting,
+        outstandingInvoiceCount: outstandingInvoices.length,
+        outstandingInvoiceAmount: outstandingInvoices.reduce((sum, inv) => sum + Number(inv.total_amount || 0), 0),
       });
       setRecent((recentRes.data || []) as RecentBooking[]);
       setTotalOrders(orderCountRes.count || 0);
@@ -307,6 +319,22 @@ export default function DashboardOverview() {
             label={labels.serviceNamePlural}
             value={stats.totalServices}
             icon="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+            color="green"
+          />
+        )}
+        {stats.outstandingInvoiceCount > 0 && (
+          <StatCard
+            label="Outstanding Invoices"
+            value={`${stats.outstandingInvoiceCount} (${formatCurrency(stats.outstandingInvoiceAmount, country)})`}
+            icon="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+            color="amber"
+          />
+        )}
+        {stats.totalBookings > 0 && (
+          <StatCard
+            label="Completion Rate"
+            value={`${(stats.completedBookings / stats.totalBookings * 100).toFixed(0)}%`}
+            icon="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
             color="green"
           />
         )}

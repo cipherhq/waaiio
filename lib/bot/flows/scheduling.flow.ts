@@ -969,7 +969,7 @@ export const schedulingFlow: FlowDefinition = {
             amount: totalDeposit > 0 ? totalDeposit : undefined,
           }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
 
-          // Post-completion: loyalty, feedback, referral
+          // Post-completion: loyalty, feedback, referral, auto-receipt
           handlePostCompletion({
             supabase: ctx.supabase,
             businessId: ctx.business.id,
@@ -978,6 +978,9 @@ export const schedulingFlow: FlowDefinition = {
             serviceType: 'booking',
             referenceId: booking.id,
             sender: ctx.sender,
+            amountPaid: totalDeposit,
+            serviceName: d.service_name as string,
+            referenceCode: booking.reference_code,
           }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
         }
 
@@ -1040,18 +1043,24 @@ export const schedulingFlow: FlowDefinition = {
               weekday: 'long', day: 'numeric', month: 'long',
             });
 
+            const paidAmount = (d.deposit_amount as number) || 0;
+            const paidCC = (ctx.business?.country_code || 'NG') as CountryCode;
+            const confirmLines = [
+              `✅ *Payment Confirmed!*`,
+              '',
+              `Your ${labels.entityName} at *${ctx.business?.name}* is fully confirmed.`,
+              d.service_name ? `📋 ${d.service_name as string}` : null,
+              `📅 ${dateLabel} at ${d.time as string}`,
+              `👥 ${d.party_size as number} ${labels.quantityLabel}`,
+              paidAmount > 0 ? `💰 ${formatCurrency(paidAmount, paidCC)}` : null,
+              `🔑 Ref: *${d.reference_code as string}*`,
+              '',
+              'See you there! 🎉',
+            ].filter(Boolean);
+
             await ctx.sender.sendText({
               to: ctx.from,
-              text: [
-                `✅ *Payment Confirmed!*`,
-                '',
-                `Your ${labels.entityName} at *${ctx.business?.name}* is fully confirmed.`,
-                `📅 ${dateLabel} at ${d.time as string}`,
-                `👥 ${d.party_size as number} ${labels.quantityLabel}`,
-                `🔑 Ref: *${d.reference_code as string}*`,
-                '',
-                'See you there! 🎉',
-              ].join('\n'),
+              text: confirmLines.join('\n'),
             });
 
             // Notify business owner (email always, WhatsApp for dedicated numbers)
@@ -1064,17 +1073,17 @@ export const schedulingFlow: FlowDefinition = {
                 sender: ctx.sender,
                 businessId: ctx.business.id,
                 businessName: ctx.business.name,
-                countryCode: (ctx.business.country_code || 'NG') as CountryCode,
+                countryCode: paidCC,
                 referenceCode: d.reference_code as string,
                 customerName: custName,
                 date: dateLabel,
                 time: (d.time as string) || '',
                 quantity: d.party_size as number,
                 quantityLabel: labels.quantityLabel,
-                amount: d.total_deposit as number || undefined,
+                amount: paidAmount || undefined,
               }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
 
-              // Post-completion: loyalty, feedback, referral
+              // Post-completion: loyalty, feedback, referral, auto-receipt
               handlePostCompletion({
                 supabase: ctx.supabase,
                 businessId: ctx.business.id,
@@ -1083,6 +1092,9 @@ export const schedulingFlow: FlowDefinition = {
                 serviceType: 'booking',
                 referenceId: d.booking_id as string,
                 sender: ctx.sender,
+                amountPaid: paidAmount,
+                serviceName: d.service_name as string,
+                referenceCode: d.reference_code as string,
               }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
 
               // Fire payment_received rule (non-blocking)

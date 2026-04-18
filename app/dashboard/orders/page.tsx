@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
 import { RefundModal } from '@/components/dashboard/RefundModal';
+import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface OrderItem {
   id: string;
@@ -59,10 +60,45 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) => setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleAll = () => setSelectedIds(prev => prev.size === pageItems.length ? new Set() : new Set(pageItems.map(o => o.id)));
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+
   // Tracking form state
   const [trackingCarrier, setTrackingCarrier] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [savingTracking, setSavingTracking] = useState(false);
+
+  // Search, date range, pagination
+  const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [page, setPage] = useState(1);
+  const perPage = 20;
+
+  const filtered = useMemo(() => {
+    let r = orders;
+    if (search) {
+      const q = search.toLowerCase();
+      r = r.filter(o =>
+        o.reference_code?.toLowerCase().includes(q) ||
+        o.user?.first_name?.toLowerCase().includes(q) ||
+        o.user?.last_name?.toLowerCase().includes(q) ||
+        o.delivery_phone?.toLowerCase().includes(q)
+      );
+    }
+    if (dateFrom) r = r.filter(o => o.created_at >= dateFrom);
+    if (dateTo) r = r.filter(o => o.created_at <= dateTo + 'T23:59:59');
+    return r;
+  }, [orders, search, dateFrom, dateTo]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+
+  // Reset page on filter change
+  useEffect(() => { setPage(1); }, [search, dateFrom, dateTo, filterStatus]);
 
   // Refund state
   const [refundModalOpen, setRefundModalOpen] = useState(false);
@@ -107,7 +143,7 @@ export default function OrdersPage() {
       query = query.eq('status', filterStatus);
     }
 
-    const { data } = await query.limit(50);
+    const { data } = await query.limit(500);
 
     // Fetch items for each order
     const ordersWithItems: Order[] = [];
@@ -518,6 +554,36 @@ export default function OrdersPage() {
         ))}
       </div>
 
+      {/* Search, Date Range & CSV */}
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <input
+            type="text"
+            placeholder="Search by reference, customer, phone..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 py-2 pl-10 pr-3 text-sm outline-none focus:border-brand"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+          <span className="text-xs text-gray-400">to</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+        </div>
+        <CsvExportButton
+          data={filtered.map(o => ({
+            Reference: o.reference_code,
+            Customer: [o.user?.first_name, o.user?.last_name].filter(Boolean).join(' '),
+            Items: o.items.length,
+            Amount: o.total_amount,
+            Status: o.status,
+            Date: new Date(o.created_at).toLocaleDateString(),
+          }))}
+          filename={`orders-${new Date().toISOString().slice(0, 10)}`}
+        />
+      </div>
+
       {/* Orders List */}
       {orders.length === 0 ? (
         <div className="mt-12 text-center">
@@ -531,14 +597,21 @@ export default function OrdersPage() {
             Orders from WhatsApp {labels.personLabelPlural.toLowerCase()} will appear here.
           </p>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="mt-12 text-center">
+          <p className="text-sm text-gray-500">No orders match your filters</p>
+        </div>
       ) : (
         <div className="mt-4 space-y-2">
-          {orders.map((order) => (
-            <button
-              key={order.id}
-              onClick={() => setSelectedOrder(order)}
-              className="flex w-full items-center justify-between rounded-xl border border-gray-100 bg-white p-4 text-left transition hover:border-brand/20 hover:shadow-sm"
-            >
+          {pageItems.map((order) => (
+            <div key={order.id} className={`flex items-center gap-3 rounded-xl border ${selectedIds.has(order.id) ? 'border-brand/30 bg-brand-50/30' : 'border-gray-100 bg-white'} transition`}>
+              <div className="pl-4" onClick={(e) => e.stopPropagation()}>
+                <input type="checkbox" checked={selectedIds.has(order.id)} onChange={() => toggleSelect(order.id)} className="h-4 w-4 rounded border-gray-300" />
+              </div>
+              <button
+                onClick={() => setSelectedOrder(order)}
+                className="flex flex-1 items-center justify-between p-4 pl-0 text-left"
+              >
               <div className="flex items-center gap-4 min-w-0">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-50">
                   <span className="text-sm font-bold text-gray-400">#</span>
@@ -546,7 +619,7 @@ export default function OrdersPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="font-mono text-sm font-semibold text-gray-900">{order.reference_code}</p>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[order.status] || 'bg-gray-100 text-gray-600'}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[order.status] || 'bg-gray-100 text-gray-600'}`}>
                       {order.status}
                     </span>
                   </div>
@@ -569,7 +642,57 @@ export default function OrdersPage() {
                 </svg>
               </div>
             </button>
+            </div>
           ))}
+        </div>
+      )}
+
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="mt-4 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand-50 p-3">
+          <span className="text-sm font-medium text-gray-700">{selectedIds.size} selected</span>
+          <select
+            disabled={bulkUpdating}
+            onChange={async (e) => {
+              const newStatus = e.target.value;
+              if (!newStatus) return;
+              setBulkUpdating(true);
+              for (const id of selectedIds) {
+                await updateOrderStatus(id, newStatus);
+              }
+              setBulkUpdating(false);
+              setSelectedIds(new Set());
+              e.target.value = '';
+            }}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs text-gray-700"
+          >
+            <option value="">Set status...</option>
+            {ORDER_STATUSES.map(s => (
+              <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+            ))}
+          </select>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Next
+          </button>
         </div>
       )}
     </div>

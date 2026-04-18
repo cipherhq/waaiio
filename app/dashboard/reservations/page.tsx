@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
 import { RefundModal } from '@/components/dashboard/RefundModal';
+import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface Booking {
   id: string;
@@ -67,14 +68,30 @@ export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const perPage = 20;
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) => setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleAll = () => setSelectedIds(prev => prev.size === pageItems.length ? new Set() : new Set(pageItems.map(b => b.id)));
+  const [bulkUpdating, setBulkUpdating] = useState(false);
 
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
 
   const selected = bookings.find((b) => b.id === selectedId) || null;
+
+  const totalPages = Math.max(1, Math.ceil(bookings.length / perPage));
+  const pageItems = bookings.slice((page - 1) * perPage, page * perPage);
+
+  // Reset page on filter change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(1); }, [filter, dateFrom, dateTo, search]);
 
   async function openRefundModal(booking: Booking) {
     if (!booking.payment_id) return;
@@ -106,7 +123,8 @@ export default function BookingsPage() {
       .limit(100);
 
     if (filter !== 'all') query = query.eq('status', filter);
-    if (dateFilter) query = query.eq('date', dateFilter);
+    if (dateFrom) query = query.gte('date', dateFrom);
+    if (dateTo) query = query.lte('date', dateTo);
 
     const { data } = await query;
     let results = data || [];
@@ -123,7 +141,7 @@ export default function BookingsPage() {
 
     setBookings(results as Booking[]);
     setLoading(false);
-  }, [business.id, filter, dateFilter, search]);
+  }, [business.id, filter, dateFrom, dateTo, search]);
 
   useEffect(() => {
     fetchBookings();
@@ -174,12 +192,11 @@ export default function BookingsPage() {
             </button>
           ))}
         </div>
-        <input
-          type="date"
-          value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
-          className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand"
-        />
+        <div className="flex items-center gap-2">
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+          <span className="text-xs text-gray-400">to</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+        </div>
         <input
           type="text"
           placeholder="Search name, phone, ref..."
@@ -187,8 +204,20 @@ export default function BookingsPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand"
         />
-        {(dateFilter || search) && (
-          <button onClick={() => { setDateFilter(''); setSearch(''); }} className="text-xs text-gray-400 hover:text-gray-600">
+        <CsvExportButton
+          data={bookings.map(b => ({
+            Reference: b.reference_code,
+            Guest: b.guest_name,
+            Phone: b.guest_phone,
+            Date: b.date,
+            Time: b.time,
+            Status: b.status,
+            'Party Size': b.party_size,
+          }))}
+          filename={`reservations-${new Date().toISOString().slice(0, 10)}`}
+        />
+        {(dateFrom || dateTo || search) && (
+          <button onClick={() => { setDateFrom(''); setDateTo(''); setSearch(''); }} className="text-xs text-gray-400 hover:text-gray-600">
             Clear
           </button>
         )}
@@ -208,6 +237,7 @@ export default function BookingsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
+                <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
@@ -218,8 +248,9 @@ export default function BookingsPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {bookings.map((r) => (
-                <tr key={r.id} className="cursor-pointer hover:bg-gray-50/50" onClick={() => setSelectedId(r.id)}>
+              {pageItems.map((r) => (
+                <tr key={r.id} className={`cursor-pointer hover:bg-gray-50/50 ${selectedIds.has(r.id) ? 'bg-brand-50/30' : ''}`} onClick={() => setSelectedId(r.id)}>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} className="h-4 w-4 rounded border-gray-300" /></td>
                   <td className="px-4 py-3">
                     <p className="font-medium text-gray-900">{r.guest_name || '\u2014'}</p>
                     <p className="text-xs text-gray-400">{r.guest_phone}</p>
@@ -234,16 +265,16 @@ export default function BookingsPage() {
                       : r.party_size}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
                       {r.channel || 'whatsapp'}
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
                       {r.status.replace('_', ' ')}
                     </span>
                     {r.rescheduled_at && (
-                      <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                      <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
                         Rescheduled
                       </span>
                     )}
@@ -255,7 +286,7 @@ export default function BookingsPage() {
                         <button
                           key={action.next}
                           onClick={() => updateStatus(r.id, action.next)}
-                          className={`rounded px-2 py-1 text-xs font-medium ${action.color}`}
+                          className={`rounded px-3 py-1.5 text-xs font-medium ${action.color}`}
                         >
                           {action.label}
                         </button>
@@ -266,6 +297,59 @@ export default function BookingsPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="mt-4 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand-50 p-3">
+          <span className="text-sm font-medium text-gray-700">{selectedIds.size} selected</span>
+          <button
+            disabled={bulkUpdating}
+            onClick={async () => {
+              setBulkUpdating(true);
+              for (const id of selectedIds) await updateStatus(id, 'confirmed');
+              setBulkUpdating(false);
+              setSelectedIds(new Set());
+            }}
+            className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {bulkUpdating ? 'Updating...' : 'Confirm All'}
+          </button>
+          <button
+            disabled={bulkUpdating}
+            onClick={async () => {
+              setBulkUpdating(true);
+              for (const id of selectedIds) await updateStatus(id, 'cancelled');
+              setBulkUpdating(false);
+              setSelectedIds(new Set());
+            }}
+            className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            Cancel All
+          </button>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Next
+          </button>
         </div>
       )}
 
@@ -293,7 +377,7 @@ export default function BookingsPage() {
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
               <div>
                 <p className="font-mono text-lg font-bold text-brand">{selected.reference_code}</p>
-                <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[selected.status] || 'bg-gray-100 text-gray-600'}`}>
+                <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[selected.status] || 'bg-gray-100 text-gray-600'}`}>
                   {selected.status.replace('_', ' ')}
                 </span>
               </div>

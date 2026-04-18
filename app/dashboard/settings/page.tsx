@@ -577,10 +577,10 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
 
       {/* Tabs */}
-      <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 p-1 w-fit">
+      <div className="mt-4 flex gap-1 overflow-x-auto rounded-lg bg-gray-100 p-1">
         <button
           onClick={() => setActiveTab('profile')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+          className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
             activeTab === 'profile' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -588,7 +588,7 @@ export default function SettingsPage() {
         </button>
         <button
           onClick={() => setActiveTab('hours')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+          className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
             activeTab === 'hours' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -596,7 +596,7 @@ export default function SettingsPage() {
         </button>
         <button
           onClick={() => setActiveTab('booking')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+          className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
             activeTab === 'booking' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -605,7 +605,7 @@ export default function SettingsPage() {
         {(capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding')) && (
           <button
             onClick={() => setActiveTab('gateway')}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
               activeTab === 'gateway' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -615,7 +615,7 @@ export default function SettingsPage() {
         {(capabilities.includes('payment') || capabilities.includes('crowdfunding')) && (
           <button
             onClick={() => setActiveTab('recurring')}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
               activeTab === 'recurring' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -625,7 +625,7 @@ export default function SettingsPage() {
         {capabilities.includes('queue') && (
           <button
             onClick={() => setActiveTab('queue')}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
               activeTab === 'queue' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -635,7 +635,7 @@ export default function SettingsPage() {
         {capabilities.includes('ordering') && (
           <button
             onClick={() => setActiveTab('shipping')}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
               activeTab === 'shipping' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -645,7 +645,7 @@ export default function SettingsPage() {
         {capabilities.includes('ordering') && (
           <button
             onClick={() => setActiveTab('delivery_zones')}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
               activeTab === 'delivery_zones' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -655,7 +655,7 @@ export default function SettingsPage() {
         {capabilities.includes('ordering') && (
           <button
             onClick={() => setActiveTab('ordering')}
-            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
               activeTab === 'ordering' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
@@ -664,7 +664,7 @@ export default function SettingsPage() {
         )}
         <button
           onClick={() => setActiveTab('account')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+          className={`shrink-0 rounded-md px-4 py-1.5 text-sm font-medium transition ${
             activeTab === 'account' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
           }`}
         >
@@ -698,7 +698,7 @@ export default function SettingsPage() {
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
                     <input
@@ -1049,7 +1049,7 @@ export default function SettingsPage() {
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-56 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Auto = uses category defaults (salons charge full, restaurants use deposits). Full = always charge full price. Deposit Only = only charge explicit service deposits. Free = no upfront payment.</span>
                   </span>
                 </div>
-                <div className="mt-1.5 grid grid-cols-2 gap-2">
+                <div className="mt-1.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {[
                     { value: 'auto', label: 'Auto (category default)', desc: 'Uses smart defaults for your business type' },
                     { value: 'full', label: 'Full price upfront', desc: 'Charge entire service price before booking' },
@@ -1869,7 +1869,7 @@ export default function SettingsPage() {
               <div className="mt-5 space-y-3">
                 {deliveryZones.map((zone, idx) => (
                   <div key={zone.id || idx} className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="mb-1 block text-xs font-medium text-gray-600">Zone Name</label>
                         <input
@@ -1904,7 +1904,7 @@ export default function SettingsPage() {
                       </div>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-2 gap-3">
+                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="mb-1 block text-xs font-medium text-gray-600">Estimated Time</label>
                         <input

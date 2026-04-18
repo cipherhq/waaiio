@@ -1,3 +1,14 @@
+// ─── HTML escape ──────────────────────────────────────────────────
+
+function esc(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ─── Branded wrapper ──────────────────────────────────────────────
 
 function wrap(body: string): string {
@@ -77,7 +88,7 @@ export function welcomeEmail(name: string) {
   return {
     subject: 'Welcome to Waaiio!',
     html: wrap(`
-      ${h(`Welcome, ${name}!`)}
+      ${h(`Welcome, ${esc(name)}!`)}
       ${p("Thanks for joining Waaiio. You're on your way to automating your business with AI-powered WhatsApp bots.")}
       ${p('Here\'s what you can do next:')}
       <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
@@ -96,11 +107,11 @@ export function businessRegisteredEmail(businessName: string, botCode: string, c
     subject: `${businessName} is live on Waaiio!`,
     html: wrap(`
       ${h('Your business is registered!')}
-      ${p(`<strong>${businessName}</strong> has been set up on Waaiio. Your bot is ready to receive customers.`)}
+      ${p(`<strong>${esc(businessName)}</strong> has been set up on Waaiio. Your bot is ready to receive customers.`)}
       ${table(
-        kv('Business', businessName) +
-        kv('Category', category.replace(/_/g, ' ')) +
-        kv('Bot Code', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${botCode}</code>`)
+        kv('Business', esc(businessName)) +
+        kv('Category', esc(category.replace(/_/g, ' '))) +
+        kv('Bot Code', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(botCode)}</code>`)
       )}
       ${btn('Set Up Your Bot', 'https://app.waaiio.com/dashboard/whatsapp')}
       ${p('Share your bot code with customers so they can start interacting with your business on WhatsApp.')}
@@ -113,11 +124,11 @@ export function payoutApprovedEmail(businessName: string, amount: string, method
     subject: `Payout approved — ${amount}`,
     html: wrap(`
       ${h('Payout Approved')}
-      ${p(`Good news! A payout for <strong>${businessName}</strong> has been approved and is being processed.`)}
+      ${p(`Good news! A payout for <strong>${esc(businessName)}</strong> has been approved and is being processed.`)}
       ${table(
-        kv('Business', businessName) +
-        kv('Amount', amount) +
-        kv('Method', method)
+        kv('Business', esc(businessName)) +
+        kv('Amount', esc(amount)) +
+        kv('Method', esc(method))
       )}
       ${p('Funds will arrive in your account within 1-3 business days depending on your bank.')}
       ${btn('View Payouts', 'https://app.waaiio.com/dashboard/payouts')}
@@ -130,11 +141,11 @@ export function payoutPaidEmail(businessName: string, amount: string, reference:
     subject: `Payout sent — ${amount}`,
     html: wrap(`
       ${h('Payout Sent!')}
-      ${p(`Your payout for <strong>${businessName}</strong> has been sent to your bank account.`)}
+      ${p(`Your payout for <strong>${esc(businessName)}</strong> has been sent to your bank account.`)}
       ${table(
-        kv('Business', businessName) +
-        kv('Amount', amount) +
-        kv('Reference', reference || '—')
+        kv('Business', esc(businessName)) +
+        kv('Amount', esc(amount)) +
+        kv('Reference', esc(reference || '—'))
       )}
       ${p('The funds should reflect in your account shortly.')}
       ${btn('View Payouts', 'https://app.waaiio.com/dashboard/payouts')}
@@ -147,11 +158,11 @@ export function payoutRejectedEmail(businessName: string, amount: string, reason
     subject: `Payout rejected — ${amount}`,
     html: wrap(`
       ${h('Payout Rejected')}
-      ${p(`A payout for <strong>${businessName}</strong> was not approved.`)}
+      ${p(`A payout for <strong>${esc(businessName)}</strong> was not approved.`)}
       ${table(
-        kv('Business', businessName) +
-        kv('Amount', amount) +
-        kv('Reason', reason)
+        kv('Business', esc(businessName)) +
+        kv('Amount', esc(amount)) +
+        kv('Reason', esc(reason))
       )}
       ${p('If you believe this is a mistake, please contact support or reply to this email.')}
       ${btn('View Payouts', 'https://app.waaiio.com/dashboard/payouts')}
@@ -160,13 +171,13 @@ export function payoutRejectedEmail(businessName: string, amount: string, reason
 }
 
 export function kycRequestedEmail(businessName: string, level: string, documentsNeeded: string[]) {
-  const docList = documentsNeeded.map(d => `<li>${d}</li>`).join('');
+  const docList = documentsNeeded.map(d => `<li>${esc(d)}</li>`).join('');
   return {
     subject: `Verification required for ${businessName}`,
     html: wrap(`
       ${h('Verification Required')}
-      ${p(`To unlock higher payout limits for <strong>${businessName}</strong>, we need you to verify your business.`)}
-      ${table(kv('Requested Level', level))}
+      ${p(`To unlock higher payout limits for <strong>${esc(businessName)}</strong>, we need you to verify your business.`)}
+      ${table(kv('Requested Level', esc(level)))}
       ${p('<strong>Documents needed:</strong>')}
       <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
         ${docList}
@@ -182,10 +193,10 @@ export function kycApprovedEmail(businessName: string, level: string, newLimit: 
     subject: `Verification approved — ${businessName}`,
     html: wrap(`
       ${h('Verification Approved!')}
-      ${p(`<strong>${businessName}</strong> has been verified at the <strong>${level}</strong> level.`)}
+      ${p(`<strong>${esc(businessName)}</strong> has been verified at the <strong>${esc(level)}</strong> level.`)}
       ${table(
-        kv('Level', level) +
-        kv('Monthly Payout Limit', newLimit)
+        kv('Level', esc(level)) +
+        kv('Monthly Payout Limit', esc(newLimit))
       )}
       ${p('You can now receive payouts up to your new limit.')}
       ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
@@ -198,8 +209,8 @@ export function kycRejectedEmail(businessName: string, reason: string) {
     subject: `Verification update — ${businessName}`,
     html: wrap(`
       ${h('Verification Not Approved')}
-      ${p(`We were unable to verify <strong>${businessName}</strong> at this time.`)}
-      ${table(kv('Reason', reason))}
+      ${p(`We were unable to verify <strong>${esc(businessName)}</strong> at this time.`)}
+      ${table(kv('Reason', esc(reason)))}
       ${p('Please review the feedback, update your documents, and resubmit.')}
       ${btn('Resubmit Documents', 'https://app.waaiio.com/dashboard/verification')}
     `),
@@ -224,13 +235,13 @@ export function bookingConfirmationEmail(details: {
     subject: `Booking confirmed at ${businessName} ${confirmationEmoji}`,
     html: wrap(`
       ${h(`Booking Confirmed ${confirmationEmoji}`)}
-      ${p(`Hi ${firstName}, your booking at <strong>${businessName}</strong> is confirmed!`)}
+      ${p(`Hi ${esc(firstName)}, your booking at <strong>${esc(businessName)}</strong> is confirmed!`)}
       ${table(
-        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
-        kv('Date', date) +
-        kv('Time', time) +
-        kv(quantityLabel, String(quantity)) +
-        (amount > 0 ? kv('Amount', amountDisplay) : '')
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
+        kv('Date', esc(date)) +
+        kv('Time', esc(time)) +
+        kv(esc(quantityLabel), String(quantity)) +
+        (amount > 0 ? kv('Amount', esc(amountDisplay)) : '')
       )}
       ${p("We'll send you a reminder before your booking. See you soon!")}
     `),
@@ -249,12 +260,12 @@ export function bookingReminderEmail(
     subject: `Reminder: Your booking at ${businessName} is tomorrow`,
     html: wrap(`
       ${h('Booking Reminder')}
-      ${p(`Hi ${guestName}, this is a friendly reminder that your appointment at <strong>${businessName}</strong> is tomorrow.`)}
+      ${p(`Hi ${esc(guestName)}, this is a friendly reminder that your appointment at <strong>${esc(businessName)}</strong> is tomorrow.`)}
       ${table(
-        kv('Service', serviceName) +
-        kv('Date', date) +
-        (time ? kv('Time', time) : '') +
-        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`)
+        kv('Service', esc(serviceName)) +
+        kv('Date', esc(date)) +
+        (time ? kv('Time', esc(time)) : '') +
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
       ${p('If you need to reschedule or cancel, please contact the business directly.')}
     `),
@@ -266,10 +277,10 @@ export function paymentReceivedEmail(businessName: string, amount: string, servi
     subject: `Payment received — ${amount}`,
     html: wrap(`
       ${h('Payment Received')}
-      ${p(`<strong>${businessName}</strong> received a new payment.`)}
+      ${p(`<strong>${esc(businessName)}</strong> received a new payment.`)}
       ${table(
-        kv('Service', service) +
-        kv('Amount', amount)
+        kv('Service', esc(service)) +
+        kv('Amount', esc(amount))
       )}
       ${btn('View Payments', 'https://app.waaiio.com/dashboard/payments')}
     `),
@@ -281,10 +292,10 @@ export function subscriptionActivatedEmail(businessName: string, tier: string, t
     subject: `Subscription activated — ${tier} plan`,
     html: wrap(`
       ${h('Subscription Activated')}
-      ${p(`<strong>${businessName}</strong> is now on the <strong>${tier}</strong> plan.`)}
+      ${p(`<strong>${esc(businessName)}</strong> is now on the <strong>${esc(tier)}</strong> plan.`)}
       ${table(
-        kv('Plan', tier) +
-        kv('Trial Ends', trialEnds)
+        kv('Plan', esc(tier)) +
+        kv('Trial Ends', esc(trialEnds))
       )}
       ${p('Enjoy all the features of your new plan!')}
       ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
@@ -303,7 +314,7 @@ export function newOrderEmail(details: {
 }) {
   const { businessName, referenceCode, customerName, items, totalAmount, deliveryAddress, dashboardUrl } = details;
   const itemRows = items.map(i => {
-    const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
+    const label = i.variant_label ? `${esc(i.name)} (${esc(i.variant_label)})` : esc(i.name);
     return `<tr>
       <td style="padding:6px 0;font-size:13px;color:#3f3f46">${label}</td>
       <td style="padding:6px 0;font-size:13px;color:#3f3f46;text-align:center">x${i.quantity}</td>
@@ -314,12 +325,12 @@ export function newOrderEmail(details: {
     subject: `New order received — ${referenceCode}`,
     html: wrap(`
       ${h('New Order Received!')}
-      ${p(`<strong>${businessName}</strong> just received a new order.`)}
+      ${p(`<strong>${esc(businessName)}</strong> just received a new order.`)}
       ${table(
-        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
-        kv('Customer', customerName) +
-        kv('Total', `<strong>${totalAmount}</strong>`) +
-        (deliveryAddress ? kv('Delivery', deliveryAddress) : '')
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
+        kv('Customer', esc(customerName)) +
+        kv('Total', `<strong>${esc(totalAmount)}</strong>`) +
+        (deliveryAddress ? kv('Delivery', esc(deliveryAddress)) : '')
       )}
       ${p('<strong>Items:</strong>')}
       <table cellpadding="0" cellspacing="0" style="width:100%;margin:0 0 16px">${itemRows}</table>
@@ -345,14 +356,14 @@ export function newBookingOwnerEmail(details: {
     subject: `New booking — ${referenceCode}`,
     html: wrap(`
       ${h('New Booking!')}
-      ${p(`<strong>${businessName}</strong> just received a new booking.`)}
+      ${p(`<strong>${esc(businessName)}</strong> just received a new booking.`)}
       ${table(
-        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
-        kv('Customer', customerName) +
-        kv('Date', date) +
-        kv('Time', time) +
-        kv(quantityLabel, String(quantity)) +
-        (amount ? kv('Amount', amount) : '')
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
+        kv('Customer', esc(customerName)) +
+        kv('Date', esc(date)) +
+        kv('Time', esc(time)) +
+        kv(esc(quantityLabel), String(quantity)) +
+        (amount ? kv('Amount', esc(amount)) : '')
       )}
       ${btn('View Bookings', dashboardUrl)}
       ${p('Log in to your dashboard to manage this booking.')}
@@ -365,7 +376,7 @@ export function trialExpiringEmail(businessName: string, daysLeft: number) {
     subject: `Your free trial ends in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`,
     html: wrap(`
       ${h('Your Trial Is Ending Soon')}
-      ${p(`The 7-day free trial for <strong>${businessName}</strong> ends in <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong>.`)}
+      ${p(`The 7-day free trial for <strong>${esc(businessName)}</strong> ends in <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong>.`)}
       ${p('After the trial, a small per-transaction fee will apply on the Free plan. Upgrade to Growth or Business to reduce fees and unlock more features.')}
       ${table(
         kv('Free Plan', '2.5% + flat fee per transaction') +
@@ -383,7 +394,7 @@ export function trialEndedEmail(businessName: string) {
     subject: `Your free trial has ended — ${businessName}`,
     html: wrap(`
       ${h('Free Trial Ended')}
-      ${p(`The 7-day free trial for <strong>${businessName}</strong> has ended.`)}
+      ${p(`The 7-day free trial for <strong>${esc(businessName)}</strong> has ended.`)}
       ${p('Your bot is still active on the <strong>Free plan</strong>. A 2.5% + flat fee now applies to each transaction.')}
       ${p('Upgrade to reduce your fees and unlock premium features like loyalty programs, broadcasts, e-signatures, and more.')}
       ${btn('Upgrade Plan', 'https://app.waaiio.com/dashboard/settings')}
@@ -396,10 +407,10 @@ export function paymentFailedEmail(businessName: string, amount: string, reason:
     subject: `Payment failed — ${businessName}`,
     html: wrap(`
       ${h('Payment Failed')}
-      ${p(`A payment attempt for <strong>${businessName}</strong> was unsuccessful.`)}
+      ${p(`A payment attempt for <strong>${esc(businessName)}</strong> was unsuccessful.`)}
       ${table(
-        kv('Amount', amount) +
-        kv('Reason', reason || 'Payment was declined')
+        kv('Amount', esc(amount)) +
+        kv('Reason', esc(reason || 'Payment was declined'))
       )}
       ${p('The customer may need to retry with a different payment method. No action is required from you — the customer has been notified.')}
       ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
@@ -417,12 +428,12 @@ export function weeklyDigestEmail(businessName: string, stats: {
     subject: `Weekly summary — ${businessName}`,
     html: wrap(`
       ${h('Weekly Summary')}
-      ${p(`Here's how <strong>${businessName}</strong> did this week:`)}
+      ${p(`Here's how <strong>${esc(businessName)}</strong> did this week:`)}
       ${table(
         kv('Bookings', String(stats.bookings)) +
-        kv('Revenue', stats.revenue) +
+        kv('Revenue', esc(stats.revenue)) +
         kv('New Customers', String(stats.newCustomers)) +
-        kv('Top Service', stats.topService)
+        kv('Top Service', esc(stats.topService))
       )}
       ${btn('View Full Analytics', 'https://app.waaiio.com/dashboard/analytics')}
       ${p('Keep up the great work!')}
@@ -444,7 +455,7 @@ export function invoiceEmail(details: {
 
   const itemRows = items.map(i =>
     `<tr>
-      <td style="padding:6px 0;font-size:13px;color:#3f3f46;border-bottom:1px solid #f4f4f5">${i.description}</td>
+      <td style="padding:6px 0;font-size:13px;color:#3f3f46;border-bottom:1px solid #f4f4f5">${esc(i.description)}</td>
       <td style="padding:6px 0;font-size:13px;color:#3f3f46;text-align:center;border-bottom:1px solid #f4f4f5">x${i.quantity}</td>
       <td style="padding:6px 0;font-size:13px;color:#3f3f46;text-align:right;border-bottom:1px solid #f4f4f5">${i.amount.toLocaleString()}</td>
     </tr>`
@@ -453,12 +464,12 @@ export function invoiceEmail(details: {
   return {
     subject: `Invoice ${referenceCode} from ${businessName}`,
     html: wrap(`
-      ${h(`Invoice from ${businessName}`)}
-      ${p(`Hi ${customerName}, you have received an invoice from <strong>${businessName}</strong>.`)}
+      ${h(`Invoice from ${esc(businessName)}`)}
+      ${p(`Hi ${esc(customerName)}, you have received an invoice from <strong>${esc(businessName)}</strong>.`)}
       ${table(
-        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${referenceCode}</code>`) +
-        kv('Amount', `<strong>${totalAmount}</strong>`) +
-        kv('Due Date', dueDate)
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
+        kv('Amount', `<strong>${esc(totalAmount)}</strong>`) +
+        kv('Due Date', esc(dueDate))
       )}
       ${items.length > 0 ? `
         ${p('<strong>Items:</strong>')}

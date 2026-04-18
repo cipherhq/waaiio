@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CATEGORY_LABELS, type BusinessCategoryKey, formatCurrency, type CountryCode } from '@/lib/constants';
+import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface DailyCount {
   date: string;
@@ -30,6 +31,8 @@ export default function AnalyticsPage() {
   const country = (business.country_code || 'NG') as CountryCode;
 
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');
+  const [customDateFrom, setCustomDateFrom] = useState('');
+  const [customDateTo, setCustomDateTo] = useState('');
   const [totalBookings, setTotalBookings] = useState(0);
   const [completedBookings, setCompletedBookings] = useState(0);
   const [cancelledBookings, setCancelledBookings] = useState(0);
@@ -51,15 +54,19 @@ export default function AnalyticsPage() {
       const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - days);
-      const startStr = startDate.toISOString().split('T')[0];
+      const startStr = customDateFrom || startDate.toISOString().split('T')[0];
+      const endStr = customDateTo || undefined;
+
+      let bookingsQuery = supabase
+        .from('bookings')
+        .select('id, status, date, time, guest_phone, total_amount, deposit_amount, service_id')
+        .eq('business_id', business.id)
+        .gte('date', startStr);
+      if (endStr) bookingsQuery = bookingsQuery.lte('date', endStr);
+      bookingsQuery = bookingsQuery.order('date', { ascending: false });
 
       const [bookingsRes, servicesRes] = await Promise.all([
-        supabase
-          .from('bookings')
-          .select('id, status, date, time, guest_phone, total_amount, deposit_amount, service_id')
-          .eq('business_id', business.id)
-          .gte('date', startStr)
-          .order('date', { ascending: false }),
+        bookingsQuery,
         supabase
           .from('services')
           .select('id, name')
@@ -137,7 +144,7 @@ export default function AnalyticsPage() {
       setLoading(false);
     }
     load();
-  }, [business.id, timeRange]);
+  }, [business.id, timeRange, customDateFrom, customDateTo]);
 
   if (loading) {
     return (
@@ -155,23 +162,38 @@ export default function AnalyticsPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
           <p className="mt-1 text-sm text-gray-500">Performance overview for {business.name}</p>
         </div>
-        <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
-          {(['7d', '30d', '90d'] as TimeRange[]).map((range) => (
-            <button
-              key={range}
-              onClick={() => setTimeRange(range)}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                timeRange === range ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {range === '7d' ? '7 days' : range === '30d' ? '30 days' : '90 days'}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
+            {(['7d', '30d', '90d'] as TimeRange[]).map((range) => (
+              <button
+                key={range}
+                onClick={() => { setTimeRange(range); setCustomDateFrom(''); setCustomDateTo(''); }}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  timeRange === range && !customDateFrom ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {range === '7d' ? '7 days' : range === '30d' ? '30 days' : '90 days'}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="date" value={customDateFrom} onChange={(e) => setCustomDateFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+            <span className="text-xs text-gray-400">to</span>
+            <input type="date" value={customDateTo} onChange={(e) => setCustomDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+          </div>
+          <CsvExportButton
+            data={dailyCounts.map(d => ({
+              Date: d.date,
+              Bookings: d.count,
+              Revenue: d.revenue,
+            }))}
+            filename={`analytics-${new Date().toISOString().slice(0, 10)}`}
+          />
         </div>
       </div>
 

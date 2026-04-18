@@ -144,6 +144,14 @@ export default function CustomersPage() {
   const [waSending, setWaSending] = useState(false);
   const [waSent, setWaSent] = useState(false);
 
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) => setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleAll = () => setSelectedIds(prev => prev.size === pageItems.length ? new Set() : new Set(pageItems.map(c => c.id)));
+  const [bulkTag, setBulkTag] = useState('');
+  const [bulkMessage, setBulkMessage] = useState('');
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
   const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
 
   /* ---- Fetch customers ---- */
@@ -172,6 +180,15 @@ export default function CustomersPage() {
           c.email?.toLowerCase().includes(search.toLowerCase()),
       )
     : customers;
+
+  /* ---- Pagination ---- */
+  const [page, setPage] = useState(1);
+  const perPage = 20;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+
+  // Reset page on search change
+  useEffect(() => { setPage(1); }, [search]);
 
   /* ---- Metrics ---- */
 
@@ -397,6 +414,7 @@ export default function CustomersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
+                <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Givings' : 'Total Visits'}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</th>
@@ -406,14 +424,15 @@ export default function CustomersPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
-              {filtered.map((c) => (
+              {pageItems.map((c) => (
                 <tr
                   key={c.id}
                   className={`cursor-pointer hover:bg-gray-50/50 ${
-                    selectedId === c.id ? 'bg-brand-50/30' : ''
+                    selectedIds.has(c.id) ? 'bg-brand-50/30' : selectedId === c.id ? 'bg-brand-50/20' : ''
                   }`}
                   onClick={() => selectCustomer(c)}
                 >
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selectedIds.has(c.id)} onChange={() => toggleSelect(c.id)} className="h-4 w-4 rounded border-gray-300" /></td>
                   {/* Customer name + avatar + phone */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
@@ -479,6 +498,96 @@ export default function CustomersPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-brand/20 bg-brand-50 p-3">
+          <span className="text-sm font-medium text-gray-700">{selectedIds.size} selected</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Tag name..."
+              value={bulkTag}
+              onChange={(e) => setBulkTag(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs outline-none focus:border-brand"
+            />
+            <button
+              disabled={!bulkTag || bulkProcessing}
+              onClick={async () => {
+                setBulkProcessing(true);
+                for (const id of selectedIds) {
+                  const customer = customers.find(c => c.id === id);
+                  if (customer) {
+                    const tags = [...(customer.tags || [])];
+                    if (!tags.includes(bulkTag)) tags.push(bulkTag);
+                    await supabase.from('customer_profiles').update({ tags }).eq('id', id);
+                  }
+                }
+                setBulkProcessing(false);
+                setBulkTag('');
+                setSelectedIds(new Set());
+                fetchCustomers();
+              }}
+              className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Add Tag
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Message..."
+              value={bulkMessage}
+              onChange={(e) => setBulkMessage(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs outline-none focus:border-brand sm:w-48"
+            />
+            <button
+              disabled={!bulkMessage || bulkProcessing}
+              onClick={async () => {
+                setBulkProcessing(true);
+                for (const id of selectedIds) {
+                  const customer = customers.find(c => c.id === id);
+                  if (customer?.phone) {
+                    await fetch('/api/chat/send', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ businessId: business.id, to: customer.phone, message: bulkMessage }),
+                    });
+                  }
+                }
+                setBulkProcessing(false);
+                setBulkMessage('');
+                setSelectedIds(new Set());
+              }}
+              className="rounded-lg bg-whatsapp px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+            >
+              Send WhatsApp
+            </button>
+          </div>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Next
+          </button>
         </div>
       )}
 

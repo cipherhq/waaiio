@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface InvoiceItem {
   id: string;
@@ -111,6 +112,40 @@ export default function InvoicesPage() {
 
   // Cancel confirm
   const [cancelConfirmId, setCancelConfirmId] = useState<string | null>(null);
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const toggleSelect = (id: string) => setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
+  const toggleAll = () => setSelectedIds(prev => prev.size === pageItems.length ? new Set() : new Set(pageItems.map(i => i.id)));
+  const [bulkSending, setBulkSending] = useState(false);
+
+  // Search, date range, pagination
+  const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [page, setPage] = useState(1);
+  const perPage = 20;
+
+  const filtered = useMemo(() => {
+    let r = invoices;
+    if (search) {
+      const q = search.toLowerCase();
+      r = r.filter(inv =>
+        inv.customer_name?.toLowerCase().includes(q) ||
+        inv.reference_code?.toLowerCase().includes(q) ||
+        String(inv.total_amount).includes(q)
+      );
+    }
+    if (dateFrom) r = r.filter(inv => inv.created_at >= dateFrom);
+    if (dateTo) r = r.filter(inv => inv.created_at <= dateTo + 'T23:59:59');
+    return r;
+  }, [invoices, search, dateFrom, dateTo]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+  const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
+
+  // Reset page on filter change
+  useEffect(() => { setPage(1); }, [search, dateFrom, dateTo, statusFilter]);
 
   const supabase = createClient();
 
@@ -326,6 +361,36 @@ export default function InvoicesPage() {
         ))}
       </div>
 
+      {/* Search, Date Range & CSV */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <input
+            type="text"
+            placeholder="Search by name, reference, amount..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full rounded-lg border border-gray-200 py-2 pl-10 pr-3 text-sm outline-none focus:border-brand"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+          <span className="text-xs text-gray-400">to</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+        </div>
+        <CsvExportButton
+          data={filtered.map(inv => ({
+            Reference: inv.reference_code,
+            Customer: inv.customer_name,
+            Amount: inv.total_amount,
+            Status: inv.status,
+            'Issue Date': inv.issue_date,
+            'Due Date': inv.due_date || '',
+          }))}
+          filename={`invoices-${new Date().toISOString().slice(0, 10)}`}
+        />
+      </div>
+
       {/* Stats */}
       {!loading && invoices.length > 0 && (() => {
         // Stats are based on ALL invoices (not filtered)
@@ -355,11 +420,16 @@ export default function InvoicesPage() {
           <p className="text-gray-500">No invoices yet</p>
           <p className="mt-1 text-sm text-gray-400">Create your first invoice to get started</p>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 py-12 text-center">
+          <p className="text-gray-500">No invoices match your filters</p>
+        </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Invoice</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Amount</th>
@@ -369,8 +439,9 @@ export default function InvoicesPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
-              {invoices.map(inv => (
-                <tr key={inv.id} className="hover:bg-gray-50">
+              {pageItems.map(inv => (
+                <tr key={inv.id} className={`hover:bg-gray-50 ${selectedIds.has(inv.id) ? 'bg-brand-50/30' : ''}`}>
+                  <td className="whitespace-nowrap px-4 py-3"><input type="checkbox" checked={selectedIds.has(inv.id)} onChange={() => toggleSelect(inv.id)} className="h-4 w-4 rounded border-gray-300" /></td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <p className="text-sm font-medium text-gray-900">{inv.reference_code}</p>
                     <p className="text-xs text-gray-400">{new Date(inv.created_at).toLocaleDateString()}</p>
@@ -445,6 +516,75 @@ export default function InvoicesPage() {
         </div>
       )}
 
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="mt-4 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand-50 p-3">
+          <span className="text-sm font-medium text-gray-700">{selectedIds.size} selected</span>
+          <button
+            disabled={bulkSending}
+            onClick={async () => {
+              setBulkSending(true);
+              const draftIds = Array.from(selectedIds).filter(id => invoices.find(i => i.id === id)?.status === 'draft');
+              for (const id of draftIds) {
+                const inv = invoices.find(i => i.id === id);
+                if (inv) {
+                  await fetch('/api/invoices/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ invoice_id: id, business_id: business.id, channel: 'whatsapp' }),
+                  });
+                }
+              }
+              setBulkSending(false);
+              setSelectedIds(new Set());
+              loadInvoices();
+              setToastMsg(`Sent ${draftIds.length} invoices`);
+              setTimeout(() => setToastMsg(''), 3000);
+            }}
+            className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {bulkSending ? 'Sending...' : 'Send All'}
+          </button>
+          <button
+            onClick={() => {
+              for (const id of selectedIds) {
+                window.open(`/api/invoices/pdf/${id}`, '_blank');
+              }
+            }}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Download PDFs
+          </button>
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            className="text-xs text-gray-500 hover:text-gray-700"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="mt-4 flex items-center justify-between text-sm">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Previous
+          </button>
+          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
+      )}
+
       {/* Create/Edit Form Modal */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -462,8 +602,8 @@ export default function InvoicesPage() {
 
             <form onSubmit={handleSave} className="space-y-4">
               {/* Customer */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-medium text-gray-700">Customer Name *</label>
                   <input
                     type="text"

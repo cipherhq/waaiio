@@ -16,10 +16,11 @@ interface Notification {
 }
 
 const typeColors: Record<string, string> = {
-  payout: 'bg-green-400',
+  booking_confirmation: 'bg-green-400',
+  payment: 'bg-emerald-400',
   system: 'bg-blue-400',
-  alert: 'bg-red-400',
-  info: 'bg-gray-400',
+  reminder_24h: 'bg-amber-400',
+  reminder_2h: 'bg-orange-400',
 };
 
 function timeAgo(dateStr: string) {
@@ -49,46 +50,78 @@ export default function NotificationsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
+  const [markingAll, setMarkingAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchNotifications();
   }, [business.id, filterType, showUnreadOnly, page]);
 
   async function fetchNotifications() {
-    const supabase = createClient();
+    try {
+      setError(null);
+      const supabase = createClient();
 
-    let query = supabase
-      .from('notifications')
-      .select('*', { count: 'exact' })
-      .eq('business_id', business.id)
-      .order('created_at', { ascending: false })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+      let query = supabase
+        .from('notifications')
+        .select('*', { count: 'exact' })
+        .eq('business_id', business.id)
+        .order('created_at', { ascending: false })
+        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-    if (filterType !== 'all') {
-      query = query.eq('type', filterType);
+      if (filterType !== 'all') {
+        query = query.eq('type', filterType);
+      }
+
+      if (showUnreadOnly) {
+        query = query.not('status', 'in', '("delivered","read")');
+      }
+
+      const { data, count, error: fetchErr } = await query;
+      if (fetchErr) throw fetchErr;
+      setNotifications(data || []);
+      setTotalCount(count || 0);
+    } catch (err) {
+      console.error('Failed to fetch notifications:', err);
+      setError('Failed to load notifications. Please try again.');
+    } finally {
+      setLoading(false);
     }
-
-    if (showUnreadOnly) {
-      query = query.not('status', 'in', '("delivered","read")');
-    }
-
-    const { data, count } = await query;
-    setNotifications(data || []);
-    setTotalCount(count || 0);
-    setLoading(false);
   }
 
   async function markAsRead(notification: Notification) {
     if (isRead(notification.status)) return;
-    const supabase = createClient();
-    await supabase
-      .from('notifications')
-      .update({ status: 'read' })
-      .eq('id', notification.id);
+    try {
+      const supabase = createClient();
+      await supabase
+        .from('notifications')
+        .update({ status: 'read' })
+        .eq('id', notification.id);
 
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notification.id ? { ...n, status: 'read' } : n))
-    );
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === notification.id ? { ...n, status: 'read' } : n))
+      );
+    } catch (err) {
+      console.error('Failed to mark notification as read:', err);
+    }
+  }
+
+  async function markAllAsRead() {
+    try {
+      setMarkingAll(true);
+      const supabase = createClient();
+      await supabase
+        .from('notifications')
+        .update({ status: 'read' })
+        .eq('business_id', business.id)
+        .neq('status', 'read');
+      setNotifications(prev => prev.map(n => ({ ...n, status: 'read' })));
+    } catch (err) {
+      console.error('Failed to mark all as read:', err);
+      setError('Failed to mark all as read.');
+    } finally {
+      setMarkingAll(false);
+    }
   }
 
   function toggleExpand(notification: Notification) {
@@ -124,10 +157,10 @@ export default function NotificationsPage() {
           className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
         >
           <option value="all">All Types</option>
-          <option value="payout">Payout</option>
+          <option value="booking_confirmation">Booking</option>
+          <option value="payment">Payment</option>
           <option value="system">System</option>
-          <option value="alert">Alert</option>
-          <option value="info">Info</option>
+          <option value="reminder_24h">Reminder</option>
         </select>
 
         <button
@@ -140,7 +173,23 @@ export default function NotificationsPage() {
         >
           Unread only
         </button>
+
+        <button
+          onClick={markAllAsRead}
+          disabled={markingAll || notifications.every(n => isRead(n.status))}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-40"
+        >
+          {markingAll ? 'Marking...' : 'Mark all as read'}
+        </button>
       </div>
+
+      {/* Error */}
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+          <button onClick={() => setError(null)} className="ml-2 text-red-500 underline">Dismiss</button>
+        </div>
+      )}
 
       {/* Notifications List */}
       {notifications.length === 0 ? (

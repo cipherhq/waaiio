@@ -7,6 +7,7 @@ import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants
 import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
+import { logger } from '@/lib/logger';
 
 export class FlowExecutor {
   constructor(
@@ -85,7 +86,7 @@ export class FlowExecutor {
       try {
         const overrides = await loadOverrides(this.supabase, business.id, resolvedFlowType);
         override = overrides.get(stepId);
-      } catch { /* non-fatal */ }
+      } catch (err) { logger.warn('[EXECUTOR] loadOverrides failed:', err); }
     }
 
     // Check if step should be skipped (override or programmatic)
@@ -245,7 +246,7 @@ export class FlowExecutor {
       try {
         const overrides = await loadOverrides(this.supabase, ctx.business.id, primaryFlowType);
         nextOverride = overrides.get(nextStepId);
-      } catch { /* non-fatal */ }
+      } catch (err) { logger.warn('[EXECUTOR] loadOverrides failed:', err); }
     }
 
     // Check skip (override or programmatic)

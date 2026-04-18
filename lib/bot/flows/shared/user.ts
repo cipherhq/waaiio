@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 
 export async function createWhatsAppUser(
   supabase: SupabaseClient,
@@ -45,7 +46,7 @@ export async function createWhatsAppUser(
           .from('profiles')
           .select('id')
           .eq('email', email)
-          .single();
+          .maybeSingle();
 
         if (byEmail?.id) {
           await supabase
@@ -91,7 +92,7 @@ export async function createWhatsAppUser(
         .limit(1)
         .maybeSingle();
       if (fallback?.id) return fallback.id;
-    } catch { /* ignore */ }
+    } catch (err) { logger.warn('[USER] Fallback lookup failed:', err); }
 
     return null;
   }

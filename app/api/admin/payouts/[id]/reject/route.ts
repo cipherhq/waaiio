@@ -81,17 +81,31 @@ export async function POST(
     .eq('id', payout.business_id)
     .single();
   if (biz) {
+    const cc = (biz.country_code || 'NG') as CountryCode;
+    const amountStr = formatCurrency(Number(payout.net_amount), cc);
+
     const { data: ownerProfile } = await supabase
       .from('profiles')
       .select('email')
       .eq('id', biz.owner_id)
       .single();
     if (ownerProfile?.email) {
-      const cc = (biz.country_code || 'NG') as CountryCode;
-      const amountStr = formatCurrency(Number(payout.net_amount), cc);
       const email = payoutRejectedEmail(biz.name, amountStr, reason);
       sendEmail({ to: ownerProfile.email, ...email }).catch(() => {});
     }
+
+    // Create in-app notification
+    try {
+      await supabase.from('notifications').insert({
+        business_id: payout.business_id,
+        type: 'payment',
+        channel: 'email',
+        status: 'sent',
+        subject: `Payout rejected — ${amountStr}`,
+        body: `Your payout of ${amountStr} for ${biz.name} was rejected. Reason: ${reason}`,
+        sent_at: new Date().toISOString(),
+      });
+    } catch { /* non-critical */ }
   }
 
   return NextResponse.json({ success: true });

@@ -185,6 +185,7 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
+  const [scrollToProductId, setScrollToProductId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
   // Sales analytics
@@ -323,6 +324,17 @@ export default function ProductsPage() {
   }, [business.id]);
 
   useEffect(() => { fetchProducts(); fetchAnalytics(); }, [fetchProducts, fetchAnalytics]);
+
+  // Scroll to edited product after save
+  useEffect(() => {
+    if (scrollToProductId && products.length > 0 && view === 'list') {
+      const el = document.querySelector(`[data-product-id="${scrollToProductId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      setScrollToProductId(null);
+    }
+  }, [scrollToProductId, products, view]);
 
   // Get unique categories for suggestions
   const categories = Array.from(new Set(products.map(p => p.category).filter(Boolean)));
@@ -692,6 +704,7 @@ export default function ProductsPage() {
     }
 
     setSaving(false);
+    setScrollToProductId(form.id || null);
     setView('list');
     fetchProducts();
   }
@@ -1882,6 +1895,7 @@ export default function ProductsPage() {
           {filtered.map((product) => (
             <div
               key={product.id}
+              data-product-id={product.id}
               className={`group cursor-pointer rounded-xl border bg-white overflow-hidden transition hover:shadow-sm ${
                 product.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
               }`}

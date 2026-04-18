@@ -2065,6 +2065,9 @@ export const orderingFlow: FlowDefinition = {
             serviceType: 'order',
             referenceId: order.id,
             sender: ctx.sender,
+            amountPaid: total,
+            serviceName: cart.map(i => i.variant_label ? `${i.name} (${i.variant_label})` : i.name).join(', '),
+            referenceCode: order.reference_code,
           }).catch(err => console.error('[ORDERING] Post-completion error:', err));
         }
 
@@ -2133,22 +2136,46 @@ export const orderingFlow: FlowDefinition = {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const verified = await verifyPayment(ctx.supabase, ref, cc);
           if (verified) {
+            const sd = ctx.session.session_data;
+            const cart = (sd.cart as CartItem[]) || [];
+            const totalAmount = (sd.total_amount as number) || 0;
+            const zoneName = sd.delivery_zone_name as string | undefined;
+            const zonePrice = (sd.delivery_zone_price as number) || 0;
+            const addonsTotal = (sd._calc_addons_total as number) || 0;
+            const volumeDiscountTotal = (sd._calc_volume_discount as number) || 0;
+            const shippingCost = (sd.shipping_cost as number) || 0;
+
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `\u2705 *Payment Confirmed!*\n\nYour order *${ctx.session.session_data.reference_code}* has been confirmed.\n\nThank you! \uD83C\uDF89`,
+              text: `\u2705 *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
+                businessName: ctx.business?.name || 'Shop',
+                items: cart,
+                totalAmount,
+                referenceCode: sd.reference_code as string,
+                deliveryAddress: sd.delivery_address as string | undefined,
+                shippingCost: zoneName ? undefined : (shippingCost || undefined),
+                deliveryZoneName: zoneName,
+                deliveryZonePrice: zoneName ? zonePrice : undefined,
+                addonsTotal: addonsTotal || undefined,
+                volumeDiscountAmount: volumeDiscountTotal || undefined,
+                countryCode: cc,
+              }),
             });
 
-            // Post-completion: loyalty, feedback, referral
+            // Post-completion: loyalty, feedback, referral, auto-receipt
             if (ctx.business) {
-              const sd = ctx.session.session_data;
+              const customerName = `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || null;
               handlePostCompletion({
                 supabase: ctx.supabase,
                 businessId: ctx.business.id,
                 customerPhone: ctx.from,
-                customerName: `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || null,
+                customerName,
                 serviceType: 'order',
                 referenceId: sd.order_id as string,
                 sender: ctx.sender,
+                amountPaid: totalAmount,
+                serviceName: cart.map(i => i.variant_label ? `${i.name} (${i.variant_label})` : i.name).join(', '),
+                referenceCode: sd.reference_code as string,
               }).catch(err => console.error('[ORDERING] Post-completion error:', err));
 
               // Fire payment_received rule (non-blocking)

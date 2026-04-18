@@ -117,9 +117,13 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Load conversations and messages via API (server-side auth) + poll for new messages
+  // Load conversations and messages via API (server-side auth) + poll with adaptive backoff
+  const prevMsgCountRef = useRef(0);
+  const pollIntervalRef = useRef(2000);
+
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let cancelled = false;
 
     async function load(isInitial = false) {
       try {
@@ -132,6 +136,7 @@ export default function ChatPage() {
           setConversations(convs);
           setMessages(msgs);
           setLoading(false);
+          prevMsgCountRef.current = msgs.length;
         } else {
           // Merge: update existing + add new conversations
           setConversations((prev) => {
@@ -148,6 +153,14 @@ export default function ChatPage() {
               (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
             );
           });
+
+          // Adaptive backoff: slow down if no new messages, speed up if new data arrives
+          if (msgs.length > prevMsgCountRef.current) {
+            pollIntervalRef.current = 2000; // reset to fast polling
+          } else {
+            pollIntervalRef.current = Math.min(pollIntervalRef.current * 1.5, 30000);
+          }
+          prevMsgCountRef.current = msgs.length;
         }
       } catch {
         if (isInitial) {
@@ -156,11 +169,17 @@ export default function ChatPage() {
           setLoading(false);
         }
       }
+
+      if (!cancelled) {
+        timeoutId = setTimeout(() => load(false), pollIntervalRef.current);
+      }
     }
 
     load(true);
-    interval = setInterval(() => load(false), 2000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [business.id]);
 
   // Load canned responses

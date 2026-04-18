@@ -3,6 +3,7 @@ import { CATEGORY_LABELS, formatCurrency, getCurrencySymbol, getCurrencyCode, ty
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getPaymentReceiptMessage } from './shared/templates';
+import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getAuthorization, createPlan, createSubscription } from '@/lib/payments/paystack-recurring';
@@ -407,6 +408,24 @@ export const paymentFlow: FlowDefinition = {
                 countryCode: cc,
               }),
             });
+
+            // Post-completion: auto-receipt, loyalty, feedback, referral
+            if (ctx.business) {
+              const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || null;
+              handlePostCompletion({
+                supabase: ctx.supabase,
+                businessId: ctx.business.id,
+                customerPhone: ctx.from,
+                customerName: custName,
+                serviceType: 'payment',
+                referenceId: d.booking_id as string,
+                sender: ctx.sender,
+                amountPaid: d.amount as number,
+                serviceName: d.service_name as string,
+                referenceCode: d.reference_code as string,
+              }).catch(err => console.error('[PAYMENT] Post-completion error:', err));
+            }
+
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 

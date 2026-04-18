@@ -5,6 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(48);
@@ -62,6 +63,9 @@ function formatAmount(amount: number, currency: string): string {
 }
 
 export async function POST(request: NextRequest) {
+  const rl = rateLimitResponse(getRateLimitKey(request, 'invoice-send'), 20, 60_000);
+  if (rl) return rl;
+
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -169,6 +173,19 @@ export async function POST(request: NextRequest) {
         html: emailContent.html,
       });
     }
+
+    // Create in-app notification record
+    try {
+      await service.from('notifications').insert({
+        business_id: invoice.business_id,
+        type: 'system',
+        channel: sendVia === 'both' ? 'whatsapp' : sendVia,
+        status: 'sent',
+        subject: `Invoice sent — ${invoice.reference_code}`,
+        body: `Invoice ${invoice.reference_code} for ${formattedAmount} was sent to ${invoice.customer_name} via ${sendVia}.`,
+        sent_at: new Date().toISOString(),
+      });
+    } catch { /* non-critical */ }
 
     return NextResponse.json({
       success: true,

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
+import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface BookingRow {
   id: string;
@@ -50,6 +51,8 @@ export default function FinancialsPage() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
   const perPage = 20;
 
@@ -142,6 +145,8 @@ export default function FinancialsPage() {
     let result = transactions;
     if (typeFilter !== 'all') result = result.filter(t => t.type === typeFilter);
     if (statusFilter !== 'all') result = result.filter(t => t.status === statusFilter);
+    if (dateFrom) result = result.filter(t => t.date >= dateFrom);
+    if (dateTo) result = result.filter(t => t.date <= dateTo + 'T23:59:59');
     if (search) {
       const q = search.toLowerCase();
       result = result.filter(t =>
@@ -151,7 +156,7 @@ export default function FinancialsPage() {
       );
     }
     return result;
-  }, [transactions, typeFilter, statusFilter, search]);
+  }, [transactions, typeFilter, statusFilter, dateFrom, dateTo, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
@@ -251,6 +256,23 @@ export default function FinancialsPage() {
           placeholder={`Search reference or ${labels.personLabel.toLowerCase()}...`}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none sm:w-64"
         />
+        <div className="flex items-center gap-2">
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand" />
+          <span className="text-xs text-gray-400">to</span>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand" />
+        </div>
+        <CsvExportButton
+          data={filtered.map(t => ({
+            Date: new Date(t.date).toLocaleDateString(),
+            Type: t.type,
+            Description: t.description,
+            Customer: t.customer,
+            Amount: t.amount,
+            Status: t.status,
+            Reference: t.reference,
+          }))}
+          filename={`financials-${new Date().toISOString().slice(0, 10)}`}
+        />
       </div>
 
       {/* Transaction Table */}
@@ -278,7 +300,7 @@ export default function FinancialsPage() {
                   <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{formatDate(t.date)}</td>
                   {availableTypes.length > 1 && (
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${flowTypeStyles[t.type] || 'bg-gray-100 text-gray-600'}`}>
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${flowTypeStyles[t.type] || 'bg-gray-100 text-gray-600'}`}>
                         {t.type}
                       </span>
                     </td>
@@ -287,7 +309,7 @@ export default function FinancialsPage() {
                   <td className="px-4 py-3 text-gray-600">{t.customer}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(t.amount, country)}</td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
                       t.status === 'completed' || t.status === 'confirmed' ? 'bg-green-100 text-green-700' :
                       t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
                       t.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
