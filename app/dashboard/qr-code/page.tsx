@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 
 // ── Poster templates based on business capabilities / use case ──
 const TEMPLATES = [
@@ -27,6 +28,7 @@ export default function QRCodePage() {
 
   const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
   const defaultPrefill = isSharedNumber && business.bot_code ? business.bot_code : 'Hi';
+  const isWhitelabel = PRICING_TIERS[(business.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
 
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('generic');
   const [copied, setCopied] = useState(false);
@@ -155,36 +157,38 @@ export default function QRCodePage() {
     ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, sans-serif';
     ctx.fillText('WhatsApp', cx, fallbackY + 200);
 
-    // ── Bottom bar — Powered by Waaiio (prominent) ──
-    const footerH = 280;
-    const footerY = height - footerH;
+    // ── Bottom bar — Powered by Waaiio (hidden for whitelabel) ──
+    if (!isWhitelabel) {
+      const footerH = 280;
+      const footerY = height - footerH;
 
-    // Footer background
-    ctx.fillStyle = '#111827';
-    ctx.fillRect(0, footerY, width, footerH);
+      // Footer background
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(0, footerY, width, footerH);
 
-    // "Powered by" text
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = '40px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Powered by', cx, footerY + 90);
+      // "Powered by" text
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font = '40px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Powered by', cx, footerY + 90);
 
-    // Waaiio logo text (large, bold, colored)
-    ctx.font = 'bold 80px -apple-system, BlinkMacSystemFont, sans-serif';
-    const parts = [
-      { text: 'wa', color: '#25D366' },
-      { text: 'ai', color: '#E5993E' },
-      { text: 'io', color: '#B5A3E0' },
-    ];
-    const fullWidth = ctx.measureText('waaiio').width;
-    let logoX = cx - fullWidth / 2;
-    for (const part of parts) {
-      ctx.fillStyle = part.color;
-      ctx.textAlign = 'left';
-      ctx.fillText(part.text, logoX, footerY + 190);
-      logoX += ctx.measureText(part.text).width;
+      // Waaiio logo text (large, bold, colored)
+      ctx.font = 'bold 80px -apple-system, BlinkMacSystemFont, sans-serif';
+      const parts = [
+        { text: 'wa', color: '#25D366' },
+        { text: 'ai', color: '#E5993E' },
+        { text: 'io', color: '#B5A3E0' },
+      ];
+      const fullWidth = ctx.measureText('waaiio').width;
+      let logoX = cx - fullWidth / 2;
+      for (const part of parts) {
+        ctx.fillStyle = part.color;
+        ctx.textAlign = 'left';
+        ctx.fillText(part.text, logoX, footerY + 190);
+        logoX += ctx.measureText(part.text).width;
+      }
+      ctx.textAlign = 'center';
     }
-    ctx.textAlign = 'center';
 
     // ── Download ──
     const url = canvas.toDataURL('image/png');
@@ -328,10 +332,12 @@ export default function QRCodePage() {
                 <p className="mt-0.5 text-xs font-medium text-green-500">WhatsApp</p>
               </div>
 
-              {/* Footer */}
-              <div className="bg-gray-50 px-6 py-3 text-center">
-                <p className="text-xs text-gray-400">Powered by Waaiio</p>
-              </div>
+              {/* Footer — hidden for whitelabel */}
+              {!isWhitelabel && (
+                <div className="bg-gray-50 px-6 py-3 text-center">
+                  <p className="text-xs text-gray-400">Powered by Waaiio</p>
+                </div>
+              )}
             </div>
 
             {/* Download button */}

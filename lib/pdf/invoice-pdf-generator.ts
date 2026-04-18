@@ -29,6 +29,7 @@ export interface InvoicePdfData {
   terms: string | null;
   status: string;
   countryCode: CountryCode;
+  whitelabel?: boolean;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -217,10 +218,12 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   }
 
   // ── Footer ──
-  y += 20;
-  if (y + 20 > doc.page.height - 40) { doc.addPage(); y = margin; }
-  doc.fontSize(8).font('Helvetica').fillColor('#aaaaaa')
-    .text('Powered by Waaiio', margin, y, { width: contentWidth, align: 'center' });
+  if (!data.whitelabel) {
+    y += 20;
+    if (y + 20 > doc.page.height - 40) { doc.addPage(); y = margin; }
+    doc.fontSize(8).font('Helvetica').fillColor('#aaaaaa')
+      .text('Powered by Waaiio', margin, y, { width: contentWidth, align: 'center' });
+  }
 
   doc.end();
   return bufferPromise;

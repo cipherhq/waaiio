@@ -3,6 +3,7 @@ import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
+import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewOrder, notifyOwnerNewQuoteRequest } from './shared/notify-owner';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
@@ -1845,6 +1846,20 @@ export const orderingFlow: FlowDefinition = {
         const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
         const total = Math.max(0, subtotal + addonsTotal - volumeDiscountTotal - discount + shippingCost);
 
+        // ── T&C gate ──
+        if (!d._terms_accepted && total > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ session_data: d })
+            .eq('id', ctx.session.id);
+          return getTermsPrompt(ctx.business?.name || 'Shop', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+        }
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Your order has been cancelled. Send *Hi* to start over.' }];
+        }
+
         // Ensure user exists
         let userId = ctx.session.user_id;
         if (!userId) {
@@ -2069,8 +2084,21 @@ export const orderingFlow: FlowDefinition = {
           }),
         }];
       },
-      async validate(): Promise<ValidationResult> { return { valid: true }; },
-      async next() { return null; },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'accept_terms') {
+          return { valid: true, data: { _terms_accepted: true } };
+        }
+        if (input === 'cancel_terms') {
+          return { valid: true, data: { _terms_cancelled: true } };
+        }
+        return { valid: true };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+          return 'process_order';
+        }
+        return null;
+      },
     },
 
     // ── Await Order Payment ──

@@ -25,47 +25,69 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
   let remindersSent = 0;
 
-  // Find confirmed bookings happening tomorrow
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowDate = tomorrow.toISOString().split('T')[0];
+  // Get all businesses with their reminder config
+  const { data: businesses } = await supabase
+    .from('businesses')
+    .select('id, metadata')
+    .limit(500);
 
-  const { data: bookings } = await supabase
-    .from('bookings')
-    .select(`
-      id, date, time, guest_name, guest_phone, guest_email,
-      reference_code, status, user_id,
-      businesses!inner(name),
-      services(name)
-    `)
-    .eq('date', tomorrowDate)
-    .in('status', ['confirmed', 'pending']);
+  // Build a set of all reminder hours across businesses (default [24, 2])
+  const bizMap = new Map<string, number[]>();
+  const allHours = new Set<number>();
+  for (const biz of businesses || []) {
+    const meta = (biz.metadata || {}) as Record<string, unknown>;
+    const hours = (meta.reminder_hours as number[]) || [24, 2];
+    bizMap.set(biz.id, hours);
+    for (const h of hours) allHours.add(h);
+  }
 
-  for (const booking of bookings || []) {
-    // Try guest_email first, then look up user profile
-    let email = (booking as any).guest_email;
-    if (!email && booking.user_id) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('email')
-        .eq('id', booking.user_id)
-        .single();
-      email = profile?.email;
-    }
+  // For each reminder hour, find bookings that need email reminders
+  for (const hoursAhead of allHours) {
+    const target = new Date();
+    target.setHours(target.getHours() + hoursAhead);
+    const targetDate = target.toISOString().split('T')[0];
 
-    if (email) {
-      const businessName = (booking as any).businesses?.name || 'Your business';
-      const serviceName = (booking as any).services?.name || 'your appointment';
-      const { subject, html } = bookingReminderEmail(
-        businessName,
-        booking.guest_name || 'Customer',
-        serviceName,
-        booking.date,
-        booking.time || '',
-        booking.reference_code || '',
-      );
-      await sendEmail({ to: email, subject, html });
-      remindersSent++;
+    const { data: bookings } = await supabase
+      .from('bookings')
+      .select(`
+        id, date, time, guest_name, guest_phone, guest_email,
+        reference_code, status, user_id, business_id,
+        businesses!inner(name),
+        services(name)
+      `)
+      .eq('date', targetDate)
+      .in('status', ['confirmed', 'pending']);
+
+    for (const booking of bookings || []) {
+      // Check this business uses this reminder hour
+      const bizHours = bizMap.get(booking.business_id) || [24, 2];
+      if (!bizHours.includes(hoursAhead)) continue;
+
+      // Try guest_email first, then look up user profile
+      let email = (booking as any).guest_email;
+      if (!email && booking.user_id) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', booking.user_id)
+          .single();
+        email = profile?.email;
+      }
+
+      if (email) {
+        const businessName = (booking as any).businesses?.name || 'Your business';
+        const serviceName = (booking as any).services?.name || 'your appointment';
+        const { subject, html } = bookingReminderEmail(
+          businessName,
+          booking.guest_name || 'Customer',
+          serviceName,
+          booking.date,
+          booking.time || '',
+          booking.reference_code || '',
+        );
+        await sendEmail({ to: email, subject, html });
+        remindersSent++;
+      }
     }
   }
 

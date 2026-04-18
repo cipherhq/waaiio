@@ -5,6 +5,7 @@ import { initializePayment, verifyPayment, recordPlatformFee } from './shared/pa
 import { createNotification } from './shared/notifications';
 import { getReservationConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
+import { getTermsPrompt } from './shared/terms';
 import type { SubscriptionTier } from '@/lib/constants';
 
 export const reservationFlow: FlowDefinition = {
@@ -382,6 +383,20 @@ export const reservationFlow: FlowDefinition = {
         const depositAmount = (d.service_deposit as number) || 0;
         const payableAmount = depositAmount > 0 ? depositAmount : totalAmount;
 
+        // ── T&C gate ──
+        if (!d._terms_accepted && payableAmount > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ session_data: d })
+            .eq('id', ctx.session.id);
+          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+        }
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Your reservation has been cancelled. Send *Hi* to start over.' }];
+        }
+
         const insertPayload: Record<string, unknown> = {
           business_id: ctx.business!.id,
           user_id: userId,
@@ -552,10 +567,21 @@ export const reservationFlow: FlowDefinition = {
           ].join('\n'),
         }];
       },
-      async validate(): Promise<ValidationResult> {
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'accept_terms') {
+          return { valid: true, data: { _terms_accepted: true } };
+        }
+        if (input === 'cancel_terms') {
+          return { valid: true, data: { _terms_cancelled: true } };
+        }
         return { valid: true };
       },
-      async next() { return null; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+          return 'create_reservation';
+        }
+        return null;
+      },
     },
 
     // ── Step 10: Payment Check ──

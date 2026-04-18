@@ -5,6 +5,7 @@ import { initializePayment, verifyPayment, recordPlatformFee } from './shared/pa
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
+import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
@@ -238,8 +239,12 @@ export const schedulingFlow: FlowDefinition = {
         return !!ctx.session.session_data.date;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const dateRange = (meta.date_range_days as number) || 7;
         const dates: Array<{ title: string; postbackText: string }> = [];
-        for (let i = 1; i <= 7; i++) {
+        // WhatsApp list max 10 items
+        const daysToShow = Math.min(dateRange, 10);
+        for (let i = 1; i <= daysToShow; i++) {
           const d = new Date();
           d.setDate(d.getDate() + i);
           const label = d.toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
@@ -271,9 +276,11 @@ export const schedulingFlow: FlowDefinition = {
 
         if (selected < tomorrow) return { valid: false, errorMessage: 'Please select a future date.' };
 
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const maxAdvanceDays = (meta.max_advance_days as number) || BOOKING_DEFAULTS.maxAdvanceDays;
         const maxDate = new Date();
-        maxDate.setDate(maxDate.getDate() + BOOKING_DEFAULTS.maxAdvanceDays);
-        if (selected > maxDate) return { valid: false, errorMessage: `Bookings can only be made up to ${BOOKING_DEFAULTS.maxAdvanceDays} days in advance.` };
+        maxDate.setDate(maxDate.getDate() + maxAdvanceDays);
+        if (selected > maxDate) return { valid: false, errorMessage: `Bookings can only be made up to ${maxAdvanceDays} days in advance.` };
 
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { date: dateStr } };
@@ -291,16 +298,30 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const dateStr = ctx.session.session_data.date as string;
         const dateLabel = new Date(dateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'short' });
-        let allSlots = generateTimeSlots('08:00', '22:00', 60);
+
+        // Read business operating hours for this day of week
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const selectedDay = dayNames[new Date(dateStr + 'T00:00').getDay()];
+        const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
+        const dayHours = opHours[selectedDay];
+        const openTime = (dayHours && !dayHours.closed && dayHours.open) ? dayHours.open : '08:00';
+        const closeTime = (dayHours && !dayHours.closed && dayHours.close) ? dayHours.close : '22:00';
+
+        // Use service duration or business metadata for slot interval (default 60)
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const serviceDuration = ctx.session.session_data.service_duration as number | undefined;
+        const slotInterval = (meta.slot_interval_minutes as number) || serviceDuration || 60;
+
+        let allSlots = generateTimeSlots(openTime, closeTime, slotInterval);
 
         // Filter by time preference if smart intent set one
         const pref = ctx.session.session_data._time_preference as string | undefined;
         if (pref === 'morning') {
-          allSlots = generateTimeSlots('08:00', '11:00', 60);
+          allSlots = generateTimeSlots(openTime, '12:00', slotInterval);
         } else if (pref === 'afternoon') {
-          allSlots = generateTimeSlots('12:00', '16:00', 60);
+          allSlots = generateTimeSlots('12:00', '17:00', slotInterval);
         } else if (pref === 'evening') {
-          allSlots = generateTimeSlots('17:00', '22:00', 60);
+          allSlots = generateTimeSlots('17:00', closeTime, slotInterval);
         }
 
         const prefLabel = pref ? ` ${pref}` : '';
@@ -336,7 +357,8 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const category = ctx.business?.category || 'restaurant';
         const labels = CATEGORY_LABELS[category];
-        const maxQty = getMaxQuantity(category);
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const maxQty = (meta.max_party_size as number) || getMaxQuantity(category);
         // Adapt button options to sensible values per category
         const singularLabel = labels.quantityLabel === 'guests' ? 'guest' : '';
         const buttons = maxQty <= 3
@@ -359,7 +381,8 @@ export const schedulingFlow: FlowDefinition = {
         ];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-        const maxQty = getMaxQuantity(ctx.business?.category || 'restaurant');
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const maxQty = (meta.max_party_size as number) || getMaxQuantity(ctx.business?.category || 'restaurant');
         const size = parseInt(input, 10);
         if (isNaN(size) || size < 1 || size > maxQty) {
           return { valid: false, errorMessage: `Please enter a number between 1 and ${maxQty}.` };
@@ -375,7 +398,12 @@ export const schedulingFlow: FlowDefinition = {
       id: 'special_requests',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const category = ctx.business?.category || 'restaurant';
-        const quickReplies = getSpecialRequestButtons(category);
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        // Use business-configured special requests if available, else category defaults
+        const customOptions = meta.special_request_options as Array<{ id: string; title: string }> | undefined;
+        const quickReplies = customOptions && customOptions.length > 0
+          ? customOptions.slice(0, 2)
+          : getSpecialRequestButtons(category);
         return [
           {
             type: 'buttons',
@@ -387,6 +415,25 @@ export const schedulingFlow: FlowDefinition = {
           },
           { type: 'text', text: 'Or type your own request:' },
         ];
+      },
+      async skipIf(ctx: FlowContext) {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        // If business explicitly disabled special requests
+        if (meta.special_requests_enabled === false) {
+          ctx.session.session_data.special_requests = '';
+          return true;
+        }
+        // If business has custom options, always show
+        if ((meta.special_request_options as unknown[])?.length > 0) return false;
+        // Fall back to category-based logic
+        const categoriesWithRequests = new Set([
+          'restaurant', 'barber', 'spa', 'salon', 'clinic', 'veterinary', 'gym', 'hotel', 'tattoo',
+        ]);
+        if (!categoriesWithRequests.has(ctx.business?.category || '')) {
+          ctx.session.session_data.special_requests = '';
+          return true;
+        }
+        return false;
       },
       async validate(input: string): Promise<ValidationResult> {
         const response = input.toLowerCase();
@@ -445,6 +492,10 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         return ctx.session.session_data.book_for_other ? 'collect_other_name' : 'confirmation';
+      },
+      async skipIf(ctx: FlowContext) {
+        // Skip unless business explicitly enables book-for-other
+        return !ctx.business?.metadata?.booking_allow_book_for_other;
       },
     },
 
@@ -548,9 +599,9 @@ export const schedulingFlow: FlowDefinition = {
     // ── Collect Email ──
     {
       id: 'collect_email',
-      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+      async prompt(): Promise<PromptMessage[]> {
         return [
-          { type: 'text', text: `Thanks, ${ctx.session.session_data.first_name}! 📧 What's your email address?\n\nType your email or *skip*:` },
+          { type: 'text', text: '📧 Email for confirmation? (type *skip* to skip)' },
         ];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -574,6 +625,50 @@ export const schedulingFlow: FlowDefinition = {
       id: 'create_booking',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+
+        // ── Reschedule existing booking ──
+        if (d._reschedule_booking_id) {
+          const rescheduleId = d._reschedule_booking_id as string;
+
+          // Fetch current booking to preserve original date/time
+          const { data: originalBooking } = await ctx.supabase
+            .from('bookings')
+            .select('date, time')
+            .eq('id', rescheduleId)
+            .single();
+
+          const { error: rescheduleError } = await ctx.supabase
+            .from('bookings')
+            .update({
+              date: d.date as string,
+              time: d.time as string,
+              party_size: (d.party_size as number) || 1,
+              original_date: originalBooking?.date ?? null,
+              original_time: originalBooking?.time ?? null,
+              rescheduled_at: new Date().toISOString(),
+            })
+            .eq('id', rescheduleId);
+
+          if (rescheduleError) {
+            console.error('Failed to reschedule booking', rescheduleError);
+            return [{ type: 'text', text: 'Sorry, something went wrong rescheduling. Send *my bookings* to try again.' }];
+          }
+
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
+            weekday: 'long', day: 'numeric', month: 'long',
+          });
+
+          await ctx.supabase
+            .from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+
+          return [{
+            type: 'text',
+            text: `✅ *Booking Rescheduled!*\n\n📅 ${dateLabel} at ${d.time as string}\n👥 ${(d.party_size as number) || 1} guest${((d.party_size as number) || 1) > 1 ? 's' : ''}\n\nSee you then! 🎉`,
+          }];
+        }
 
         // Ensure user exists
         let userId = ctx.session.user_id;
@@ -614,16 +709,22 @@ export const schedulingFlow: FlowDefinition = {
           depositPerGuest = biz?.deposit_per_guest || 0;
         }
 
-        // Categories that collect full service price upfront (no deposit model)
+        // Determine prepay mode: 'full' = charge full price, 'deposit_only' = only explicit deposits, 'free' = no upfront charge, 'auto' = category-based
+        const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const prepayMode = (bizMeta.prepay_mode as string) || 'auto';
+
+        // Category-based fallback for auto mode
         const prepayCategories = new Set([
           'barber', 'spa', 'salon', 'tattoo', 'gym', 'clinic', 'dental',
           'veterinary', 'consultant', 'tutor', 'photographer', 'car_wash',
           'laundry', 'coworking',
         ]);
-        const isPrepay = prepayCategories.has(ctx.business?.category || '');
+        const isPrepay = prepayMode === 'full' || (prepayMode === 'auto' && prepayCategories.has(ctx.business?.category || ''));
 
         let totalDeposit: number;
-        if (serviceDeposit > 0) {
+        if (prepayMode === 'free') {
+          totalDeposit = 0;
+        } else if (serviceDeposit > 0) {
           // Explicit deposit set on the service
           totalDeposit = serviceDeposit;
         } else if (depositPerGuest > 0) {
@@ -634,6 +735,21 @@ export const schedulingFlow: FlowDefinition = {
           totalDeposit = servicePrice * partySize;
         } else {
           totalDeposit = 0;
+        }
+
+        // ── T&C gate (before creating record) ──
+        if (!d._terms_accepted && totalDeposit > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
+          d._pending_deposit = totalDeposit;
+          await ctx.supabase.from('bot_sessions')
+            .update({ session_data: d })
+            .eq('id', ctx.session.id);
+          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+        }
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
         }
 
         const insertPayload: Record<string, unknown> = {
@@ -867,10 +983,22 @@ export const schedulingFlow: FlowDefinition = {
 
         return [{ type: 'text', text: message }];
       },
-      async validate(): Promise<ValidationResult> {
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'accept_terms') {
+          return { valid: true, data: { _terms_accepted: true } };
+        }
+        if (input === 'cancel_terms') {
+          return { valid: true, data: { _terms_cancelled: true } };
+        }
         return { valid: true };
       },
-      async next() { return null; },
+      async next(ctx: FlowContext) {
+        // After accepting/cancelling terms, re-enter this step to proceed
+        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+          return 'create_booking';
+        }
+        return null;
+      },
     },
 
     // ── Payment Check ──

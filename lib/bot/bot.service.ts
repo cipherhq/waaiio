@@ -233,7 +233,7 @@ export class BotService {
       // Load business for the executor
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
         .eq('id', resolvedBusinessId)
         .single();
 
@@ -441,7 +441,7 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
           .eq('id', businessId)
           .single();
         business = biz as BusinessRecord | null;
@@ -821,7 +821,7 @@ export class BotService {
     if (session.business_id) {
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
         .eq('id', session.business_id)
         .single();
       business = biz as BusinessRecord | null;
@@ -1553,6 +1553,7 @@ export class BotService {
         to: from,
         body: 'What would you like to do?',
         buttons: [
+          { id: 'reschedule_booking', title: 'Reschedule' },
           { id: 'cancel_booking', title: 'Cancel Booking' },
           { id: 'back_bookings', title: 'Back' },
         ],
@@ -1576,6 +1577,64 @@ export class BotService {
 
       await this.sendText(from, '✓ Booking cancelled.\n\nSend *Hi* to make a new booking or *my bookings* to manage others.');
       await this.deactivateSession(session.id);
+      return;
+    }
+
+    if (response === 'reschedule_booking') {
+      // Fetch booking details to populate session for rescheduling
+      const { data: booking } = await this.supabase
+        .from('bookings')
+        .select('id, business_id, service_id, party_size, services (id, name, price, deposit_amount)')
+        .eq('id', bookingId)
+        .single();
+
+      if (!booking || !booking.business_id) {
+        await this.sendText(from, 'Could not load booking details. Send *my bookings* to try again.');
+        await this.deactivateSession(session.id);
+        return;
+      }
+
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .eq('id', booking.business_id)
+        .single();
+
+      if (!biz) {
+        await this.sendText(from, 'Business not found. Send *Hi* to start over.');
+        await this.deactivateSession(session.id);
+        return;
+      }
+
+      const svc = booking.services as unknown as { id: string; name: string; price: number; deposit_amount: number } | null;
+
+      // Update session to restart scheduling from date selection
+      const sessionData: Record<string, unknown> = {
+        ...session.session_data,
+        _reschedule_booking_id: bookingId,
+        active_capability: 'scheduling',
+        party_size: booking.party_size || 1,
+      };
+      if (svc) {
+        sessionData.service_id = svc.id;
+        sessionData.service_name = svc.name;
+        sessionData.service_price = svc.price || 0;
+        sessionData.service_deposit = svc.deposit_amount || 0;
+        sessionData.skip_service = true;
+      }
+
+      await this.supabase.from('bot_sessions').update({
+        current_step: 'select_date',
+        session_data: sessionData,
+        business_id: biz.id,
+      }).eq('id', session.id);
+
+      session.session_data = sessionData;
+      session.current_step = 'select_date';
+      session.business_id = biz.id;
+
+      await this.sendText(from, "Let's pick a new date and time for your booking.");
+      await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
       return;
     }
 
@@ -1814,7 +1873,7 @@ export class BotService {
                 session.session_data.active_capability = 'queue';
                 const { data: biz } = await this.supabase
                   .from('businesses')
-                  .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+                  .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
                   .eq('id', session.business_id)
                   .single();
                 await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
@@ -1853,7 +1912,7 @@ export class BotService {
             session.current_step = capFirstStep;
             const { data: biz } = await this.supabase
               .from('businesses')
-              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code')
+              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
               .eq('id', session.business_id)
               .single();
             await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);

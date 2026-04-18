@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } from '@/lib/pdf/receipt-generator';
 import type { HistoryRow } from '@/lib/pdf/receipt-generator';
-import type { CountryCode } from '@/lib/constants';
+import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -62,7 +62,7 @@ async function handleReceipt(
   // Fetch most recent booking
   const { data: recentBooking } = await supabase
     .from('bookings')
-    .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
+    .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier)')
     .eq('user_id', userId)
     .in('status', ['completed', 'confirmed', 'pending'])
     .order('created_at', { ascending: false })
@@ -72,7 +72,7 @@ async function handleReceipt(
   // Fetch most recent subscription charge
   const { data: recentCharge } = await supabase
     .from('subscription_charges')
-    .select('id, reference_code, amount, status, created_at, services(name), businesses(name, country_code)')
+    .select('id, reference_code, amount, status, created_at, services(name), businesses(name, country_code, subscription_tier)')
     .eq('user_id', userId)
     .eq('status', 'success')
     .order('created_at', { ascending: false })
@@ -96,7 +96,7 @@ async function handleReceipt(
 
   let receiptData;
   if (source === 'booking' && recentBooking) {
-    const biz = recentBooking.businesses as unknown as { name: string; country_code?: string } | null;
+    const biz = recentBooking.businesses as unknown as { name: string; country_code?: string; subscription_tier?: string } | null;
     const svc = recentBooking.services as unknown as { name: string } | null;
     const countryCode = (biz?.country_code || 'NG') as CountryCode;
 
@@ -110,9 +110,10 @@ async function handleReceipt(
       customerName,
       customerPhone,
       countryCode,
+      whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
     };
   } else if (recentCharge) {
-    const biz = recentCharge.businesses as unknown as { name: string; country_code?: string } | null;
+    const biz = recentCharge.businesses as unknown as { name: string; country_code?: string; subscription_tier?: string } | null;
     const svc = recentCharge.services as unknown as { name: string } | null;
     const countryCode = (biz?.country_code || 'NG') as CountryCode;
 
@@ -126,6 +127,7 @@ async function handleReceipt(
       customerName,
       customerPhone,
       countryCode,
+      whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
     };
   } else {
     return NextResponse.json({ error: 'No transactions found' }, { status: 404 });

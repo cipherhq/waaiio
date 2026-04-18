@@ -78,6 +78,7 @@ export interface FlowContext {
     subscription_tier: string;
     trial_ends_at: string;
     metadata: Record<string, unknown>;
+    operating_hours?: Record<string, { open?: string; close?: string; closed?: boolean }>;
     country_code?: CountryCode;
   } | null;
 }

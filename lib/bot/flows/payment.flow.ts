@@ -1,8 +1,9 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { CATEGORY_LABELS, formatCurrency, type CountryCode } from '@/lib/constants';
+import { CATEGORY_LABELS, formatCurrency, getCurrencySymbol, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getPaymentReceiptMessage } from './shared/templates';
+import { getTermsPrompt } from './shared/terms';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getAuthorization, createPlan, createSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
@@ -72,7 +73,7 @@ export const paymentFlow: FlowDefinition = {
       id: 'enter_amount',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const symbol = cc === 'NG' ? '\u20a6' : cc === 'GH' ? 'GH\u20b5' : cc === 'GB' ? '\u00a3' : '$';
+        const symbol = getCurrencySymbol(cc);
         return [{
           type: 'text',
           text: `How much would you like to pay for *${ctx.session.session_data.service_name}*?\n\nType the amount (e.g. 5000):`,
@@ -84,8 +85,10 @@ export const paymentFlow: FlowDefinition = {
         if (isNaN(amount) || amount < 1) {
           return { valid: false, errorMessage: 'Please enter a valid amount.' };
         }
-        if (amount > 10_000_000) {
-          return { valid: false, errorMessage: 'Maximum amount exceeded.' };
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const maxPaymentAmount = (meta.max_payment_amount as number) || 10_000_000;
+        if (amount > maxPaymentAmount) {
+          return { valid: false, errorMessage: `Maximum amount is ${formatCurrency(maxPaymentAmount, (ctx.business?.country_code || 'NG') as CountryCode)}.` };
         }
         return { valid: true, data: { amount: Math.round(amount * 100) / 100 } };
       },
@@ -169,6 +172,21 @@ export const paymentFlow: FlowDefinition = {
       id: 'process_payment',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
+        const amount = d.amount as number;
+
+        // ── T&C gate ──
+        if (!d._terms_accepted && amount > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ session_data: d })
+            .eq('id', ctx.session.id);
+          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+        }
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Payment cancelled. Send *Hi* to start over.' }];
+        }
 
         // Ensure user exists
         let userId = ctx.session.user_id;
@@ -191,8 +209,6 @@ export const paymentFlow: FlowDefinition = {
         if (!userId) {
           return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
         }
-
-        const amount = d.amount as number;
 
         // Create a booking record for payment tracking
         const { data: booking, error } = await ctx.supabase
@@ -286,8 +302,21 @@ export const paymentFlow: FlowDefinition = {
 
         return [{ type: 'text', text: 'Payment initialization failed. Please try again later.' }];
       },
-      async validate(): Promise<ValidationResult> { return { valid: true }; },
-      async next() { return null; },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'accept_terms') {
+          return { valid: true, data: { _terms_accepted: true } };
+        }
+        if (input === 'cancel_terms') {
+          return { valid: true, data: { _terms_cancelled: true } };
+        }
+        return { valid: true };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+          return 'process_payment';
+        }
+        return null;
+      },
     },
 
     // ── Await Payment ──
@@ -582,7 +611,7 @@ export const paymentFlow: FlowDefinition = {
             businessName: ctx.business.name,
             serviceName,
             amount,
-            currency: cc === 'GB' ? 'GBP' : cc === 'CA' ? 'CAD' : 'USD',
+            currency: getCurrencyCode(cc),
             interval: frequency === 'weekly' ? 'week' : 'month',
             customerEmail: email,
             metadata: {
@@ -620,7 +649,7 @@ export const paymentFlow: FlowDefinition = {
           user_id: userId,
           service_id: (d.service_id as string) || null,
           amount,
-          currency: cc === 'NG' ? 'NGN' : cc === 'GH' ? 'GHS' : cc === 'GB' ? 'GBP' : cc === 'CA' ? 'CAD' : 'USD',
+          currency: getCurrencyCode(cc),
           frequency,
           status: 'active',
           gateway: gatewayName,

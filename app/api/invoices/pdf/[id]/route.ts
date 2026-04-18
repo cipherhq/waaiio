@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateInvoicePdf } from '@/lib/pdf/invoice-pdf-generator';
+import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 
 export async function GET(
   request: NextRequest,
@@ -46,10 +47,10 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
 
-    // Fetch business name
+    // Fetch business name + tier
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, country_code')
+      .select('name, country_code, subscription_tier')
       .eq('id', invoice.business_id)
       .single();
 
@@ -85,6 +86,7 @@ export async function GET(
       terms: invoice.terms,
       status: invoice.status,
       countryCode: (biz?.country_code || 'NG') as 'NG' | 'US' | 'GB' | 'GH' | 'KE' | 'ZA',
+      whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
     });
 
     return new Response(new Uint8Array(buffer), {

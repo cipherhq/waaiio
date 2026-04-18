@@ -35,7 +35,7 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'account'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'account'>('profile');
 
   // Account tab state
   const searchParams = useSearchParams();
@@ -72,6 +72,26 @@ export default function SettingsPage() {
   // Ordering settings from business.metadata
   const [orderingQuickAdd, setOrderingQuickAdd] = useState<boolean>(meta.ordering_quick_add !== false);
   const [orderingBrowseByCategory, setOrderingBrowseByCategory] = useState<boolean>((meta.ordering_browse_by_category as boolean) || false);
+
+  // T&C checkout setting
+  const [requireTerms, setRequireTerms] = useState<boolean>(meta.require_terms_before_payment !== false);
+  const [termsText, setTermsText] = useState<string>((meta.terms_text as string) || '');
+  const [maxPaymentAmount, setMaxPaymentAmount] = useState<number>((meta.max_payment_amount as number) || 10_000_000);
+
+  // Booking settings from business.metadata
+  const [slotInterval, setSlotInterval] = useState<number>((meta.slot_interval_minutes as number) || 60);
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>((meta.max_advance_days as number) || 30);
+  const [maxPartySize, setMaxPartySize] = useState<number>((meta.max_party_size as number) || 20);
+  const [dateRangeDays, setDateRangeDays] = useState<number>((meta.date_range_days as number) || 7);
+  const [prepayMode, setPrepayMode] = useState<string>((meta.prepay_mode as string) || 'auto');
+  const [reminderHours, setReminderHours] = useState<string>(
+    (meta.reminder_hours as number[])?.join(', ') || '24, 2'
+  );
+  const [maxTicketQuantity, setMaxTicketQuantity] = useState<number>((meta.max_ticket_quantity as number) || 10);
+  const [specialRequestsEnabled, setSpecialRequestsEnabled] = useState<boolean>(meta.special_requests_enabled !== false);
+  const [specialRequestOptions, setSpecialRequestOptions] = useState<string>(
+    ((meta.special_request_options as Array<{ id: string; title: string }>)?.map(o => o.title).join('\n')) || ''
+  );
 
   // Delivery Zones state
   interface DeliveryZone {
@@ -574,6 +594,14 @@ export default function SettingsPage() {
         >
           Operating Hours
         </button>
+        <button
+          onClick={() => setActiveTab('booking')}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            activeTab === 'booking' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Bot & Booking
+        </button>
         {(capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding')) && (
           <button
             onClick={() => setActiveTab('gateway')}
@@ -879,6 +907,266 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+      ) : activeTab === 'booking' ? (
+        /* Bot & Booking Settings Tab */
+        <div className="mt-6 max-w-xl space-y-4">
+          {(capabilities.includes('scheduling') || business.flow_type === 'scheduling') && (
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Scheduling Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">Control how customers book appointments through your WhatsApp bot.</p>
+
+            <div className="mt-5 space-y-5">
+              {/* Slot Interval */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Time Slot Interval</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">How often time slots appear in the booking menu. E.g. 30 = every 30 minutes.</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  {[15, 30, 45, 60].map(v => (
+                    <button
+                      key={v}
+                      onClick={() => setSlotInterval(v)}
+                      className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition ${slotInterval === v ? 'border-brand bg-brand-50 text-brand' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                    >
+                      {v}min
+                    </button>
+                  ))}
+                  <input
+                    type="number"
+                    value={slotInterval}
+                    onChange={e => setSlotInterval(Number(e.target.value) || 60)}
+                    min={5}
+                    max={240}
+                    className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+
+              {/* Max Advance Days */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Max Advance Booking</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">How far in the future customers can book. Set higher for venues (e.g. 365), lower for barbers (e.g. 7).</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={maxAdvanceDays}
+                    onChange={e => setMaxAdvanceDays(Number(e.target.value) || 30)}
+                    min={1}
+                    max={365}
+                    className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                  <span className="text-sm text-gray-500">days</span>
+                </div>
+              </div>
+
+              {/* Date Range */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Date Picker Range</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Number of upcoming days shown in the date selector. Max 10 (WhatsApp limit). Customers can also type a date.</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={dateRangeDays}
+                    onChange={e => setDateRangeDays(Math.min(10, Number(e.target.value) || 7))}
+                    min={3}
+                    max={10}
+                    className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                  <span className="text-sm text-gray-500">days shown</span>
+                </div>
+              </div>
+
+              {/* Max Party Size */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Max Party / Quantity</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Maximum guests/units a customer can book at once. Set based on your capacity.</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={maxPartySize}
+                    onChange={e => setMaxPartySize(Number(e.target.value) || 20)}
+                    min={1}
+                    max={500}
+                    className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          )}
+
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">General Bot Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">Settings that apply across all bot flows (ordering, ticketing, payments, etc.).</p>
+
+            <div className="mt-5 space-y-5">
+              {/* Max Ticket Quantity */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Max Tickets Per Order</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Maximum tickets a customer can purchase in a single order. Only applies to the ticketing/events flow.</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={maxTicketQuantity}
+                    onChange={e => setMaxTicketQuantity(Number(e.target.value) || 10)}
+                    min={1}
+                    max={100}
+                    className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+
+              {/* Prepay Mode */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Payment Collection</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-56 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Auto = uses category defaults (salons charge full, restaurants use deposits). Full = always charge full price. Deposit Only = only charge explicit service deposits. Free = no upfront payment.</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 grid grid-cols-2 gap-2">
+                  {[
+                    { value: 'auto', label: 'Auto (category default)', desc: 'Uses smart defaults for your business type' },
+                    { value: 'full', label: 'Full price upfront', desc: 'Charge entire service price before booking' },
+                    { value: 'deposit_only', label: 'Deposit only', desc: 'Only charge if service has explicit deposit' },
+                    { value: 'free', label: 'No upfront payment', desc: 'Bookings are free, collect payment later' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setPrepayMode(opt.value)}
+                      className={`rounded-lg border p-3 text-left transition ${prepayMode === opt.value ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}
+                    >
+                      <p className={`text-sm font-medium ${prepayMode === opt.value ? 'text-brand' : 'text-gray-700'}`}>{opt.label}</p>
+                      <p className="mt-0.5 text-xs text-gray-500">{opt.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reminder Hours */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Reminder Schedule</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Hours before appointment to send reminders. Comma-separated. E.g. &quot;24, 2&quot; sends reminders 24h and 2h before.</span>
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={reminderHours}
+                  onChange={e => setReminderHours(e.target.value)}
+                  placeholder="24, 2"
+                  className="mt-1.5 w-40 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-1 text-xs text-gray-400">Hours before booking (comma-separated)</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Special Requests */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Special Requests</h2>
+                <p className="mt-1 text-xs text-gray-500">Quick-reply options shown to customers before confirming their booking.</p>
+              </div>
+              <button
+                onClick={() => setSpecialRequestsEnabled(!specialRequestsEnabled)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${specialRequestsEnabled ? 'bg-brand' : 'bg-gray-200'}`}
+              >
+                <div
+                  className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left]"
+                  style={{ left: specialRequestsEnabled ? '22px' : '2px' }}
+                />
+              </button>
+            </div>
+
+            {specialRequestsEnabled && (
+              <div className="mt-4">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Custom Options</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">One option per line (max 2). Leave blank to use category defaults. These become WhatsApp quick-reply buttons.</span>
+                  </span>
+                </div>
+                <textarea
+                  value={specialRequestOptions}
+                  onChange={e => setSpecialRequestOptions(e.target.value)}
+                  placeholder={"Birthday celebration\nWindow seat preferred"}
+                  rows={3}
+                  className="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-1 text-xs text-gray-400">One per line. Leave empty for category defaults. Customers can always type their own.</p>
+              </div>
+            )}
+          </div>
+
+          {/* Save */}
+          <button
+            onClick={async () => {
+              setSaving(true);
+              const parsedReminders = reminderHours.split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n) && n > 0);
+              const parsedOptions = specialRequestOptions.trim()
+                ? specialRequestOptions.trim().split('\n').filter(Boolean).slice(0, 2).map((title, i) => ({
+                    id: `custom_${i}`,
+                    title: title.trim().slice(0, 24),
+                  }))
+                : [];
+              const supabase = createClient();
+              await supabase
+                .from('businesses')
+                .update({
+                  metadata: {
+                    ...meta,
+                    slot_interval_minutes: slotInterval,
+                    max_advance_days: maxAdvanceDays,
+                    max_party_size: maxPartySize,
+                    date_range_days: dateRangeDays,
+                    prepay_mode: prepayMode,
+                    reminder_hours: parsedReminders.length > 0 ? parsedReminders : [24, 2],
+                    max_ticket_quantity: maxTicketQuantity,
+                    special_requests_enabled: specialRequestsEnabled,
+                    special_request_options: parsedOptions.length > 0 ? parsedOptions : null,
+                  },
+                })
+                .eq('id', business.id);
+              setSaving(false);
+              setSaved(true);
+              setTimeout(() => setSaved(false), 2000);
+            }}
+            disabled={saving}
+            className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Booking Settings'}
+          </button>
+        </div>
       ) : activeTab === 'gateway' ? (
         /* Payment Gateway Tab */
         <div className="mt-6 max-w-xl">
@@ -1180,6 +1468,105 @@ export default function SettingsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </Link>
+          </div>
+
+          {/* Checkout Settings */}
+          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Checkout Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">Configure the customer checkout experience</p>
+
+            {/* T&C Toggle */}
+            <div className="mt-4 flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-sm font-medium text-gray-700">Terms & Conditions</p>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">When enabled, customers must accept terms before paying. Applies to all flows (booking, ordering, ticketing, etc.)</span>
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400">
+                  {requireTerms
+                    ? 'Customers must accept terms before payment.'
+                    : 'Terms acceptance is disabled — customers go straight to payment.'}
+                </p>
+              </div>
+              <button
+                onClick={() => setRequireTerms(!requireTerms)}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${requireTerms ? 'bg-brand' : 'bg-gray-200'}`}
+              >
+                <div
+                  className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left]"
+                  style={{ left: requireTerms ? '22px' : '2px' }}
+                />
+              </button>
+            </div>
+
+            {/* T&C Custom Text */}
+            {requireTerms && (
+              <div className="mt-4">
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Custom Terms Text</label>
+                  <span className="group relative">
+                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-56 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Custom message shown before payment. Leave blank for the default terms. Supports WhatsApp formatting (*bold*, _italic_).</span>
+                  </span>
+                </div>
+                <textarea
+                  value={termsText}
+                  onChange={e => setTermsText(e.target.value)}
+                  placeholder="Leave blank for default terms. E.g.: By paying, you agree to our cancellation policy. No refunds within 24 hours of appointment."
+                  rows={3}
+                  className="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            )}
+
+            {/* Max Payment Amount */}
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <div className="flex items-center gap-1.5">
+                <label className="text-sm font-medium text-gray-700">Maximum Payment Amount</label>
+                <span className="group relative">
+                  <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                  <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Maximum single payment a customer can make via WhatsApp. Prevents accidental large payments.</span>
+                </span>
+              </div>
+              <div className="mt-1.5 flex items-center gap-2">
+                <input
+                  type="number"
+                  value={maxPaymentAmount}
+                  onChange={e => setMaxPaymentAmount(Number(e.target.value) || 10_000_000)}
+                  min={1000}
+                  className="w-40 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            </div>
+
+            {/* Save Checkout Settings */}
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({
+                    metadata: {
+                      ...meta,
+                      require_terms_before_payment: requireTerms,
+                      terms_text: termsText.trim() || null,
+                      max_payment_amount: maxPaymentAmount,
+                    },
+                  })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-5 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Checkout Settings'}
+            </button>
           </div>
         </div>
       ) : activeTab === 'recurring' ? (

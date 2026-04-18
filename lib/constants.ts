@@ -606,9 +606,6 @@ export const CITIES = COUNTRIES.NG.cities;
 export const BOOKING_DEFAULTS = {
   maxPartySize: 20,
   maxAdvanceDays: 30,
-  defaultCancellationHours: 4,
-  defaultWalkInRatio: 60,
-  defaultSlotDurationMinutes: 120,
   reminderHours: [24, 2],
 } as const;
 
@@ -767,6 +764,16 @@ function _getCountryConfig(code: string): CountryConfig {
 }
 
 // ── Multi-Country Helpers ──
+
+/** Get currency symbol for a country code */
+export function getCurrencySymbol(countryCode: CountryCode = 'NG'): string {
+  return _getCountryConfig(countryCode).currencySymbol;
+}
+
+/** Get currency code (e.g. 'NGN', 'USD') for a country */
+export function getCurrencyCode(countryCode: CountryCode = 'NG'): string {
+  return _getCountryConfig(countryCode).currencyCode;
+}
 
 /** Format currency for a given country */
 export function formatCurrency(amount: number, countryCode: CountryCode = 'NG'): string {

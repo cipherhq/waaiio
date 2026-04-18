@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 
 export async function GET(
   _request: NextRequest,
@@ -25,10 +26,10 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
 
-    // Fetch business name (no sensitive data)
+    // Fetch business name + tier (no sensitive data)
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, logo_url')
+      .select('name, logo_url, subscription_tier')
       .eq('id', invoice.business_id)
       .single();
 
@@ -69,6 +70,7 @@ export async function GET(
       paid_at: invoice.paid_at,
       business_name: biz?.name || '',
       logo_url: biz?.logo_url || null,
+      whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
       items,
     });
   } catch {

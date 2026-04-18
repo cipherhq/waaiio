@@ -2,9 +2,11 @@
  * Supabase Edge Function: booking-reminders
  *
  * Triggered every 30 minutes via CRON to:
- * 1. Send 24h booking reminders
- * 2. Send 2h booking reminders
- * 3. Send post-service follow-ups (24h after completion)
+ * 1. Send configurable booking reminders (default: 24h and 2h before)
+ * 2. Send post-service follow-ups (24h after completion)
+ *
+ * Reminder hours are read from business.metadata.reminder_hours (array of numbers).
+ * Falls back to [24, 2] if not set.
  *
  * CRON schedule (add to supabase/config.toml):
  *   [functions.booking-reminders]
@@ -23,6 +25,8 @@ const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
+
+const DEFAULT_REMINDER_HOURS = [24, 2];
 
 async function sendWhatsApp(to: string, text: string): Promise<boolean> {
   if (!whatsappToken || !whatsappPhoneId) {
@@ -58,76 +62,85 @@ async function sendWhatsApp(to: string, text: string): Promise<boolean> {
 Deno.serve(async () => {
   const supabase = createClient(supabaseUrl, supabaseKey);
   const now = new Date();
-  let sent24h = 0;
-  let sent2h = 0;
+  let sentReminders = 0;
   let sentFollowUp = 0;
 
-  // ── 24-hour reminders ──
-  const tomorrow = new Date(now);
-  tomorrow.setHours(tomorrow.getHours() + 24);
-  const tomorrowDate = tomorrow.toISOString().split('T')[0];
+  // ── Load all active businesses with their reminder config ──
+  const { data: businesses } = await supabase
+    .from('businesses')
+    .select('id, name, metadata')
+    .limit(500);
 
-  const { data: bookings24h } = await supabase
-    .from('bookings')
-    .select('id, guest_phone, guest_name, date, time, business_id, businesses!inner(name)')
-    .eq('date', tomorrowDate)
-    .in('status', ['confirmed', 'pending'])
-    .eq('reminder_24h_sent', false)
-    .is('deleted_at', null)
-    .limit(100);
-
-  for (const booking of bookings24h || []) {
-    if (!booking.guest_phone) continue;
-    const bizName = (booking as Record<string, unknown>).businesses
-      ? ((booking as Record<string, unknown>).businesses as Record<string, string>).name
-      : 'your business';
-
-    const msg = `⏰ *Reminder: You have a booking tomorrow!*\n\n📍 ${bizName}\n📅 ${booking.date}\n🕐 ${booking.time}\n\nWe look forward to seeing you, ${booking.guest_name || 'there'}! 🙌`;
-
-    const sent = await sendWhatsApp(booking.guest_phone, msg);
-    if (sent) {
-      await supabase.from('bookings').update({ reminder_24h_sent: true }).eq('id', booking.id);
-      sent24h++;
-    }
+  // Build a map of business_id → reminder hours
+  const bizMap = new Map<string, { name: string; reminderHours: number[] }>();
+  for (const biz of businesses || []) {
+    const meta = (biz.metadata || {}) as Record<string, unknown>;
+    const hours = (meta.reminder_hours as number[]) || DEFAULT_REMINDER_HOURS;
+    bizMap.set(biz.id, { name: biz.name, reminderHours: hours });
   }
 
-  // ── 2-hour reminders ──
-  const twoHoursFromNow = new Date(now);
-  twoHoursFromNow.setHours(twoHoursFromNow.getHours() + 2);
-  const todayDate = now.toISOString().split('T')[0];
-  const targetHour = twoHoursFromNow.getHours().toString().padStart(2, '0');
-  const targetMinute = twoHoursFromNow.getMinutes().toString().padStart(2, '0');
-  const targetTime = `${targetHour}:${targetMinute}`;
+  // ── Process each reminder hour window ──
+  // Collect all unique reminder hours across businesses
+  const allHours = new Set<number>();
+  for (const { reminderHours } of bizMap.values()) {
+    for (const h of reminderHours) allHours.add(h);
+  }
 
-  // Get bookings within the 2h window (between now+1h45m and now+2h15m)
-  const { data: bookings2h } = await supabase
-    .from('bookings')
-    .select('id, guest_phone, guest_name, date, time, business_id, businesses!inner(name)')
-    .eq('date', todayDate)
-    .in('status', ['confirmed'])
-    .eq('reminder_2h_sent', false)
-    .gte('time', targetTime.slice(0, 5))
-    .is('deleted_at', null)
-    .limit(100);
+  for (const hoursAhead of allHours) {
+    const targetTime = new Date(now);
+    targetTime.setHours(targetTime.getHours() + hoursAhead);
+    const targetDate = targetTime.toISOString().split('T')[0];
+    const targetHH = targetTime.getHours().toString().padStart(2, '0');
+    const targetMM = targetTime.getMinutes().toString().padStart(2, '0');
+    const targetTimeStr = `${targetHH}:${targetMM}`;
 
-  for (const booking of bookings2h || []) {
-    if (!booking.guest_phone) continue;
-    // Verify it's actually ~2 hours away
-    const bookingDateTime = new Date(`${booking.date}T${booking.time}`);
-    const diffMs = bookingDateTime.getTime() - now.getTime();
-    const diffHours = diffMs / (1000 * 60 * 60);
-    if (diffHours < 1.75 || diffHours > 2.25) continue;
+    // Determine which flag to check/set
+    // For standard 24h/2h, use existing columns. For custom hours, use metadata tracking.
+    const flagColumn = hoursAhead === 24 ? 'reminder_24h_sent' : hoursAhead === 2 ? 'reminder_2h_sent' : null;
 
-    const bizName = (booking as Record<string, unknown>).businesses
-      ? ((booking as Record<string, unknown>).businesses as Record<string, string>).name
-      : 'your business';
+    let query = supabase
+      .from('bookings')
+      .select('id, guest_phone, guest_name, date, time, business_id')
+      .eq('date', targetDate)
+      .in('status', hoursAhead >= 12 ? ['confirmed', 'pending'] : ['confirmed'])
+      .is('deleted_at', null)
+      .limit(100);
 
-    const msg = `⏰ *Your booking is in 2 hours!*\n\n📍 ${bizName}\n🕐 ${booking.time}\n\nSee you soon, ${booking.guest_name || 'there'}! 👋`;
+    // For standard hours, filter by the sent flag
+    if (flagColumn) {
+      query = query.eq(flagColumn, false);
+    }
 
-    const sent = await sendWhatsApp(booking.guest_phone, msg);
-    if (sent) {
-      await supabase.from('bookings').update({ reminder_2h_sent: true }).eq('id', booking.id);
-      sent2h++;
+    const { data: bookings } = await query;
+
+    for (const booking of bookings || []) {
+      if (!booking.guest_phone) continue;
+
+      // Check if this business actually wants this reminder hour
+      const bizInfo = bizMap.get(booking.business_id);
+      if (!bizInfo || !bizInfo.reminderHours.includes(hoursAhead)) continue;
+
+      // Verify time is within window (±15 minutes)
+      if (booking.time) {
+        const bookingDateTime = new Date(`${booking.date}T${booking.time}`);
+        const diffMs = bookingDateTime.getTime() - now.getTime();
+        const diffHours = diffMs / (1000 * 60 * 60);
+        if (Math.abs(diffHours - hoursAhead) > 0.5) continue;
+      }
+
+      const humanHours = hoursAhead >= 24 ? `${Math.round(hoursAhead / 24)} day${hoursAhead >= 48 ? 's' : ''}` : `${hoursAhead} hour${hoursAhead !== 1 ? 's' : ''}`;
+      const msg = hoursAhead >= 12
+        ? `⏰ *Reminder: You have a booking ${hoursAhead === 24 ? 'tomorrow' : `in ${humanHours}`}!*\n\n📍 ${bizInfo.name}\n📅 ${booking.date}\n🕐 ${booking.time}\n\nWe look forward to seeing you, ${booking.guest_name || 'there'}! 🙌`
+        : `⏰ *Your booking is in ${humanHours}!*\n\n📍 ${bizInfo.name}\n🕐 ${booking.time}\n\nSee you soon, ${booking.guest_name || 'there'}! 👋`;
+
+      const sent = await sendWhatsApp(booking.guest_phone, msg);
+      if (sent) {
+        // Mark as sent
+        if (flagColumn) {
+          await supabase.from('bookings').update({ [flagColumn]: true }).eq('id', booking.id);
+        }
+        sentReminders++;
+      }
     }
   }
 
@@ -159,7 +172,7 @@ Deno.serve(async () => {
     }
   }
 
-  const summary = `Reminders sent: 24h=${sent24h}, 2h=${sent2h}, follow-ups=${sentFollowUp}`;
+  const summary = `Reminders sent: ${sentReminders}, follow-ups=${sentFollowUp}`;
   log.debug(summary);
 
   return new Response(JSON.stringify({ success: true, summary }), {

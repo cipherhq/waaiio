@@ -13,6 +13,7 @@ export interface ReceiptData {
   customerName: string;
   customerPhone: string; // will be masked
   countryCode: CountryCode;
+  whitelabel?: boolean;
 }
 
 export interface HistoryRow {
@@ -29,6 +30,7 @@ export interface HistoryData {
   customerPhone: string;
   countryCode: CountryCode;
   rows: HistoryRow[];
+  whitelabel?: boolean;
 }
 
 // ── Helpers ──
@@ -106,9 +108,11 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   doc.moveTo(40, y).lineTo(pageWidth - 40, y).strokeColor('#cccccc').stroke();
 
   // Footer
-  y += 15;
-  doc.fontSize(8).font('Helvetica').fillColor('#888888')
-    .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+  if (!data.whitelabel) {
+    y += 15;
+    doc.fontSize(8).font('Helvetica').fillColor('#888888')
+      .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+  }
 
   doc.end();
   return bufferPromise;
@@ -212,9 +216,11 @@ export async function generateHistoryPdf(data: HistoryData): Promise<Buffer> {
   });
 
   // Footer
-  y += 30;
-  doc.fontSize(8).font('Helvetica').fillColor('#888888')
-    .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+  if (!data.whitelabel) {
+    y += 30;
+    doc.fontSize(8).font('Helvetica').fillColor('#888888')
+      .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+  }
 
   doc.end();
   return bufferPromise;
@@ -229,6 +235,7 @@ export interface AnnualStatementData {
   year: number;
   businessName?: string;
   rows: HistoryRow[];
+  whitelabel?: boolean;
 }
 
 export async function generateAnnualStatementPdf(data: AnnualStatementData): Promise<Buffer> {
@@ -377,9 +384,11 @@ export async function generateAnnualStatementPdf(data: AnnualStatementData): Pro
     );
 
   // Footer
-  y += 25;
-  doc.fontSize(8).font('Helvetica').fillColor('#888888')
-    .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+  if (!data.whitelabel) {
+    y += 25;
+    doc.fontSize(8).font('Helvetica').fillColor('#888888')
+      .text('Powered by Waaiio', 40, y, { width: contentWidth, align: 'center' });
+  }
 
   doc.end();
   return bufferPromise;

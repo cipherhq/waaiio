@@ -3,7 +3,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
-import type { CountryCode } from '@/lib/constants';
+import { getCurrencySymbol, PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 
@@ -53,13 +53,14 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     try {
       const { data: biz } = await supabase
         .from('businesses')
-        .select('name, country_code')
+        .select('name, country_code, subscription_tier')
         .eq('id', businessId)
         .single();
 
-      const cc = (biz?.country_code || 'NG') as string;
-      const currencySymbol = cc === 'NG' ? '\u20a6' : cc === 'GH' ? 'GH\u20b5' : cc === 'GB' ? '\u00a3' : cc === 'US' ? '$' : '$';
+      const cc = (biz?.country_code || 'NG') as CountryCode;
+      const currencySymbol = getCurrencySymbol(cc);
       const bizName = biz?.name || 'Business';
+      const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
       const formattedAmount = `${currencySymbol}${amountPaid.toLocaleString()}`;
       const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
       const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -90,6 +91,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           customerName: customerName || 'Customer',
           customerPhone,
           countryCode: (cc as CountryCode) || 'NG',
+          whitelabel: isWhitelabel,
         });
 
         const uuid = crypto.randomUUID();

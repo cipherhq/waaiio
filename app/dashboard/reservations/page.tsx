@@ -28,6 +28,9 @@ interface Booking {
   completed_at: string | null;
   cancelled_at: string | null;
   payment_id: string | null;
+  rescheduled_at: string | null;
+  original_date: string | null;
+  original_time: string | null;
 }
 
 const allStatuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
@@ -96,7 +99,7 @@ export default function BookingsPage() {
     const supabase = createClient();
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time')
       .eq('business_id', business.id)
       .order('date', { ascending: false })
       .order('time', { ascending: false })
@@ -239,6 +242,11 @@ export default function BookingsPage() {
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
                       {r.status.replace('_', ' ')}
                     </span>
+                    {r.rescheduled_at && (
+                      <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                        Rescheduled
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.reference_code}</td>
                   <td className="px-4 py-3">
@@ -331,6 +339,19 @@ export default function BookingsPage() {
                 <div className="rounded-lg bg-yellow-50 p-3">
                   <h3 className="text-sm font-medium text-yellow-800">Special Requests</h3>
                   <p className="mt-1 text-sm text-yellow-700">{selected.special_requests}</p>
+                </div>
+              )}
+              {selected.rescheduled_at && (
+                <div className="rounded-lg bg-blue-50 p-3">
+                  <p className="text-xs font-medium text-blue-800">Rescheduled</p>
+                  <p className="mt-1 text-xs text-blue-600">
+                    Originally: {selected.original_date
+                      ? new Date(selected.original_date + 'T00:00').toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' })
+                      : '—'}{selected.original_time ? ` at ${selected.original_time.slice(0, 5)}` : ''}
+                  </p>
+                  <p className="mt-0.5 text-xs text-blue-500">
+                    Changed on {new Date(selected.rescheduled_at).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </p>
                 </div>
               )}
               {nextActions[selected.status] && nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (

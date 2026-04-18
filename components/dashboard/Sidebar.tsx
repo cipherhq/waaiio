@@ -354,7 +354,10 @@ export function Sidebar() {
     if (item.label === 'Bookings') {
       const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
       if (labels) {
-        return labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1);
+        const renamed = labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1);
+        // Don't relabel to "Orders" when the commerce Orders page is also visible
+        if (renamed === 'Orders') return 'Bookings';
+        return renamed;
       }
     }
     if (item.label === 'Guests') {

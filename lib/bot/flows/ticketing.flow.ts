@@ -2,6 +2,8 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePaystackPayment, verifyPaystackPayment, recordPlatformFee } from './shared/payment';
 import { getTicketConfirmationMessage } from './shared/templates';
+import { getTermsPrompt } from './shared/terms';
+import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
 
 export const ticketingFlow: FlowDefinition = {
@@ -33,10 +35,11 @@ export const ticketingFlow: FlowDefinition = {
           buttonLabel: 'View Events',
           items: events.map(e => {
             const available = e.total_tickets - e.tickets_sold;
-            const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString(getLocale(cc), { day: 'numeric', month: 'short' });
             return {
               title: e.name,
-              description: `${dateLabel} • ₦${e.price.toLocaleString()} • ${available} left`,
+              description: `${dateLabel} • ${formatCurrency(e.price, cc)} • ${available} left`,
               postbackText: e.id,
             };
           }),
@@ -79,16 +82,18 @@ export const ticketingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const available = d.event_available as number;
-        const maxShow = Math.min(available, 10);
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const maxTickets = (meta.max_ticket_quantity as number) || 10;
+        const maxShow = Math.min(available, maxTickets);
 
         return [
           {
             type: 'text',
             text: [
               `🎪 *${d.event_name}*`,
-              `📅 ${new Date((d.event_date as string) + 'T00:00').toLocaleDateString('en-NG', { weekday: 'long', day: 'numeric', month: 'long' })}`,
+              `📅 ${new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' })}`,
               d.event_venue ? `📍 ${d.event_venue}` : '',
-              `🎟️ ₦${(d.event_price as number).toLocaleString()} per ticket`,
+              `🎟️ ${formatCurrency(d.event_price as number, (ctx.business?.country_code || 'NG') as CountryCode)} per ticket`,
               `✅ ${available} tickets available`,
             ].filter(Boolean).join('\n'),
           },
@@ -113,8 +118,10 @@ export const ticketingFlow: FlowDefinition = {
         if (qty > available) {
           return { valid: false, errorMessage: `Only ${available} tickets available.` };
         }
-        if (qty > 10) {
-          return { valid: false, errorMessage: 'Maximum 10 tickets per order.' };
+        const meta = (ctx.session.session_data._biz_metadata || ctx.business?.metadata || {}) as Record<string, unknown>;
+        const maxTickets = (meta.max_ticket_quantity as number) || 10;
+        if (qty > maxTickets) {
+          return { valid: false, errorMessage: `Maximum ${maxTickets} tickets per order.` };
         }
 
         const total = qty * (ctx.session.session_data.event_price as number);
@@ -200,6 +207,20 @@ export const ticketingFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const qty = d.ticket_quantity as number;
         const total = d.total_amount as number;
+
+        // ── T&C gate ──
+        if (!d._terms_accepted && total > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ session_data: d })
+            .eq('id', ctx.session.id);
+          return getTermsPrompt(ctx.business?.name || 'Events', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+        }
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Your ticket purchase has been cancelled. Send *Hi* to start over.' }];
+        }
 
         // Ensure user exists
         let userId = ctx.session.user_id;
@@ -331,8 +352,21 @@ export const ticketingFlow: FlowDefinition = {
           }),
         }];
       },
-      async validate(): Promise<ValidationResult> { return { valid: true }; },
-      async next() { return null; },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'accept_terms') {
+          return { valid: true, data: { _terms_accepted: true } };
+        }
+        if (input === 'cancel_terms') {
+          return { valid: true, data: { _terms_cancelled: true } };
+        }
+        return { valid: true };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+          return 'process_tickets';
+        }
+        return null;
+      },
     },
 
     // ── Await Ticket Payment ──

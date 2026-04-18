@@ -35,6 +35,7 @@ interface InvoiceData {
   paid_at: string | null;
   business_name: string;
   logo_url: string | null;
+  whitelabel: boolean;
   items: InvoiceItem[];
 }
 
@@ -334,10 +335,12 @@ export default function InvoicePage() {
           </a>
         </div>
 
-        {/* Footer */}
-        <p className="mt-8 text-center text-xs text-gray-400">
-          Powered by Waaiio
-        </p>
+        {/* Footer — hidden for whitelabel */}
+        {!invoice.whitelabel && (
+          <p className="mt-8 text-center text-xs text-gray-400">
+            Powered by Waaiio
+          </p>
+        )}
       </main>
     </div>
   );
