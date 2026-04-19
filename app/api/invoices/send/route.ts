@@ -47,7 +47,7 @@ async function sendWhatsAppMessage(
       const result = await gupshup.sendText({ to: cleanPhone, text: message });
       if (result.success && result.messageId) messageId = result.messageId;
     } else {
-      console.log(`[mock] WhatsApp to ${cleanPhone}: ${message.slice(0, 80)}...`);
+      console.warn(`[INVOICE] No WhatsApp channel configured for business ${businessId}. Gupshup not configured. Message NOT delivered to ${cleanPhone}.`);
     }
   }
 

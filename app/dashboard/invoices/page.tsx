@@ -269,13 +269,17 @@ export default function InvoicesPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invoice_id: sendModalInvoice.id, channel: sendChannel }),
       });
-      if (res.ok) {
+      const data = await res.json();
+      if (res.ok && data.success) {
         setSendModalInvoice(null);
         await loadInvoices();
         toast('Invoice sent');
+      } else {
+        toast(data.error || 'Failed to send invoice');
       }
     } catch (err) {
       console.error('Send failed:', err);
+      toast('Failed to send invoice. Check your connection and try again.');
     } finally {
       setSending(false);
     }
