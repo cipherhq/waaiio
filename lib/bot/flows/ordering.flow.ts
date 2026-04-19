@@ -62,7 +62,12 @@ function calculateCartTotal(cart: CartItem[]): number {
 }
 
 /** Route to the correct step after a product is selected */
-function routeAfterProductSelection(d: Record<string, unknown>): string {
+function routeAfterProductSelection(d: Record<string, unknown>, meta?: Record<string, unknown>): string {
+  // Custom order mode: skip variants/quantity → go to custom collection steps
+  if (meta?.custom_order_mode) {
+    d.custom_order_started = true;
+    return 'collect_style_photo';
+  }
   if (!d.current_product_has_variants) return 'select_quantity';
   const variantOptions = (d.current_product_variant_options as OptionGroup[]) || [];
   if (variantOptions.length >= 2 && variantOptions.every(g => g.name && g.values.length > 0)) {
@@ -215,6 +220,13 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+
+        // Custom order mode: skip quick-add → go to custom collection steps
+        if (meta.custom_order_mode) {
+          d.custom_order_started = true;
+          return 'collect_style_photo';
+        }
+
         const quickAdd = meta.ordering_quick_add !== false;
 
         // Quick-add: simple products (no variants) with no required addons
@@ -239,7 +251,7 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        return routeAfterProductSelection(d);
+        return routeAfterProductSelection(d, meta);
       },
     },
 
@@ -339,6 +351,13 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+
+        // Custom order mode: skip quick-add → go to custom collection steps
+        if (meta.custom_order_mode) {
+          d.custom_order_started = true;
+          return 'collect_style_photo';
+        }
+
         const quickAdd = meta.ordering_quick_add !== false;
 
         // Quick-add for simple products
@@ -363,7 +382,7 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
-        return routeAfterProductSelection(d);
+        return routeAfterProductSelection(d, meta);
       },
     },
 
@@ -562,6 +581,154 @@ export const orderingFlow: FlowDefinition = {
         };
       },
       async next() { return 'select_quantity'; },
+    },
+
+    // ── Collect Style Photo (Custom Order) ──
+    {
+      id: 'collect_style_photo',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        return config.require_style_photo === false;
+      },
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'text',
+          text: '\uD83D\uDCF8 *Send a photo of the style you want*\n\nAttach a reference image showing the design, style, or look you\'re going for.\n\nType *skip* if you don\'t have one.',
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const text = input.toLowerCase().trim();
+        if (text === 'skip') {
+          return { valid: true, data: { custom_style_photo_url: null } };
+        }
+        // If we have a media URL from the message, use it
+        if (ctx.mediaUrl) {
+          return { valid: true, data: { custom_style_photo_url: ctx.mediaUrl } };
+        }
+        return { valid: false, errorMessage: '\uD83D\uDCF7 Please send a photo or type *skip* to continue without one.' };
+      },
+      async next(ctx: FlowContext) {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        const measurementFields = (config.measurement_fields as string[]) || [];
+        if (config.require_measurements !== false && measurementFields.length > 0) {
+          ctx.session.session_data._measurement_index = 0;
+          return 'collect_measurements';
+        }
+        return 'collect_design_notes';
+      },
+    },
+
+    // ── Collect Measurements (Custom Order) ──
+    {
+      id: 'collect_measurements',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        const measurementFields = (config.measurement_fields as string[]) || [];
+        return config.require_measurements === false || measurementFields.length === 0;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        const fields = (config.measurement_fields as string[]) || [];
+        const index = (ctx.session.session_data._measurement_index as number) || 0;
+        const field = fields[index];
+        if (!field) return [{ type: 'text', text: 'Measurements complete.' }];
+        return [{
+          type: 'text',
+          text: `\uD83D\uDCCF *Measurement ${index + 1} of ${fields.length}: ${field}*\n\nType the measurement (e.g. 38 inches, 96cm):`,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const text = input.trim();
+        if (text.length < 1) {
+          return { valid: false, errorMessage: 'Please enter a measurement value.' };
+        }
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        const fields = (config.measurement_fields as string[]) || [];
+        const index = (ctx.session.session_data._measurement_index as number) || 0;
+        const field = fields[index];
+
+        // Store measurement
+        const measurements = (ctx.session.session_data.custom_measurements || {}) as Record<string, string>;
+        measurements[field] = text;
+
+        return { valid: true, data: { custom_measurements: measurements, _measurement_index: index + 1 } };
+      },
+      async next(ctx: FlowContext) {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        const fields = (config.measurement_fields as string[]) || [];
+        const index = (ctx.session.session_data._measurement_index as number) || 0;
+        if (index < fields.length) {
+          return 'collect_measurements'; // self-loop for next field
+        }
+        return 'collect_design_notes';
+      },
+    },
+
+    // ── Collect Design Notes (Custom Order) ──
+    {
+      id: 'collect_design_notes',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'text',
+          text: '\u270D\uFE0F *Describe what you want*\n\nShare special details, color preferences, fabric choices, or any notes for the maker.\n\nType *skip* if nothing to add.',
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.trim();
+        if (text.toLowerCase() === 'skip') {
+          return { valid: true, data: { custom_design_notes: null } };
+        }
+        return { valid: true, data: { custom_design_notes: text } };
+      },
+      async next(ctx: FlowContext) {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        if (config.require_deadline === false) {
+          // Skip deadline, set defaults and go to add_to_cart
+          ctx.session.session_data.current_quantity = 1;
+          ctx.session.session_data.current_addons = [];
+          ctx.session.session_data._force_quote_mode = true;
+          return 'add_to_cart';
+        }
+        return 'collect_deadline';
+      },
+    },
+
+    // ── Collect Deadline (Custom Order) ──
+    {
+      id: 'collect_deadline',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const config = (meta.custom_order_config || {}) as Record<string, unknown>;
+        return config.require_deadline === false;
+      },
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'text',
+          text: '\uD83D\uDCC5 *When do you need this ready?*\n\nType a date (e.g. Dec 20, Next Friday, 2 weeks) or type *no deadline*.',
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.trim();
+        if (text.length < 3) {
+          return { valid: false, errorMessage: 'Please enter a date or type *no deadline*.' };
+        }
+        const deadline = text.toLowerCase() === 'no deadline' ? null : text;
+        return { valid: true, data: { custom_deadline: deadline } };
+      },
+      async next(ctx: FlowContext) {
+        // Set quantity to 1, skip addons, force quote mode → add to cart
+        ctx.session.session_data.current_quantity = 1;
+        ctx.session.session_data.current_addons = [];
+        ctx.session.session_data._force_quote_mode = true;
+        return 'add_to_cart';
+      },
     },
 
     // ── Select Quantity ──
@@ -1198,7 +1365,11 @@ export const orderingFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap an option or enter a promo code.' };
       },
       async next(ctx: FlowContext) {
-        return ctx.session.session_data._promo_action === 'enter' ? 'enter_promo_code' : 'select_delivery_zone';
+        if (ctx.session.session_data._promo_action === 'enter') return 'enter_promo_code';
+        // Logistics mode: skip delivery zones, collect pickup+dropoff addresses
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        if (meta.logistics_mode) return 'collect_pickup_address';
+        return 'select_delivery_zone';
       },
     },
 
@@ -1235,7 +1406,11 @@ export const orderingFlow: FlowDefinition = {
 
         return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code } };
       },
-      async next() { return 'select_delivery_zone'; },
+      async next(ctx: FlowContext) {
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        if (meta.logistics_mode) return 'collect_pickup_address';
+        return 'select_delivery_zone';
+      },
     },
 
     // ── Select Delivery Zone ──
@@ -1243,6 +1418,9 @@ export const orderingFlow: FlowDefinition = {
       id: 'select_delivery_zone',
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
+        // Logistics mode uses its own address collection
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        if (meta.logistics_mode) return true;
         const { data: zones } = await ctx.supabase
           .from('delivery_zones')
           .select('id')
@@ -1339,6 +1517,76 @@ export const orderingFlow: FlowDefinition = {
       },
     },
 
+    // ── Logistics: Collect Pickup Address ──
+    {
+      id: 'collect_pickup_address',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '\uD83D\uDCCD *Pickup Location*\n\nWhere should we pick up the package?\n\nType the full address (e.g., 12 Main St, Lagos):' }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input.trim().length < 5) {
+          return { valid: false, errorMessage: 'That address seems too short. Please include the street name and area.' };
+        }
+        return { valid: true, data: { pickup_address: input.trim() } };
+      },
+      async next() { return 'collect_dropoff_address'; },
+    },
+
+    // ── Logistics: Collect Drop-off Address ──
+    {
+      id: 'collect_dropoff_address',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '\uD83D\uDCCD *Drop-off Location*\n\nWhere should we deliver it? Type the full address:' }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input.trim().length < 5) {
+          return { valid: false, errorMessage: 'That address seems too short. Please include the street name and area.' };
+        }
+        return { valid: true, data: { dropoff_address: input.trim(), delivery_address: input.trim() } };
+      },
+      async next() { return 'collect_package_description'; },
+    },
+
+    // ── Logistics: Package Description ──
+    {
+      id: 'collect_package_description',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '\uD83D\uDCE6 What are you sending?\n\nBriefly describe the package (e.g., "Small box of documents"):' }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input.trim().length < 3) {
+          return { valid: false, errorMessage: 'Please add a brief description so the rider knows what to expect.' };
+        }
+        return { valid: true, data: { package_description: input.trim() } };
+      },
+      async next() { return 'collect_package_photo'; },
+    },
+
+    // ── Logistics: Package Photo ──
+    {
+      id: 'collect_package_photo',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: '\uD83D\uDCF8 Want to add a photo of the package?\n\nThis helps the rider identify it. You can also tap Skip.',
+          buttons: [
+            { id: 'skip', title: 'Skip' },
+          ],
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (ctx.mediaUrl) {
+          return { valid: true, data: { package_photo_url: ctx.mediaUrl } };
+        }
+        if (input.toLowerCase() === 'skip' || input === 'skip') {
+          return { valid: true };
+        }
+        // Accept any text as skip
+        return { valid: true };
+      },
+      async next() { return 'collect_name'; },
+    },
+
     // ── Collect Address ──
     {
       id: 'collect_address',
@@ -1395,6 +1643,83 @@ export const orderingFlow: FlowDefinition = {
           return { valid: false, errorMessage: 'Please enter a valid name.' };
         }
         return { valid: true, data: { first_name: parts[0], last_name: parts.slice(1).join(' ') || '' } };
+      },
+      async next() { return 'ask_referral_code'; },
+    },
+
+    // ── Ask Referral Code ──
+    {
+      id: 'ask_referral_code',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: '\uD83C\uDF81 Got a referral code from a friend?',
+          buttons: [
+            { id: 'enter_code', title: 'Enter Code' },
+            { id: 'skip', title: 'Skip' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'enter_code') return { valid: true, data: { _referral_action: 'enter' } };
+        if (input === 'skip' || input.toLowerCase() === 'skip') return { valid: true, data: { _referral_action: 'skip' } };
+        return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._referral_action === 'enter') return 'enter_referral_code';
+        return 'collect_email';
+      },
+      async skipIf(ctx: FlowContext) {
+        if (!ctx.business) return true;
+        // Skip if business doesn't have referral capability
+        const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+        const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
+        if (!caps.includes('referral')) return true;
+        // Skip if user already has a converted referral for this business
+        if (ctx.session.user_id) {
+          const { data: existing } = await ctx.supabase
+            .from('referrals')
+            .select('id')
+            .eq('business_id', ctx.business.id)
+            .eq('referred_user_id', ctx.session.user_id)
+            .eq('status', 'converted')
+            .limit(1)
+            .maybeSingle();
+          if (existing) return true;
+        }
+        return false;
+      },
+    },
+
+    // ── Enter Referral Code ──
+    {
+      id: 'enter_referral_code',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '\uD83C\uDF81 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const code = input.trim();
+        if (code.toLowerCase() === 'skip') {
+          return { valid: true };
+        }
+        if (!ctx.business) return { valid: true };
+
+        const { data: referral } = await ctx.supabase
+          .from('referrals')
+          .select('id, referrer_phone')
+          .eq('business_id', ctx.business.id)
+          .eq('referral_code', code)
+          .eq('status', 'pending')
+          .maybeSingle();
+
+        if (!referral) {
+          return { valid: false, errorMessage: 'Hmm, that code didn\u2019t work. Double-check it and try again, or type *skip* to continue without one.' };
+        }
+
+        return {
+          valid: true,
+          data: { referral_id: referral.id, referrer_phone: referral.referrer_phone },
+        };
       },
       async next() { return 'collect_email'; },
     },
@@ -1546,11 +1871,43 @@ export const orderingFlow: FlowDefinition = {
         const name = `${d.first_name || ''} ${d.last_name || ''}`.trim();
         if (name) summary.push(`\uD83D\uDC64 ${name}`);
         if (d.customer_email) summary.push(`\uD83D\uDCE7 ${d.customer_email}`);
-        if (d.delivery_address) summary.push(`\uD83D\uDCCD ${d.delivery_address}`);
-        if (d.delivery_type === 'pickup') summary.push(`\uD83C\uDFEA Pickup`);
+        // Logistics mode: show pickup + dropoff
+        if (d.pickup_address) {
+          summary.push(`\uD83D\uDCCD Pickup: ${d.pickup_address}`);
+          summary.push(`\uD83D\uDCCD Drop-off: ${d.dropoff_address || d.delivery_address}`);
+          if (d.package_description) summary.push(`\uD83D\uDCE6 Package: ${d.package_description}`);
+          if (d.package_photo_url) summary.push(`\uD83D\uDCF8 Photo: attached`);
+        } else {
+          if (d.delivery_address) summary.push(`\uD83D\uDCCD ${d.delivery_address}`);
+          if (d.delivery_type === 'pickup') summary.push(`\uD83C\uDFEA Pickup`);
+        }
+
+        // Custom order details
+        const isCustomOrder = !!d.custom_order_started;
+        if (isCustomOrder) {
+          summary.push('');
+          summary.push('\uD83C\uDFA8 *Custom Order Details*');
+          if (d.custom_style_photo_url) summary.push('\uD83D\uDCF8 Style photo: attached');
+          const measurements = d.custom_measurements as Record<string, string> | undefined;
+          if (measurements && Object.keys(measurements).length > 0) {
+            summary.push('\uD83D\uDCCF Measurements:');
+            for (const [field, value] of Object.entries(measurements)) {
+              summary.push(`  \u2022 ${field}: ${value}`);
+            }
+          }
+          if (d.custom_design_notes) summary.push(`\u270D\uFE0F Notes: ${d.custom_design_notes}`);
+          if (d.custom_deadline) summary.push(`\uD83D\uDCC5 Deadline: ${d.custom_deadline}`);
+        }
 
         const hasNegotiable = !!d._has_negotiable_addon;
-        const buttons = hasNegotiable
+        const isForceQuote = isCustomOrder || !!d._force_quote_mode;
+
+        const buttons = isForceQuote
+          ? [
+              { id: 'request_quote', title: 'Request Quote \uD83D\uDCCB' },
+              { id: 'edit_order', title: 'Edit Order' },
+            ]
+          : hasNegotiable
           ? [
               { id: 'confirm_order', title: 'Confirm Order' },
               { id: 'request_quote', title: 'Request Quote' },
@@ -1566,7 +1923,9 @@ export const orderingFlow: FlowDefinition = {
           { type: 'text', text: summary.join('\n') },
           {
             type: 'buttons',
-            body: hasNegotiable
+            body: isForceQuote
+              ? 'This is a custom order. Submit a quote request for the maker to price:'
+              : hasNegotiable
               ? 'Some items have negotiable pricing. Request a quote or confirm at listed prices?'
               : 'Ready to place your order?',
             buttons,
@@ -1743,6 +2102,14 @@ export const orderingFlow: FlowDefinition = {
           }
         }
 
+        // Build custom order data if applicable
+        const customOrderData = d.custom_order_started ? {
+          style_photo_url: (d.custom_style_photo_url as string) || null,
+          measurements: (d.custom_measurements as Record<string, string>) || {},
+          design_notes: (d.custom_design_notes as string) || null,
+          deadline: (d.custom_deadline as string) || null,
+        } : null;
+
         // Create quote request
         const { data: quote, error } = await ctx.supabase
           .from('quote_requests')
@@ -1759,6 +2126,7 @@ export const orderingFlow: FlowDefinition = {
             delivery_address: (d.delivery_address as string) || null,
             estimated_subtotal: estimatedSubtotal,
             channel: 'whatsapp',
+            custom_order_data: customOrderData,
           })
           .select('id')
           .single();
@@ -1782,6 +2150,7 @@ export const orderingFlow: FlowDefinition = {
             addons: allAddons.length > 0 ? allAddons : undefined,
             estimatedSubtotal,
             deliveryZoneName: (d.delivery_zone_name as string) || undefined,
+            customOrderData: customOrderData || undefined,
           }).catch(err => logger.error('[ORDERING] Quote notification error:', err));
         }
 
@@ -1891,6 +2260,12 @@ export const orderingFlow: FlowDefinition = {
         if (zoneName) orderPayload.delivery_zone_name = zoneName;
         if (addonsTotal > 0) orderPayload.addons_total = addonsTotal;
         if (volumeDiscountTotal > 0) orderPayload.volume_discount_amount = volumeDiscountTotal;
+
+        // Logistics mode fields
+        if (d.pickup_address) orderPayload.pickup_address = d.pickup_address;
+        if (d.dropoff_address) orderPayload.dropoff_address = d.dropoff_address;
+        if (d.package_description) orderPayload.package_description = d.package_description;
+        if (d.package_photo_url) orderPayload.package_photo_url = d.package_photo_url;
 
         const { data: order, error } = await ctx.supabase
           .from('orders')

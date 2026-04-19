@@ -122,6 +122,12 @@ export class BotService {
       || /^(my\s+)?recurring(\s+payments?)?$/i.test(text)
       || /^(manage|view|show|check)\s+(my\s+)?(subscriptions?|recurring)$/i.test(text);
 
+    const isLoyaltyQuery = /^(my\s+)?(loyalty|points|rewards?|stars?)$/i.test(text)
+      || /^(check|view|show)\s+(my\s+)?(loyalty|points|rewards?|balance)$/i.test(text);
+
+    const isInvoiceQuery = /^(my\s+)?(invoices?|bills?)$/i.test(text)
+      || /^(check|view|show|pay)\s+(my\s+)?(invoices?|bills?)$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     if (isBookingsQuery) {
@@ -241,6 +247,103 @@ export class BotService {
       return;
     }
 
+    if (isLoyaltyQuery) {
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        return;
+      }
+
+      // Find most recent loyalty_points entry to get business_id
+      const { data: loyaltyEntry } = await this.supabase
+        .from('loyalty_points')
+        .select('business_id')
+        .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const resolvedBusinessId = session?.business_id || loyaltyEntry?.business_id || null;
+      if (!resolvedBusinessId) {
+        await this.sendText(from, "You don't have any loyalty points yet. Visit a business to start earning!");
+        return;
+      }
+
+      await this.supabase.from('bot_sessions').delete()
+        .eq('whatsapp_number', from).eq('is_active', false);
+
+      const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+        whatsapp_number: from, user_id: profile.id, business_id: resolvedBusinessId,
+        current_step: 'loyalty_menu', session_data: { loyalty_business_id: resolvedBusinessId }, is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+
+      if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
+
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .eq('id', resolvedBusinessId)
+        .single();
+
+      await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
+      return;
+    }
+
+    if (isInvoiceQuery) {
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        return;
+      }
+
+      // Find most recent unpaid invoice to get business_id
+      const { data: invoiceEntry } = await this.supabase
+        .from('invoices')
+        .select('business_id')
+        .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+        .in('status', ['sent', 'viewed', 'overdue'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const resolvedBusinessId = session?.business_id || invoiceEntry?.business_id || null;
+      if (!resolvedBusinessId) {
+        await this.sendText(from, "You don't have any outstanding invoices.");
+        return;
+      }
+
+      await this.supabase.from('bot_sessions').delete()
+        .eq('whatsapp_number', from).eq('is_active', false);
+
+      const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+        whatsapp_number: from, user_id: profile.id, business_id: resolvedBusinessId,
+        current_step: 'invoice_list', session_data: { invoice_business_id: resolvedBusinessId }, is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+
+      if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
+
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .eq('id', resolvedBusinessId)
+        .single();
+
+      await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
+      return;
+    }
+
     // Check for "switch <keyword>" command — lets users swap between businesses
     const switchMatch = text.match(/^switch\s+(.+)$/i);
     if (switchMatch) {
@@ -303,7 +406,7 @@ export class BotService {
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isChatStep = currentStep === 'chat_handoff' || currentStep === 'chat_start';
-    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion'].includes(currentStep);
+    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description'].includes(currentStep);
 
     // Detect greetings and booking intent for restart detection (without detectIntent)
     const normalizedForRestart = text.toLowerCase().trim();
@@ -691,7 +794,7 @@ export class BotService {
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
-    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion'].includes(step);
+    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
       // Load business category for category-scoped keywords
@@ -889,7 +992,7 @@ export class BotService {
         is_read: false,
         conversation_id: conv?.id || null,
         media_url: mediaUrl || null,
-        media_type: mediaUrl ? 'audio' : null,
+        media_type: mediaUrl ? (messageType || 'image') : null,
       });
 
       // Update last_message_at on conversation
@@ -966,7 +1069,7 @@ export class BotService {
           is_read: false,
           conversation_id: chatConv?.id || null,
           media_url: mediaUrl || null,
-          media_type: mediaUrl ? 'audio' : null,
+          media_type: mediaUrl ? (messageType || 'image') : null,
         });
 
         // Try FAQ auto-response first
@@ -1003,7 +1106,7 @@ export class BotService {
       }
     }
 
-    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business);
+    await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType);
     } catch (err) {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
       logger.error('[BOT] handleMessage CRASH:', errMsg);
@@ -1420,6 +1523,8 @@ export class BotService {
       case 'payment': return 'select_category';
       case 'ordering': return 'browse_catalog';
       case 'ticketing': return 'select_event';
+      case 'queue': return 'queue_start';
+      case 'reservation': return 'select_service';
       default: return 'select_service';
     }
   }
@@ -1456,7 +1561,7 @@ export class BotService {
       case 'chat': return 'chat_start';
       case 'waitlist': return 'waitlist_join';
       case 'feedback': return 'select_service'; // feedback is post-completion
-      case 'loyalty': return 'select_service'; // loyalty is post-completion
+      case 'loyalty': return 'loyalty_menu';
       case 'referral': return 'select_service'; // referral is post-completion
       case 'staff': return 'select_service'; // staff enhances scheduling
       default: return 'select_service';

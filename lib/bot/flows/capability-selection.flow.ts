@@ -25,6 +25,10 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
       return 'Join Waitlist';
     case 'queue':
       return 'Check In';
+    case 'loyalty':
+      return 'My Rewards';
+    case 'invoice':
+      return 'My Invoices';
     default:
       return cap;
   }
@@ -42,6 +46,8 @@ function getFirstStepForCapability(cap: CapabilityId): string {
     case 'chat': return 'chat_start';
     case 'waitlist': return 'waitlist_join';
     case 'queue': return 'queue_start';
+    case 'loyalty': return 'loyalty_menu';
+    case 'invoice': return 'invoice_list';
     default: return 'select_service';
   }
 }

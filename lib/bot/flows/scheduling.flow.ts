@@ -1,5 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { BOOKING_DEFAULTS, CATEGORY_LABELS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/lib/constants';
+import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/lib/constants';
+import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { createNotification } from './shared/notifications';
@@ -99,7 +100,7 @@ export const schedulingFlow: FlowDefinition = {
           return [];
         }
 
-        const labels = CATEGORY_LABELS[ctx.business.category];
+        const labels = getCategoryLabels(ctx.business.category);
         return [{
           type: 'list',
           title: 'Select Service',
@@ -356,7 +357,7 @@ export const schedulingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const category = ctx.business?.category || 'restaurant';
-        const labels = CATEGORY_LABELS[category];
+        const labels = getCategoryLabels(category);
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxQty = (meta.max_party_size as number) || getMaxQuantity(category);
         // Adapt button options to sensible values per category
@@ -519,7 +520,7 @@ export const schedulingFlow: FlowDefinition = {
       id: 'confirmation',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const labels = CATEGORY_LABELS[ctx.business?.category || 'restaurant'];
+        const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
         const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
         });
@@ -580,7 +581,7 @@ export const schedulingFlow: FlowDefinition = {
           data: { first_name: parts[0], last_name: parts.slice(1).join(' ') || '' },
         };
       },
-      async next() { return 'collect_email'; },
+      async next() { return 'ask_referral_code'; },
       async skipIf(ctx: FlowContext) {
         // Skip if user already exists
         if (ctx.session.user_id) {
@@ -594,6 +595,82 @@ export const schedulingFlow: FlowDefinition = {
         }
         return false;
       },
+    },
+
+    // ── Ask Referral Code ──
+    {
+      id: 'ask_referral_code',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: '\uD83C\uDF81 Got a referral code from a friend?',
+          buttons: [
+            { id: 'enter_code', title: 'Enter Code' },
+            { id: 'skip', title: 'Skip' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input === 'enter_code') return { valid: true, data: { _referral_action: 'enter' } };
+        if (input === 'skip' || input.toLowerCase() === 'skip') return { valid: true, data: { _referral_action: 'skip' } };
+        return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._referral_action === 'enter') return 'enter_referral_code';
+        return 'collect_email';
+      },
+      async skipIf(ctx: FlowContext) {
+        if (!ctx.business) return true;
+        // Skip if business doesn't have referral capability
+        const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
+        if (!caps.includes('referral')) return true;
+        // Skip if user already has a converted referral for this business
+        if (ctx.session.user_id) {
+          const { data: existing } = await ctx.supabase
+            .from('referrals')
+            .select('id')
+            .eq('business_id', ctx.business.id)
+            .eq('referred_user_id', ctx.session.user_id)
+            .eq('status', 'converted')
+            .limit(1)
+            .maybeSingle();
+          if (existing) return true;
+        }
+        return false;
+      },
+    },
+
+    // ── Enter Referral Code ──
+    {
+      id: 'enter_referral_code',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '\uD83C\uDF81 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const code = input.trim();
+        if (code.toLowerCase() === 'skip') {
+          return { valid: true };
+        }
+        if (!ctx.business) return { valid: true };
+
+        const { data: referral } = await ctx.supabase
+          .from('referrals')
+          .select('id, referrer_phone')
+          .eq('business_id', ctx.business.id)
+          .eq('referral_code', code)
+          .eq('status', 'pending')
+          .maybeSingle();
+
+        if (!referral) {
+          return { valid: false, errorMessage: 'Hmm, that code didn\u2019t work. Double-check it and try again, or type *skip* to continue without one.' };
+        }
+
+        return {
+          valid: true,
+          data: { referral_id: referral.id, referrer_phone: referral.referrer_phone },
+        };
+      },
+      async next() { return 'collect_email'; },
     },
 
     // ── Collect Email ──
@@ -835,7 +912,7 @@ export const schedulingFlow: FlowDefinition = {
           .update({ session_data: d })
           .eq('id', ctx.session.id);
 
-        const labels = CATEGORY_LABELS[ctx.business?.category || 'restaurant'];
+        const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
         const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long',
         });
@@ -1038,7 +1115,7 @@ export const schedulingFlow: FlowDefinition = {
           const verified = await verifyPayment(ctx.supabase, ref, (ctx.business?.country_code || 'NG') as CountryCode);
           if (verified) {
             const d = ctx.session.session_data;
-            const labels = CATEGORY_LABELS[ctx.business?.category || 'restaurant'];
+            const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
             const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
               weekday: 'long', day: 'numeric', month: 'long',
             });

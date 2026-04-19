@@ -12,6 +12,8 @@ import { queueCheckinFlow } from './queue-checkin.flow';
 import { feedbackFlow } from './feedback.flow';
 import { waitlistFlow } from './waitlist.flow';
 import { chatFlow } from './chat.flow';
+import { loyaltyFlow } from './loyalty.flow';
+import { invoiceFlow } from './invoice.flow';
 
 const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   scheduling: schedulingFlow,
@@ -19,6 +21,7 @@ const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   ordering: orderingFlow,
   ticketing: ticketingFlow,
   reservation: reservationFlow,
+  queue: queueCheckinFlow,
 };
 
 /** Extended registry including pseudo-flows */
@@ -27,10 +30,11 @@ const EXTENDED_REGISTRY: Record<string, FlowDefinition> = {
   'capability-selection': capabilitySelectionFlow,
   crowdfunding: crowdfundingFlow,
   'recurring-manage': recurringManageFlow,
-  'queue-checkin': queueCheckinFlow,
   feedback: feedbackFlow,
   waitlist: waitlistFlow,
   chat: chatFlow,
+  loyalty: loyaltyFlow,
+  invoice: invoiceFlow,
 };
 
 export function getFlowDefinition(type: FlowType): FlowDefinition {
