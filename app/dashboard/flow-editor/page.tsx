@@ -1,14 +1,14 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import {
-  STEP_MANIFEST,
   getManifestForFlow,
   getManifestFlowTypes,
   type StepManifestEntry,
 } from '@/lib/bot/flows/step-manifest';
+import { CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
 
 // ── Types ──
 
@@ -34,12 +34,9 @@ interface StepOverride {
 
 // ── Constants ──
 
-const FLOW_LABELS: Record<string, string> = {
-  scheduling: 'Scheduling',
-  ordering: 'Ordering',
-  payment: 'Payment',
-  ticketing: 'Ticketing',
-};
+const capLabelMap: Record<string, string> = Object.fromEntries(
+  CAPABILITIES.map(c => [c.id, c.label]),
+);
 
 const OPERATOR_LABELS: Record<string, string> = {
   eq: 'equals',
@@ -62,6 +59,7 @@ const ACTION_BADGE_STYLES: Record<StepAction, string> = {
 
 export default function FlowEditorPage() {
   const business = useBusiness();
+  const { capabilities } = useCapabilities();
   const supabase = createClient();
 
   const [overrides, setOverrides] = useState<Map<string, StepOverride>>(new Map());
@@ -271,7 +269,7 @@ export default function FlowEditorPage() {
 
   // ── Render ──
 
-  const flowTypes = getManifestFlowTypes();
+  const flowTypes = getManifestFlowTypes().filter(ft => capabilities.includes(ft as CapabilityId));
 
   if (loading) {
     return (
@@ -294,6 +292,17 @@ export default function FlowEditorPage() {
       </div>
 
       <div className="mt-6 max-w-3xl space-y-4">
+        {flowTypes.length === 0 && (
+          <div className="rounded-xl border border-gray-100 bg-white p-10 text-center">
+            <p className="text-sm text-gray-500">
+              No bot flows available. Enable capabilities in{' '}
+              <a href="/dashboard/settings" className="font-medium text-brand hover:underline">
+                Settings
+              </a>{' '}
+              to configure their conversation flows.
+            </p>
+          </div>
+        )}
         {flowTypes.map((flowType) => {
           const steps = getManifestForFlow(flowType);
           const isExpanded = expandedFlows.has(flowType);
@@ -314,7 +323,7 @@ export default function FlowEditorPage() {
               >
                 <div className="flex items-center gap-3">
                   <h2 className="text-lg font-semibold text-gray-900">
-                    {FLOW_LABELS[flowType] || flowType}
+                    {capLabelMap[flowType] || flowType}
                   </h2>
                   <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
                     {steps.length} steps
