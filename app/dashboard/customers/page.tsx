@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { exportToCsv } from '@/lib/utils/csv-export';
-import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -119,7 +119,7 @@ function tagColor(tag: string): string {
 export default function CustomersPage() {
   const business = useBusiness();
   const supabase = createClient();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const isGiving = labels.quantityLabel === 'amount';
 
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);

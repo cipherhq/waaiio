@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 interface OptionGroup {
   name: string;
@@ -178,7 +179,7 @@ function mapCSVRow(row: Record<string, string>) {
 
 export default function ProductsPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
   const curr = formatCurrency(0, country).charAt(0);
 

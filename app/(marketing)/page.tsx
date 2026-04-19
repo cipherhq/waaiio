@@ -5,12 +5,15 @@ import { useState, useEffect } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import CounterAnimation from '@/components/marketing/CounterAnimation';
-import { BUSINESS_CATEGORIES, formatCurrency, getPricingTiers } from '@/lib/constants';
+import { formatCurrency, getPricingTiers } from '@/lib/constants';
+import { getCategoryList } from '@/lib/categoryConfig';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 const PRICING_TIERS = getPricingTiers('NG');
-const CATEGORY_COUNT = BUSINESS_CATEGORIES.filter(c => c.key !== 'other').length;
+const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 
 export default function HomePage() {
+  useCategoryConfig(); // trigger DB load for category templates
   const { scrollYProgress } = useScroll();
   const heroY = useTransform(scrollYProgress, [0, 0.3], [0, 120]);
   const heroOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
@@ -734,7 +737,7 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
   const [activeFlow, setActiveFlow] = useState<string>(FLOW_TABS[0].flow);
   const activeTab = FLOW_TABS.find(t => t.flow === activeFlow) ?? FLOW_TABS[0];
   const accent = ACCENT_STYLES[activeTab.accent];
-  const industries = BUSINESS_CATEGORIES.filter(c => c.key !== 'other' && c.flow === activeFlow);
+  const industries = getCategoryList().filter(c => c.key !== 'other' && c.flow === activeFlow);
 
   return (
     <section className="bg-gray-950 py-20">

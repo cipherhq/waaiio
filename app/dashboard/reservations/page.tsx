@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
@@ -63,7 +64,7 @@ const nextActions: Record<string, { label: string; next: string; color: string }
 
 export default function BookingsPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const statuses = allStatuses.filter(s => !labels.hiddenStatuses.includes(s));
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);

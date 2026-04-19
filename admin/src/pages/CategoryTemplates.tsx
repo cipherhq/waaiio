@@ -45,13 +45,15 @@ interface CategoryTemplate {
   updated_at: string;
 }
 
-const FLOW_TYPES = ['scheduling', 'payment', 'ordering', 'ticketing'] as const;
+const FLOW_TYPES = ['scheduling', 'payment', 'ordering', 'ticketing', 'reservation', 'queue'] as const;
 
 const FLOW_BADGE_COLORS: Record<string, string> = {
   scheduling: 'bg-blue-100 text-blue-700',
   payment: 'bg-green-100 text-green-700',
   ordering: 'bg-purple-100 text-purple-700',
   ticketing: 'bg-yellow-100 text-yellow-700',
+  reservation: 'bg-teal-100 text-teal-700',
+  queue: 'bg-orange-100 text-orange-700',
 };
 
 const ALL_CAPABILITIES = [

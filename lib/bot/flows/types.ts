@@ -81,6 +81,10 @@ export interface FlowContext {
     operating_hours?: Record<string, { open?: string; close?: string; closed?: boolean }>;
     country_code?: CountryCode;
   } | null;
+  /** Current message media URL (image/audio/video/document from WhatsApp) */
+  mediaUrl?: string;
+  /** Current message media type */
+  mediaType?: string;
 }
 
 // ── Flow step config ──

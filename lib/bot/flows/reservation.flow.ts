@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { CATEGORY_LABELS, formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/lib/constants';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { createNotification } from './shared/notifications';

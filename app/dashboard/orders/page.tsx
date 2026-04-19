@@ -3,7 +3,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
@@ -34,6 +35,12 @@ interface Order {
   addons_total: number | null;
   volume_discount_amount: number | null;
   discount_amount: number | null;
+  deposit_amount: number | null;
+  deposit_percentage: number | null;
+  balance_amount: number | null;
+  balance_paid_at: string | null;
+  deposit_paid_at: string | null;
+  custom_order_data: Record<string, unknown> | null;
   user: { first_name: string | null; last_name: string | null; phone: string | null } | null;
   items: OrderItem[];
 }
@@ -52,7 +59,7 @@ const statusColors: Record<string, string> = {
 
 export default function OrdersPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +77,9 @@ export default function OrdersPage() {
   const [trackingCarrier, setTrackingCarrier] = useState('');
   const [trackingNumber, setTrackingNumber] = useState('');
   const [savingTracking, setSavingTracking] = useState(false);
+
+  // Balance request state
+  const [requestingBalance, setRequestingBalance] = useState(false);
 
   // Search, date range, pagination
   const [search, setSearch] = useState('');
@@ -134,6 +144,8 @@ export default function OrdersPage() {
         delivery_phone, notes, channel, created_at,
         shipping_carrier, tracking_number, shipped_at,
         delivery_zone_name, addons_total, volume_discount_amount, discount_amount,
+        deposit_amount, deposit_percentage, balance_amount, balance_paid_at, deposit_paid_at,
+        custom_order_data,
         user:profiles!orders_user_id_fkey(first_name, last_name, phone)
       `)
       .eq('business_id', business.id)
@@ -383,6 +395,49 @@ export default function OrdersPage() {
                 ))}
               </div>
             </div>
+
+            {/* Balance Payment Request (for custom orders with deposit) */}
+            {selectedOrder.balance_amount != null && selectedOrder.balance_amount > 0 && !selectedOrder.balance_paid_at && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-6">
+                <h2 className="text-sm font-semibold text-gray-900">Balance Payment</h2>
+                <div className="mt-2 space-y-1 text-sm">
+                  {selectedOrder.deposit_amount != null && selectedOrder.deposit_amount > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Deposit ({selectedOrder.deposit_percentage}%)</span>
+                      <span className="font-medium text-green-600">{formatCurrency(selectedOrder.deposit_amount, country)} {selectedOrder.deposit_paid_at ? '\u2705' : ''}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Balance due</span>
+                    <span className="font-medium text-amber-700">{formatCurrency(selectedOrder.balance_amount, country)}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    setRequestingBalance(true);
+                    try {
+                      const res = await fetch('/api/orders/request-balance', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ order_id: selectedOrder.id, business_id: business.id }),
+                      });
+                      if (res.ok) {
+                        await fetchOrders();
+                        setSelectedOrder(prev => prev ? { ...prev, status: 'ready' } : null);
+                      }
+                    } catch {}
+                    setRequestingBalance(false);
+                  }}
+                  disabled={requestingBalance}
+                  className="mt-3 w-full rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {requestingBalance ? 'Sending...' : 'Request Balance Payment'}
+                </button>
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Customer will receive a WhatsApp message with a payment link.
+                </p>
+              </div>
+            )}
 
             {/* Refund Payment */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">

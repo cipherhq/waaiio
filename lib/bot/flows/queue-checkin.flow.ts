@@ -229,7 +229,7 @@ const queueCheckStatusStep: FlowStepConfig = {
 };
 
 export const queueCheckinFlow: FlowDefinition = {
-  type: 'scheduling' as const, // pseudo-flow, registered in extended registry
+  type: 'queue' as const,
   steps: [
     queueStartStep,
     queueCollectNameStep,

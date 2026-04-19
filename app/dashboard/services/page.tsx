@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 interface Service {
   id: string;
@@ -28,7 +29,7 @@ type ViewMode = 'list' | 'add' | 'edit';
 export default function ServicesPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
+  const { labels } = useCategoryConfig(business.category);
   const isScheduling = business.flow_type === 'scheduling';
   const curr = formatCurrency(0, country).charAt(0);
 
@@ -197,7 +198,7 @@ export default function ServicesPage() {
             </svg>
           </button>
           <h1 className="text-xl font-bold text-gray-900">
-            {view === 'add' ? `Add ${labels.serviceName}` : `Edit ${labels.serviceName}`}
+            {view === 'add' ? `Add ${labels.serviceName || 'Service'}` : `Edit ${labels.serviceName || 'Service'}`}
           </h1>
         </div>
 
@@ -275,7 +276,7 @@ export default function ServicesPage() {
                 <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
                   <div>
                     <p className="text-sm font-medium text-gray-700">Set a fixed amount</p>
-                    <p className="text-xs text-gray-400">Enable if this {labels.serviceName.toLowerCase()} has a set price</p>
+                    <p className="text-xs text-gray-400">Enable if this {(labels.serviceName || 'service').toLowerCase()} has a set price</p>
                   </div>
                   <button
                     type="button"
@@ -467,7 +468,7 @@ export default function ServicesPage() {
             disabled={saving || !form.name.trim()}
             className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
           >
-            {saving ? 'Saving...' : view === 'add' ? `Add ${labels.serviceName}` : 'Save Changes'}
+            {saving ? 'Saving...' : view === 'add' ? `Add ${labels.serviceName || 'Service'}` : 'Save Changes'}
           </button>
           <button
             onClick={() => setView('list')}
@@ -480,7 +481,7 @@ export default function ServicesPage() {
               onClick={handleDelete}
               className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50"
             >
-              Delete {labels.serviceName}
+              Delete {labels.serviceName || 'Service'}
             </button>
           )}
         </div>
@@ -495,7 +496,7 @@ export default function ServicesPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{labels.serviceNamePlural}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{labels.serviceNamePlural || 'Services'}</h1>
           <p className="mt-1 text-sm text-gray-500">
             Manage what your business offers
           </p>
@@ -504,7 +505,7 @@ export default function ServicesPage() {
           onClick={openAdd}
           className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600"
         >
-          + Add {labels.serviceName}
+          + Add {labels.serviceName || 'Service'}
         </button>
       </div>
 
@@ -515,13 +516,13 @@ export default function ServicesPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
             </svg>
           </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No {labels.serviceNamePlural.toLowerCase()} yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Add your first {labels.serviceName.toLowerCase()} so {labels.personLabelPlural.toLowerCase()} know what you offer.</p>
+          <h3 className="mt-4 text-sm font-semibold text-gray-900">No {(labels.serviceNamePlural || 'services').toLowerCase()} yet</h3>
+          <p className="mt-1 text-sm text-gray-500">Add your first {(labels.serviceName || 'service').toLowerCase()} so {labels.personLabelPlural.toLowerCase()} know what you offer.</p>
           <button
             onClick={openAdd}
             className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
           >
-            + Add {labels.serviceName}
+            + Add {labels.serviceName || 'Service'}
           </button>
         </div>
       ) : (

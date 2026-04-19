@@ -43,6 +43,8 @@ export class FlowExecutor {
       metadata: Record<string, unknown>;
       country_code?: CountryCode;
     } | null,
+    mediaUrl?: string,
+    mediaType?: string,
   ): Promise<void> {
     // Determine which flow to use: active_capability takes priority
     const activeCap = session.session_data.active_capability as CapabilityId | undefined;
@@ -78,6 +80,8 @@ export class FlowExecutor {
       from,
       session,
       business,
+      mediaUrl,
+      mediaType,
     };
 
     // ── Step overrides: load business-level overrides ──
@@ -316,7 +320,7 @@ export class FlowExecutor {
       case 'whatsapp_sign': return 'scheduling'; // no bot flow — dashboard only
       case 'crowdfunding': return 'payment'; // crowdfunding uses payment infrastructure
       case 'reports': return 'scheduling'; // reports don't have their own flow
-      case 'queue': return 'scheduling'; // queue uses its own extended flow
+      case 'queue': return 'queue';
       case 'feedback': return 'scheduling'; // feedback uses its own extended flow
       case 'loyalty': return 'scheduling'; // loyalty is post-completion, no dedicated flow
       case 'chat': return 'scheduling'; // chat is handled in bot.service

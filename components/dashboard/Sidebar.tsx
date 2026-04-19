@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useBusiness, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { APP_NAME, CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { APP_NAME } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { useChatUnreadCount } from '@/hooks/useChatUnreadCount';
 
@@ -309,8 +310,8 @@ export function Sidebar() {
 
   const { capabilities } = useCapabilities();
   const chatUnreadCount = useChatUnreadCount(business.id);
-  const categoryLabel =
-    CATEGORY_LABELS[business.category as BusinessCategoryKey]?.entityName || 'business';
+  const { labels: catLabels } = useCategoryConfig(business.category);
+  const categoryLabel = catLabels?.entityName || 'business';
 
   // Filter nav items based on capabilities and category
   const visibleItems = navItems.filter(item => {
@@ -352,25 +353,21 @@ export function Sidebar() {
   // Dynamic label: "Bookings" → category-specific label
   const getLabel = (item: NavItem) => {
     if (item.label === 'Bookings') {
-      const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
-      if (labels) {
-        const renamed = labels.entityNamePlural.charAt(0).toUpperCase() + labels.entityNamePlural.slice(1);
+      if (catLabels) {
+        const renamed = catLabels.entityNamePlural.charAt(0).toUpperCase() + catLabels.entityNamePlural.slice(1);
         // Don't relabel to "Orders" when the commerce Orders page is also visible
         if (renamed === 'Orders') return 'Bookings';
         return renamed;
       }
     }
     if (item.label === 'Guests') {
-      const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
-      if (labels) return labels.personLabelPlural;
+      if (catLabels) return catLabels.personLabelPlural;
     }
     if (item.label === 'Services') {
-      const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
-      if (labels?.serviceNamePlural) return labels.serviceNamePlural;
+      if (catLabels?.serviceNamePlural) return catLabels.serviceNamePlural;
     }
     if (item.label === 'Customers') {
-      const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey];
-      if (labels?.personLabelPlural) return labels.personLabelPlural;
+      if (catLabels?.personLabelPlural) return catLabels.personLabelPlural;
     }
     return item.label;
   };

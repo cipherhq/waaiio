@@ -6,12 +6,11 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import {
-  CATEGORY_LABELS,
-  BUSINESS_CATEGORIES,
-  type BusinessCategoryKey,
   formatCurrency,
   type CountryCode,
 } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { getCategoryByKey } from '@/lib/categoryConfig';
 import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 
@@ -66,9 +65,9 @@ export default function DashboardOverview() {
   const [loading, setLoading] = useState(true);
   const [linkCopied, setLinkCopied] = useState(false);
 
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
-  const category = BUSINESS_CATEGORIES.find(c => c.key === business.category);
+  const categoryTemplate = getCategoryByKey(business.category);
 
   const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER || '';
   const whatsappLink = business.bot_code
@@ -142,7 +141,7 @@ export default function DashboardOverview() {
   const setupSteps = [
     {
       id: 'services',
-      title: `Add your ${labels.serviceNamePlural.toLowerCase()}`,
+      title: `Add your ${(labels.serviceNamePlural || 'Services').toLowerCase()}`,
       desc: `Tell customers what you offer`,
       done: stats.totalServices > 0,
       href: '/dashboard/services',
@@ -237,7 +236,7 @@ export default function DashboardOverview() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Welcome back, {business.name} {category?.icon || ''}
+            Welcome back, {business.name} {categoryTemplate?.icon || ''}
           </p>
         </div>
         {whatsappLink && (
@@ -316,7 +315,7 @@ export default function DashboardOverview() {
         )}
         {hasCapability('scheduling') && !hasCapability('payment') && !hasCapability('ordering') && !hasCapability('ticketing') && !hasCapability('crowdfunding') && (
           <StatCard
-            label={labels.serviceNamePlural}
+            label={labels.serviceNamePlural || 'Services'}
             value={stats.totalServices}
             icon="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
             color="green"
@@ -513,7 +512,7 @@ export default function DashboardOverview() {
               <div className="mt-3 space-y-2.5 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">Category</span>
-                  <span className="font-medium text-gray-900">{category?.label}</span>
+                  <span className="font-medium text-gray-900">{categoryTemplate?.label}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Status</span>
@@ -524,7 +523,7 @@ export default function DashboardOverview() {
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">{labels.serviceNamePlural}</span>
+                  <span className="text-gray-500">{labels.serviceNamePlural || 'Services'}</span>
                   <span className="font-medium text-gray-900">{stats.totalServices}</span>
                 </div>
               </div>

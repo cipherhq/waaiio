@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { type CapabilityId, CATEGORY_DEFAULT_CAPABILITIES } from './types';
+import { getCategoryDefaultCapabilities } from '@/lib/categoryConfig';
 
 /** Get all enabled capabilities for a business, with fallback to category defaults */
 export async function getEnabledCapabilities(
@@ -17,9 +18,10 @@ export async function getEnabledCapabilities(
     return data.map(row => row.capability as CapabilityId);
   }
 
-  // Fallback: derive from category
+  // Fallback: derive from category (DB-backed → hardcoded fallback)
   if (category) {
-    return CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
+    const dbCaps = getCategoryDefaultCapabilities(category);
+    return (dbCaps as CapabilityId[]) || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
   }
 
   return ['scheduling'];
@@ -89,7 +91,8 @@ export async function initCapabilities(
   category: string,
   overrides?: CapabilityId[],
 ): Promise<void> {
-  const capabilities = overrides || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
+  const dbCaps = getCategoryDefaultCapabilities(category);
+  const capabilities = overrides || (dbCaps as CapabilityId[]) || CATEGORY_DEFAULT_CAPABILITIES[category] || ['scheduling'];
 
   const rows = capabilities.map(cap => ({
     business_id: businessId,

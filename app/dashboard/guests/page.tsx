@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 interface Guest {
   guest_phone: string;
@@ -20,7 +20,7 @@ type SortKey = 'booking_count' | 'total_spent' | 'last_visit' | 'guest_name';
 
 export default function GuestsPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const [guests, setGuests] = useState<Guest[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');

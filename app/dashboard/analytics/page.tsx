@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, type BusinessCategoryKey, formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface DailyCount {
@@ -27,7 +28,7 @@ type TimeRange = '7d' | '30d' | '90d';
 
 export default function AnalyticsPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
 
   const [timeRange, setTimeRange] = useState<TimeRange>('30d');

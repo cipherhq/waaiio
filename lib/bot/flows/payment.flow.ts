@@ -1,5 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { CATEGORY_LABELS, formatCurrency, getCurrencySymbol, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getCurrencySymbol, getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getPaymentReceiptMessage } from './shared/templates';
@@ -30,7 +31,7 @@ export const paymentFlow: FlowDefinition = {
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
-        const labels = CATEGORY_LABELS[ctx.business.category];
+        const labels = getCategoryLabels(ctx.business.category);
         return [{
           type: 'list',
           title: `Select ${labels.entityName} Type`,
@@ -101,7 +102,7 @@ export const paymentFlow: FlowDefinition = {
       id: 'confirm_amount',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const labels = CATEGORY_LABELS[ctx.business?.category || 'church'];
+        const labels = getCategoryLabels(ctx.business?.category || 'church');
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         return [
@@ -279,7 +280,7 @@ export const paymentFlow: FlowDefinition = {
               text: [
                 `\ud83d\udcb3 *Payment Link Ready*`,
                 '',
-                `${CATEGORY_LABELS[ctx.business?.category || 'church'].confirmationEmoji} ${ctx.business?.name}`,
+                `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
                 `\ud83d\udccc ${d.service_name as string}`,
                 `\ud83d\udcb0 ${formatCurrency(amount, cc)}`,
                 `\ud83d\udd11 Ref: *${booking.reference_code}*`,
@@ -396,7 +397,7 @@ export const paymentFlow: FlowDefinition = {
               }
             }
 
-            const labels = CATEGORY_LABELS[ctx.business?.category || 'church'];
+            const labels = getCategoryLabels(ctx.business?.category || 'church');
             await ctx.sender.sendText({
               to: ctx.from,
               text: getPaymentReceiptMessage({
@@ -712,7 +713,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const labels = CATEGORY_LABELS[ctx.business?.category || 'church'];
+        const labels = getCategoryLabels(ctx.business?.category || 'church');
 
         return [{
           type: 'text',

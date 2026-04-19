@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, formatCurrency, type BusinessCategoryKey, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
 interface BookingRow {
@@ -40,7 +41,7 @@ const flowTypeStyles: Record<string, string> = {
 
 export default function FinancialsPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
   const isGiving = labels.quantityLabel === 'amount';
 

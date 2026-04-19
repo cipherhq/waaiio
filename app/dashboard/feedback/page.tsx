@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CATEGORY_LABELS, type BusinessCategoryKey } from '@/lib/constants';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 interface FeedbackEntry {
   id: string;
@@ -43,7 +43,7 @@ const RATING_COLORS: Record<number, string> = {
 
 export default function FeedbackPage() {
   const business = useBusiness();
-  const labels = CATEGORY_LABELS[business.category as BusinessCategoryKey] || CATEGORY_LABELS.other;
+  const { labels } = useCategoryConfig(business.category);
   const [reviews, setReviews] = useState<FeedbackEntry[]>([]);
   const [loading, setLoading] = useState(true);
 

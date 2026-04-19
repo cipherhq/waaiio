@@ -7,7 +7,6 @@ import { createClient } from '@/lib/supabase/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { OtpInput } from '@/components/auth/OtpInput';
 import {
-  BUSINESS_CATEGORIES,
   CATEGORY_FLOW_MAP,
   formatCurrency,
   getPricingTiers,
@@ -16,6 +15,8 @@ import {
   type SubscriptionTier,
   type CountryCode,
 } from '@/lib/constants';
+import { getCategoryList, getCategoryByKey } from '@/lib/categoryConfig';
+import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
 import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
 import type { User } from '@supabase/supabase-js';
@@ -240,6 +241,7 @@ const COEXIST_WARNINGS = [
 ];
 
 function OnboardingWizard() {
+  useCategoryConfig(); // trigger DB load for category templates
   const router = useRouter();
   const searchParams = useSearchParams();
   const preselectedPlan = searchParams.get('plan') as SubscriptionTier | null;
@@ -862,7 +864,7 @@ function OnboardingWizard() {
   // ── Derived state ──
 
   const flowType = category ? CATEGORY_FLOW_MAP[category] : null;
-  const categoryInfo = category ? BUSINESS_CATEGORIES.find(c => c.key === category) : null;
+  const categoryInfo = category ? getCategoryByKey(category) : null;
 
   const defaultGreeting = (() => {
     if (!category || !name) return 'Welcome! How can I help you today?';
@@ -1131,12 +1133,12 @@ function OnboardingWizard() {
                       </select>
                       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                         {CATEGORY_GROUPS[selectedGroupIndex].keys
-                          .map(k => BUSINESS_CATEGORIES.find(c => c.key === k))
-                          .filter((cat): cat is (typeof BUSINESS_CATEGORIES)[number] => !!cat)
+                          .map(k => getCategoryByKey(k))
+                          .filter((cat): cat is NonNullable<typeof cat> => !!cat)
                           .map((cat) => (
                             <button key={cat.key} type="button" onClick={() => {
-                              setCategory(cat.key);
-                              const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key] || ['scheduling'];
+                              setCategory(cat.key as BusinessCategoryKey);
+                              const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key as BusinessCategoryKey] || ['scheduling'];
                               setSelectedCapabilities([...defaults]);
                             }}
                               className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${category === cat.key ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>

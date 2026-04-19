@@ -5,19 +5,17 @@ import {
   generateSlug,
   generateBotCode,
   getCitiesForCountry,
-  BUSINESS_CATEGORIES,
   CATEGORY_FLOW_MAP,
   DEFAULT_SERVICES,
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
 import { loadCountries, isValidCountryCode } from '@/lib/countries';
+import { loadCategories, getAllCategoryKeys } from '@/lib/categoryConfig';
 import { initCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { sendEmail } from '@/lib/email/client';
 import { welcomeEmail, businessRegisteredEmail } from '@/lib/email/templates';
-
-const VALID_CATEGORIES = BUSINESS_CATEGORIES.map(c => c.key);
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,6 +27,7 @@ export async function POST(request: NextRequest) {
     }
 
     await loadCountries();
+    await loadCategories();
     const body = await request.json();
     const { first_name, last_name, name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
@@ -40,7 +39,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!VALID_CATEGORIES.includes(category)) {
+    const validCategories = getAllCategoryKeys();
+    if (!validCategories.includes(category)) {
       return NextResponse.json(
         { message: 'Invalid category' },
         { status: 400 },

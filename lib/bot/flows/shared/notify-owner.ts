@@ -92,6 +92,13 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   }
 }
 
+interface CustomOrderData {
+  style_photo_url?: string | null;
+  measurements?: Record<string, string>;
+  design_notes?: string | null;
+  deadline?: string | null;
+}
+
 interface NotifyQuoteOpts {
   supabase: SupabaseClient;
   sender: MessageSender;
@@ -104,10 +111,11 @@ interface NotifyQuoteOpts {
   addons?: Array<{ name: string; price: number; quantity?: number }>;
   estimatedSubtotal: number;
   deliveryZoneName?: string;
+  customOrderData?: CustomOrderData;
 }
 
 export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise<void> {
-  const { supabase, sender, businessId, businessName, countryCode, customerName, items, addons, estimatedSubtotal, deliveryZoneName } = opts;
+  const { supabase, sender, businessId, businessName, countryCode, customerName, items, addons, estimatedSubtotal, deliveryZoneName, customOrderData } = opts;
 
   const { data: biz } = await supabase
     .from('businesses')
@@ -128,15 +136,36 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
   // Always send email
   if (ownerEmail) {
     const itemLines = items.map(i => `${i.name} x${i.quantity}`).join(', ');
+    let customHtml = '';
+    if (customOrderData) {
+      customHtml += '<h3>Custom Order Details</h3>';
+      if (customOrderData.style_photo_url) {
+        customHtml += `<p><strong>Style Photo:</strong> <a href="${customOrderData.style_photo_url}">View Photo</a></p>`;
+      }
+      if (customOrderData.measurements && Object.keys(customOrderData.measurements).length > 0) {
+        customHtml += '<p><strong>Measurements:</strong></p><ul>';
+        for (const [field, value] of Object.entries(customOrderData.measurements)) {
+          customHtml += `<li>${field}: ${value}</li>`;
+        }
+        customHtml += '</ul>';
+      }
+      if (customOrderData.design_notes) {
+        customHtml += `<p><strong>Design Notes:</strong> ${customOrderData.design_notes}</p>`;
+      }
+      if (customOrderData.deadline) {
+        customHtml += `<p><strong>Deadline:</strong> ${customOrderData.deadline}</p>`;
+      }
+    }
     sendEmail({
       to: ownerEmail,
-      subject: `New Quote Request from ${customerName} - ${businessName}`,
+      subject: `New ${customOrderData ? 'Custom Order' : 'Quote'} Request from ${customerName} - ${businessName}`,
       html: `
-        <h2>New Quote Request</h2>
+        <h2>New ${customOrderData ? 'Custom Order' : 'Quote'} Request</h2>
         <p><strong>Customer:</strong> ${customerName}</p>
         <p><strong>Items:</strong> ${itemLines}</p>
         <p><strong>Estimated Subtotal:</strong> ${formattedTotal}</p>
         ${deliveryZoneName ? `<p><strong>Delivery Zone:</strong> ${deliveryZoneName}</p>` : ''}
+        ${customHtml}
         <p><a href="${dashboardUrl}">Respond to this quote in your dashboard</a></p>
       `,
     }).catch(err => logger.error('[NOTIFY-OWNER] Quote email error:', err));
@@ -169,6 +198,20 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
       lines.push(`\uD83D\uDE9A Zone: ${deliveryZoneName}`);
     }
 
+    // Custom order details
+    if (customOrderData) {
+      lines.push('', '\uD83C\uDFA8 *Custom Order Details:*');
+      if (customOrderData.style_photo_url) lines.push('\uD83D\uDCF8 Style photo attached');
+      if (customOrderData.measurements && Object.keys(customOrderData.measurements).length > 0) {
+        lines.push('\uD83D\uDCCF Measurements:');
+        for (const [field, value] of Object.entries(customOrderData.measurements)) {
+          lines.push(`  \u2022 ${field}: ${value}`);
+        }
+      }
+      if (customOrderData.design_notes) lines.push(`\u270D\uFE0F Notes: ${customOrderData.design_notes}`);
+      if (customOrderData.deadline) lines.push(`\uD83D\uDCC5 Deadline: ${customOrderData.deadline}`);
+    }
+
     lines.push('', `\uD83D\uDCB0 Estimated: *${formattedTotal}*`);
     lines.push('', `Open your dashboard to respond with a price.`);
 
@@ -176,6 +219,15 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
     sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
       logger.error('[NOTIFY-OWNER] Quote WhatsApp error:', err),
     );
+
+    // Send style photo as separate image message if available
+    if (customOrderData?.style_photo_url) {
+      sender.sendImage({
+        to: phone,
+        imageUrl: customOrderData.style_photo_url,
+        caption: `Style reference from ${customerName}`,
+      }).catch(err => logger.error('[NOTIFY-OWNER] Style photo send error:', err));
+    }
   }
 }
 

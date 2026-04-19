@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, name, country_code, subscription_tier, trial_ends_at')
+      .select('id, name, country_code, subscription_tier, trial_ends_at, metadata')
       .eq('id', quote.business_id)
       .single();
 
@@ -91,6 +91,14 @@ export async function POST(request: NextRequest) {
       addons?: Array<{ name: string; price: number; quantity?: number }>;
     }>;
 
+    // Check for custom order deposit configuration
+    const bizMeta = (biz?.metadata || {}) as Record<string, unknown>;
+    const customConfig = (bizMeta.custom_order_config || {}) as Record<string, unknown>;
+    const hasCustomOrderData = !!quote.custom_order_data;
+    const depositPct = hasCustomOrderData ? ((customConfig.deposit_percentage as number) || 0) : 0;
+    const depositAmount = depositPct > 0 ? Math.floor(total * depositPct / 100) : 0;
+    const balanceAmount = depositPct > 0 ? total - depositAmount : 0;
+
     // Ensure user
     let userId = quote.user_id;
     if (!userId && quote.customer_phone) {
@@ -105,22 +113,33 @@ export async function POST(request: NextRequest) {
       userId = profile?.id || null;
     }
 
-    // Create order
+    // Create order (with deposit tracking for custom orders)
+    const orderPayload: Record<string, unknown> = {
+      business_id: quote.business_id,
+      user_id: userId,
+      status: 'confirmed',
+      delivery_address: quote.delivery_address || null,
+      delivery_phone: quote.customer_phone || null,
+      total_amount: total,
+      delivery_zone_id: quote.delivery_zone_id || null,
+      delivery_zone_name: quote.delivery_zone_name || null,
+      quote_request_id: quote_id,
+      channel: quote.channel || 'whatsapp',
+      notes: quote.quote_notes || null,
+    };
+
+    if (hasCustomOrderData) {
+      orderPayload.custom_order_data = quote.custom_order_data;
+    }
+    if (depositPct > 0) {
+      orderPayload.deposit_percentage = depositPct;
+      orderPayload.deposit_amount = depositAmount;
+      orderPayload.balance_amount = balanceAmount;
+    }
+
     const { data: order, error: orderError } = await supabase
       .from('orders')
-      .insert({
-        business_id: quote.business_id,
-        user_id: userId,
-        status: 'confirmed',
-        delivery_address: quote.delivery_address || null,
-        delivery_phone: quote.customer_phone || null,
-        total_amount: total,
-        delivery_zone_id: quote.delivery_zone_id || null,
-        delivery_zone_name: quote.delivery_zone_name || null,
-        quote_request_id: quote_id,
-        channel: quote.channel || 'whatsapp',
-        notes: quote.quote_notes || null,
-      })
+      .insert(orderPayload)
       .select('id, reference_code')
       .single();
 
@@ -163,11 +182,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Initialize payment and send link to customer
-    if (total > 0 && quote.customer_phone) {
+    const paymentAmount = depositAmount > 0 ? depositAmount : total;
+    if (paymentAmount > 0 && quote.customer_phone) {
       const paymentResult = await initializePayment(supabase, {
         orderId: order.id,
         userId: userId || undefined,
-        amount: total,
+        amount: paymentAmount,
         referenceCode: order.reference_code,
         businessName: biz?.name || 'Shop',
         phone: quote.customer_phone,
@@ -184,18 +204,34 @@ export async function POST(request: NextRequest) {
             ? quote.customer_phone.slice(1)
             : quote.customer_phone;
 
+          const messageLines = depositAmount > 0
+            ? [
+                `\u2705 *Quote Accepted!*`,
+                '',
+                `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
+                `\uD83D\uDD11 Ref: *${order.reference_code}*`,
+                `\uD83D\uDCB0 Deposit (${depositPct}%): *${formatCurrency(depositAmount, cc)}*`,
+                `\uD83D\uDCB5 Balance due: *${formatCurrency(balanceAmount, cc)}*`,
+                '',
+                `\uD83D\uDCB3 Pay deposit now \uD83D\uDC47`,
+                paymentResult.url,
+                '',
+                `Balance will be requested when your order is ready.`,
+              ]
+            : [
+                `\u2705 *Quote Accepted!*`,
+                '',
+                `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
+                `\uD83D\uDD11 Ref: *${order.reference_code}*`,
+                `\uD83D\uDCB0 Total: *${formatCurrency(total, cc)}*`,
+                '',
+                `\uD83D\uDCB3 Pay here \uD83D\uDC47`,
+                paymentResult.url,
+              ];
+
           await sender.sendText({
             to: phone,
-            text: [
-              `\u2705 *Quote Accepted!*`,
-              '',
-              `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
-              `\uD83D\uDD11 Ref: *${order.reference_code}*`,
-              `\uD83D\uDCB0 Total: *${formatCurrency(total, cc)}*`,
-              '',
-              `\uD83D\uDCB3 Pay here \uD83D\uDC47`,
-              paymentResult.url,
-            ].join('\n'),
+            text: messageLines.join('\n'),
           });
         } catch (err) {
           logger.error('[QUOTE-ACCEPT] Payment link send error:', err);
