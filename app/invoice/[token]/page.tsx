@@ -35,6 +35,7 @@ interface InvoiceData {
   paid_at: string | null;
   business_name: string;
   logo_url: string | null;
+  show_logo: boolean;
   whitelabel: boolean;
   items: InvoiceItem[];
 }
@@ -154,7 +155,7 @@ export default function InvoicePage() {
       <header className="border-b bg-white px-4 py-4 shadow-sm">
         <div className="mx-auto max-w-lg">
           <div className="flex items-center gap-3">
-            {invoice.logo_url && (
+            {invoice.logo_url && invoice.show_logo && (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={invoice.logo_url}

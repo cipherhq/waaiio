@@ -30,6 +30,7 @@ export interface InvoicePdfData {
   status: string;
   countryCode: CountryCode;
   whitelabel?: boolean;
+  logoUrl?: string | null;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -65,11 +66,26 @@ export async function generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> 
   const contentWidth = pageWidth - margin * 2;
 
   // ── Header ──
+  let logoOffset = 0;
+
+  if (data.logoUrl) {
+    try {
+      const logoRes = await fetch(data.logoUrl);
+      if (logoRes.ok) {
+        const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
+        (doc as any).image(logoBuffer, margin, margin, { width: 40, height: 40 });
+        logoOffset = 50; // logo width + spacing
+      }
+    } catch {
+      // Logo fetch failed — fall back to text-only header
+    }
+  }
+
   doc.fontSize(24).font('Helvetica-Bold').fillColor('#333333')
-    .text('INVOICE', margin, margin, { width: contentWidth, align: 'left' });
+    .text('INVOICE', margin + logoOffset, margin, { width: contentWidth - logoOffset, align: 'left' });
 
   doc.fontSize(11).font('Helvetica-Bold').fillColor('#555555')
-    .text(data.businessName, margin, margin + 30);
+    .text(data.businessName, margin + logoOffset, margin + 30);
 
   // Reference + dates on right
   const headerRightX = pageWidth - margin - 180;

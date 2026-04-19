@@ -50,7 +50,7 @@ export async function GET(
     // Fetch business name + tier
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, country_code, subscription_tier')
+      .select('name, logo_url, country_code, subscription_tier')
       .eq('id', invoice.business_id)
       .single();
 
@@ -58,8 +58,11 @@ export async function GET(
       (a: { sort_order: number }, b: { sort_order: number }) => a.sort_order - b.sort_order
     );
 
+    const isPaidTier = (biz?.subscription_tier || 'free') !== 'free';
+
     const buffer = await generateInvoicePdf({
       businessName: biz?.name || 'Business',
+      logoUrl: isPaidTier ? (biz?.logo_url || null) : null,
       referenceCode: invoice.reference_code,
       issueDate: invoice.issue_date,
       dueDate: invoice.due_date,

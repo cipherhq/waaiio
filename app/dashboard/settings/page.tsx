@@ -54,6 +54,10 @@ export default function SettingsPage() {
   const [newCapSelections, setNewCapSelections] = useState<CapabilityId[]>([]);
   const [capSaving, setCapSaving] = useState(false);
 
+  // Logo upload state
+  const [logoUrl, setLogoUrl] = useState(business.logo_url);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
@@ -697,6 +701,63 @@ export default function SettingsPage() {
               <h2 className="text-sm font-semibold text-gray-900">Business Profile</h2>
 
               <div className="mt-4 space-y-4">
+                {/* Logo Upload */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Business Logo</label>
+                  <div className="flex items-center gap-4">
+                    {logoUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={logoUrl}
+                        alt="Business logo"
+                        className="h-12 w-12 rounded-lg border border-gray-200 object-contain"
+                      />
+                    ) : (
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50">
+                        <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                    )}
+                    <div>
+                      <label className="cursor-pointer rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        {uploadingLogo ? 'Uploading...' : 'Upload Logo'}
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp"
+                          className="hidden"
+                          disabled={uploadingLogo}
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setUploadingLogo(true);
+                            try {
+                              const fd = new FormData();
+                              fd.append('file', file);
+                              fd.append('business_id', business.id);
+                              const res = await fetch('/api/business/upload-logo', { method: 'POST', body: fd });
+                              const data = await res.json();
+                              if (res.ok && data.url) {
+                                setLogoUrl(data.url);
+                              } else {
+                                alert(data.error || 'Upload failed');
+                              }
+                            } catch {
+                              alert('Upload failed');
+                            } finally {
+                              setUploadingLogo(false);
+                              e.target.value = '';
+                            }
+                          }}
+                        />
+                      </label>
+                      {business.subscription_tier === 'free' && (
+                        <p className="mt-1 text-xs text-gray-400">Logo appears on invoices on Growth plan and above</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Business Name</label>
                   <input

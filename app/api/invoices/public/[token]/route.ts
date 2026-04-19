@@ -74,6 +74,7 @@ export async function GET(
       paid_at: invoice.paid_at,
       business_name: biz?.name || '',
       logo_url: biz?.logo_url || null,
+      show_logo: (biz?.subscription_tier || 'free') !== 'free',
       whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
       items,
     });
