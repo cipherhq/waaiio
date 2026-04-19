@@ -7,6 +7,7 @@ import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardPr
 import { createClient } from '@/lib/supabase/client';
 import { PRICING_TIERS, getPricingTiers, formatCurrency, type CountryCode, type PaymentGatewayName, type SubscriptionTier } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 import { getCategoryByKey } from '@/lib/categoryConfig';
 import { getCountry } from '@/lib/countries';
 import {
@@ -703,7 +704,13 @@ export default function SettingsPage() {
               <div className="mt-4 space-y-4">
                 {/* Logo Upload */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Business Logo</label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Business Logo</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Your logo appears on invoices and your public page. Paid plans only.</span>
+                    </span>
+                  </div>
                   <div className="flex items-center gap-4">
                     {logoUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -759,7 +766,13 @@ export default function SettingsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Business Name</label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Business Name</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Displayed on invoices, receipts, and your booking page</span>
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={form.name}
@@ -768,7 +781,13 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Description</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Shown on your public booking page to describe your business</span>
+                    </span>
+                  </div>
                   <textarea
                     value={form.description}
                     onChange={(e) => setForm({ ...form, description: e.target.value })}
@@ -776,28 +795,43 @@ export default function SettingsPage() {
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
-                    <input
-                      type="tel"
-                      value={form.phone}
-                      onChange={(e) => setForm({ ...form, phone: e.target.value })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                    />
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Phone</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Customer-facing contact number with country code</span>
+                    </span>
                   </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
-                    <input
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => setForm({ ...form, email: e.target.value })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                    />
-                  </div>
+                  <PhoneInput
+                    value={form.phone}
+                    onChange={(val) => setForm({ ...form, phone: val })}
+                    countryCode={country}
+                  />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Address</label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Email</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Used for notifications and displayed on invoices</span>
+                    </span>
+                  </div>
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm({ ...form, email: e.target.value })}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Address</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Your business location shown on the booking page</span>
+                    </span>
+                  </div>
                   <input
                     type="text"
                     value={form.address}
@@ -806,7 +840,13 @@ export default function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Deposit per {labels.personLabel} ({formatCurrency(0, country).charAt(0)})</label>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <label className="text-sm font-medium text-gray-700">Deposit per {labels.personLabel} ({formatCurrency(0, country).charAt(0)})</label>
+                    <span className="group relative">
+                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Upfront charge per guest when booking. Set to 0 to disable</span>
+                    </span>
+                  </div>
                   <input
                     type="number"
                     min={0}
@@ -814,7 +854,6 @@ export default function SettingsPage() {
                     onChange={(e) => setForm({ ...form, deposit_per_guest: Number(e.target.value) })}
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
-                  <p className="mt-1 text-xs text-gray-400">Set to 0 to disable deposits</p>
                 </div>
 
                 <button

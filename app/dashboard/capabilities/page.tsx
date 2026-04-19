@@ -19,7 +19,6 @@ export default function CapabilitiesPage() {
   const overrides = business.capabilityOverrides || [];
   const [enabled, setEnabled] = useState<CapabilityId[]>(business.capabilities);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   const defaults = CATEGORY_DEFAULT_CAPABILITIES[business.category] || ['scheduling'];
 
@@ -58,8 +57,7 @@ export default function CapabilitiesPage() {
     }
 
     setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    window.location.reload();
   }
 
   function handleReset() {
@@ -199,7 +197,7 @@ export default function CapabilitiesPage() {
           disabled={saving}
           className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
         >
-          {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Changes'}
+          {saving ? 'Saving...' : 'Save Changes'}
         </button>
         <button
           onClick={handleReset}
@@ -209,9 +207,6 @@ export default function CapabilitiesPage() {
         </button>
       </div>
 
-      <p className="mt-4 text-xs text-gray-400">
-        Note: Reload the page after saving to see updated sidebar navigation.
-      </p>
     </div>
   );
 }
