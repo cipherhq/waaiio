@@ -2,20 +2,40 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { type CapabilityId, CATEGORY_DEFAULT_CAPABILITIES } from './types';
 import { getCategoryDefaultCapabilities } from '@/lib/categoryConfig';
 
-/** Get all enabled capabilities for a business, with fallback to category defaults */
+/** Get all enabled capabilities for a business, with fallback to category defaults.
+ *  Also merges in any NEW category defaults that the business doesn't have rows for yet
+ *  (i.e. defaults added after the business was created). */
 export async function getEnabledCapabilities(
   supabase: SupabaseClient,
   businessId: string,
   category?: string,
 ): Promise<CapabilityId[]> {
+  // Fetch ALL rows (enabled + disabled) so we know what the business explicitly configured
   const { data } = await supabase
     .from('business_capabilities')
-    .select('capability')
-    .eq('business_id', businessId)
-    .eq('is_enabled', true);
+    .select('capability, is_enabled')
+    .eq('business_id', businessId);
 
   if (data && data.length > 0) {
-    return data.map(row => row.capability as CapabilityId);
+    const enabled = new Set(
+      data.filter(row => row.is_enabled).map(row => row.capability as CapabilityId),
+    );
+    // Capabilities the business has ANY row for (including disabled = explicitly turned off)
+    const known = new Set(data.map(row => row.capability as CapabilityId));
+
+    // Merge newly-added category defaults that the business has never seen
+    if (category) {
+      const defaults = (getCategoryDefaultCapabilities(category) as CapabilityId[] | null)
+        ?? CATEGORY_DEFAULT_CAPABILITIES[category]
+        ?? [];
+      for (const cap of defaults) {
+        if (!known.has(cap)) {
+          enabled.add(cap); // new default → auto-enable
+        }
+      }
+    }
+
+    return Array.from(enabled);
   }
 
   // Fallback: derive from category (DB-backed → hardcoded fallback)
