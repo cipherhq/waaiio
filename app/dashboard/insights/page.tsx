@@ -70,8 +70,7 @@ export default function InsightsPage() {
         supabase
           .from('services')
           .select('id, name')
-          .eq('business_id', business.id)
-          .is('metadata->event_date', null),
+          .eq('business_id', business.id),
         supabase
           .from('customer_feedback')
           .select('rating, created_at')

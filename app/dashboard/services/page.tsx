@@ -64,7 +64,6 @@ export default function ServicesPage() {
       .from('services')
       .select('*')
       .eq('business_id', business.id)
-      .is('metadata->event_date', null)
       .order('sort_order', { ascending: true });
     setServices((data as Service[]) || []);
     setLoading(false);

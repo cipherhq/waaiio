@@ -71,8 +71,7 @@ export default function AnalyticsPage() {
         supabase
           .from('services')
           .select('id, name')
-          .eq('business_id', business.id)
-          .is('metadata->event_date', null),
+          .eq('business_id', business.id),
       ]);
       const bookings = bookingsRes.data;
       const serviceMap = new Map((servicesRes.data || []).map((s: { id: string; name: string }) => [s.id, s.name]));

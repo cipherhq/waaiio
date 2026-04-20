@@ -9,15 +9,14 @@ interface EventItem {
   id: string;
   name: string;
   description: string | null;
+  date: string;
+  time: string | null;
+  venue: string | null;
   price: number;
-  is_active: boolean;
-  metadata: {
-    event_date?: string;
-    event_time?: string;
-    venue?: string;
-    total_tickets?: number;
-    tickets_sold?: number;
-  };
+  total_tickets: number;
+  tickets_sold: number;
+  status: 'draft' | 'published' | 'sold_out' | 'cancelled' | 'completed';
+  image_url: string | null;
   created_at: string;
 }
 
@@ -41,25 +40,24 @@ export default function EventsPage() {
     venue: '',
     price: 0,
     total_tickets: 100,
-    is_active: true,
+    status: 'published' as EventItem['status'],
   });
 
   const loadEvents = useCallback(async () => {
     const supabase = createClient();
     const { data } = await supabase
-      .from('services')
-      .select('*')
+      .from('events')
+      .select('id, name, description, date, time, venue, price, total_tickets, tickets_sold, status, image_url, created_at')
       .eq('business_id', business.id)
-      .not('metadata->event_date', 'is', null)
-      .order('created_at', { ascending: false });
-    setEvents((data || []) as unknown as EventItem[]);
+      .order('date', { ascending: false });
+    setEvents((data || []) as EventItem[]);
     setLoading(false);
   }, [business.id]);
 
   useEffect(() => { loadEvents(); }, [loadEvents]);
 
   function openAdd() {
-    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, is_active: true });
+    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, status: 'published' });
     setView('add');
   }
 
@@ -68,12 +66,12 @@ export default function EventsPage() {
       id: event.id,
       name: event.name,
       description: event.description || '',
-      date: event.metadata?.event_date || '',
-      time: event.metadata?.event_time || '',
-      venue: event.metadata?.venue || '',
+      date: event.date,
+      time: event.time || '',
+      venue: event.venue || '',
       price: event.price,
-      total_tickets: event.metadata?.total_tickets || 100,
-      is_active: event.is_active,
+      total_tickets: event.total_tickets,
+      status: event.status,
     });
     setView('edit');
   }
@@ -86,27 +84,18 @@ export default function EventsPage() {
       business_id: business.id,
       name: form.name.trim(),
       description: form.description.trim() || null,
+      date: form.date,
+      time: form.time,
+      venue: form.venue.trim() || null,
       price: form.price,
-      is_active: form.is_active,
-      duration_minutes: null,
-      metadata: {
-        event_date: form.date,
-        event_time: form.time,
-        venue: form.venue.trim() || null,
-        total_tickets: form.total_tickets,
-        tickets_sold: 0,
-      },
+      total_tickets: form.total_tickets,
+      status: form.status,
     };
 
     if (view === 'add') {
-      await supabase.from('services').insert(payload);
+      await supabase.from('events').insert(payload);
     } else {
-      // Preserve tickets_sold on edit
-      const existing = events.find(e => e.id === form.id);
-      if (existing) {
-        payload.metadata.tickets_sold = existing.metadata?.tickets_sold || 0;
-      }
-      await supabase.from('services').update(payload).eq('id', form.id);
+      await supabase.from('events').update(payload).eq('id', form.id);
     }
 
     setSaving(false);
@@ -117,7 +106,7 @@ export default function EventsPage() {
   async function handleDelete(id: string) {
     if (!confirm('Delete this event?')) return;
     const supabase = createClient();
-    await supabase.from('services').delete().eq('id', id);
+    await supabase.from('events').delete().eq('id', id);
     if (view !== 'list') setView('list');
     loadEvents();
   }
@@ -189,20 +178,24 @@ export default function EventsPage() {
           {/* Right: Settings */}
           <div className="space-y-3">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Settings</p>
-            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
-              <div className="mr-3">
-                <p className="text-sm font-medium text-gray-800">Active</p>
-                <p className="text-xs text-gray-400">Visible and accepting ticket sales</p>
-              </div>
-              <button type="button" onClick={() => setForm({ ...form, is_active: !form.is_active })} className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.is_active ? 'bg-brand' : 'bg-gray-200'}`}>
-                <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.is_active ? '22px' : '2px' }} />
-              </button>
+            <div className="rounded-lg border border-gray-100 bg-white p-3">
+              <label className="mb-1 block text-sm font-medium text-gray-800">Status</label>
+              <select
+                value={form.status}
+                onChange={e => setForm({ ...form, status: e.target.value as EventItem['status'] })}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+              >
+                <option value="published">Published</option>
+                <option value="draft">Draft</option>
+                <option value="cancelled">Cancelled</option>
+                <option value="completed">Completed</option>
+              </select>
             </div>
             {view === 'edit' && (
               <div className="rounded-lg border border-gray-100 bg-white p-3">
                 <p className="text-xs font-medium text-gray-500">Tickets Sold</p>
                 <p className="mt-1 text-lg font-bold text-gray-900">
-                  {events.find(e => e.id === form.id)?.metadata?.tickets_sold || 0}
+                  {events.find(e => e.id === form.id)?.tickets_sold || 0}
                   <span className="text-sm font-normal text-gray-400"> / {form.total_tickets}</span>
                 </p>
               </div>
@@ -248,10 +241,16 @@ export default function EventsPage() {
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {events.map(event => {
-            const meta = event.metadata || {};
-            const sold = meta.tickets_sold || 0;
-            const total = meta.total_tickets || 0;
+            const sold = event.tickets_sold || 0;
+            const total = event.total_tickets || 0;
             const progress = total > 0 ? Math.min(100, Math.round((sold / total) * 100)) : 0;
+            const statusColors: Record<string, string> = {
+              published: 'bg-green-100 text-green-700',
+              draft: 'bg-gray-100 text-gray-600',
+              cancelled: 'bg-red-100 text-red-700',
+              completed: 'bg-blue-100 text-blue-700',
+              sold_out: 'bg-amber-100 text-amber-700',
+            };
 
             return (
               <div
@@ -259,12 +258,17 @@ export default function EventsPage() {
                 onClick={() => openEdit(event)}
                 className="cursor-pointer rounded-xl border border-gray-100 bg-white p-5 transition hover:border-gray-200 hover:shadow-sm"
               >
-                <h3 className="text-sm font-semibold text-gray-900">{event.name}</h3>
-                {meta.event_date && (
-                  <p className="mt-1 text-xs text-gray-500">
-                    {meta.event_date} at {meta.event_time} {meta.venue ? `\u2022 ${meta.venue}` : ''}
-                  </p>
-                )}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-900">{event.name}</h3>
+                  {event.status !== 'published' && (
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[event.status] || 'bg-gray-100 text-gray-600'}`}>
+                      {event.status.replace('_', ' ')}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {event.date} at {event.time || '--'} {event.venue ? `\u2022 ${event.venue}` : ''}
+                </p>
                 <div className="mt-3 flex items-center justify-between">
                   <span className="text-sm font-bold text-gray-900">
                     {event.price > 0 ? formatCurrency(event.price, country) : 'Free'}
