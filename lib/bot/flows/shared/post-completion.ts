@@ -41,7 +41,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
   // Parallel: load capabilities + business data in one round-trip
   let capabilities: CapabilityId[];
-  let biz: { name: string; country_code: string | null; subscription_tier: string | null; metadata: Record<string, unknown> | null } | null = null;
+  let biz: { name: string; country_code: string | null; subscription_tier: string | null; metadata: Record<string, unknown> | null } | null;
   try {
     const [caps, bizResult] = await Promise.all([
       getEnabledCapabilities(supabase, businessId),
@@ -52,14 +52,14 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         .single(),
     ]);
     capabilities = caps;
-    biz = bizResult.data as typeof biz;
+    biz = (bizResult.data ?? null) as typeof biz;
   } catch {
     return;
   }
 
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
-  const bizName = biz?.name || 'Business';
-  const meta = (biz?.metadata || {}) as Record<string, unknown>;
+  const bizName = biz?.name ?? 'Business';
+  const meta = (biz?.metadata ?? {}) as Record<string, unknown>;
 
   // 0. Auto-receipt — send payment confirmation with receipt details
   if (amountPaid && amountPaid > 0) {
