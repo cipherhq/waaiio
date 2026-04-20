@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
-import { fmtDate, fmtDateTime } from '@/lib/formatters';
+import { fmtDate, fmtDateTime, maskPhone } from '@/lib/formatters';
 
 interface QueueRecord {
   id: string;
@@ -168,7 +168,7 @@ export default function QueueManagement() {
                 <td className="px-4 py-3 text-gray-600">
                   {e.customer_name || '-'}
                   <br />
-                  <span className="text-xs text-gray-400">{e.customer_phone}</span>
+                  <span className="text-xs text-gray-400">{maskPhone(e.customer_phone)}</span>
                 </td>
                 <td className="px-4 py-3 font-bold text-gray-900">{e.queue_number}</td>
                 <td className="px-4 py-3">

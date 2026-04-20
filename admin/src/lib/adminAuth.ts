@@ -1,9 +1,14 @@
 import { supabase } from './supabase';
 
+export type AdminRole = 'admin' | 'support';
+
 export interface AdminSession {
   userId: string;
   email: string;
+  role: AdminRole;
 }
+
+const ALLOWED_ROLES: AdminRole[] = ['admin', 'support'];
 
 export async function requireAdminSession(): Promise<AdminSession> {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -21,9 +26,14 @@ export async function requireAdminSession(): Promise<AdminSession> {
     .maybeSingle();
 
   if (profileError) throw profileError;
-  if (!profile || profile.role !== 'admin') {
-    throw new Error('Signed-in account is not an admin profile.');
+  if (!profile || !ALLOWED_ROLES.includes(profile.role as AdminRole)) {
+    throw new Error('Signed-in account does not have admin access.');
   }
 
-  return { userId: user.id, email: user.email || '' };
+  return { userId: user.id, email: user.email || '', role: profile.role as AdminRole };
+}
+
+/** Check if current admin session has full admin privileges (not just support). */
+export function isFullAdmin(session: AdminSession | null): boolean {
+  return session?.role === 'admin';
 }

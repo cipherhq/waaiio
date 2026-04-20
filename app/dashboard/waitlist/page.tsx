@@ -79,7 +79,7 @@ export default function WaitlistPage() {
     setActionLoading(entryId);
     try {
       const supabase = createClient();
-      await supabase.from('waitlist_entries').delete().eq('id', entryId);
+      await supabase.from('waitlist_entries').delete().eq('id', entryId).eq('business_id', business.id);
       fetchEntries();
     } finally {
       setActionLoading(null);

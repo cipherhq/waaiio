@@ -111,7 +111,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     const { data: nextNum } = await ctx.supabase
       .rpc('next_queue_number', { biz_id: ctx.business.id });
 
-    const queueNumber = nextNum || 1;
+    const queueNumber = nextNum ?? 1;
 
     // Calculate estimated wait based on current waiting count
     const { count } = await ctx.supabase

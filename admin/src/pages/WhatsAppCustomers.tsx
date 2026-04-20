@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
+import { maskPhone } from '@/lib/formatters';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtRelative, fmtCurrency } from '@/lib/formatters';
 import { Users, UserCheck, CreditCard, Building2, Search } from 'lucide-react';
@@ -421,7 +422,7 @@ export default function Customers() {
                 >
                   <td className="px-4 py-3 font-medium text-gray-900">{c.name}</td>
                   <td className="px-4 py-3 text-gray-600">{c.email}</td>
-                  <td className="px-4 py-3 text-gray-600">{c.phone}</td>
+                  <td className="px-4 py-3 text-gray-600">{maskPhone(c.phone)}</td>
                   <td className="px-4 py-3 text-gray-600">
                     {c.businesses.length === 1
                       ? c.businesses[0].name
@@ -455,7 +456,7 @@ export default function Customers() {
           <div className="space-y-4 text-sm">
             <DetailRow label="Name" value={selected.name} />
             <DetailRow label="Email" value={selected.email} />
-            <DetailRow label="Phone" value={selected.phone} />
+            <DetailRow label="Phone" value={maskPhone(selected.phone)} />
             <DetailRow label="Bookings" value={selected.booking_count} />
             <DetailRow label="Payments" value={selected.payment_count} />
             <DetailRow label="Total Spent" value={selected.total_spent > 0 ? fmtCurrency(selected.total_spent, selected.currency) : '—'} />

@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
+import { maskPhone } from '@/lib/formatters';
 import { SummaryCard } from '@/components/SummaryCard';
 import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
@@ -288,7 +289,7 @@ export default function UserManagement() {
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-600">{user.email}</td>
-                  <td className="px-4 py-3 text-gray-600">{user.phone || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{maskPhone(user.phone)}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={user.role} colorMap={{
                       customer: 'bg-blue-100 text-blue-700',
@@ -323,7 +324,7 @@ export default function UserManagement() {
             <div className="space-y-3 text-sm">
               <DetailRow label="ID" value={selected.id} />
               <DetailRow label="Email" value={selected.email} />
-              <DetailRow label="Phone" value={selected.phone} />
+              <DetailRow label="Phone" value={maskPhone(selected.phone)} />
               <DetailRow label="Role" value={selected.role.replace(/_/g, ' ')} />
               <DetailRow label="Country" value={selected.country_code} />
               <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />

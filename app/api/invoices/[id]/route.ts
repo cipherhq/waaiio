@@ -21,6 +21,18 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
 
+    // Verify user owns the business that owns this invoice
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('id', data.business_id)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (!biz) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
+
     return NextResponse.json(data);
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -37,14 +49,25 @@ export async function PUT(
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Check current status
+    // Check current status + ownership
     const { data: existing } = await supabase
       .from('invoices')
-      .select('id, status')
+      .select('id, status, business_id')
       .eq('id', id)
       .single();
 
     if (!existing) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
+
+    const { data: ownedBiz } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('id', existing.business_id)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (!ownedBiz) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
     if (existing.status !== 'draft') {
@@ -133,6 +156,28 @@ export async function DELETE(
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Verify ownership before cancelling
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('id, business_id')
+      .eq('id', id)
+      .single();
+
+    if (!invoice) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
+
+    const { data: ownedBiz } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('id', invoice.business_id)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+
+    if (!ownedBiz) {
+      return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
 
     const { error } = await supabase
       .from('invoices')

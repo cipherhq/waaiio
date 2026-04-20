@@ -25,6 +25,16 @@ export function fmtDateTime(date: string | Date): string {
   });
 }
 
+/** Mask phone number for privacy: shows country code + last 4 digits. */
+export function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return '—';
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length <= 4) return phone;
+  const last4 = digits.slice(-4);
+  const prefix = phone.startsWith('+') ? phone.slice(0, phone.indexOf(digits.charAt(0))) : '';
+  return `${prefix}***${last4}`;
+}
+
 export function fmtRelative(date: string | Date): string {
   const now = Date.now();
   const then = new Date(date).getTime();
