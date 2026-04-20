@@ -60,30 +60,59 @@ const selectCapabilityStep: FlowStepConfig = {
     const category = ctx.business?.category || 'other';
 
     // Filter out non-user-facing capabilities (background or dashboard-only)
-    const userFacing = capabilities.filter(c => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff'].includes(c));
+    const userFacing = capabilities.filter(c => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign'].includes(c));
 
-    const buttons = userFacing.slice(0, 3).map(cap => ({
-      id: `cap_${cap}`,
+    // WhatsApp buttons max 3 — use a list for more options
+    if (userFacing.length <= 3) {
+      const buttons = userFacing.map(cap => ({
+        id: `cap_${cap}`,
+        title: getCapabilityLabel(cap, category),
+      }));
+      return [{
+        type: 'buttons' as const,
+        body: 'What would you like to do?',
+        buttons,
+      }];
+    }
+
+    // List message for 4+ capabilities
+    const items = userFacing.map(cap => ({
       title: getCapabilityLabel(cap, category),
+      postbackText: `cap_${cap}`,
     }));
-
     return [{
-      type: 'buttons' as const,
+      type: 'list' as const,
+      title: 'Services',
       body: 'What would you like to do?',
-      buttons,
+      buttonLabel: 'View Options',
+      items,
     }];
   },
 
   async validate(input: string, ctx: FlowContext) {
-    if (!input.startsWith('cap_')) {
-      return { valid: false, errorMessage: 'Please select an option.' };
+    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+    const category = ctx.business?.category || 'other';
+    const userFacing = capabilities.filter(c => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign'].includes(c));
+
+    let capId: CapabilityId | null = null;
+
+    if (input.startsWith('cap_')) {
+      capId = input.replace('cap_', '') as CapabilityId;
+    } else {
+      // Numeric selection: "1", "2", etc.
+      const num = parseInt(input, 10);
+      if (num >= 1 && num <= userFacing.length) {
+        capId = userFacing[num - 1];
+      }
+      // Label match: "buy tickets", "give", etc.
+      if (!capId) {
+        const lower = input.toLowerCase();
+        capId = userFacing.find(c => getCapabilityLabel(c, category).toLowerCase() === lower) || null;
+      }
     }
 
-    const capId = input.replace('cap_', '') as CapabilityId;
-    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
-
-    if (!capabilities.includes(capId)) {
-      return { valid: false, errorMessage: 'Invalid option. Please try again.' };
+    if (!capId || !capabilities.includes(capId)) {
+      return { valid: false, errorMessage: 'Please select an option from the menu.' };
     }
 
     return {
