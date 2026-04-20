@@ -158,6 +158,17 @@ export async function POST(request: NextRequest) {
         // Don't auto-hold for velocity, just flag for review
       }
 
+      // --- LARGE PAYOUT CHECK ---
+      const LARGE_PAYOUT_THRESHOLD = 1_000_000;
+      if (net >= LARGE_PAYOUT_THRESHOLD) {
+        flags.push({
+          type: 'large_payout',
+          message: `Net payout amount (${net.toLocaleString()}) exceeds ${LARGE_PAYOUT_THRESHOLD.toLocaleString()} — review carefully`,
+          severity: 'warning',
+        });
+        // Informational flag only — does not auto-hold
+      }
+
       // Get active payout account
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')

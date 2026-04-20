@@ -69,6 +69,48 @@ export async function POST(
     }, { status: 400 });
   }
 
+  // --- Payout account verification ---
+  if (!payout.payout_account_id) {
+    return NextResponse.json({
+      error: 'Cannot approve payout: no payout account configured for this business.',
+    }, { status: 400 });
+  }
+
+  const { data: payoutAcct } = await supabase
+    .from('payout_accounts')
+    .select('id, business_id, is_active, verified_at')
+    .eq('id', payout.payout_account_id)
+    .maybeSingle();
+
+  if (!payoutAcct) {
+    return NextResponse.json({
+      error: 'Cannot approve payout: payout account not found.',
+    }, { status: 400 });
+  }
+
+  if (payoutAcct.business_id !== payout.business_id) {
+    logger.error('Security violation: payout account business_id mismatch', {
+      payout_id: id,
+      payout_business_id: payout.business_id,
+      account_business_id: payoutAcct.business_id,
+    });
+    return NextResponse.json({
+      error: 'Security violation: payout account does not belong to this business.',
+    }, { status: 403 });
+  }
+
+  if (!payoutAcct.is_active) {
+    return NextResponse.json({
+      error: 'Cannot approve payout: payout account is inactive.',
+    }, { status: 400 });
+  }
+
+  if (!payoutAcct.verified_at) {
+    return NextResponse.json({
+      error: 'Cannot approve payout: payout account has not been verified.',
+    }, { status: 400 });
+  }
+
   try {
     let gatewayTransferCode: string | null = null;
     let finalStatus = 'paid';

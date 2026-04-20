@@ -1,0 +1,88 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+import { logger } from '@/lib/logger';
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  const { token } = body;
+
+  if (!token || typeof token !== 'string') {
+    return NextResponse.json({ error: 'Missing token' }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+
+  try {
+    // Look up the token — must not be expired and not already used
+    const { data: tokenRecord } = await supabase
+      .from('admin_impersonation_tokens')
+      .select('id, admin_id, business_id, expires_at, used_at')
+      .eq('token', token)
+      .maybeSingle();
+
+    if (!tokenRecord) {
+      return NextResponse.json({ error: 'Invalid token' }, { status: 400 });
+    }
+
+    if (tokenRecord.used_at) {
+      return NextResponse.json({ error: 'Token has already been used' }, { status: 400 });
+    }
+
+    if (new Date(tokenRecord.expires_at) < new Date()) {
+      return NextResponse.json({ error: 'Token has expired' }, { status: 400 });
+    }
+
+    // Verify the admin is still valid (admin or support role)
+    const { data: adminProfile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', tokenRecord.admin_id)
+      .maybeSingle();
+
+    if (!adminProfile || !['admin', 'support'].includes(adminProfile.role)) {
+      return NextResponse.json({ error: 'Admin account is no longer valid' }, { status: 403 });
+    }
+
+    // Get business name for the cookie
+    const { data: business } = await supabase
+      .from('businesses')
+      .select('name')
+      .eq('id', tokenRecord.business_id)
+      .maybeSingle();
+
+    // Mark token as used
+    await supabase
+      .from('admin_impersonation_tokens')
+      .update({ used_at: new Date().toISOString() })
+      .eq('id', tokenRecord.id);
+
+    // Set httpOnly cookies for impersonation
+    const cookieStore = await cookies();
+    const maxAge = 1800; // 30 minutes
+
+    cookieStore.set('impersonate_business_id', tokenRecord.business_id, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/dashboard',
+      maxAge,
+    });
+
+    cookieStore.set('impersonate_admin_id', tokenRecord.admin_id, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/dashboard',
+      maxAge,
+    });
+
+    return NextResponse.json({
+      success: true,
+      business_name: business?.name || 'Unknown Business',
+    });
+  } catch (error) {
+    logger.error('Validate impersonation token error:', (error as Error).message);
+    return NextResponse.json({ error: 'Failed to validate token' }, { status: 500 });
+  }
+}

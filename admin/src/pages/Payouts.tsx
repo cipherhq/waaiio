@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 
 interface PayoutRecord {
@@ -57,6 +56,16 @@ export default function Payouts() {
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
 
+  // Payout account details for approve modal
+  const [approveAccountInfo, setApproveAccountInfo] = useState<{
+    bank_name: string | null;
+    account_name: string | null;
+    account_number: string | null;
+    is_active: boolean;
+    verified_at: string | null;
+  } | null>(null);
+  const [loadingAccount, setLoadingAccount] = useState(false);
+
   const loadingRef = useRef(false);
 
   async function loadData() {
@@ -105,43 +114,69 @@ export default function Payouts() {
   const totalPages = Math.max(1, Math.ceil(displayPayouts.length / perPage));
   const pageItems = displayPayouts.slice((page - 1) * perPage, page * perPage);
 
-  // Approve payout
+  // Load payout account details when approve modal opens
+  async function loadApproveAccount(payoutAccountId: string | null, businessId: string) {
+    if (!payoutAccountId) {
+      setApproveAccountInfo(null);
+      return;
+    }
+    setLoadingAccount(true);
+    try {
+      const { data } = await supabase
+        .from('payout_accounts')
+        .select('bank_name, account_name, account_number, is_active, verified_at')
+        .eq('id', payoutAccountId)
+        .eq('business_id', businessId)
+        .maybeSingle();
+      setApproveAccountInfo(data);
+    } catch {
+      setApproveAccountInfo(null);
+    } finally {
+      setLoadingAccount(false);
+    }
+  }
+
+  function openApproveModal(p: PayoutRecord) {
+    setApproveTarget(p);
+    setApproveAccountInfo(null);
+    loadApproveAccount(p.payout_account_id, p.business_id);
+  }
+
+  // Approve payout via API route
   async function handleApprove() {
     if (!approveTarget) return;
     setApproving(true);
 
     try {
-      // For API transfers, we'd call Paystack/Stripe here
-      // For now, support manual marking
-      const { error } = await supabase
-        .from('business_payouts')
-        .update({
-          status: transferMethod.startsWith('manual') ? 'paid' : 'processing',
-          approved_at: new Date().toISOString(),
-          transfer_method: transferMethod,
-          transfer_reference: transferRef || null,
-          notes: approveNotes || null,
-          paid_at: transferMethod.startsWith('manual') ? new Date().toISOString() : null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', approveTarget.id);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        alert('Session expired — please re-login');
+        return;
+      }
 
-      if (error) throw error;
-
-      await logAudit({
-        action: 'approve_payout',
-        entity_type: 'business_payout',
-        entity_id: approveTarget.id,
-        details: {
-          business_id: approveTarget.business_id,
-          business_name: approveTarget.business_name,
-          amount: approveTarget.net_amount,
-          transfer_method: transferMethod,
-          transfer_reference: transferRef,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/payouts/${approveTarget.id}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
         },
+        body: JSON.stringify({
+          transfer_method: transferMethod,
+          reference: transferRef || null,
+          notes: approveNotes || null,
+        }),
       });
 
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to approve payout');
+        return;
+      }
+
       setApproveTarget(null);
+      setApproveAccountInfo(null);
       setTransferMethod('manual_bank');
       setTransferRef('');
       setApproveNotes('');
@@ -154,34 +189,34 @@ export default function Payouts() {
     }
   }
 
-  // Reject payout
+  // Reject payout via API route
   async function handleReject() {
     if (!rejectTarget || !rejectReason) return;
     setRejecting(true);
 
     try {
-      const { error } = await supabase
-        .from('business_payouts')
-        .update({
-          status: 'rejected',
-          rejected_reason: rejectReason,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', rejectTarget.id);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        alert('Session expired — please re-login');
+        return;
+      }
 
-      if (error) throw error;
-
-      await logAudit({
-        action: 'reject_payout',
-        entity_type: 'business_payout',
-        entity_id: rejectTarget.id,
-        details: {
-          business_id: rejectTarget.business_id,
-          business_name: rejectTarget.business_name,
-          amount: rejectTarget.net_amount,
-          reason: rejectReason,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/payouts/${rejectTarget.id}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
         },
+        body: JSON.stringify({ reason: rejectReason }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to reject payout');
+        return;
+      }
 
       setRejectTarget(null);
       setRejectReason('');
@@ -194,105 +229,43 @@ export default function Payouts() {
     }
   }
 
-  // Generate weekly payouts
+  // Generate weekly payouts via API route
   async function handleGenerate() {
     if (!confirm('Generate pending payouts for all platform-managed businesses?')) return;
     setGenerating(true);
 
     try {
-      const now = new Date();
-      const periodEnd = new Date(now);
-      periodEnd.setDate(periodEnd.getDate() - periodEnd.getDay()); // Last Sunday
-      const periodStart = new Date(periodEnd);
-      periodStart.setDate(periodStart.getDate() - 6); // Monday before
-
-      // Get platform-managed businesses
-      const { data: businesses } = await supabase
-        .from('businesses')
-        .select('id, name')
-        .eq('payout_mode', 'platform_managed')
-        .eq('status', 'active');
-
-      if (!businesses?.length) {
-        alert('No platform-managed businesses found');
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        alert('Session expired — please re-login');
         setGenerating(false);
         return;
       }
 
-      let created = 0;
-
-      for (const biz of businesses) {
-        // Sum payments in period
-        const { data: payments } = await supabase
-          .from('payments')
-          .select('amount')
-          .eq('business_id', biz.id)
-          .eq('status', 'success')
-          .gte('created_at', periodStart.toISOString())
-          .lte('created_at', periodEnd.toISOString());
-
-        const gross = (payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
-        if (gross <= 0) continue;
-
-        // Get platform fees for this business in period
-        const { data: fees } = await supabase
-          .from('platform_fees')
-          .select('fee_total')
-          .eq('business_id', biz.id)
-          .eq('waived', false)
-          .gte('created_at', periodStart.toISOString())
-          .lte('created_at', periodEnd.toISOString());
-
-        const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-        const net = Math.max(0, gross - totalFees);
-
-        // Get payout account
-        const { data: payoutAccount } = await supabase
-          .from('payout_accounts')
-          .select('id')
-          .eq('business_id', biz.id)
-          .eq('is_active', true)
-          .maybeSingle();
-
-        // Check for existing payout in this period
-        const { data: existing } = await supabase
-          .from('business_payouts')
-          .select('id')
-          .eq('business_id', biz.id)
-          .eq('period_start', periodStart.toISOString().split('T')[0])
-          .eq('period_end', periodEnd.toISOString().split('T')[0])
-          .maybeSingle();
-
-        if (existing) continue; // Already generated
-
-        await supabase.from('business_payouts').insert({
-          business_id: biz.id,
-          payout_account_id: payoutAccount?.id || null,
-          period_start: periodStart.toISOString().split('T')[0],
-          period_end: periodEnd.toISOString().split('T')[0],
-          gross_amount: gross,
-          platform_fee: totalFees,
-          gateway_fee: 0,
-          net_amount: net,
-          status: 'pending',
-        });
-
-        created++;
-      }
-
-      await logAudit({
-        action: 'generate_payouts',
-        entity_type: 'business_payout',
-        entity_id: 'batch',
-        details: {
-          period_start: periodStart.toISOString().split('T')[0],
-          period_end: periodEnd.toISOString().split('T')[0],
-          businesses_processed: businesses.length,
-          payouts_created: created,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/payouts/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
         },
       });
 
-      alert(`Generated ${created} payout(s) for ${businesses.length} businesses`);
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to generate payouts');
+        setGenerating(false);
+        return;
+      }
+
+      const msg = [
+        `Created: ${data.created} payout(s)`,
+        data.held ? `Held: ${data.held} (flagged for review)` : null,
+        data.period ? `Period: ${data.period.start} to ${data.period.end}` : null,
+      ].filter(Boolean).join('\n');
+      alert(msg);
+
       await loadData();
     } catch (error) {
       console.error('Generate error:', error);
@@ -402,7 +375,7 @@ export default function Payouts() {
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
-                          onClick={() => setApproveTarget(p)}
+                          onClick={() => openApproveModal(p)}
                           className="rounded-lg bg-green-100 px-3 py-1.5 text-xs font-medium text-green-700 transition hover:bg-green-200"
                         >
                           Approve
@@ -433,6 +406,36 @@ export default function Payouts() {
             <p className="mt-1 text-sm text-gray-500">
               {approveTarget.business_name} — {formatMoney(approveTarget.net_amount, approveTarget.country_code)}
             </p>
+
+            {/* Destination Account Info */}
+            <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+              <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Destination Account</p>
+              {loadingAccount ? (
+                <p className="mt-1 text-sm text-gray-400">Loading account details...</p>
+              ) : !approveTarget.payout_account_id ? (
+                <p className="mt-1 text-sm font-medium text-red-600">No payout account configured</p>
+              ) : !approveAccountInfo ? (
+                <p className="mt-1 text-sm font-medium text-red-600">Payout account not found or mismatched</p>
+              ) : (
+                <div className="mt-1 space-y-0.5 text-sm">
+                  {approveAccountInfo.bank_name && (
+                    <p className="text-gray-700">Bank: <span className="font-medium">{approveAccountInfo.bank_name}</span></p>
+                  )}
+                  {approveAccountInfo.account_name && (
+                    <p className="text-gray-700">Name: <span className="font-medium">{approveAccountInfo.account_name}</span></p>
+                  )}
+                  {approveAccountInfo.account_number && (
+                    <p className="text-gray-700">Account: <span className="font-mono font-medium">****{approveAccountInfo.account_number.slice(-4)}</span></p>
+                  )}
+                  {!approveAccountInfo.is_active && (
+                    <p className="font-medium text-red-600">Account is inactive</p>
+                  )}
+                  {!approveAccountInfo.verified_at && (
+                    <p className="font-medium text-amber-600">Account is not verified</p>
+                  )}
+                </div>
+              )}
+            </div>
 
             <div className="mt-4 space-y-4">
               <div>
@@ -482,7 +485,7 @@ export default function Payouts() {
                 {approving ? 'Processing...' : 'Approve & Mark Paid'}
               </button>
               <button
-                onClick={() => setApproveTarget(null)}
+                onClick={() => { setApproveTarget(null); setApproveAccountInfo(null); }}
                 className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
               >
                 Cancel

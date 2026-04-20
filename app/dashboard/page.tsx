@@ -92,7 +92,7 @@ export default function DashboardOverview() {
           .eq('business_id', business.id)
           .order('created_at', { ascending: false })
           .limit(5),
-        supabase.from('services').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
+        supabase.from('services').select('id', { count: 'exact', head: true }).eq('business_id', business.id).is('metadata->event_date', null),
         supabase.from('whatsapp_config').select('bot_greeting').eq('business_id', business.id).maybeSingle(),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).gte('created_at', monthStart),
         // Order queries

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
-import { Search, LogOut, Pencil, Check, X, Building2 } from 'lucide-react';
+import { Search, LogOut, Pencil, Check, X, Building2, ExternalLink } from 'lucide-react';
 
 interface Business {
   id: string;
@@ -67,6 +67,7 @@ export default function ImpersonationMode() {
   const [editingField, setEditingField] = useState<EditingField>(null);
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
+  const [launchingDashboard, setLaunchingDashboard] = useState(false);
 
   // Load businesses and admin info on mount
   useEffect(() => {
@@ -133,8 +134,8 @@ export default function ImpersonationMode() {
         session_id: sid,
         admin_id: adminId,
         admin_email: adminEmail,
-        business_id: business.id,
-        business_name: business.name,
+        target_business_id: business.id,
+        target_business_name: business.name,
         action: 'session_start',
         changes: null,
         created_at: new Date().toISOString(),
@@ -172,6 +173,43 @@ export default function ImpersonationMode() {
     }
   }
 
+  // Launch "View Dashboard" — generates an impersonation token and opens business dashboard in new tab
+  async function handleViewDashboard() {
+    if (!selected || launchingDashboard) return;
+    setLaunchingDashboard(true);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        alert('Session expired — please re-login');
+        return;
+      }
+
+      const res = await fetch('/api/admin/impersonate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ business_id: selected.id }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to generate impersonation token');
+        return;
+      }
+
+      window.open(data.url, '_blank');
+    } catch (error) {
+      console.error('View dashboard error:', error);
+      alert('Failed to launch dashboard');
+    } finally {
+      setLaunchingDashboard(false);
+    }
+  }
+
   // End impersonation session
   async function handleEndSession() {
     if (!selected || !sessionId) return;
@@ -181,8 +219,8 @@ export default function ImpersonationMode() {
         session_id: sessionId,
         admin_id: adminId,
         admin_email: adminEmail,
-        business_id: selected.id,
-        business_name: selected.name,
+        target_business_id: selected.id,
+        target_business_name: selected.name,
         action: 'session_end',
         changes: null,
         created_at: new Date().toISOString(),
@@ -236,8 +274,8 @@ export default function ImpersonationMode() {
         session_id: sessionId,
         admin_id: adminId,
         admin_email: adminEmail,
-        business_id: selected.id,
-        business_name: selected.name,
+        target_business_id: selected.id,
+        target_business_name: selected.name,
         action: 'update_profile',
         changes: {
           field: editingField,
@@ -337,13 +375,23 @@ export default function ImpersonationMode() {
                 </p>
               </div>
             </div>
-            <button
-              onClick={handleEndSession}
-              className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-amber-700"
-            >
-              <LogOut className="h-4 w-4" />
-              End Session
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleViewDashboard}
+                disabled={launchingDashboard}
+                className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-sm font-bold text-amber-700 transition hover:bg-amber-50 disabled:opacity-50"
+              >
+                <ExternalLink className="h-4 w-4" />
+                {launchingDashboard ? 'Opening...' : 'View Dashboard'}
+              </button>
+              <button
+                onClick={handleEndSession}
+                className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-amber-700"
+              >
+                <LogOut className="h-4 w-4" />
+                End Session
+              </button>
+            </div>
           </div>
 
           {/* Business Profile Card */}

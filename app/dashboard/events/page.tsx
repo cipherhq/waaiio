@@ -50,6 +50,7 @@ export default function EventsPage() {
       .from('services')
       .select('*')
       .eq('business_id', business.id)
+      .not('metadata->event_date', 'is', null)
       .order('created_at', { ascending: false });
     setEvents((data || []) as unknown as EventItem[]);
     setLoading(false);
