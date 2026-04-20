@@ -44,6 +44,7 @@ interface BusinessRecord {
   trial_ends_at: string;
   metadata: Record<string, unknown>;
   country_code?: CountryCode;
+  is_whitelabel?: boolean;
 }
 
 export class BotService {
@@ -549,16 +550,25 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, is_whitelabel')
           .eq('id', businessId)
           .single();
         business = biz as BusinessRecord | null;
       }
 
-      // Load capabilities for this business
+      // Load capabilities + WhatsApp config + tier limits in parallel (all only need businessId)
       let capabilities: CapabilityId[] = [];
+      let waConfig: import('./standalone.service').WhatsAppConfigBundle | null = null;
+      let tierInfo: import('./standalone.service').TierCheckResult | null = null;
       if (business) {
-        capabilities = await getEnabledCapabilities(this.supabase, business.id, business.category);
+        const [caps, config, tier] = await Promise.all([
+          getEnabledCapabilities(this.supabase, business.id, business.category),
+          this.standaloneService.loadWhatsAppConfigBundle(business.id),
+          this.standaloneService.checkTierLimitsFromBusiness(business.id, business.subscription_tier, business.is_whitelabel),
+        ]);
+        capabilities = caps;
+        waConfig = config;
+        tierInfo = tier;
       }
 
       const firstStep = business
@@ -602,19 +612,13 @@ export class BotService {
 
       session = newSession as BotSession;
 
-      if (business) {
-        // Standalone bot greeting
-        const [templates, tierInfo, botAlias] = await Promise.all([
-          this.standaloneService.getBotTemplates(business.id),
-          this.standaloneService.checkTierLimits(business.id),
-          this.standaloneService.getBotAlias(business.id),
-        ]);
-
+      if (business && waConfig && tierInfo) {
+        // Standalone bot greeting — use pre-fetched config (no extra queries)
         let greeting: string;
-        if (botAlias) {
-          greeting = this.intelligence.getPersonaGreeting(botAlias, business.name);
+        if (waConfig.alias) {
+          greeting = this.intelligence.getPersonaGreeting(waConfig.alias, business.name);
         } else {
-          greeting = this.standaloneService.fillTemplate(templates.greeting, {
+          greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
             restaurant_name: business.name,
             business_name: business.name,
           });
@@ -632,9 +636,8 @@ export class BotService {
 
         // ── Welcome Buttons: send interactive menu after greeting ──
         try {
-          const customConfig = await loadBotCustomConfig(this.supabase, business.id);
-          if (customConfig.welcome_buttons.length > 0) {
-            const buttons = customConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
+          if (waConfig.welcome_buttons.length > 0) {
+            const buttons = waConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
               id: `wb_${i}`,
               title: btn.label.slice(0, 20),
             }));
