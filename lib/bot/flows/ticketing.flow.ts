@@ -135,7 +135,7 @@ export const ticketingFlow: FlowDefinition = {
       id: 'ticket_confirmation',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString('en-NG', {
+        const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long',
         });
 
@@ -296,7 +296,7 @@ export const ticketingFlow: FlowDefinition = {
           });
         }
 
-        const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString('en-NG', {
+        const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long',
         });
 
@@ -404,7 +404,7 @@ export const ticketingFlow: FlowDefinition = {
           const verified = await verifyPaystackPayment(ctx.supabase, ref);
           if (verified) {
             const d = ctx.session.session_data;
-            const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString('en-NG', {
+            const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
               weekday: 'long', day: 'numeric', month: 'long',
             });
             await ctx.sender.sendText({
