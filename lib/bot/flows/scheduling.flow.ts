@@ -889,13 +889,17 @@ export const schedulingFlow: FlowDefinition = {
 
         // Reserve booking slot (overbooking prevention)
         if (ctx.business) {
-          await ctx.supabase.rpc('reserve_booking_slot', {
-            p_business_id: ctx.business.id,
-            p_date: d.date as string,
-            p_start_time: d.time as string,
-            p_end_time: d.time as string, // end_time is auto-calculated
-            p_staff_id: (d.staff_id as string) || null,
-          });
+          try {
+            await ctx.supabase.rpc('reserve_booking_slot', {
+              p_business_id: ctx.business.id,
+              p_date: d.date as string,
+              p_start_time: d.time as string,
+              p_end_time: d.time as string, // end_time is auto-calculated
+              p_staff_id: (d.staff_id as string) || null,
+            });
+          } catch (err) {
+            console.error('[SCHEDULING] reserve_booking_slot error (non-fatal):', err);
+          }
         }
 
         // Upsert customer profile

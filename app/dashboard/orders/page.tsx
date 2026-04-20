@@ -90,6 +90,7 @@ export default function OrdersPage() {
 
   const filtered = useMemo(() => {
     let r = orders;
+    if (filterStatus !== 'all') r = r.filter(o => o.status === filterStatus);
     if (search) {
       const q = search.toLowerCase();
       r = r.filter(o =>
@@ -102,7 +103,7 @@ export default function OrdersPage() {
     if (dateFrom) r = r.filter(o => o.created_at >= dateFrom);
     if (dateTo) r = r.filter(o => o.created_at <= dateTo + 'T23:59:59');
     return r;
-  }, [orders, search, dateFrom, dateTo]);
+  }, [orders, search, dateFrom, dateTo, filterStatus]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);

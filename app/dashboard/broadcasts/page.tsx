@@ -252,14 +252,14 @@ export default function BroadcastsPage() {
             <div>
               <div className="flex items-center justify-between text-xs text-gray-500">
                 <span>{broadcastsUsed} of {maxBroadcasts} broadcasts</span>
-                <span>{Math.round((broadcastsUsed / maxBroadcasts) * 100)}%</span>
+                <span>{maxBroadcasts > 0 ? Math.round((broadcastsUsed / maxBroadcasts) * 100) : 0}%</span>
               </div>
               <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
                 <div
                   className={`h-2 rounded-full transition-all ${
                     broadcastsUsed >= maxBroadcasts ? 'bg-red-500' : broadcastsUsed >= maxBroadcasts * 0.8 ? 'bg-amber-500' : 'bg-brand'
                   }`}
-                  style={{ width: `${Math.min((broadcastsUsed / maxBroadcasts) * 100, 100)}%` }}
+                  style={{ width: `${maxBroadcasts > 0 ? Math.min((broadcastsUsed / maxBroadcasts) * 100, 100) : 0}%` }}
                 />
               </div>
             </div>
@@ -267,14 +267,14 @@ export default function BroadcastsPage() {
             <div>
               <div className="flex items-center justify-between text-xs text-gray-500">
                 <span>{recipientsUsed} of {maxRecipients} recipients</span>
-                <span>{Math.round((recipientsUsed / maxRecipients) * 100)}%</span>
+                <span>{maxRecipients > 0 ? Math.round((recipientsUsed / maxRecipients) * 100) : 0}%</span>
               </div>
               <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
                 <div
                   className={`h-2 rounded-full transition-all ${
                     recipientsUsed >= maxRecipients ? 'bg-red-500' : recipientsUsed >= maxRecipients * 0.8 ? 'bg-amber-500' : 'bg-brand'
                   }`}
-                  style={{ width: `${Math.min((recipientsUsed / maxRecipients) * 100, 100)}%` }}
+                  style={{ width: `${maxRecipients > 0 ? Math.min((recipientsUsed / maxRecipients) * 100, 100) : 0}%` }}
                 />
               </div>
             </div>

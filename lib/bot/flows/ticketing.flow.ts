@@ -149,7 +149,7 @@ export const ticketingFlow: FlowDefinition = {
               `📅 ${dateLabel}`,
               d.event_venue ? `📍 ${d.event_venue}` : '',
               `🎟️ ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''}`,
-              `💰 Total: ₦${(d.total_amount as number).toLocaleString()}`,
+              `💰 Total: ${formatCurrency(d.total_amount as number, (ctx.business?.country_code || 'NG') as CountryCode)}`,
             ].filter(Boolean).join('\n'),
           },
           {

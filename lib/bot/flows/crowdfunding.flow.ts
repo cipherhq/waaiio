@@ -132,8 +132,8 @@ const enterDonationAmountStep: FlowStepConfig = {
   },
 
   async validate(input: string) {
-    const amount = parseInt(input.replace(/[^0-9]/g, ''), 10);
-    if (!amount || amount < 100) {
+    const amount = Math.round(parseFloat(input.replace(/[^0-9.]/g, '')));
+    if (!amount || isNaN(amount) || amount < 100) {
       return { valid: false, errorMessage: 'Please enter a valid amount (minimum 100).' };
     }
     return { valid: true, data: { donation_amount: amount } };

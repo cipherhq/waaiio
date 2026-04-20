@@ -2294,15 +2294,17 @@ export const orderingFlow: FlowDefinition = {
 
           // Decrement stock: use variant stock if applicable, otherwise product stock
           if (item.variant_id) {
-            await ctx.supabase.rpc('decrement_variant_stock', {
+            const { error: stockErr } = await ctx.supabase.rpc('decrement_variant_stock', {
               p_variant_id: item.variant_id,
               qty: item.quantity,
             });
+            if (stockErr) console.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
           } else {
-            await ctx.supabase.rpc('decrement_stock', {
+            const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
               p_product_id: item.product_id,
               qty: item.quantity,
             });
+            if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
           }
         }
 
