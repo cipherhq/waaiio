@@ -458,26 +458,31 @@ export class BotService {
         logger.debug('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
       }
 
-      // Bot code routing (with fuzzy suggestions)
-      let pendingSuggestions: { id: string; name: string; bot_code: string }[] | undefined;
-      let isCategoryMatch = false;
-      if (!businessId) {
-        const detection = await this.detectBotCodeWithSuggestions(text, from);
-        businessId = detection.businessId;
-        pendingSuggestions = detection.suggestions;
-        isCategoryMatch = detection.isCategory || false;
-        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
-      }
-
-      // Link to existing user (check both +phone and phone formats)
+      // Normalize phone formats (reused below)
       const phoneWithPlus = from.startsWith('+') ? from : `+${from}`;
       const phoneWithout = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase
+
+      // Bot code routing + profile lookup in parallel (independent queries)
+      let pendingSuggestions: { id: string; name: string; bot_code: string }[] | undefined;
+      let isCategoryMatch = false;
+      const detectionPromise = !businessId
+        ? this.detectBotCodeWithSuggestions(text, from)
+        : Promise.resolve(null);
+      const profilePromise = this.supabase
         .from('profiles')
         .select('id')
         .or(`phone.eq.${phoneWithPlus},phone.eq.${phoneWithout}`)
         .limit(1)
         .maybeSingle();
+
+      const [detection, { data: profile }] = await Promise.all([detectionPromise, profilePromise]);
+
+      if (detection) {
+        businessId = detection.businessId;
+        pendingSuggestions = detection.suggestions;
+        isCategoryMatch = detection.isCategory || false;
+        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
+      }
 
       // Returning customer: check past history if no business resolved yet
       if (!businessId) {
@@ -561,7 +566,7 @@ export class BotService {
         : 'greeting';
 
       const sessionData: Record<string, unknown> = businessId && business
-        ? { business_id: businessId, business_name: business.name, capabilities }
+        ? { business_id: businessId, business_name: business.name, business_category: business.category, capabilities }
         : {};
 
       // Remove old inactive sessions for this phone+business to avoid unique constraint violation
@@ -599,9 +604,11 @@ export class BotService {
 
       if (business) {
         // Standalone bot greeting
-        const templates = await this.standaloneService.getBotTemplates(business.id);
-        const tierInfo = await this.standaloneService.checkTierLimits(business.id);
-        const botAlias = await this.standaloneService.getBotAlias(business.id);
+        const [templates, tierInfo, botAlias] = await Promise.all([
+          this.standaloneService.getBotTemplates(business.id),
+          this.standaloneService.checkTierLimits(business.id),
+          this.standaloneService.getBotAlias(business.id),
+        ]);
 
         let greeting: string;
         if (botAlias) {
@@ -797,16 +804,8 @@ export class BotService {
     const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
-      // Load business category for category-scoped keywords
-      let businessCategory: string | null = null;
-      if (session.business_id) {
-        const { data: catBiz } = await this.supabase
-          .from('businesses')
-          .select('category')
-          .eq('id', session.business_id)
-          .single();
-        businessCategory = catBiz?.category || null;
-      }
+      // Use cached category from session_data (saved during session creation)
+      const businessCategory = (session.session_data?.business_category as string) || null;
 
       const keywords = await loadUnifiedKeywords(this.supabase, session.business_id, businessCategory);
       const kwMatch = matchUnifiedKeyword(text, keywords);
@@ -1027,7 +1026,7 @@ export class BotService {
       }
 
       // This is a chat session — store message and acknowledge
-      const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+      const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(this.supabase, session.business_id);
       if (caps.includes('chat')) {
         // Get customer name
         const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
@@ -1165,55 +1164,30 @@ export class BotService {
       'pls', 'biko', 'ejoor', 'mehn', 'guy', 'babe',
     ]);
 
-    // ── 1. Exact match (case-insensitive) — "CITADEL-OF-GRACE" ──
-    if (/^[a-z0-9-]{2,30}$/.test(normalizedText)) {
-      const { data } = await this.supabase
-        .from('businesses')
-        .select('id')
-        .ilike('bot_code', normalizedText)
-        .eq('status', 'active')
-        .maybeSingle();
-      if (data) return { businessId: data.id };
-    }
-
-    // ── 2. Spaces-to-hyphens — "citadel of grace" → "citadel-of-grace" ──
+    // ── 1-4. Batch bot code matching (exact, spaces-to-hyphens, tokens, filler-stripped) in ONE query ──
     const spacesToHyphens = normalizedText.replace(/\s+/g, '-');
-    if (/^[a-z0-9-]{2,30}$/.test(spacesToHyphens) && spacesToHyphens !== normalizedText) {
-      const { data } = await this.supabase
-        .from('businesses')
-        .select('id')
-        .ilike('bot_code', spacesToHyphens)
-        .eq('status', 'active')
-        .maybeSingle();
-      if (data) return { businessId: data.id };
-    }
-
-    // ── 3. Hyphenated token match ──
     const tokens = normalizedText.split(/\s+/);
     const hyphenated = tokens.filter(t => t.includes('-') && /^[a-z0-9-]{2,30}$/.test(t));
-    for (const candidate of hyphenated) {
+    const meaningful = tokens.filter(t => !FILLER_WORDS.has(t) && t.length > 0);
+
+    const codeCandidates = new Set<string>();
+    if (/^[a-z0-9-]{2,30}$/.test(normalizedText)) codeCandidates.add(normalizedText);
+    if (/^[a-z0-9-]{2,30}$/.test(spacesToHyphens)) codeCandidates.add(spacesToHyphens);
+    for (const t of hyphenated) codeCandidates.add(t);
+    if (meaningful.length > 0 && meaningful.length <= 6) {
+      const joined = meaningful.join('-').replace(/-+/g, '-').slice(0, 30);
+      if (/^[a-z0-9-]{2,30}$/.test(joined)) codeCandidates.add(joined);
+    }
+
+    if (codeCandidates.size > 0) {
+      const orFilter = Array.from(codeCandidates).map(c => `bot_code.ilike.${c}`).join(',');
       const { data } = await this.supabase
         .from('businesses')
         .select('id')
-        .ilike('bot_code', candidate)
         .eq('status', 'active')
+        .or(orFilter)
         .maybeSingle();
       if (data) return { businessId: data.id };
-    }
-
-    // ── 4. Strip filler/pidgin words and join with hyphens ──
-    const meaningful = tokens.filter(t => !FILLER_WORDS.has(t) && t.length > 0);
-    if (meaningful.length > 0 && meaningful.length <= 6) {
-      const candidate = meaningful.join('-').replace(/-+/g, '-').slice(0, 30);
-      if (/^[a-z0-9-]{2,30}$/.test(candidate)) {
-        const { data } = await this.supabase
-          .from('businesses')
-          .select('id')
-          .ilike('bot_code', candidate)
-          .eq('status', 'active')
-          .maybeSingle();
-        if (data) return { businessId: data.id };
-      }
     }
 
     // Skip advanced matching if the input is just common greetings/filler
@@ -1458,14 +1432,24 @@ export class BotService {
    * Used for quick-pick lists when customer has multiple past businesses.
    */
   private async findReturningCustomerBusinesses(phone: string, userId: string | null): Promise<{ id: string; name: string; bot_code: string }[]> {
-    // Check past bot_sessions (most reliable — covers all interaction types)
-    const { data: pastSessions } = await this.supabase
-      .from('bot_sessions')
-      .select('business_id')
-      .eq('whatsapp_number', phone)
-      .not('business_id', 'is', null)
-      .order('last_active_at', { ascending: false })
-      .limit(10);
+    // Parallel: past sessions + bookings lookup (independent queries)
+    const [{ data: pastSessions }, bookingsResult] = await Promise.all([
+      this.supabase
+        .from('bot_sessions')
+        .select('business_id')
+        .eq('whatsapp_number', phone)
+        .not('business_id', 'is', null)
+        .order('last_active_at', { ascending: false })
+        .limit(10),
+      userId
+        ? this.supabase
+            .from('bookings')
+            .select('business_id')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(5)
+        : Promise.resolve({ data: null }),
+    ]);
 
     const seen = new Set<string>();
     const uniqueBusinessIds: string[] = [];
@@ -1479,21 +1463,11 @@ export class BotService {
       }
     }
 
-    // Also check bookings if we have a user profile
-    if (userId) {
-      const { data: recentBookings } = await this.supabase
-        .from('bookings')
-        .select('business_id')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false })
-        .limit(5);
-
-      if (recentBookings) {
-        for (const b of recentBookings) {
-          if (b.business_id && !seen.has(b.business_id)) {
-            seen.add(b.business_id);
-            uniqueBusinessIds.push(b.business_id);
-          }
+    if (bookingsResult.data) {
+      for (const b of bookingsResult.data) {
+        if (b.business_id && !seen.has(b.business_id)) {
+          seen.add(b.business_id);
+          uniqueBusinessIds.push(b.business_id);
         }
       }
     }
@@ -1932,7 +1906,7 @@ export class BotService {
 
           if (action === 'escalate') {
             if (session.business_id) {
-              const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+              const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(this.supabase, session.business_id);
               if (caps.includes('chat')) {
                 const escPhoneP = from.startsWith('+') ? from : `+${from}`;
                 const escPhoneN = from.startsWith('+') ? from.slice(1) : from;
@@ -1968,7 +1942,7 @@ export class BotService {
 
           if (action === 'checkin') {
             if (session.business_id) {
-              const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+              const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(this.supabase, session.business_id);
               if (caps.includes('queue')) {
                 await this.supabase.from('bot_sessions').update({
                   current_step: 'queue_start',

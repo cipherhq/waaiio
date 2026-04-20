@@ -39,27 +39,33 @@ function generateReferralCode(): string {
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
   const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode } = params;
 
+  // Parallel: load capabilities + business data in one round-trip
   let capabilities: CapabilityId[];
+  let biz: { name: string; country_code: string | null; subscription_tier: string | null; metadata: Record<string, unknown> | null } | null = null;
   try {
-    capabilities = await getEnabledCapabilities(supabase, businessId);
+    const [caps, bizResult] = await Promise.all([
+      getEnabledCapabilities(supabase, businessId),
+      supabase
+        .from('businesses')
+        .select('name, country_code, subscription_tier, metadata')
+        .eq('id', businessId)
+        .single(),
+    ]);
+    capabilities = caps;
+    biz = bizResult.data as typeof biz;
   } catch {
     return;
   }
 
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const bizName = biz?.name || 'Business';
+  const meta = (biz?.metadata || {}) as Record<string, unknown>;
 
   // 0. Auto-receipt — send payment confirmation with receipt details
   if (amountPaid && amountPaid > 0) {
     try {
-      const { data: biz } = await supabase
-        .from('businesses')
-        .select('name, country_code, subscription_tier')
-        .eq('id', businessId)
-        .single();
-
       const cc = (biz?.country_code || 'NG') as CountryCode;
       const currencySymbol = getCurrencySymbol(cc);
-      const bizName = biz?.name || 'Business';
       const isWhitelabel = PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true;
       const formattedAmount = `${currencySymbol}${amountPaid.toLocaleString()}`;
       const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -125,14 +131,6 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // 1. Loyalty — award points
   if (capabilities.includes('loyalty')) {
     try {
-      // Get loyalty config from business metadata
-      const { data: biz } = await supabase
-        .from('businesses')
-        .select('metadata, name')
-        .eq('id', businessId)
-        .single();
-
-      const meta = (biz?.metadata || {}) as Record<string, unknown>;
       const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
 
       // Upsert loyalty_points
@@ -211,13 +209,6 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       });
 
       // Send the rating prompt
-      const { data: bizData } = await supabase
-        .from('businesses')
-        .select('name')
-        .eq('id', businessId)
-        .single();
-
-      const bizName = bizData?.name || 'us';
       await sender.sendButtons({
         to: phone,
         body: `How was your experience at ${bizName}? Rate us:`,
@@ -247,13 +238,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       service_type: serviceType,
     };
 
-    // Load business name for rule messages
-    const { data: bizInfo } = await supabase
-      .from('businesses')
-      .select('name')
-      .eq('id', businessId)
-      .single();
-    if (bizInfo) automationContext.business_name = bizInfo.name;
+    if (bizName) automationContext.business_name = bizName;
 
     // Trigger sequences
     await triggerSequences(supabase, businessId, triggerEvent, customerPhone, automationContext);
@@ -282,13 +267,6 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       if (!existingRef) {
         const code = generateReferralCode();
 
-        const { data: biz } = await supabase
-          .from('businesses')
-          .select('name, metadata')
-          .eq('id', businessId)
-          .single();
-
-        const meta = (biz?.metadata || {}) as Record<string, unknown>;
         const rewardType = (meta.referral_reward_type as string) || 'points';
         const rewardAmount = (meta.referral_reward_amount as number) || 50;
 
@@ -302,7 +280,6 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           reward_amount: rewardAmount,
         });
 
-        const bizName = biz?.name || 'us';
         await sender.sendText({
           to: phone,
           text: `Share ${bizName} with friends! Your referral code: *${code}*\n\nWhen a friend uses your code, you both earn rewards.`,
