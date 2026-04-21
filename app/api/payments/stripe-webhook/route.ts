@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
+import { getPlatformFees } from '@/lib/getPlatformFees';
+import type { SubscriptionTier } from '@/lib/constants';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -111,11 +113,10 @@ export async function POST(request: NextRequest) {
 
               if (business) {
                 const isInTrial = new Date(business.trial_ends_at) > new Date();
-                const tier = business.subscription_tier || 'free';
-                const feePercentage = isInTrial ? 0 : (tier === 'business' ? 1.0 : tier === 'growth' ? 1.5 : 2.5);
-                const feeFlat = isInTrial ? 0 : (tier === 'business' ? 0.25 : tier === 'growth' ? 0.25 : 0.50);
+                const tier = (business.subscription_tier || 'free') as SubscriptionTier;
                 const amount = booking.total_amount || payment.amount;
-                const feeTotal = isInTrial ? 0 : Math.round((amount * feePercentage / 100 + feeFlat) * 100) / 100;
+
+                const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(amount, tier, isInTrial);
 
                 await supabase.from('platform_fees').insert({
                   business_id: booking.business_id,

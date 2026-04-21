@@ -699,6 +699,7 @@ export function generateBotCode(name: string): string {
 }
 
 // ── Platform Fee Calculator ──
+/** @deprecated Use `getPlatformFees()` from `@/lib/getPlatformFees` instead — it reads fees from the database. */
 export function calculatePlatformFee(
   amount: number,
   tier: SubscriptionTier,

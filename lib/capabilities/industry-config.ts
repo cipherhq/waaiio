@@ -144,3 +144,26 @@ export const INDUSTRY_CONFIG: Record<string, IndustryConfig> = {
 export function getIndustryConfig(category: string): IndustryConfig {
   return INDUSTRY_CONFIG[category] || {};
 }
+
+/**
+ * Async: read industry_config from category_templates.metadata in DB,
+ * falling back to the hardcoded INDUSTRY_CONFIG if not found.
+ */
+export async function getIndustryConfigAsync(category: string): Promise<IndustryConfig> {
+  try {
+    const { createClient } = await import('@/lib/supabase/client');
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('category_templates')
+      .select('metadata')
+      .eq('key', category)
+      .single();
+
+    if (data?.metadata?.industry_config) {
+      return data.metadata.industry_config as IndustryConfig;
+    }
+  } catch {
+    // Fall through to hardcoded
+  }
+  return INDUSTRY_CONFIG[category] || {};
+}

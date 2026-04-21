@@ -31,6 +31,7 @@ export class FlowExecutor {
       business_id: string | null;
       current_step: string;
       session_data: Record<string, unknown>;
+      conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>;
     },
     business: {
       id: string;
@@ -67,7 +68,11 @@ export class FlowExecutor {
     }
 
     if (!step) {
-      await this.sendText(from, 'Something went wrong. Send "Hi" to start again.');
+      const errMsg = 'Something went wrong. Send "Hi" to start again.';
+      if (!session.conversation_log) session.conversation_log = [];
+      session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
+      await this.persistConversationLog(session.id, session.conversation_log);
+      await this.sendText(from, errMsg);
       await this.deactivateSession(session.id);
       return;
     }
@@ -109,26 +114,40 @@ export class FlowExecutor {
 
     // No input = show prompt (possibly customized)
     if (!input) {
+      if (!session.conversation_log) session.conversation_log = [];
       if (override?.action === 'custom' && override.customPrompt) {
-        // Send custom prompt text instead of the step's default
+        session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
+        await this.persistConversationLog(session.id, session.conversation_log);
         await this.sendText(from, override.customPrompt);
       } else {
         const messages = await step.prompt(ctx);
+        this.logPromptMessages(session, messages);
+        await this.persistConversationLog(session.id, session.conversation_log);
         await this.sendMessages(from, messages);
       }
       return;
     }
 
+    // Log user input to conversation_log
+    if (!session.conversation_log) session.conversation_log = [];
+    session.conversation_log.push({ role: 'user', content: input, timestamp: new Date().toISOString() });
+
     // Global escape hatch: cancel / start over at any step
     const lowerInput = input.toLowerCase().trim();
     if (lowerInput === 'cancel' || lowerInput === 'stop' || lowerInput === 'quit') {
+      const cancelMsg = 'Cancelled. Send *Hi* to start again.';
+      session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
+      await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
-      await this.sendText(from, 'Cancelled. Send *Hi* to start again.');
+      await this.sendText(from, cancelMsg);
       return;
     }
     if (lowerInput === 'start over' || lowerInput === 'restart' || lowerInput === 'reset') {
+      const restartMsg = 'No problem! Send *Hi* to start fresh.';
+      session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
+      await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
-      await this.sendText(from, 'No problem! Send *Hi* to start fresh.');
+      await this.sendText(from, restartMsg);
       return;
     }
 
@@ -172,25 +191,29 @@ export class FlowExecutor {
 
     if (!result.valid) {
       if (result.errorMessage) {
-        await this.sendText(from, `${result.errorMessage}\n\n_Type *cancel* to exit or *start over* to restart._`);
+        const errText = `${result.errorMessage}\n\n_Type *cancel* to exit or *start over* to restart._`;
+        session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
+        await this.sendText(from, errText);
       }
       // Re-send interactive prompts (buttons/list) so user gets fresh clickable options
       // WhatsApp buttons are single-use — once tapped, they gray out
       const retryMessages = await step.prompt(ctx);
       if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
+        this.logPromptMessages(session, retryMessages);
         await this.sendMessages(from, retryMessages);
       }
+      await this.persistConversationLog(session.id, session.conversation_log);
       return;
     }
 
     // Merge data into session
     if (result.data) {
       Object.assign(session.session_data, result.data);
-      await this.supabase
-        .from('bot_sessions')
-        .update({ session_data: session.session_data })
-        .eq('id', session.id);
     }
+    await this.supabase
+      .from('bot_sessions')
+      .update({ session_data: session.session_data, conversation_log: session.conversation_log })
+      .eq('id', session.id);
 
     // ── Branch conditions: check override-based branching before default next() ──
     let nextStepId: string | null = null;
@@ -205,13 +228,14 @@ export class FlowExecutor {
     if (nextStepId) {
       await this.advanceToStep(session, nextStepId, from, ctx);
     } else {
-      // Flow complete
+      // Flow complete — persist log before deactivating
+      await this.persistConversationLog(session.id, session.conversation_log || []);
       await this.deactivateSession(session.id);
     }
   }
 
   private async advanceToStep(
-    session: { id: string; session_data: Record<string, unknown>; user_id: string | null; business_id: string | null; current_step: string },
+    session: { id: string; session_data: Record<string, unknown>; user_id: string | null; business_id: string | null; current_step: string; conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }> },
     nextStepId: string,
     from: string,
     ctx: FlowContext,
@@ -222,6 +246,7 @@ export class FlowExecutor {
       .update({
         current_step: nextStepId,
         session_data: session.session_data,
+        conversation_log: session.conversation_log || [],
         expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       })
       .eq('id', session.id);
@@ -269,37 +294,83 @@ export class FlowExecutor {
 
     // Show next step's prompt (possibly customized)
     if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
+      if (!session.conversation_log) session.conversation_log = [];
+      session.conversation_log.push({ role: 'bot', content: nextOverride.customPrompt, timestamp: new Date().toISOString() });
+      await this.persistConversationLog(session.id, session.conversation_log);
       await this.sendText(from, nextOverride.customPrompt);
     } else {
       const messages = await nextStep.prompt(ctx);
+      this.logPromptMessages(session, messages);
+      await this.persistConversationLog(session.id, session.conversation_log || []);
       await this.sendMessages(from, messages);
     }
   }
 
   private async sendMessages(to: string, messages: PromptMessage[]): Promise<void> {
-    for (const msg of messages) {
-      switch (msg.type) {
-        case 'text':
-          await this.sender.sendText({ to, text: msg.text });
-          break;
-        case 'list':
-          await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections });
-          break;
-        case 'buttons':
-          await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });
-          break;
-        case 'image':
-          await this.sender.sendImage({ to, imageUrl: msg.imageUrl, caption: msg.caption });
-          break;
-        case 'document':
-          await this.sender.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
-          break;
-      }
+    if (messages.length === 0) return;
+    if (messages.length === 1) {
+      await this.sendSingleMessage(to, messages[0]);
+      return;
+    }
+    // Send all messages in parallel for speed
+    await Promise.all(messages.map(msg => this.sendSingleMessage(to, msg)));
+  }
+
+  private async sendSingleMessage(to: string, msg: PromptMessage): Promise<void> {
+    switch (msg.type) {
+      case 'text':
+        await this.sender.sendText({ to, text: msg.text });
+        break;
+      case 'list':
+        await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections });
+        break;
+      case 'buttons':
+        await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });
+        break;
+      case 'image':
+        await this.sender.sendImage({ to, imageUrl: msg.imageUrl, caption: msg.caption });
+        break;
+      case 'document':
+        await this.sender.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
+        break;
     }
   }
 
   private async sendText(to: string, text: string): Promise<void> {
     await this.sender.sendText({ to, text });
+  }
+
+  /** Extract text from prompt messages and append to session's conversation_log */
+  private logPromptMessages(
+    session: { conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }> },
+    messages: PromptMessage[],
+  ): void {
+    if (!session.conversation_log) session.conversation_log = [];
+    const ts = new Date().toISOString();
+    for (const msg of messages) {
+      let text = '';
+      switch (msg.type) {
+        case 'text': text = msg.text; break;
+        case 'buttons': text = msg.body; break;
+        case 'list': text = msg.body; break;
+        case 'image': text = msg.caption || '[Image]'; break;
+        case 'document': text = msg.caption || msg.filename || '[Document]'; break;
+      }
+      if (text) {
+        session.conversation_log.push({ role: 'bot', content: text, timestamp: ts });
+      }
+    }
+  }
+
+  /** Persist conversation_log to the database */
+  private async persistConversationLog(
+    sessionId: string,
+    log: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>,
+  ): Promise<void> {
+    await this.supabase
+      .from('bot_sessions')
+      .update({ conversation_log: log })
+      .eq('id', sessionId);
   }
 
   private async deactivateSession(sessionId: string): Promise<void> {

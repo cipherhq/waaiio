@@ -32,6 +32,7 @@ import Countries from './pages/Countries';
 import RecurringPayments from './pages/RecurringPayments';
 import Reports from './pages/Reports';
 import QueueManagement from './pages/QueueManagement';
+import Tickets from './pages/Tickets';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
       { path: 'payments', Component: Payments },
       { path: 'subscriptions', Component: Subscriptions },
       { path: 'recurring', Component: RecurringPayments },
+      { path: 'tickets', Component: Tickets },
       { path: 'reports', Component: Reports },
       { path: 'queue-management', Component: QueueManagement },
       // Giving

@@ -31,6 +31,7 @@ import {
   Globe,
   Repeat,
   ListOrdered,
+  Ticket,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { LucideIcon } from 'lucide-react';
@@ -74,6 +75,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: CreditCard, label: 'Payments', path: '/payments' },
       { icon: RefreshCw, label: 'Subscriptions', path: '/subscriptions' },
       { icon: Repeat, label: 'Recurring', path: '/recurring' },
+      { icon: Ticket, label: 'Tickets', path: '/tickets' },
     ],
   },
   {

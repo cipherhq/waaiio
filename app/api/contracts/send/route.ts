@@ -5,7 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 
 function generateToken(): string {
-  const tokenBytes = new Uint8Array(48);
+  const tokenBytes = new Uint8Array(24);
   crypto.getRandomValues(tokenBytes);
   return Array.from(tokenBytes, b =>
     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'[b % 62]
@@ -185,10 +185,9 @@ export async function POST(request: NextRequest) {
           `${biz.name} has sent you a document to sign:`,
           `\ud83d\udcc4 ${title}`,
           '',
-          `Please tap the link below to review and sign:`,
-          signUrl,
+          `\ud83d\udc49 ${signUrl}`,
           '',
-          `\u23f0 This link expires in 72 hours.`,
+          `\u23f0 Expires in 72 hours.`,
         ].join('\n');
 
         const waMessageId = await sendWhatsAppMessage(service, business_id, biz.country_code, signer.signer_phone, message);
@@ -208,7 +207,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Single signer flow (unchanged)
+    // Single signer flow
     const signUrl = `${appUrl}/sign/${primaryToken}`;
 
     const message = [
@@ -217,10 +216,9 @@ export async function POST(request: NextRequest) {
       `${biz.name} has sent you a document to sign:`,
       `\ud83d\udcc4 ${title}`,
       '',
-      `Please tap the link below to review and sign:`,
-      signUrl,
+      `\ud83d\udc49 ${signUrl}`,
       '',
-      `\u23f0 This link expires in 72 hours.`,
+      `\u23f0 Expires in 72 hours.`,
     ].join('\n');
 
     const waMessageId = await sendWhatsAppMessage(service, business_id, biz.country_code, signer_phone, message);

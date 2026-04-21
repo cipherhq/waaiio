@@ -15,6 +15,7 @@ interface EventItem {
   price: number;
   total_tickets: number;
   tickets_sold: number;
+  max_per_order: number | null;
   status: 'draft' | 'published' | 'sold_out' | 'cancelled' | 'completed';
   image_url: string | null;
   created_at: string;
@@ -40,6 +41,7 @@ export default function EventsPage() {
     venue: '',
     price: 0,
     total_tickets: 100,
+    max_per_order: 0,
     status: 'published' as EventItem['status'],
   });
 
@@ -47,7 +49,7 @@ export default function EventsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('events')
-      .select('id, name, description, date, time, venue, price, total_tickets, tickets_sold, status, image_url, created_at')
+      .select('id, name, description, date, time, venue, price, total_tickets, tickets_sold, max_per_order, status, image_url, created_at')
       .eq('business_id', business.id)
       .order('date', { ascending: false });
     setEvents((data || []) as EventItem[]);
@@ -57,7 +59,7 @@ export default function EventsPage() {
   useEffect(() => { loadEvents(); }, [loadEvents]);
 
   function openAdd() {
-    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, status: 'published' });
+    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published' });
     setView('add');
   }
 
@@ -71,6 +73,7 @@ export default function EventsPage() {
       venue: event.venue || '',
       price: event.price,
       total_tickets: event.total_tickets,
+      max_per_order: event.max_per_order || 0,
       status: event.status,
     });
     setView('edit');
@@ -89,6 +92,7 @@ export default function EventsPage() {
       venue: form.venue.trim() || null,
       price: form.price,
       total_tickets: form.total_tickets,
+      max_per_order: form.max_per_order || null,
       status: form.status,
     };
 
@@ -160,7 +164,7 @@ export default function EventsPage() {
               <input type="text" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} placeholder="e.g. Eko Hotel, Lagos" className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Ticket Price ({curr})</label>
                 <div className="relative">
@@ -171,6 +175,10 @@ export default function EventsPage() {
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Total Tickets</label>
                 <input type="number" min={1} value={form.total_tickets} onChange={e => setForm({ ...form, total_tickets: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Max per Order</label>
+                <input type="number" min={1} value={form.max_per_order || ''} onChange={e => setForm({ ...form, max_per_order: Number(e.target.value) })} placeholder="Default" className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
             </div>
           </div>

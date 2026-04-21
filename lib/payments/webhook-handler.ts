@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getPlatformFees } from '@/lib/getPlatformFees';
+import type { SubscriptionTier } from '@/lib/constants';
 
 /**
  * Shared webhook processing logic for both platform and BYO payment webhooks.
@@ -114,12 +116,10 @@ async function recordPlatformFeeForBooking(
   if (!business) return;
 
   const isInTrial = new Date(business.trial_ends_at) > new Date();
-  const tier = business.subscription_tier || 'free';
-
-  const feePercentage = isInTrial ? 0 : (tier === 'business' ? 1.0 : tier === 'growth' ? 1.5 : 2.5);
-  const feeFlat = isInTrial ? 0 : (tier === 'business' ? 50 : tier === 'growth' ? 50 : 100);
+  const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const amount = booking.total_amount || paymentAmount;
-  const feeTotal = isInTrial ? 0 : Math.round(amount * feePercentage / 100) + feeFlat;
+
+  const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(amount, tier, isInTrial);
 
   await supabase.from('platform_fees').insert({
     business_id: booking.business_id,
@@ -154,12 +154,10 @@ async function recordPlatformFeeForInvoice(
   if (!business) return;
 
   const isInTrial = new Date(business.trial_ends_at) > new Date();
-  const tier = business.subscription_tier || 'free';
-
-  const feePercentage = isInTrial ? 0 : (tier === 'business' ? 1.0 : tier === 'growth' ? 1.5 : 2.5);
-  const feeFlat = isInTrial ? 0 : (tier === 'business' ? 50 : tier === 'growth' ? 50 : 100);
+  const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const amount = invoice.total_amount || paymentAmount;
-  const feeTotal = isInTrial ? 0 : Math.round(amount * feePercentage / 100) + feeFlat;
+
+  const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(amount, tier, isInTrial);
 
   await supabase.from('platform_fees').insert({
     business_id: invoice.business_id,

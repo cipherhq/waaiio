@@ -12,6 +12,12 @@ declare module 'pdfkit' {
     lineTo(x: number, y: number): this;
     stroke(color?: string): this;
     strokeColor(color: string): this;
+    image(src: Buffer | string, x?: number, y?: number, options?: Record<string, unknown>): this;
+    roundedRect(x: number, y: number, w: number, h: number, r: number): this;
+    lineWidth(w: number): this;
+    dash(length: number, options?: { space?: number }): this;
+    undash(): this;
+    opacity(o: number): this;
     moveDown(lines?: number): this;
     addPage(options?: Record<string, unknown>): this;
     end(): void;

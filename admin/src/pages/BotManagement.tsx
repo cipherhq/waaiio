@@ -4,20 +4,18 @@ import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
-import { fmtDate, fmtDateTime, fmtRelative } from '@/lib/formatters';
+import { fmtDateTime, fmtRelative } from '@/lib/formatters';
 import { Bot, CalendarCheck, CalendarRange, MessageSquare } from 'lucide-react';
 
 interface BotSession {
   id: string;
   business_id: string;
   business_name?: string;
-  phone: string | null;
-  flow_type: string | null;
-  status: string;
-  message_count: number | null;
-  messages: number | null;
-  conversation_log: unknown[] | null;
-  flow_state: Record<string, unknown> | null;
+  whatsapp_number: string | null;
+  current_step: string;
+  session_data: Record<string, unknown>;
+  conversation_log: Array<{ role: string; content: string; timestamp?: string }>;
+  is_active: boolean;
   created_at: string;
   updated_at: string | null;
   last_active_at: string | null;
@@ -85,14 +83,11 @@ export default function BotManagement() {
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-      const activeSessions = enriched.filter(s => s.status === 'active').length;
+      const activeSessions = enriched.filter(s => s.is_active).length;
       const sessionsToday = enriched.filter(s => s.created_at >= todayStart).length;
       const sessionsThisMonth = enriched.filter(s => s.created_at >= monthStart).length;
 
-      const totalMessages = enriched.reduce((sum, s) => {
-        const count = s.message_count ?? s.messages ?? 0;
-        return sum + Number(count);
-      }, 0);
+      const totalMessages = enriched.reduce((sum, s) => sum + getMessageCount(s), 0);
       const avgMessages = enriched.length > 0 ? Math.round((totalMessages / enriched.length) * 10) / 10 : 0;
 
       setStats({ activeSessions, sessionsToday, sessionsThisMonth, avgMessages });
@@ -108,8 +103,10 @@ export default function BotManagement() {
 
   // Apply filters
   const filtered = sessions.filter(s => {
-    if (statusFilter !== 'all' && s.status !== statusFilter) return false;
-    if (flowFilter !== 'all' && s.flow_type !== flowFilter) return false;
+    if (statusFilter === 'active' && !s.is_active) return false;
+    if (statusFilter === 'completed' && s.is_active) return false;
+    const flowType = getFlowType(s);
+    if (flowFilter !== 'all' && flowType !== flowFilter) return false;
     if (businessFilter !== 'all' && s.business_id !== businessFilter) return false;
     return true;
   });
@@ -118,7 +115,16 @@ export default function BotManagement() {
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
 
   function getMessageCount(s: BotSession): number {
-    return Number(s.message_count ?? s.messages ?? 0);
+    return s.conversation_log?.length || 0;
+  }
+
+  function getFlowType(s: BotSession): string {
+    const sd = s.session_data || {};
+    return (sd.active_capability as string) || (sd.business_category as string) || '';
+  }
+
+  function getStatus(s: BotSession): string {
+    return s.is_active ? 'active' : 'completed';
   }
 
   if (loading) {
@@ -152,7 +158,6 @@ export default function BotManagement() {
           <option value="all">All Statuses</option>
           <option value="active">Active</option>
           <option value="completed">Completed</option>
-          <option value="expired">Expired</option>
         </select>
 
         <select
@@ -215,10 +220,10 @@ export default function BotManagement() {
                 >
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">{s.id.slice(0, 8)}...</td>
                   <td className="px-4 py-3 font-medium text-gray-900">{s.business_name}</td>
-                  <td className="px-4 py-3 text-gray-600">{s.phone || '—'}</td>
-                  <td className="px-4 py-3 text-gray-600 capitalize">{s.flow_type || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{s.whatsapp_number || '—'}</td>
+                  <td className="px-4 py-3 text-gray-600 capitalize">{getFlowType(s).replace(/_/g, ' ') || '—'}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={s.status} />
+                    <StatusBadge status={getStatus(s)} />
                   </td>
                   <td className="px-4 py-3 text-right text-gray-900">{getMessageCount(s)}</td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
@@ -243,7 +248,8 @@ export default function BotManagement() {
         {selected && (
           <div className="space-y-3 text-sm">
             <DetailRow label="Session ID" value={selected.id} />
-            <DetailRow label="Status" value={selected.status} />
+            <DetailRow label="Status" value={getStatus(selected)} />
+            <DetailRow label="Current Step" value={selected.current_step} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
             {selected.updated_at && (
               <DetailRow label="Last Updated" value={fmtDateTime(selected.updated_at)} />
@@ -265,33 +271,29 @@ export default function BotManagement() {
             <div className="rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Session Info</p>
               <div className="space-y-2">
-                <DetailRow label="Phone" value={selected.phone} />
-                <DetailRow label="Flow Type" value={selected.flow_type} />
+                <DetailRow label="Phone" value={selected.whatsapp_number} />
+                <DetailRow label="Flow Type" value={getFlowType(selected).replace(/_/g, ' ') || '—'} />
                 <DetailRow label="Messages" value={getMessageCount(selected)} />
               </div>
             </div>
 
-            {selected.flow_state && Object.keys(selected.flow_state).length > 0 && (
+            {selected.session_data && Object.keys(selected.session_data).length > 0 && (
               <div className="rounded-lg bg-gray-50 p-4">
-                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Flow State</p>
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Session Data</p>
                 <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">
-                  {JSON.stringify(selected.flow_state, null, 2)}
+                  {JSON.stringify(selected.session_data, null, 2)}
                 </pre>
               </div>
             )}
 
-            {selected.conversation_log && Array.isArray(selected.conversation_log) && selected.conversation_log.length > 0 && (
+            {selected.conversation_log && selected.conversation_log.length > 0 && (
               <div className="rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold uppercase text-gray-500 mb-2">
                   Conversation Log ({selected.conversation_log.length} messages)
                 </p>
                 <div className="max-h-64 overflow-y-auto space-y-2">
                   {selected.conversation_log.map((entry, i) => {
-                    const msg = entry as Record<string, unknown>;
-                    const role = String(msg.role || msg.sender || 'unknown');
-                    const content = String(msg.content || msg.text || msg.body || JSON.stringify(entry));
-                    const ts = msg.timestamp || msg.created_at;
-                    const isBot = role === 'bot' || role === 'assistant' || role === 'system';
+                    const isBot = entry.role === 'bot' || entry.role === 'assistant' || entry.role === 'system';
 
                     return (
                       <div
@@ -301,12 +303,12 @@ export default function BotManagement() {
                         }`}
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-semibold capitalize">{role}</span>
-                          {ts && (
-                            <span className="text-gray-400 text-[10px]">{fmtDateTime(String(ts))}</span>
+                          <span className="font-semibold capitalize">{entry.role}</span>
+                          {entry.timestamp && (
+                            <span className="text-gray-400 text-[10px]">{fmtDateTime(entry.timestamp)}</span>
                           )}
                         </div>
-                        <p className="whitespace-pre-wrap break-words">{content}</p>
+                        <p className="whitespace-pre-wrap break-words">{entry.content}</p>
                       </div>
                     );
                   })}

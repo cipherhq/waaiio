@@ -4,7 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 import { rateLimitResponse } from '@/lib/rate-limit';
-import { BROADCAST_LIMITS, type SubscriptionTier } from '@/lib/constants';
+import { type SubscriptionTier } from '@/lib/constants';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -49,7 +50,8 @@ export async function POST(request: NextRequest) {
     }
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-    const limits = BROADCAST_LIMITS[tier];
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const limits = settings.broadcast_limits[tier];
 
     // Tier gate: free tier cannot broadcast
     if (tier === 'free') {

@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { BROADCAST_LIMITS, type SubscriptionTier } from '@/lib/constants';
+import { type SubscriptionTier } from '@/lib/constants';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,7 +33,8 @@ export async function GET(request: NextRequest) {
     }
 
     const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-    const limits = BROADCAST_LIMITS[tier];
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const limits = settings.broadcast_limits[tier];
     const monthKey = new Date().toISOString().slice(0, 7);
 
     const { data: usage } = await service

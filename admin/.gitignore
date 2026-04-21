@@ -1,0 +1,5 @@
+# shortest (AI E2E testing)
+.shortest/
+.env.shortest
+
+.vercel

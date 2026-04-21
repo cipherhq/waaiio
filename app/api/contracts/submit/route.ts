@@ -283,10 +283,9 @@ export async function POST(request: NextRequest) {
             `${businessName} has sent you a document to sign:`,
             `\ud83d\udcc4 ${activeContract.title}`,
             '',
-            `Please tap the link below to review and sign:`,
-            nextSignUrl,
+            `\ud83d\udc49 ${nextSignUrl}`,
             '',
-            `\u23f0 This link expires in 72 hours.`,
+            `\u23f0 Expires in 72 hours.`,
           ].join('\n');
 
           await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', nextSigner.signer_phone, nextMsg);

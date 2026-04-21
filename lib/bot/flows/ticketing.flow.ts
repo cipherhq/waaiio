@@ -3,6 +3,7 @@ import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePaystackPayment, verifyPaystackPayment, recordPlatformFee } from './shared/payment';
 import { getTicketConfirmationMessage } from './shared/templates';
 import { getTermsPrompt } from './shared/terms';
+import { sendTicketsAfterPurchase } from './shared/send-tickets';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
 
@@ -48,7 +49,7 @@ export const ticketingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: event } = await ctx.supabase
           .from('events')
-          .select('id, name, date, time, venue, price, total_tickets, tickets_sold')
+          .select('id, name, date, time, venue, price, total_tickets, tickets_sold, max_per_order')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
@@ -70,6 +71,7 @@ export const ticketingFlow: FlowDefinition = {
             event_venue: event.venue,
             event_price: event.price,
             event_available: available,
+            event_max_per_order: event.max_per_order,
           },
         };
       },
@@ -82,8 +84,10 @@ export const ticketingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const available = d.event_available as number;
+        const eventMax = d.event_max_per_order as number | null;
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        const maxTickets = (meta.max_ticket_quantity as number) || 10;
+        const bizMax = (meta.max_ticket_quantity as number) || 10;
+        const maxTickets = eventMax || bizMax;
         const maxShow = Math.min(available, maxTickets);
 
         return [
@@ -118,8 +122,10 @@ export const ticketingFlow: FlowDefinition = {
         if (qty > available) {
           return { valid: false, errorMessage: `Only ${available} tickets available.` };
         }
+        const eventMax = ctx.session.session_data.event_max_per_order as number | null;
         const meta = (ctx.session.session_data._biz_metadata || ctx.business?.metadata || {}) as Record<string, unknown>;
-        const maxTickets = (meta.max_ticket_quantity as number) || 10;
+        const bizMax = (meta.max_ticket_quantity as number) || 10;
+        const maxTickets = eventMax || bizMax;
         if (qty > maxTickets) {
           return { valid: false, errorMessage: `Maximum ${maxTickets} tickets per order.` };
         }
@@ -340,6 +346,23 @@ export const ticketingFlow: FlowDefinition = {
           .update({ current_step: 'complete', is_active: false })
           .eq('id', ctx.session.id);
 
+        // Send ticket PDF (non-blocking)
+        sendTicketsAfterPurchase({
+          supabase: ctx.supabase,
+          sender: ctx.sender,
+          businessId: ctx.business!.id,
+          bookingId: booking.id,
+          eventId: d.event_id as string,
+          eventName: d.event_name as string,
+          eventDate: dateLabel,
+          eventTime: d.event_time as string | undefined,
+          venue: (d.event_venue as string) || '',
+          guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+          guestPhone: ctx.from,
+          referenceCode: booking.reference_code,
+          quantity: qty,
+        }).catch(err => console.error('[TICKETING] Ticket PDF send error:', err));
+
         return [{
           type: 'text',
           text: getTicketConfirmationMessage({
@@ -418,6 +441,24 @@ export const ticketingFlow: FlowDefinition = {
                 referenceCode: d.reference_code as string,
               }),
             });
+
+            // Send ticket PDF (non-blocking)
+            sendTicketsAfterPurchase({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business!.id,
+              bookingId: d.booking_id as string,
+              eventId: d.event_id as string,
+              eventName: d.event_name as string,
+              eventDate: dateLabel,
+              eventTime: d.event_time as string | undefined,
+              venue: (d.event_venue as string) || '',
+              guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              guestPhone: ctx.from,
+              referenceCode: d.reference_code as string,
+              quantity: d.ticket_quantity as number,
+            }).catch(err => console.error('[TICKETING] Ticket PDF send error:', err));
+
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 

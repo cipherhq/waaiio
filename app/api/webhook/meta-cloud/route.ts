@@ -107,52 +107,40 @@ export async function POST(request: NextRequest) {
             const newStatus = status.status; // 'sent' | 'delivered' | 'read' | 'failed'
             if (!wamid || !statusOrder[newStatus]) continue;
 
-            // Check contracts table
-            const { data: contract } = await supabase
-              .from('contracts')
-              .select('id, wa_delivery_status')
-              .eq('wa_message_id', wamid)
-              .maybeSingle();
+            // Check contracts and contract_signers in parallel
+            const [{ data: contract }, { data: signer }] = await Promise.all([
+              supabase.from('contracts').select('id, wa_delivery_status').eq('wa_message_id', wamid).maybeSingle(),
+              supabase.from('contract_signers').select('id, wa_delivery_status').eq('wa_message_id', wamid).maybeSingle(),
+            ]);
 
-            if (contract) {
-              // Atomic progressive update: only advance status forward using WHERE clause
-              const lowerStatuses = Object.entries(statusOrder)
-                .filter(([, order]) => order < statusOrder[newStatus])
-                .map(([s]) => s);
-              if (lowerStatuses.length > 0) {
-                await supabase
-                  .from('contracts')
+            const lowerStatuses = Object.entries(statusOrder)
+              .filter(([, order]) => order < statusOrder[newStatus])
+              .map(([s]) => s);
+
+            const updates: PromiseLike<unknown>[] = [];
+            if (contract && lowerStatuses.length > 0) {
+              updates.push(
+                supabase.from('contracts')
                   .update({ wa_delivery_status: newStatus, wa_status_updated_at: new Date().toISOString() })
                   .eq('id', contract.id)
-                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string]);
-              }
+                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string])
+              );
             }
-
-            // Check contract_signers table
-            const { data: signer } = await supabase
-              .from('contract_signers')
-              .select('id, wa_delivery_status')
-              .eq('wa_message_id', wamid)
-              .maybeSingle();
-
-            if (signer) {
-              const lowerStatuses = Object.entries(statusOrder)
-                .filter(([, order]) => order < statusOrder[newStatus])
-                .map(([s]) => s);
-              if (lowerStatuses.length > 0) {
-                await supabase
-                  .from('contract_signers')
+            if (signer && lowerStatuses.length > 0) {
+              updates.push(
+                supabase.from('contract_signers')
                   .update({ wa_delivery_status: newStatus, wa_status_updated_at: new Date().toISOString() })
                   .eq('id', signer.id)
-                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string]);
-              }
+                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string])
+              );
             }
+            if (updates.length > 0) await Promise.all(updates);
           }
         }
 
         if (messages.length === 0) continue;
 
-        const supabase = createServiceClient();
+        const supabase = createServiceClient(); // single instance for all messages in this change
         const intelligenceSvc = getIntelligence();
         const resolver = getChannelResolver();
 
@@ -203,15 +191,14 @@ export async function POST(request: NextRequest) {
                 const ext = (msg.audio.mime_type || 'audio/ogg').includes('ogg') ? 'ogg' : 'webm';
                 const storagePath = `chat-audio/${preResolvedBusinessId || 'unknown'}/${Date.now()}.${ext}`;
 
-                const storageSupabase = createServiceClient();
-                await storageSupabase.storage
+                await supabase.storage
                   .from('business-documents')
                   .upload(storagePath, audioBuffer, {
                     contentType: msg.audio.mime_type || 'audio/ogg',
                     upsert: false,
                   });
 
-                const { data: urlData } = storageSupabase.storage
+                const { data: urlData } = supabase.storage
                   .from('business-documents')
                   .getPublicUrl(storagePath);
                 mediaUrl = urlData.publicUrl;

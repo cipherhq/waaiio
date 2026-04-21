@@ -17,6 +17,7 @@
     "recharts": "^2.15.0"
   },
   "devDependencies": {
+    "@antiwork/shortest": "^0.4.9",
     "@vitejs/plugin-react-swc": "^3.10.2",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.38",

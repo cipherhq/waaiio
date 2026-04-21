@@ -36,6 +36,11 @@ admin/.env.local
 credentials.json
 *.keystore
 
+# shortest (AI E2E testing)
+.shortest/
+.env.shortest
+admin/.env.shortest
+
 # vercel
 .vercel
 

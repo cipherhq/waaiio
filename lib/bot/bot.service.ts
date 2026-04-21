@@ -30,6 +30,7 @@ interface BotSession {
   business_id: string | null;
   current_step: string;
   session_data: Record<string, unknown>;
+  conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>;
   is_active: boolean;
   expires_at: string;
 }
@@ -100,6 +101,17 @@ export class BotService {
       return;
     }
 
+    // ── Early profile lookup (cached for reuse across all query paths) ──
+    const phoneP = from.startsWith('+') ? from : `+${from}`;
+    const phoneN = from.startsWith('+') ? from.slice(1) : from;
+    let _cachedProfile: { id: string } | null | undefined = undefined; // undefined = not fetched yet
+    const getProfile = async () => {
+      if (_cachedProfile !== undefined) return _cachedProfile;
+      const { data } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      _cachedProfile = data;
+      return _cachedProfile;
+    };
+
     // Detect "my bookings" keyword — covers industry-specific terminology
     const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|sessions?|upcoming|schedule)$/i.test(text)
       || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|schedule)$/i.test(text);
@@ -135,9 +147,7 @@ export class BotService {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const profile = await getProfile();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to make your first booking!");
         return;
@@ -163,9 +173,7 @@ export class BotService {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const profile = await getProfile();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number. Send *Hi* to make your first booking!");
         return;
@@ -178,9 +186,7 @@ export class BotService {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const profile = await getProfile();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
         return;
@@ -196,9 +202,7 @@ export class BotService {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
 
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const profile = await getProfile();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
         return;
@@ -252,9 +256,7 @@ export class BotService {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const profile = await getProfile();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
         return;
@@ -300,9 +302,7 @@ export class BotService {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-      const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const profile = await getProfile();
       if (!profile?.id) {
         await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
         return;
@@ -459,24 +459,15 @@ export class BotService {
         logger.debug('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
       }
 
-      // Normalize phone formats (reused below)
-      const phoneWithPlus = from.startsWith('+') ? from : `+${from}`;
-      const phoneWithout = from.startsWith('+') ? from.slice(1) : from;
-
       // Bot code routing + profile lookup in parallel (independent queries)
       let pendingSuggestions: { id: string; name: string; bot_code: string }[] | undefined;
       let isCategoryMatch = false;
       const detectionPromise = !businessId
         ? this.detectBotCodeWithSuggestions(text, from)
         : Promise.resolve(null);
-      const profilePromise = this.supabase
-        .from('profiles')
-        .select('id')
-        .or(`phone.eq.${phoneWithPlus},phone.eq.${phoneWithout}`)
-        .limit(1)
-        .maybeSingle();
+      const profilePromise = getProfile();
 
-      const [detection, { data: profile }] = await Promise.all([detectionPromise, profilePromise]);
+      const [detection, profile] = await Promise.all([detectionPromise, profilePromise]);
 
       if (detection) {
         businessId = detection.businessId;

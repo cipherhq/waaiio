@@ -22,7 +22,7 @@ const appUrl = Deno.env.get('APP_URL') || 'https://app.waaiio.com';
 const whatsappToken = Deno.env.get('WHATSAPP_TOKEN') || '';
 const whatsappPhoneId = Deno.env.get('WHATSAPP_PHONE_NUMBER_ID') || '';
 
-function generateToken(length = 64): string {
+function generateToken(length = 24): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const array = new Uint8Array(length);
   crypto.getRandomValues(array);
@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Business not found' }), { status: 404 });
     }
 
-    const token = generateToken(64);
+    const token = generateToken(24);
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
     const { data: contract, error } = await supabase
@@ -129,10 +129,9 @@ Deno.serve(async (req) => {
         `${business.name} has sent you a document to sign:`,
         `📄 ${title}`,
         '',
-        `Please tap the link below to review and sign:`,
-        signUrl,
+        `👉 ${signUrl}`,
         '',
-        `⏰ This link expires in 72 hours.`,
+        `⏰ Expires in 72 hours.`,
       ].join('\n');
 
       await sendWhatsApp(signer_phone, message);
