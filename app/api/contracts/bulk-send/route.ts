@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
         .replace(/\{\{date\}\}/g, new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }));
     }
 
-    const results: { phone: string; success: boolean; contract_id?: string }[] = [];
+    const results: { phone: string; success: boolean; contract_id?: string; message_delivered?: boolean }[] = [];
 
     // Resolve WhatsApp channel once
     const resolver = new ChannelResolver(service);
@@ -122,21 +122,25 @@ export async function POST(request: NextRequest) {
         try {
           const result = await resolved.sender.sendText({ to: phone, text: message });
           sent = result.success !== false;
-        } catch {
-          // continue
+        } catch (err) {
+          console.warn(`[CONTRACT-BULK] Primary channel failed for ${phone}:`, err);
         }
       }
 
       if (!sent) {
         const gupshup = new GupshupService();
         if (gupshup.isConfigured) {
-          await gupshup.sendText({ to: phone, text: message });
+          const result = await gupshup.sendText({ to: phone, text: message });
+          sent = result.success !== false;
+          if (!sent) {
+            console.warn(`[CONTRACT-BULK] Gupshup fallback failed for ${phone}`);
+          }
         } else {
-          console.log(`[mock] Bulk WhatsApp to ${phone}: Sign "${title}" at ${signUrl}`);
+          console.warn(`[CONTRACT-BULK] No WhatsApp channel configured. Message NOT delivered to ${phone}.`);
         }
       }
 
-      results.push({ phone: recipient.phone, success: true, contract_id: contract.id });
+      results.push({ phone: recipient.phone, success: true, contract_id: contract.id, message_delivered: sent });
     }
 
     return NextResponse.json({

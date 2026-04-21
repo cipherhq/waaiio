@@ -18,7 +18,7 @@ async function sendWhatsAppMessage(
   countryCode: string,
   phone: string,
   message: string,
-): Promise<string | null> {
+): Promise<{ messageId: string | null; delivered: boolean }> {
   const cleanPhone = phone.replace(/\D/g, '');
   const resolver = new ChannelResolver(service);
   const resolved =
@@ -34,24 +34,29 @@ async function sendWhatsAppMessage(
       sent = result.success !== false;
       if (sent && result.messageId) messageId = result.messageId;
     } catch (waErr) {
-      console.warn('Primary channel send failed, trying Gupshup fallback:', waErr);
+      console.warn(`[CONTRACT-RESEND] Primary channel send failed for ${cleanPhone}:`, waErr);
     }
+  } else {
+    console.warn(`[CONTRACT-RESEND] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
   }
 
   if (!sent) {
     const gupshup = new GupshupService();
     if (gupshup.isConfigured) {
       const result = await gupshup.sendText({ to: cleanPhone, text: message });
-      if (result.success && result.messageId) messageId = result.messageId;
+      if (result.success && result.messageId) {
+        messageId = result.messageId;
+        sent = true;
+      }
       if (!result.success) {
-        console.warn('Gupshup fallback also failed');
+        console.warn(`[CONTRACT-RESEND] Gupshup fallback also failed for ${cleanPhone}`);
       }
     } else {
-      console.log(`[mock] WhatsApp to ${cleanPhone}: ${message.slice(0, 80)}...`);
+      console.warn(`[CONTRACT-RESEND] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
     }
   }
 
-  return messageId;
+  return { messageId, delivered: sent };
 }
 
 export async function POST(request: NextRequest) {
@@ -137,14 +142,14 @@ export async function POST(request: NextRequest) {
             `\u23f0 Expires in 72 hours.`,
           ].join('\n');
 
-          const waMessageId = await sendWhatsAppMessage(service, contract.business_id, biz.country_code, signer.signer_phone, message);
-          if (waMessageId) {
+          const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(service, contract.business_id, biz.country_code, signer.signer_phone, message);
+          if (delivered && waMessageId) {
             await service
               .from('contract_signers')
               .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
               .eq('id', signer.id);
           }
-          resent++;
+          if (delivered) resent++;
         }
       }
 
@@ -196,8 +201,8 @@ export async function POST(request: NextRequest) {
       `\u23f0 Expires in 72 hours.`,
     ].join('\n');
 
-    const waMessageId = await sendWhatsAppMessage(service, contract.business_id, biz.country_code, contract.signer_phone, message);
-    if (waMessageId) {
+    const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(service, contract.business_id, biz.country_code, contract.signer_phone, message);
+    if (delivered && waMessageId) {
       await service
         .from('contracts')
         .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
@@ -208,6 +213,7 @@ export async function POST(request: NextRequest) {
       sign_url: signUrl,
       contract_id: contract.id,
       expires_at: expiresAt,
+      message_delivered: delivered,
     });
   } catch (err) {
     console.error('contracts/resend error:', err);

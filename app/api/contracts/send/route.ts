@@ -18,7 +18,7 @@ async function sendWhatsAppMessage(
   countryCode: string,
   phone: string,
   message: string,
-): Promise<string | null> {
+): Promise<{ messageId: string | null; delivered: boolean }> {
   const resolver = new ChannelResolver(service);
   const resolved =
     (await resolver.resolveByBusinessId(businessId)) ||
@@ -34,24 +34,29 @@ async function sendWhatsAppMessage(
       sent = result.success !== false;
       if (sent && result.messageId) messageId = result.messageId;
     } catch (waErr) {
-      console.warn('Primary channel send failed, trying Gupshup fallback:', waErr);
+      console.warn(`[CONTRACT] Primary channel send failed for ${cleanPhone}:`, waErr);
     }
+  } else {
+    console.warn(`[CONTRACT] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
   }
 
   if (!sent) {
     const gupshup = new GupshupService();
     if (gupshup.isConfigured) {
       const result = await gupshup.sendText({ to: cleanPhone, text: message });
-      if (result.success && result.messageId) messageId = result.messageId;
+      if (result.success && result.messageId) {
+        messageId = result.messageId;
+        sent = true;
+      }
       if (!result.success) {
-        console.warn('Gupshup fallback also failed');
+        console.warn(`[CONTRACT] Gupshup fallback also failed for ${cleanPhone}`);
       }
     } else {
-      console.log(`[mock] WhatsApp to ${cleanPhone}: ${message.slice(0, 80)}...`);
+      console.warn(`[CONTRACT] No WhatsApp channel configured for business ${businessId}. Gupshup not configured. Message NOT delivered to ${cleanPhone}.`);
     }
   }
 
-  return messageId;
+  return { messageId, delivered: sent };
 }
 
 interface SignerInput {
@@ -177,6 +182,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Send WhatsApp to active (pending) signers
+      let deliveredCount = 0;
       for (const signer of (insertedSigners || []).filter(s => s.status === 'pending')) {
         const signUrl = `${appUrl}/sign/${signer.token}`;
         const message = [
@@ -190,12 +196,13 @@ export async function POST(request: NextRequest) {
           `\u23f0 Expires in 72 hours.`,
         ].join('\n');
 
-        const waMessageId = await sendWhatsAppMessage(service, business_id, biz.country_code, signer.signer_phone, message);
-        if (waMessageId) {
+        const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(service, business_id, biz.country_code, signer.signer_phone, message);
+        if (delivered && waMessageId) {
           await service
             .from('contract_signers')
             .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
             .eq('id', signer.id);
+          deliveredCount++;
         }
       }
 
@@ -204,6 +211,7 @@ export async function POST(request: NextRequest) {
         signers_count: multiSigners.length,
         signing_mode: mode,
         expires_at: expiresAt,
+        messages_delivered: deliveredCount,
       });
     }
 
@@ -221,8 +229,8 @@ export async function POST(request: NextRequest) {
       `\u23f0 Expires in 72 hours.`,
     ].join('\n');
 
-    const waMessageId = await sendWhatsAppMessage(service, business_id, biz.country_code, signer_phone, message);
-    if (waMessageId) {
+    const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(service, business_id, biz.country_code, signer_phone, message);
+    if (delivered && waMessageId) {
       await service
         .from('contracts')
         .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent', wa_status_updated_at: new Date().toISOString() })
@@ -233,6 +241,7 @@ export async function POST(request: NextRequest) {
       sign_url: signUrl,
       contract_id: contract.id,
       expires_at: expiresAt,
+      message_delivered: delivered,
     });
   } catch (err) {
     console.error('contracts/send error:', err);

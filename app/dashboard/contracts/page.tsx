@@ -288,9 +288,14 @@ export default function ContractsPage() {
       });
 
       if (res.ok) {
+        const data = await res.json();
         setShowModal(false);
         resetForm();
         await loadContracts();
+        if (data.message_delivered === false || data.messages_delivered === 0) {
+          setToastMsg('Contract created but WhatsApp message could not be delivered. Share the signing link manually.');
+          setTimeout(() => setToastMsg(''), 6000);
+        }
       }
     } catch (err) {
       console.error('Failed to send:', err);
@@ -308,8 +313,14 @@ export default function ContractsPage() {
         body: JSON.stringify({ contract_id: contractId }),
       });
       if (res.ok) {
-        setToastMsg('Signing link re-sent via WhatsApp');
-        setTimeout(() => setToastMsg(''), 3000);
+        const data = await res.json();
+        if (data.message_delivered === false) {
+          setToastMsg('Link regenerated but WhatsApp message could not be delivered. Share the link manually.');
+          setTimeout(() => setToastMsg(''), 6000);
+        } else {
+          setToastMsg('Signing link re-sent via WhatsApp');
+          setTimeout(() => setToastMsg(''), 3000);
+        }
       }
       await loadContracts();
     } catch (err) {
