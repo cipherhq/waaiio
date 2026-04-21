@@ -49,6 +49,7 @@ export default function ContractsPage() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [confirmRevokeId, setConfirmRevokeId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState('');
+  const [shareLinkUrl, setShareLinkUrl] = useState('');
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
 
   // Edit state
@@ -293,8 +294,9 @@ export default function ContractsPage() {
         resetForm();
         await loadContracts();
         if (data.message_delivered === false || data.messages_delivered === 0) {
-          setToastMsg('Contract created but WhatsApp message could not be delivered. Share the signing link manually.');
-          setTimeout(() => setToastMsg(''), 6000);
+          setShareLinkUrl(data.sign_url || '');
+          setToastMsg('Contract created but WhatsApp could not deliver. Copy the link below to share manually.');
+          setTimeout(() => { setToastMsg(''); setShareLinkUrl(''); }, 15000);
         }
       }
     } catch (err) {
@@ -315,8 +317,9 @@ export default function ContractsPage() {
       if (res.ok) {
         const data = await res.json();
         if (data.message_delivered === false) {
-          setToastMsg('Link regenerated but WhatsApp message could not be delivered. Share the link manually.');
-          setTimeout(() => setToastMsg(''), 6000);
+          setShareLinkUrl(data.sign_url || '');
+          setToastMsg('Link regenerated but WhatsApp could not deliver. Copy the link below to share manually.');
+          setTimeout(() => { setToastMsg(''); setShareLinkUrl(''); }, 15000);
         } else {
           setToastMsg('Signing link re-sent via WhatsApp');
           setTimeout(() => setToastMsg(''), 3000);
@@ -1296,8 +1299,24 @@ export default function ContractsPage() {
 
       {/* Toast */}
       {toastMsg && (
-        <div className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-gray-900 px-5 py-3 text-sm text-white shadow-lg">
-          {toastMsg}
+        <div className="fixed bottom-6 left-1/2 z-[100] -translate-x-1/2 rounded-lg bg-gray-900 px-5 py-3 text-sm text-white shadow-lg max-w-md">
+          <p>{toastMsg}</p>
+          {shareLinkUrl && (
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                readOnly
+                value={shareLinkUrl}
+                className="flex-1 rounded bg-gray-700 px-2 py-1 text-xs text-gray-200 outline-none"
+                onClick={e => (e.target as HTMLInputElement).select()}
+              />
+              <button
+                onClick={() => { navigator.clipboard.writeText(shareLinkUrl); setToastMsg('Link copied!'); setShareLinkUrl(''); setTimeout(() => setToastMsg(''), 2000); }}
+                className="rounded bg-white px-3 py-1 text-xs font-medium text-gray-900 hover:bg-gray-100"
+              >
+                Copy
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
