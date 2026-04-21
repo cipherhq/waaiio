@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 
+const CONTRACT_TEMPLATE_NAME = process.env.WHATSAPP_CONTRACT_TEMPLATE || 'document_signature_request';
+
 function generateToken(): string {
   const tokenBytes = new Uint8Array(24);
   crypto.getRandomValues(tokenBytes);
@@ -119,21 +121,50 @@ export async function POST(request: NextRequest) {
 
       let sent = false;
       if (resolved) {
+        // Try sendText first (works within 24h conversation window)
         try {
           const result = await resolved.sender.sendText({ to: phone, text: message });
           sent = result.success !== false;
         } catch (err) {
-          console.warn(`[CONTRACT-BULK] Primary channel failed for ${phone}:`, err);
+          console.warn(`[CONTRACT-BULK] sendText failed for ${phone}:`, err);
+        }
+
+        // If text failed, try template (works for all numbers)
+        if (!sent && resolved.sender.sendTemplate) {
+          try {
+            const result = await resolved.sender.sendTemplate({
+              to: phone,
+              templateName: CONTRACT_TEMPLATE_NAME,
+              templateParams: [biz.name, title, signUrl],
+            });
+            sent = result.success !== false;
+            if (sent) console.log(`[CONTRACT-BULK] Template message sent to ${phone}`);
+          } catch (tmplErr) {
+            console.warn(`[CONTRACT-BULK] Template fallback failed for ${phone}:`, tmplErr);
+          }
         }
       }
 
       if (!sent) {
         const gupshup = new GupshupService();
         if (gupshup.isConfigured) {
-          const result = await gupshup.sendText({ to: phone, text: message });
-          sent = result.success !== false;
+          // Try template first on Gupshup
+          try {
+            const result = await gupshup.sendTemplate({
+              to: phone,
+              templateId: CONTRACT_TEMPLATE_NAME,
+              templateParams: [biz.name, title, signUrl],
+            });
+            if (result.success && result.messageId) sent = true;
+          } catch {
+            // fall through to text
+          }
           if (!sent) {
-            console.warn(`[CONTRACT-BULK] Gupshup fallback failed for ${phone}`);
+            const result = await gupshup.sendText({ to: phone, text: message });
+            sent = result.success !== false;
+          }
+          if (!sent) {
+            console.warn(`[CONTRACT-BULK] All attempts failed for ${phone}`);
           }
         } else {
           console.warn(`[CONTRACT-BULK] No WhatsApp channel configured. Message NOT delivered to ${phone}.`);
