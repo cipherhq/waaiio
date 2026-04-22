@@ -10,6 +10,7 @@ import {
   type CountryCode,
 } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import type { Recommendation } from '@/lib/intelligence/recommendations';
 import { getCategoryByKey } from '@/lib/categoryConfig';
 import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
@@ -59,6 +60,7 @@ export default function DashboardOverview() {
   });
   const [recent, setRecent] = useState<RecentBooking[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
+  const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [orderRevenue, setOrderRevenue] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
   const [monthlyBookings, setMonthlyBookings] = useState(0);
@@ -127,6 +129,12 @@ export default function DashboardOverview() {
       setRecentOrders((recentOrdersRes.data || []) as RecentOrder[]);
       setMonthlyBookings(monthlyRes.count || 0);
       setLoading(false);
+
+      // Load recommendations in background
+      fetch('/api/dashboard/recommendations')
+        .then(r => r.json())
+        .then(data => setRecommendations(data.recommendations || []))
+        .catch(() => {});
     }
     load();
   }, [business.id]);
@@ -582,6 +590,54 @@ export default function DashboardOverview() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Smart Recommendations */}
+      {recommendations.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-base font-semibold text-gray-900">Recommended Actions</h2>
+          <p className="mt-1 text-xs text-gray-500">AI-powered suggestions to grow your revenue</p>
+          <div className="mt-3 space-y-3">
+            {recommendations.slice(0, 4).map(rec => {
+              const impactColors = {
+                high: 'border-red-200 bg-red-50',
+                medium: 'border-yellow-200 bg-yellow-50',
+                low: 'border-blue-200 bg-blue-50',
+              };
+              const impactBadge = {
+                high: 'bg-red-100 text-red-700',
+                medium: 'bg-yellow-100 text-yellow-700',
+                low: 'bg-blue-100 text-blue-700',
+              };
+              return (
+                <div key={rec.id} className={`rounded-xl border p-4 ${impactColors[rec.impact]}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${impactBadge[rec.impact]}`}>
+                          {rec.impact} impact
+                        </span>
+                        {rec.metric && (
+                          <span className="text-xs font-medium text-gray-500">{rec.metric}</span>
+                        )}
+                      </div>
+                      <p className="mt-1.5 text-sm font-semibold text-gray-900">{rec.title}</p>
+                      <p className="mt-0.5 text-xs text-gray-600">{rec.description}</p>
+                    </div>
+                    {rec.actionPath && rec.actionLabel && (
+                      <Link
+                        href={rec.actionPath}
+                        className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand-600 transition"
+                      >
+                        {rec.actionLabel}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

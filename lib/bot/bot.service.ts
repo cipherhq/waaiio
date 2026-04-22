@@ -10,6 +10,7 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { translateBotResponse } from './translate';
+import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
@@ -627,6 +628,43 @@ export class BotService {
 
         await this.sendText(from, greeting);
 
+        // ── Returning customer: personalized greeting + repeat suggestion ──
+        try {
+          const custHistory = await getCustomerHistory(this.supabase, from, business.id);
+          if (custHistory.isReturning) {
+            session.session_data._customer_history = {
+              totalVisits: custHistory.totalVisits,
+              lastServiceId: custHistory.lastServiceId,
+              lastServiceName: custHistory.lastServiceName,
+              favoriteServiceId: custHistory.favoriteServiceId,
+              favoriteServiceName: custHistory.favoriteServiceName,
+            };
+
+            // Lookup customer name for personalized greeting
+            let customerName: string | null = null;
+            if (profile?.id) {
+              const { data: fullProfile } = await this.supabase
+                .from('profiles')
+                .select('first_name')
+                .eq('id', profile.id)
+                .maybeSingle();
+              customerName = (fullProfile as { first_name?: string } | null)?.first_name || null;
+            }
+
+            const returnMsg = buildReturnGreeting(
+              customerName,
+              custHistory,
+              business.name,
+            );
+            if (returnMsg) {
+              const lang = session.session_data._detected_language as string | undefined;
+              await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang) : returnMsg);
+            }
+          }
+        } catch (err) {
+          logger.error('[BOT] Customer history lookup error (non-fatal):', err);
+        }
+
         // ── Welcome Buttons: send interactive menu after greeting ──
         try {
           if (waConfig.welcome_buttons.length > 0) {
@@ -698,6 +736,23 @@ export class BotService {
               // Pre-fill quantity
               if (parsed.quantity && parsed.quantity >= 1 && parsed.quantity <= 20) {
                 session.session_data.party_size = parsed.quantity;
+              }
+
+              // If no service matched but customer has a favorite, suggest it
+              if (!session.session_data.service_id) {
+                const hist = session.session_data._customer_history as { favoriteServiceId?: string; favoriteServiceName?: string } | undefined;
+                if (hist?.favoriteServiceId) {
+                  const { data: favService } = await this.supabase
+                    .from('services')
+                    .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+                    .eq('id', hist.favoriteServiceId)
+                    .eq('is_active', true)
+                    .maybeSingle();
+                  if (favService) {
+                    session.session_data._suggested_service_id = favService.id;
+                    session.session_data._suggested_service_name = favService.name;
+                  }
+                }
               }
 
               // Persist pre-filled data

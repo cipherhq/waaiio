@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/backup",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/customer-intelligence",
+      "schedule": "0 4 * * *"
     }
   ]
 }
