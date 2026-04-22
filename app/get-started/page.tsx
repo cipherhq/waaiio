@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { getPostHogClient } from '@/lib/posthog/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { OtpInput } from '@/components/auth/OtpInput';
 import {
@@ -363,6 +364,22 @@ function OnboardingWizard() {
     });
   }, [successStep, successBusinessId]);
 
+  // Track onboarding funnel steps
+  useEffect(() => {
+    const ph = getPostHogClient();
+    if (!ph) return;
+    const stepMap: Record<WizardStep, string> = {
+      auth: 'onboarding_auth',
+      category: 'onboarding_category',
+      details: 'onboarding_details',
+      persona: 'onboarding_persona',
+      connect: 'onboarding_connect',
+      plan: 'onboarding_plan',
+      success: 'onboarding_success',
+    };
+    ph.capture(stepMap[step], { step, category: category || undefined, country: selectedCountry });
+  }, [step]);
+
   useEffect(() => {
     if (step !== 'success' || successData) return;
     if (!successBusinessId) return;
@@ -579,6 +596,7 @@ function OnboardingWizard() {
       if (signUpError) { setError(signUpError.message); return; }
       if (signUpData.session) {
         setUser(signUpData.user);
+        getPostHogClient()?.capture('signup_completed', { method: 'email' });
         setStep('category');
       } else if (signUpData.user) {
         setEmailSent(true);
@@ -743,6 +761,7 @@ function OnboardingWizard() {
 
       setBusinessId(registerData.business_id);
       setBotCode(registerData.bot_code);
+      getPostHogClient()?.capture('business_created', { category, country: selectedCountry, businessId: registerData.business_id });
 
       // Step 2: Connect the WhatsApp channel
       const fbRes = await fetch('/api/auth/facebook/callback', {

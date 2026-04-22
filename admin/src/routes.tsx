@@ -33,6 +33,8 @@ import RecurringPayments from './pages/RecurringPayments';
 import Reports from './pages/Reports';
 import QueueManagement from './pages/QueueManagement';
 import Tickets from './pages/Tickets';
+import LLMClassifications from './pages/LLMClassifications';
+import Alerts from './pages/Alerts';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -59,6 +61,7 @@ export const router = createBrowserRouter([
       { path: 'subscriptions', Component: Subscriptions },
       { path: 'recurring', Component: RecurringPayments },
       { path: 'tickets', Component: Tickets },
+      { path: 'alerts', Component: Alerts },
       { path: 'reports', Component: Reports },
       { path: 'queue-management', Component: QueueManagement },
       // Giving
@@ -66,6 +69,7 @@ export const router = createBrowserRouter([
       // Communication
       { path: 'bot-management', Component: BotManagement },
       { path: 'bot-keywords', Component: BotKeywords },
+      { path: 'llm-logs', Component: LLMClassifications },
       { path: 'whatsapp-channels', Component: WhatsAppChannels },
       { path: 'notifications', Component: Notifications },
       { path: 'broadcasts', Component: Broadcasts },

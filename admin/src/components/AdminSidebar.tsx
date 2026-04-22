@@ -32,6 +32,8 @@ import {
   Repeat,
   ListOrdered,
   Ticket,
+  BrainCircuit,
+  AlertTriangle,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { LucideIcon } from 'lucide-react';
@@ -76,6 +78,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: RefreshCw, label: 'Subscriptions', path: '/subscriptions' },
       { icon: Repeat, label: 'Recurring', path: '/recurring' },
       { icon: Ticket, label: 'Tickets', path: '/tickets' },
+      { icon: AlertTriangle, label: 'Alerts', path: '/alerts' },
     ],
   },
   {
@@ -90,6 +93,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     items: [
       { icon: Bot, label: 'Bot Management', path: '/bot-management' },
       { icon: Hash, label: 'Bot Keywords', path: '/bot-keywords' },
+      { icon: BrainCircuit, label: 'LLM Logs', path: '/llm-logs' },
       { icon: MessageCircle, label: 'WhatsApp Channels', path: '/whatsapp-channels' },
       { icon: Bell, label: 'Notifications', path: '/notifications' },
       { icon: Megaphone, label: 'Broadcasts', path: '/broadcasts' },

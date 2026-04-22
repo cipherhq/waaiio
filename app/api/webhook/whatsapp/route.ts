@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { GupshupService } from '@/lib/channels/gupshup';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
@@ -167,6 +168,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
     logger.error('[WEBHOOK] Error:', error);
+    Sentry.captureException(error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
 }

@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import type { MessageSender } from '@/lib/channels/message-sender';
+import { translateBotResponse } from '@/lib/bot/translate';
 import type { StandaloneService } from '@/lib/bot/standalone.service';
 import type { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import type { FlowContext, PromptMessage } from './types';
@@ -68,7 +70,9 @@ export class FlowExecutor {
     }
 
     if (!step) {
-      const errMsg = 'Something went wrong. Send "Hi" to start again.';
+      Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
+      let errMsg = 'Something went wrong. Send "Hi" to start again.';
+      errMsg = await this.maybeTranslate(errMsg, session);
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
@@ -135,7 +139,7 @@ export class FlowExecutor {
     // Global escape hatch: cancel / start over at any step
     const lowerInput = input.toLowerCase().trim();
     if (lowerInput === 'cancel' || lowerInput === 'stop' || lowerInput === 'quit') {
-      const cancelMsg = 'Cancelled. Send *Hi* to start again.';
+      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start again.', session);
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
@@ -143,7 +147,7 @@ export class FlowExecutor {
       return;
     }
     if (lowerInput === 'start over' || lowerInput === 'restart' || lowerInput === 'reset') {
-      const restartMsg = 'No problem! Send *Hi* to start fresh.';
+      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start fresh.', session);
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
@@ -191,7 +195,9 @@ export class FlowExecutor {
 
     if (!result.valid) {
       if (result.errorMessage) {
-        const errText = `${result.errorMessage}\n\n_Type *cancel* to exit or *start over* to restart._`;
+        const translatedError = await this.maybeTranslate(result.errorMessage, session);
+        const cancelHint = await this.maybeTranslate('Type *cancel* to exit or *start over* to restart.', session);
+        const errText = `${translatedError}\n\n_${cancelHint}_`;
         session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
         await this.sendText(from, errText);
       }
@@ -338,6 +344,16 @@ export class FlowExecutor {
 
   private async sendText(to: string, text: string): Promise<void> {
     await this.sender.sendText({ to, text });
+  }
+
+  /** Translate text if session has a detected non-English language */
+  private async maybeTranslate(
+    text: string,
+    session: { session_data: Record<string, unknown> },
+  ): Promise<string> {
+    const lang = session.session_data._detected_language as string | undefined;
+    if (!lang || lang === 'en') return text;
+    return translateBotResponse(text, lang);
   }
 
   /** Extract text from prompt messages and append to session's conversation_log */

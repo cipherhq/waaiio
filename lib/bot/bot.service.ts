@@ -1,4 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
@@ -7,7 +8,8 @@ import { FlowExecutor } from './flows/executor';
 import { getLocale, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import { parseSmartIntent, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
+import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
+import { translateBotResponse } from './translate';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
@@ -648,7 +650,13 @@ export class BotService {
         // so the flow can skip already-answered steps.
         if (text && text.length > 2 && !isRestart) {
           try {
-            const parsed = parseSmartIntent(text);
+            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null);
+
+            // Store detected language on session for future translations
+            if ('language' in parsed && parsed.language && parsed.language !== 'en') {
+              session.session_data._detected_language = parsed.language;
+            }
+
             if (parsed.understood && business) {
               // Match service keywords against business services
               if (parsed.serviceKeywords.length > 0) {
@@ -705,7 +713,9 @@ export class BotService {
                 locale,
               );
               if (ack) {
-                await this.sendText(from, ack);
+                const lang = session.session_data._detected_language as string | undefined;
+                const translatedAck = lang ? await translateBotResponse(ack, lang) : ack;
+                await this.sendText(from, translatedAck);
               }
             }
           } catch (err) {
@@ -1103,6 +1113,7 @@ export class BotService {
     } catch (err) {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
       logger.error('[BOT] handleMessage CRASH:', errMsg);
+      Sentry.captureException(err);
       try { await this.sendText(from, 'Sorry, something went wrong. Please try again.'); } catch (_) { /* ignore */ }
     }
   }

@@ -45,6 +45,11 @@ export default function AnalyticsPage() {
   const [dailyCounts, setDailyCounts] = useState<DailyCount[]>([]);
   const [hourlyCounts, setHourlyCounts] = useState<HourlyCount[]>([]);
   const [topServices, setTopServices] = useState<ServiceStat[]>([]);
+  const [botSessions, setBotSessions] = useState(0);
+  const [botCompletedSessions, setBotCompletedSessions] = useState(0);
+  const [botEscalated, setBotEscalated] = useState(0);
+  const [paymentSuccess, setPaymentSuccess] = useState(0);
+  const [paymentFailed, setPaymentFailed] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -66,12 +71,22 @@ export default function AnalyticsPage() {
       if (endStr) bookingsQuery = bookingsQuery.lte('date', endStr);
       bookingsQuery = bookingsQuery.order('date', { ascending: false });
 
-      const [bookingsRes, servicesRes] = await Promise.all([
+      const [bookingsRes, servicesRes, botSessionsRes, paymentsRes] = await Promise.all([
         bookingsQuery,
         supabase
           .from('services')
           .select('id, name')
           .eq('business_id', business.id),
+        supabase
+          .from('bot_sessions')
+          .select('id, is_active, session_data')
+          .eq('business_id', business.id)
+          .gte('created_at', startStr + 'T00:00:00'),
+        supabase
+          .from('payments')
+          .select('id, status')
+          .eq('business_id', business.id)
+          .gte('created_at', startStr + 'T00:00:00'),
       ]);
       const bookings = bookingsRes.data;
       const serviceMap = new Map((servicesRes.data || []).map((s: { id: string; name: string }) => [s.id, s.name]));
@@ -141,6 +156,22 @@ export default function AnalyticsPage() {
         .sort((a, b) => b.count - a.count)
         .slice(0, 5);
       setTopServices(services);
+
+      // Bot session stats
+      const allSessions = botSessionsRes.data || [];
+      setBotSessions(allSessions.length);
+      const completedSessions = allSessions.filter(s => !s.is_active);
+      setBotCompletedSessions(completedSessions.length);
+      const escalatedSessions = allSessions.filter(s => {
+        const data = s.session_data as Record<string, unknown> | null;
+        return data?.escalated_to_human === true;
+      });
+      setBotEscalated(escalatedSessions.length);
+
+      // Payment stats
+      const allPayments = paymentsRes.data || [];
+      setPaymentSuccess(allPayments.filter(p => p.status === 'success').length);
+      setPaymentFailed(allPayments.filter(p => p.status === 'failed').length);
 
       setLoading(false);
     }
@@ -294,6 +325,79 @@ export default function AnalyticsPage() {
           </div>
         </div>
       )}
+      {/* Bot & Payment Performance */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        {/* Bot Performance */}
+        {botSessions > 0 && (
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Bot Performance</h2>
+            <div className="mt-4 grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-2xl font-bold text-gray-900">{botSessions}</p>
+                <p className="text-xs text-gray-500">Total Sessions</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-green-600">
+                  {botSessions > 0 ? Math.round(((botCompletedSessions - botEscalated) / botSessions) * 100) : 0}%
+                </p>
+                <p className="text-xs text-gray-500">Self-Resolved</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-amber-600">{botEscalated}</p>
+                <p className="text-xs text-gray-500">Escalated to Human</p>
+              </div>
+            </div>
+            <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-gray-100">
+              {botSessions > 0 && (
+                <>
+                  <div
+                    className="float-left h-3 bg-green-500"
+                    style={{ width: `${((botCompletedSessions - botEscalated) / botSessions) * 100}%` }}
+                  />
+                  <div
+                    className="float-left h-3 bg-amber-400"
+                    style={{ width: `${(botEscalated / botSessions) * 100}%` }}
+                  />
+                </>
+              )}
+            </div>
+            <div className="mt-2 flex gap-4 text-[10px] text-gray-400">
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-green-500" /> Self-resolved</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-amber-400" /> Escalated</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-gray-200" /> Active</span>
+            </div>
+          </div>
+        )}
+
+        {/* Payment Success Rate */}
+        {(paymentSuccess + paymentFailed) > 0 && (
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Payment Success Rate</h2>
+            <div className="mt-4 grid grid-cols-3 gap-4">
+              <div>
+                <p className="text-2xl font-bold text-gray-900">{paymentSuccess + paymentFailed}</p>
+                <p className="text-xs text-gray-500">Total Payments</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-green-600">
+                  {Math.round((paymentSuccess / (paymentSuccess + paymentFailed)) * 100)}%
+                </p>
+                <p className="text-xs text-gray-500">Success Rate</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-red-600">{paymentFailed}</p>
+                <p className="text-xs text-gray-500">Failed</p>
+              </div>
+            </div>
+            <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-gray-100">
+              <div
+                className="h-3 rounded-full bg-green-500"
+                style={{ width: `${(paymentSuccess / (paymentSuccess + paymentFailed)) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

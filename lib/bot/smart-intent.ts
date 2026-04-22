@@ -6,6 +6,9 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { classifyWithLLM } from './llm-intent';
+import { logClassification } from './classification-logger';
+import { isFeatureEnabledServer, FLAGS } from '@/lib/posthog/flags';
 
 // ── Types ────────────────────────────────────────────────
 
@@ -411,6 +414,106 @@ export function parseSmartIntent(text: string): SmartParseResult {
   );
 
   return result;
+}
+
+// ── Hybrid intent: regex first, LLM fallback ───────────
+
+export async function parseSmartIntentHybrid(
+  text: string,
+  businessCategory: string | null,
+  supabase: SupabaseClient,
+  businessId: string | null,
+): Promise<SmartParseResult & { language?: string; llmUsed?: boolean }> {
+  // Step 1: Try regex
+  const regexResult = parseSmartIntent(text);
+
+  // Check if LLM is enabled via feature flag (defaults to true if PostHog not configured)
+  const llmEnabled = businessId
+    ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(() => true)
+    : true;
+
+  // Step 2: If regex found a confident intent with service keywords, use it
+  if (regexResult.intent && regexResult.serviceKeywords.length > 0) {
+    logClassification(supabase, {
+      businessId,
+      businessCategory,
+      userMessage: text,
+      detectedIntent: regexResult.intent,
+      detectedFlow: regexResult.intent,
+      entities: { serviceKeywords: regexResult.serviceKeywords, date: regexResult.date, time: regexResult.specificTime },
+      confidence: 1.0,
+      language: null,
+      regexAttempted: true,
+      regexMatched: true,
+      llmUsed: false,
+      latencyMs: null,
+      model: null,
+    });
+    return regexResult;
+  }
+
+  // Step 3: Fall back to LLM (if enabled)
+  if (!llmEnabled) return regexResult;
+
+  try {
+    const start = Date.now();
+    const llmResult = await classifyWithLLM(text, businessCategory);
+    const latency = Date.now() - start;
+
+    // Only use LLM result if confidence is reasonable
+    if (llmResult.confidence < 0.3) {
+      logClassification(supabase, {
+        businessId,
+        businessCategory,
+        userMessage: text,
+        detectedIntent: llmResult.flow,
+        detectedFlow: llmResult.flow,
+        entities: llmResult.entities,
+        confidence: llmResult.confidence,
+        language: llmResult.language,
+        regexAttempted: true,
+        regexMatched: !!regexResult.intent,
+        llmUsed: true,
+        latencyMs: latency,
+        model: 'claude-haiku-4-5-20251001',
+      });
+      // Low confidence — return whatever regex found (possibly empty)
+      return regexResult;
+    }
+
+    const merged: SmartParseResult = {
+      understood: true,
+      intent: llmResult.flow,
+      serviceKeywords: llmResult.entities.serviceKeywords.length > 0
+        ? llmResult.entities.serviceKeywords
+        : regexResult.serviceKeywords,
+      date: llmResult.entities.date || regexResult.date,
+      timePreference: (llmResult.entities.timePreference as SmartParseResult['timePreference']) || regexResult.timePreference,
+      specificTime: regexResult.specificTime,
+      quantity: llmResult.entities.quantity || regexResult.quantity,
+    };
+
+    logClassification(supabase, {
+      businessId,
+      businessCategory,
+      userMessage: text,
+      detectedIntent: llmResult.flow,
+      detectedFlow: llmResult.flow,
+      entities: llmResult.entities,
+      confidence: llmResult.confidence,
+      language: llmResult.language,
+      regexAttempted: true,
+      regexMatched: !!regexResult.intent,
+      llmUsed: true,
+      latencyMs: latency,
+      model: 'claude-haiku-4-5-20251001',
+    });
+
+    return { ...merged, language: llmResult.language, llmUsed: true };
+  } catch {
+    // LLM failed — return regex result
+    return regexResult;
+  }
 }
 
 // ── Service matcher ──────────────────────────────────────

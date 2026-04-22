@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import { getPlatformFees } from '@/lib/getPlatformFees';
+import { getServerPostHog } from '@/lib/posthog/server';
+import { createAlert } from '@/lib/alerts/create-alert';
 import type { SubscriptionTier } from '@/lib/constants';
 
 /**
@@ -24,6 +27,7 @@ export async function processPaystackChargeSuccess(
   const expectedKobo = existingPayment.amount * 100;
 
   if (webhookAmountKobo !== expectedKobo) {
+    Sentry.captureMessage('Payment amount mismatch', { level: 'warning', extra: { reference, webhookAmountKobo, expectedKobo } });
     await supabase
       .from('payments')
       .update({ status: 'failed', gateway_status: 'amount_mismatch' })
@@ -43,6 +47,10 @@ export async function processPaystackChargeSuccess(
       paid_at: new Date().toISOString(),
     })
     .eq('gateway_reference', reference);
+
+  // Track payment success
+  const posthog = getServerPostHog();
+  posthog?.capture({ distinctId: reference, event: 'payment_success', properties: { gateway: 'paystack', amount: existingPayment.amount } });
 
   if (existingPayment.booking_id) {
     await supabase
@@ -79,7 +87,7 @@ export async function processPaystackChargeFailed(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status')
+    .select('id, status, amount, business_id')
     .eq('gateway_reference', reference)
     .single();
 
@@ -92,6 +100,23 @@ export async function processPaystackChargeFailed(
       gateway_status: (data.gateway_response as string) || 'failed',
     })
     .eq('gateway_reference', reference);
+
+  // Track payment failure
+  const posthog = getServerPostHog();
+  posthog?.capture({ distinctId: reference, event: 'payment_failed', properties: { gateway: 'paystack', reason: (data.gateway_response as string) || 'unknown' } });
+
+  // Create alert for business owner
+  if (existingPayment.business_id) {
+    const reason = (data.gateway_response as string) || 'Payment failed';
+    await createAlert(supabase, {
+      businessId: existingPayment.business_id,
+      type: 'payment_failed',
+      severity: 'warning',
+      title: 'Payment Failed',
+      message: `A payment of ${existingPayment.amount} failed: ${reason}`,
+      metadata: { paymentId: existingPayment.id, amount: existingPayment.amount, gateway: 'paystack', reference, reason },
+    });
+  }
 }
 
 async function recordPlatformFeeForBooking(

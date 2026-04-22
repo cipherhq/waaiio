@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server';
 import { DashboardProvider } from '@/components/dashboard/DashboardProvider';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { ImpersonationBanner } from '@/components/dashboard/ImpersonationBanner';
+import { AlertBanner } from '@/components/dashboard/AlertBanner';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
@@ -84,6 +85,7 @@ export default async function DashboardLayout({
           <DashboardProvider business={businessWithCaps} userId={user.id}>
             <div className="min-h-screen bg-gray-50">
               <ImpersonationBanner businessName={impersonatedBusinessName} />
+              <AlertBanner />
               <Sidebar />
               <main className="lg:pl-64">
                 <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
@@ -144,6 +146,7 @@ export default async function DashboardLayout({
   return (
     <DashboardProvider business={businessWithCaps} userId={user.id}>
       <div className="min-h-screen bg-gray-50">
+        <AlertBanner />
         <Sidebar />
         <main className="lg:pl-64">
           <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">

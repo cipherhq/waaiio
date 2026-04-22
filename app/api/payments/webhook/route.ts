@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createHmac } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
+import { createAlert } from '@/lib/alerts/create-alert';
 
 export async function POST(request: NextRequest) {
   try {
@@ -254,6 +256,18 @@ export async function POST(request: NextRequest) {
             failure_reason: (data.gateway_response as string) || 'Payment failed',
             created_at: new Date().toISOString(),
           });
+
+          // Alert business owner
+          if (sub.business_id) {
+            await createAlert(supabase, {
+              businessId: sub.business_id,
+              type: 'subscription_payment_failed',
+              severity: newFailCount >= 3 ? 'critical' : 'warning',
+              title: 'Subscription Payment Failed',
+              message: `Recurring payment failed (attempt ${newFailCount}). ${newFailCount >= 3 ? 'Subscription is now past due.' : 'We will retry.'}`,
+              metadata: { subscriptionId: sub.id, failureCount: newFailCount, gateway: 'paystack' },
+            });
+          }
         }
       }
     }
@@ -274,7 +288,8 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ received: true });
-  } catch {
+  } catch (error) {
+    Sentry.captureException(error);
     return NextResponse.json({ received: true }, { status: 200 });
   }
 }

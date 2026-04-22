@@ -11,6 +11,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.90.0",
+    "@sentry/nextjs": "^10.49.0",
     "@supabase/ssr": "^0.10.0",
     "@supabase/supabase-js": "^2.101.1",
     "@types/qrcode": "^1.5.6",
@@ -19,6 +21,8 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.6.205",
     "pdfkit": "^0.15.0",
+    "posthog-js": "^1.370.1",
+    "posthog-node": "^5.29.5",
     "qrcode": "^1.5.4",
     "qrcode.react": "^4.2.0",
     "react": "^18",

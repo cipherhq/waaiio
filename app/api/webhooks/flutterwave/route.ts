@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { createAlert } from '@/lib/alerts/create-alert';
 
 const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
@@ -21,6 +23,27 @@ export async function POST(request: NextRequest) {
     }
 
     if (data.status !== 'successful') {
+      // Alert on non-successful Flutterwave charges
+      const txRef = data.tx_ref as string;
+      if (txRef) {
+        const flwSupabase = createServiceClient();
+        const { data: failedPayment } = await flwSupabase
+          .from('payments')
+          .select('id, amount, business_id')
+          .eq('gateway_reference', txRef)
+          .maybeSingle();
+
+        if (failedPayment?.business_id) {
+          await createAlert(flwSupabase, {
+            businessId: failedPayment.business_id,
+            type: 'payment_failed',
+            severity: 'warning',
+            title: 'Payment Failed',
+            message: `A Flutterwave payment of ${failedPayment.amount} was not successful (status: ${data.status}).`,
+            metadata: { paymentId: failedPayment.id, amount: failedPayment.amount, gateway: 'flutterwave', status: data.status },
+          });
+        }
+      }
       return NextResponse.json({ message: 'Payment not successful' }, { status: 200 });
     }
 
@@ -76,6 +99,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: 'OK' }, { status: 200 });
   } catch (error) {
     logger.error('Flutterwave webhook error:', (error as Error).message);
+    Sentry.captureException(error);
     return NextResponse.json({ message: 'Internal error' }, { status: 500 });
   }
 }

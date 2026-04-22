@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
+import { createAlert } from '@/lib/alerts/create-alert';
 import type { SubscriptionTier } from '@/lib/constants';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
@@ -194,11 +196,29 @@ export async function POST(request: NextRequest) {
     if (event === 'checkout.session.expired') {
       const sessionId = data.id as string;
       if (sessionId) {
+        const { data: expiredPayment } = await supabase
+          .from('payments')
+          .select('id, amount, business_id')
+          .eq('gateway_reference', sessionId)
+          .neq('status', 'success')
+          .maybeSingle();
+
         await supabase
           .from('payments')
           .update({ status: 'failed', gateway_status: 'expired' })
           .eq('gateway_reference', sessionId)
           .neq('status', 'success');
+
+        if (expiredPayment?.business_id) {
+          await createAlert(supabase, {
+            businessId: expiredPayment.business_id,
+            type: 'payment_failed',
+            severity: 'warning',
+            title: 'Payment Expired',
+            message: `A Stripe checkout session expired before payment was completed.`,
+            metadata: { paymentId: expiredPayment.id, amount: expiredPayment.amount, gateway: 'stripe' },
+          });
+        }
       }
     }
 
@@ -334,6 +354,17 @@ export async function POST(request: NextRequest) {
             failure_reason: 'Payment failed',
             created_at: new Date().toISOString(),
           });
+
+          if (sub.business_id) {
+            await createAlert(supabase, {
+              businessId: sub.business_id,
+              type: 'subscription_payment_failed',
+              severity: newFailCount >= 3 ? 'critical' : 'warning',
+              title: 'Subscription Payment Failed',
+              message: `Recurring Stripe payment failed (attempt ${newFailCount}). ${newFailCount >= 3 ? 'Subscription is now past due.' : 'We will retry.'}`,
+              metadata: { subscriptionId: sub.id, failureCount: newFailCount, gateway: 'stripe' },
+            });
+          }
         }
       }
     }
@@ -356,7 +387,8 @@ export async function POST(request: NextRequest) {
     // Already marked as processed via upsert above
 
     return NextResponse.json({ received: true });
-  } catch {
+  } catch (error) {
+    Sentry.captureException(error);
     return NextResponse.json({ received: true }, { status: 200 });
   }
 }

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { PostHogProvider } from '@/components/PostHogProvider';
 import CookieConsent from '@/components/marketing/CookieConsent';
 import './globals.css';
 
@@ -43,7 +44,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} antialiased`}>
-        {children}
+        <PostHogProvider>
+          {children}
+        </PostHogProvider>
         <CookieConsent />
       </body>
     </html>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { supabase } from '@/lib/supabase';
-import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap } from 'lucide-react';
+import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap, CreditCard, BrainCircuit, Bell } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 interface StatCard {
@@ -26,6 +26,13 @@ export default function Dashboard() {
   const [pendingPayouts, setPendingPayouts] = useState(0);
   const [heldPayouts, setHeldPayouts] = useState(0);
   const [alerts, setAlerts] = useState<ActionAlert[]>([]);
+  // System health
+  const [paymentSuccessCount, setPaymentSuccessCount] = useState(0);
+  const [paymentFailedCount, setPaymentFailedCount] = useState(0);
+  const [llmTotal, setLlmTotal] = useState(0);
+  const [llmUsedCount, setLlmUsedCount] = useState(0);
+  const [llmAvgConfidence, setLlmAvgConfidence] = useState(0);
+  const [recentAlerts, setRecentAlerts] = useState<{ id: string; severity: string; title: string; business_name: string; created_at: string }[]>([]);
 
   useEffect(() => {
     async function loadStats() {
@@ -158,6 +165,34 @@ export default function Dashboard() {
           });
         }
         setAlerts(alertList);
+
+        // System health queries
+        const [paymentsSuccessRes, paymentsFailedRes, llmRes, recentAlertsRes] = await Promise.all([
+          supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'success').gte('created_at', monthStart),
+          supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'failed').gte('created_at', monthStart),
+          supabase.from('llm_classifications').select('confidence, llm_used').gte('created_at', monthStart).limit(500),
+          supabase.from('alerts').select('id, severity, title, business_id, created_at').order('created_at', { ascending: false }).limit(5),
+        ]);
+
+        setPaymentSuccessCount(paymentsSuccessRes.count || 0);
+        setPaymentFailedCount(paymentsFailedRes.count || 0);
+
+        const llmData = llmRes.data || [];
+        setLlmTotal(llmData.length);
+        setLlmUsedCount(llmData.filter(r => r.llm_used).length);
+        const confidences = llmData.filter(r => r.confidence > 0).map(r => r.confidence as number);
+        setLlmAvgConfidence(confidences.length > 0 ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0);
+
+        // Enrich alerts with business names
+        const alertBizIds = [...new Set((recentAlertsRes.data || []).map(a => a.business_id).filter(Boolean))];
+        const { data: alertBizzes } = alertBizIds.length > 0
+          ? await supabase.from('businesses').select('id, name').in('id', alertBizIds)
+          : { data: [] };
+        const alertBizMap = new Map((alertBizzes || []).map(b => [b.id, b.name]));
+        setRecentAlerts((recentAlertsRes.data || []).map(a => ({
+          ...a,
+          business_name: alertBizMap.get(a.business_id) || 'Unknown',
+        })));
       } catch (error) {
         console.warn('Failed to load dashboard stats:', error);
       } finally {
@@ -251,6 +286,88 @@ export default function Dashboard() {
             </div>
           );
         })}
+      </div>
+
+      {/* System Health */}
+      <div className="mt-8">
+        <h2 className="text-lg font-semibold text-gray-900">System Health</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Payment Health */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center gap-2">
+              <CreditCard className="h-4 w-4 text-green-600" />
+              <h3 className="text-sm font-semibold text-gray-900">Payment Health</h3>
+            </div>
+            <div className="mt-3 flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-gray-900">
+                  {(paymentSuccessCount + paymentFailedCount) > 0
+                    ? `${Math.round((paymentSuccessCount / (paymentSuccessCount + paymentFailedCount)) * 100)}%`
+                    : '—'}
+                </p>
+                <p className="text-xs text-gray-500">Success rate this month</p>
+              </div>
+              <div className="text-right text-xs text-gray-400">
+                <p className="text-green-600 font-medium">{paymentSuccessCount} succeeded</p>
+                <p className="text-red-500 font-medium">{paymentFailedCount} failed</p>
+              </div>
+            </div>
+            {(paymentSuccessCount + paymentFailedCount) > 0 && (
+              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-red-100">
+                <div className="h-2 rounded-full bg-green-500" style={{ width: `${(paymentSuccessCount / (paymentSuccessCount + paymentFailedCount)) * 100}%` }} />
+              </div>
+            )}
+          </div>
+
+          {/* LLM Performance */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center gap-2">
+              <BrainCircuit className="h-4 w-4 text-purple-600" />
+              <h3 className="text-sm font-semibold text-gray-900">LLM Intent Detection</h3>
+            </div>
+            <div className="mt-3 flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-gray-900">{llmTotal}</p>
+                <p className="text-xs text-gray-500">Classifications this month</p>
+              </div>
+              <div className="text-right text-xs text-gray-400">
+                <p className="text-purple-600 font-medium">{llmUsedCount} used LLM</p>
+                <p className="text-gray-500 font-medium">{llmTotal - llmUsedCount} regex only</p>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-between text-xs">
+              <span className="text-gray-500">Avg confidence</span>
+              <span className={`font-semibold ${llmAvgConfidence >= 0.8 ? 'text-green-600' : llmAvgConfidence >= 0.5 ? 'text-yellow-600' : 'text-red-600'}`}>
+                {(llmAvgConfidence * 100).toFixed(0)}%
+              </span>
+            </div>
+          </div>
+
+          {/* Recent Alerts */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bell className="h-4 w-4 text-amber-600" />
+                <h3 className="text-sm font-semibold text-gray-900">Recent Alerts</h3>
+              </div>
+              <button onClick={() => navigate('/alerts')} className="text-xs text-brand hover:underline">View all</button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {recentAlerts.length === 0 && (
+                <p className="text-xs text-gray-400 py-2">No recent alerts</p>
+              )}
+              {recentAlerts.map(a => (
+                <div key={a.id} className="flex items-center gap-2 text-xs">
+                  <span className={`inline-block h-2 w-2 rounded-full shrink-0 ${
+                    a.severity === 'critical' ? 'bg-red-500' : a.severity === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
+                  }`} />
+                  <span className="truncate text-gray-700">{a.title}</span>
+                  <span className="shrink-0 text-gray-400">{a.business_name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Quick Actions */}
