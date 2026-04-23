@@ -42,11 +42,11 @@ export default function HomePage() {
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
                 </span>
-                WhatsApp Automation Platform
+                Keep your WhatsApp number. We make it 10x smarter.
               </motion.span>
 
               <h1 className="mt-6 text-balance text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-[3.5rem]">
-                {'Automate Any Business with '.split(' ').map((word, i) => (
+                {'Your WhatsApp Number, '.split(' ').map((word, i) => (
                   <motion.span
                     key={i}
                     initial={{ opacity: 0, y: 30 }}
@@ -63,7 +63,7 @@ export default function HomePage() {
                   transition={{ delay: 0.7, duration: 0.5 }}
                   className="inline-block text-accent mr-[0.25em]"
                 >
-                  AI-Powered
+                  Supercharged
                 </motion.span>
                 <motion.span
                   initial={{ opacity: 0, y: 30 }}
@@ -71,7 +71,7 @@ export default function HomePage() {
                   transition={{ delay: 0.77, duration: 0.5 }}
                   className="inline-block"
                 >
-                  WhatsApp
+                  with AI
                 </motion.span>
               </h1>
 
@@ -81,8 +81,8 @@ export default function HomePage() {
                 transition={{ delay: 0.9, duration: 0.6 }}
                 className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
               >
-                Bookings, payments, orders, donations, ticketing, and more — for {CATEGORY_COUNT}+ industries
-                including churches, salons, restaurants, clinics, and shops. Available in 5 countries.
+                Turn your WhatsApp into a business operating system. Auto-book appointments, collect payments,
+                take orders, and grow revenue — while you sleep. For {CATEGORY_COUNT}+ industries across 5 countries.
               </motion.p>
 
               <motion.div
@@ -210,26 +210,26 @@ export default function HomePage() {
       <section className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4 text-center">
           <AnimatedSection>
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">How Waaiio empowers you</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Your invisible AI layer</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Everything your business needs on WhatsApp
+              Everything WhatsApp Business should have been
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-gray-600">
-              Run bookings, accept payments, take orders, and sell tickets — all from the app 2 billion people already use.
+              Use your own WhatsApp number. Customers think you just got really good at replying. Behind the scenes, AI handles everything.
             </p>
           </AnimatedSection>
 
           <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { icon: '&#x1F4C5;', title: '24/7 WhatsApp Automation', desc: 'Accept bookings, payments, and orders any time — even when your staff are busy or you\'re closed.' },
-              { icon: '&#x1F3ED;', title: 'Multi-Industry Support', desc: `Churches, salons, clinics, shops, schools, NGOs, events, and more — ${CATEGORY_COUNT}+ business categories supported out of the box.` },
-              { icon: '&#x1F4CA;', title: 'Real-Time Dashboard', desc: 'View, manage, and export all bookings, orders, and payments from a clean analytics dashboard.' },
-              { icon: '&#x1F4B3;', title: 'Integrated Payments', desc: 'Collect payments, tithes, donations, and fees via Paystack (NG, GH), Square (US), or Stripe (UK, CA) — prompted automatically in chat.' },
-              { icon: '&#x1F514;', title: 'Smart Reminders', desc: 'Automatic reminders before appointments and events, cutting no-shows by up to 60%.' },
-              { icon: '&#x2728;', title: 'Custom Brand Persona', desc: 'Your business name, personality, and greeting. Customers interact with your brand, not ours.' },
-              { icon: '&#x1F3C6;', title: 'Loyalty & Referrals', desc: 'Reward repeat customers with points and drive growth with referral bonuses — all managed through WhatsApp.' },
-              { icon: '&#x1F4CB;', title: 'Queue & Waitlist', desc: 'Let customers join a queue or waitlist via WhatsApp. Notify them automatically when it\'s their turn.' },
-              { icon: '&#x1F4E2;', title: 'Broadcasts & Promos', desc: 'Send targeted messages, promotions, and updates to customer segments. Drive repeat business effortlessly.' },
+              { icon: '&#x1F4C5;', title: 'Never Miss a Booking', desc: 'Accept bookings, payments, and orders 24/7 — even when you\'re closed. Your bot works while you sleep.' },
+              { icon: '&#x1F9E0;', title: 'Remembers Every Customer', desc: '"Welcome back! Last time you had a haircut + beard trim. Want the same?" Your bot personalizes every interaction based on history.' },
+              { icon: '&#x1F4B0;', title: 'Collect Money Instantly', desc: 'Payments, tithes, donations, fees — collected automatically in the chat via Paystack, Stripe, Square, or Flutterwave. Receipts sent instantly.' },
+              { icon: '&#x1F4C8;', title: 'AI Revenue Recommendations', desc: '"23 customers haven\'t returned in 30 days. Your evening slots are empty. Enable deposits to cut no-shows." One-click actions from your dashboard.' },
+              { icon: '&#x1F514;', title: '60% Fewer No-Shows', desc: 'Automatic reminders before every appointment. Smart follow-ups after every visit. Win-back campaigns for dormant customers.' },
+              { icon: '&#x1F30D;', title: '7 Languages, One Bot', desc: 'Speaks English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French. Your customers talk naturally — the AI understands.' },
+              { icon: '&#x1F3C6;', title: 'Loyalty That Runs Itself', desc: 'Points awarded after every visit. Referral bonuses for bringing friends. All automated through WhatsApp — no app download needed.' },
+              { icon: '&#x1F4CB;', title: 'Smart Queue & Waitlist', desc: 'Customers join the queue from WhatsApp. Notified automatically when it\'s their turn. No more crowded waiting rooms.' },
+              { icon: '&#x1F4E2;', title: 'Targeted Broadcasts', desc: 'Send promos to VIP customers. Win-back offers to churning ones. Announcements to everyone. Unlimited broadcasts on Business tier.' },
             ].map((f, i) => (
               <AnimatedSection key={f.title} delay={i * 0.06}>
                 <motion.div
@@ -252,21 +252,89 @@ export default function HomePage() {
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Why Waaiio?</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Three powerful reasons to switch
+              What WhatsApp Business can&apos;t do
             </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-600">
+              WhatsApp Business gives you a catalog and quick replies. Waaiio gives you a business operating system.
+            </p>
           </AnimatedSection>
 
           <div className="mt-14 grid gap-8 lg:grid-cols-3">
             {[
-              { number: '01', title: 'Lead Generation', desc: 'Every WhatsApp message becomes a potential sale. Your bot qualifies leads, captures contact info, and converts casual browsers into paying customers — automatically.', color: 'brand' },
-              { number: '02', title: '20+ Capabilities', desc: 'Beyond 4 core flows — scheduling, payments, ordering, and ticketing — get loyalty programs, broadcasts, queue management, referrals, analytics, and more. All auto-configured for your industry.', color: 'accent' },
-              { number: '03', title: 'AI-Powered Commerce', desc: 'Smart intent detection understands what customers want. The bot handles upsells, collects payments, sends confirmations, and learns from every interaction.', color: 'whatsapp' },
+              { number: '01', title: 'Auto-Book, Auto-Pay, Auto-Receipt', desc: 'Customer messages "I wan barb tomorrow 3pm" → bot books the slot, collects payment, sends a receipt. No staff needed. WhatsApp Business can\'t do this.', color: 'brand' },
+              { number: '02', title: 'Knows Your Customers', desc: '"Welcome back, Chioma! Last time you had Full Grooming. Want the same?" Your bot remembers every customer, suggests repeat bookings, and flags who\'s about to churn.', color: 'accent' },
+              { number: '03', title: 'Grows Your Revenue', desc: '"23 customers haven\'t returned in 30 days — send a win-back offer?" AI-powered recommendations tell you exactly what to do to earn more. One-click actions from your dashboard.', color: 'whatsapp' },
             ].map((card, i) => (
               <AnimatedSection key={card.number} delay={i * 0.1}>
                 <WhyCard {...card} />
               </AnimatedSection>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── WhatsApp Business vs Waaiio ── */}
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-4xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">The difference</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              WhatsApp Business vs Waaiio
+            </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-600">
+              WhatsApp Business is a messaging app. Waaiio is a business operating system that runs on WhatsApp.
+            </p>
+          </AnimatedSection>
+
+          <AnimatedSection delay={0.2}>
+            <div className="mt-12 overflow-hidden rounded-2xl border border-gray-200">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-gray-50">
+                    <th className="px-6 py-4 text-left font-semibold text-gray-500">Feature</th>
+                    <th className="px-6 py-4 text-center font-semibold text-gray-400">WhatsApp Business</th>
+                    <th className="px-6 py-4 text-center font-semibold text-brand">Waaiio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {[
+                    { feature: 'Auto-book appointments', wa: false, waaiio: true },
+                    { feature: 'Collect payments in chat', wa: false, waaiio: true },
+                    { feature: 'Customer memory & history', wa: false, waaiio: true },
+                    { feature: 'AI revenue recommendations', wa: false, waaiio: true },
+                    { feature: 'Automated reminders', wa: false, waaiio: true },
+                    { feature: 'Loyalty & referral programs', wa: false, waaiio: true },
+                    { feature: 'Multi-step follow-up sequences', wa: false, waaiio: true },
+                    { feature: 'Win-back dormant customers', wa: false, waaiio: true },
+                    { feature: '7 African languages', wa: false, waaiio: true },
+                    { feature: 'Use your own WhatsApp number', wa: true, waaiio: true },
+                    { feature: 'Product catalog', wa: true, waaiio: true },
+                    { feature: 'Greeting messages', wa: true, waaiio: true },
+                  ].map((row) => (
+                    <tr key={row.feature} className="hover:bg-gray-50/50">
+                      <td className="px-6 py-3 text-gray-700 font-medium">{row.feature}</td>
+                      <td className="px-6 py-3 text-center">
+                        {row.wa ? (
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 text-gray-500">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                          </span>
+                        ) : (
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-gray-300">
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-3 text-center">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white">
+                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </AnimatedSection>
         </div>
       </section>
 
@@ -305,18 +373,18 @@ export default function HomePage() {
             <AnimatedSection direction="left">
               <p className="text-xs font-bold uppercase tracking-widest text-brand-200">Intelligent AI</p>
               <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
-                AI that understands your customers
+                AI that grows your revenue
               </h2>
               <p className="mt-4 text-lg leading-relaxed text-brand-200">
-                Waaiio uses advanced intent detection to understand what customers want — even from casual, misspelled, or slang-filled messages.
+                Not just a chatbot — an AI business partner that understands customers, remembers their history, and tells you exactly how to earn more.
               </p>
 
               <div className="mt-8 space-y-4">
                 {[
-                  { title: 'Smart Intent Detection', desc: 'Detects booking requests, complaints, questions, and payment intents from natural language.' },
-                  { title: 'Auto-Upsell & Cross-sell', desc: 'Suggests complementary services and premium options during the conversation flow.' },
-                  { title: 'Multi-Language Support', desc: 'Understands Pidgin, Yoruba greetings, and mixed-language messages common in African markets.' },
-                  { title: 'Profanity & Spam Filter', desc: 'Built-in moderation keeps conversations clean and professional for your brand.' },
+                  { title: 'Understands 7 Languages', desc: 'English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French. Customers speak naturally — the AI gets it.' },
+                  { title: 'Remembers Every Customer', desc: '"Welcome back! Last time you had Full Grooming." Personalized greetings and repeat booking suggestions based on visit history.' },
+                  { title: 'Revenue Recommendations', desc: '"Enable deposits to cut no-shows by 60%. 23 customers are at risk — send a win-back." AI tells you what to do next.' },
+                  { title: 'Smart Upselling', desc: 'Suggests add-ons based on what customers ordered before. Knows their favorites and spending patterns.' },
                 ].map((item, i) => (
                   <motion.div
                     key={item.title}
