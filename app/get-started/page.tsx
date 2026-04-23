@@ -582,10 +582,34 @@ function OnboardingWizard() {
   async function handleEmailSignup(e: React.FormEvent) {
     e.preventDefault();
     if (!email || !password) return;
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     setAuthLoading(true);
     setError('');
     try {
       const supabase = createClient();
+
+      // Check if the user already exists by trying to sign in first
+      const { data: signInData } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInData.session) {
+        // Existing user with correct password — log them in and continue onboarding
+        setUser(signInData.user);
+        getPostHogClient()?.capture('login_from_signup', { method: 'email' });
+
+        // Check if they already have a business
+        const { count } = await supabase
+          .from('businesses')
+          .select('id', { count: 'exact', head: true })
+          .eq('owner_id', signInData.user!.id);
+        if (count && count > 0) {
+          // Already has a business — redirect to dashboard
+          window.location.href = '/dashboard';
+          return;
+        }
+        setStep('category');
+        return;
+      }
+
+      // Not an existing user — proceed with signup
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
@@ -593,18 +617,37 @@ function OnboardingWizard() {
           emailRedirectTo: `${window.location.origin}/auth/callback?next=/get-started`,
         },
       });
-      if (signUpError) { setError(signUpError.message); return; }
+      if (signUpError) {
+        // Friendly error messages
+        if (signUpError.message.includes('already registered') || signUpError.message.includes('already been registered')) {
+          setError('This email is already registered. Try signing in instead, or use a different email.');
+        } else if (signUpError.message.includes('rate limit')) {
+          setError('Too many attempts. Please wait a few minutes and try again.');
+        } else {
+          setError(signUpError.message);
+        }
+        return;
+      }
+
+      // Supabase returns a user without a session when email confirmation is required
+      // but also when the user already exists (security measure to prevent enumeration)
       if (signUpData.session) {
         setUser(signUpData.user);
         getPostHogClient()?.capture('signup_completed', { method: 'email' });
         setStep('category');
       } else if (signUpData.user) {
-        setEmailSent(true);
+        // Check if this is a fake "success" for an existing user (no identities = already exists)
+        if (signUpData.user.identities && signUpData.user.identities.length === 0) {
+          setError('An account with this email already exists. Please sign in instead.');
+        } else {
+          setEmailSent(true);
+        }
       } else {
         setError('Something went wrong. Please try again.');
       }
-    } catch {
-      setError('Network error. Please try again.');
+    } catch (err) {
+      console.error('[SIGNUP] Error:', err);
+      setError('Network error. Please check your connection and try again.');
     } finally {
       setAuthLoading(false);
     }

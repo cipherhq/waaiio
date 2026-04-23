@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { OtpInput } from '@/components/auth/OtpInput';
 import { createClient } from '@/lib/supabase/client';
+import { getPostHogClient } from '@/lib/posthog/client';
 
 type Step = 'phone' | 'otp';
 type AuthMode = 'phone' | 'email';
@@ -41,9 +42,20 @@ function LoginForm() {
       });
 
       if (signInError) {
-        setError('Invalid email or password');
+        if (signInError.message.includes('Invalid login credentials')) {
+          setError('Invalid email or password. If you signed up recently, check your email for a confirmation link.');
+        } else if (signInError.message.includes('Email not confirmed')) {
+          setError('Please check your email and click the confirmation link before signing in.');
+        } else if (signInError.message.includes('rate limit')) {
+          setError('Too many login attempts. Please wait a few minutes and try again.');
+        } else {
+          setError(signInError.message);
+        }
+        getPostHogClient()?.capture('login_failed', { reason: signInError.message });
         return;
       }
+
+      getPostHogClient()?.capture('login_success', { method: 'email' });
 
       // If user has no business yet, send them to onboarding
       if (signInData.user) {
