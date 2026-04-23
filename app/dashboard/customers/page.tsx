@@ -23,6 +23,9 @@ interface CustomerProfile {
   last_seen_at: string | null;
   tags: string[] | null;
   notes: string | null;
+  lifetime_value: number | null;
+  churn_risk: number | null;
+  customer_segment: string | null;
 }
 
 interface BookingRecord {
@@ -420,6 +423,7 @@ export default function CustomersPage() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Avg Rating</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Last Seen</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Segment</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Tags</th>
               </tr>
             </thead>
@@ -479,6 +483,23 @@ export default function CustomersPage() {
                   {/* Last Seen */}
                   <td className="px-4 py-3 text-gray-500">
                     {relativeTime(c.last_seen_at)}
+                  </td>
+
+                  {/* Segment */}
+                  <td className="px-4 py-3">
+                    {c.customer_segment ? (
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
+                        c.customer_segment === 'loyal' ? 'bg-green-50 text-green-700' :
+                        c.customer_segment === 'returning' ? 'bg-blue-50 text-blue-700' :
+                        c.customer_segment === 'at_risk' ? 'bg-yellow-50 text-yellow-700' :
+                        c.customer_segment === 'churned' ? 'bg-red-50 text-red-700' :
+                        'bg-gray-50 text-gray-600'
+                      }`}>
+                        {c.customer_segment === 'at_risk' ? 'At Risk' : c.customer_segment.charAt(0).toUpperCase() + c.customer_segment.slice(1)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-300">&mdash;</span>
+                    )}
                   </td>
 
                   {/* Tags */}
@@ -679,6 +700,41 @@ export default function CustomersPage() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Customer Intelligence */}
+                  {(selected.lifetime_value || selected.churn_risk != null || selected.customer_segment) && (
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+                      <div className="rounded-lg bg-brand-50 p-3">
+                        <p className="text-xs text-brand">Lifetime Value</p>
+                        <p className="mt-1 text-lg font-bold text-brand">
+                          {selected.lifetime_value ? formatNaira(selected.lifetime_value) : '\u2014'}
+                        </p>
+                      </div>
+                      <div className={`rounded-lg p-3 ${
+                        (selected.churn_risk || 0) >= 50 ? 'bg-red-50' :
+                        (selected.churn_risk || 0) >= 20 ? 'bg-yellow-50' : 'bg-green-50'
+                      }`}>
+                        <p className={`text-xs ${
+                          (selected.churn_risk || 0) >= 50 ? 'text-red-600' :
+                          (selected.churn_risk || 0) >= 20 ? 'text-yellow-600' : 'text-green-600'
+                        }`}>Churn Risk</p>
+                        <p className={`mt-1 text-lg font-bold ${
+                          (selected.churn_risk || 0) >= 50 ? 'text-red-700' :
+                          (selected.churn_risk || 0) >= 20 ? 'text-yellow-700' : 'text-green-700'
+                        }`}>
+                          {selected.churn_risk != null ? `${selected.churn_risk}%` : '\u2014'}
+                        </p>
+                      </div>
+                      <div className="rounded-lg bg-gray-50 p-3">
+                        <p className="text-xs text-gray-500">Segment</p>
+                        <p className="mt-1 text-sm font-bold text-gray-900">
+                          {selected.customer_segment
+                            ? selected.customer_segment === 'at_risk' ? 'At Risk' : selected.customer_segment.charAt(0).toUpperCase() + selected.customer_segment.slice(1)
+                            : '\u2014'}
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Loyalty Points */}
                   {loyalty && (
