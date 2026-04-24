@@ -691,7 +691,7 @@ function OnboardingWizard() {
                   token_expires_at: data.token_expires_at,
                 });
                 setFbConnecting(false);
-                setConnectSubStep('phone_select');
+                setFbConnected(true);
               } else {
                 setFbConnecting(false);
                 setError(data.message || 'No WhatsApp Business Account found. Please try again.');
@@ -1455,12 +1455,78 @@ function OnboardingWizard() {
                       </button>
                     </div>
                     {waMethod !== 'shared' && (
-                      <div className="mt-4 space-y-3 rounded-xl border border-gray-200 bg-white p-4">
-                        <div>
-                          <label className="mb-1.5 block text-sm font-medium text-gray-700">Phone Number</label>
-                          <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
+                      <div className="mt-4 space-y-4">
+                        {/* Facebook Embedded Signup */}
+                        {!fbConnected ? (
+                          <div className="rounded-xl border border-gray-200 bg-white p-4">
+                            <div className="flex items-center gap-3 mb-3">
+                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1877F2]">
+                                <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                                </svg>
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-bold text-gray-900">Connect with Facebook</h4>
+                                <p className="text-xs text-gray-500">Link your WhatsApp Business Account</p>
+                              </div>
+                            </div>
+                            {fbConnecting ? (
+                              <div className="flex flex-col items-center py-4">
+                                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+                                <p className="mt-3 text-xs text-gray-500">Complete the signup in the popup...</p>
+                                <button type="button" onClick={() => setFbConnecting(false)} className="mt-2 text-xs text-gray-400 hover:text-brand underline">Cancel</button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={launchWhatsAppSignup}
+                                disabled={!fbSdkReady}
+                                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877F2] py-3 text-sm font-bold text-white transition hover:bg-[#166FE5] disabled:opacity-50"
+                              >
+                                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
+                                </svg>
+                                {fbSdkReady ? 'Connect with Facebook' : 'Loading Facebook...'}
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-100">
+                                <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                </svg>
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-bold text-green-900">Facebook Connected</h4>
+                                <p className="text-xs text-green-700">{discoveredWabas[0]?.waba_name || 'WhatsApp Business Account linked'}</p>
+                              </div>
+                              <button type="button" onClick={() => { setFbConnected(false); setFbConnectionData(null); setDiscoveredWabas([]); }} className="ml-auto text-xs text-green-600 hover:underline">Reconnect</button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Phone number + Display name */}
+                        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                          <div>
+                            <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Phone Number *</label>
+                            <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
+                            <p className="mt-1 text-xs text-gray-400">The number you want to use with Waaiio</p>
+                          </div>
+                          <div>
+                            <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Display Name</label>
+                            <input
+                              type="text"
+                              value={fbConnectionData?.display_name || ''}
+                              onChange={(e) => setFbConnectionData(prev => prev ? { ...prev, display_name: e.target.value } : { waba_id: '', phone_number_id: '', access_token: '', token_expires_at: '', display_name: e.target.value })}
+                              placeholder={name || 'Your business name on WhatsApp'}
+                              className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
+                            />
+                          </div>
                         </div>
-                        <p className="text-xs text-gray-400">You can also connect via Facebook after signup from your dashboard settings.</p>
+
+                        <p className="text-xs text-gray-400 text-center">You can also set this up later from your dashboard settings.</p>
                       </div>
                     )}
                   </div>
