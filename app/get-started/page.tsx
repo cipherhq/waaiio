@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client';
 import { getPostHogClient } from '@/lib/posthog/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { OtpInput } from '@/components/auth/OtpInput';
+import AddressAutocomplete from '@/components/ui/AddressAutocomplete';
 import {
   CATEGORY_FLOW_MAP,
   formatCurrency,
@@ -95,7 +96,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   details: {
     title: 'Business information',
     subtitle: 'This helps us customize your WhatsApp bot for your location and customers.',
-    bullets: ['Available in 5 countries', 'Localized payment gateways', 'City-specific neighborhoods'],
+    bullets: ['Available in 5 countries', 'Localized payment gateways', 'Google address autocomplete'],
     visual: '&#x1F4CD;',
   },
   persona: {
@@ -293,7 +294,8 @@ function OnboardingWizard() {
   const [botCodeEdited, setBotCodeEdited] = useState(false);
   const botCodeCheckRef = useRef<NodeJS.Timeout | null>(null);
   const [city, setCity] = useState('');
-  const [neighborhood, setNeighborhood] = useState('');
+  const [state, setState] = useState('');
+  const [zipCode, setZipCode] = useState('');
   const [address, setAddress] = useState('');
   const [businessPhone, setBusinessPhone] = useState('');
 
@@ -777,7 +779,7 @@ function OnboardingWizard() {
     }
 
     // New business onboarding — register first, then connect
-    if (!name || !city || !neighborhood || !address || !businessPhone || !category) return;
+    if (!name || !city || !address || !businessPhone || !category) return;
     setLoading(true);
     setError('');
     try {
@@ -786,7 +788,7 @@ function OnboardingWizard() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name, city, neighborhood, address,
+          name, city, state, zip_code: zipCode, address,
           phone: businessPhone, category, country: selectedCountry,
           bot_alias: botAlias || undefined,
           bot_greeting: botGreeting || undefined,
@@ -837,7 +839,7 @@ function OnboardingWizard() {
 
   async function handleRegister(e: React.FormEvent | React.MouseEvent) {
     e.preventDefault();
-    if (!name || !city || !neighborhood || !address || !businessPhone || !category) return;
+    if (!name || !city || !address || !businessPhone || !category) return;
     setLoading(true);
     setError('');
     try {
@@ -849,7 +851,8 @@ function OnboardingWizard() {
           last_name: lastName,
           name,
           city,
-          neighborhood,
+          state,
+          zip_code: zipCode,
           address,
           phone: businessPhone,
           category,
@@ -1373,25 +1376,33 @@ function OnboardingWizard() {
                       </p>
                     )}
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">City *</label>
-                      <select value={city} onChange={(e) => { setCity(e.target.value); setNeighborhood(''); }} className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required>
-                        <option value="">Select city</option>
-                        {cityOptions.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Neighborhood *</label>
-                      <select value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required disabled={!city}>
-                        <option value="">Select area</option>
-                        {neighborhoodOptions.map(n => <option key={n.value} value={n.value}>{n.label}</option>)}
-                      </select>
-                    </div>
-                  </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700">Address *</label>
-                    <input type="text" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="e.g. 12 Admiralty Way, Lekki Phase 1" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
+                    <AddressAutocomplete
+                      defaultValue={address}
+                      countryCode={selectedCountry}
+                      onSelect={(result) => {
+                        setAddress(result.address);
+                        setCity(result.city);
+                        setState(result.state);
+                        setZipCode(result.zipCode);
+                      }}
+                    />
+                    <p className="mt-1 text-xs text-gray-400">Start typing to search — city, state, and zip will auto-fill</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700">City *</label>
+                      <input type="text" value={city} onChange={(e) => setCity(e.target.value)} placeholder="City" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700">State</label>
+                      <input type="text" value={state} onChange={(e) => setState(e.target.value)} placeholder="State / Province" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" />
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Zip Code</label>
+                      <input type="text" value={zipCode} onChange={(e) => setZipCode(e.target.value)} placeholder="Zip / Postal" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" />
+                    </div>
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700">Phone *</label>
@@ -1400,7 +1411,7 @@ function OnboardingWizard() {
                 </div>
                 <div className="mt-8 flex gap-3">
                   <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="submit" disabled={!firstName || !lastName || !name || !city || !neighborhood || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
+                  <button type="submit" disabled={!firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
                 </div>
               </form>
             )}
@@ -1806,147 +1817,60 @@ function OnboardingWizard() {
                       Back
                     </button>
 
-                    <h2 className="text-2xl font-bold text-gray-900">Select your WhatsApp number</h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      Confirm which WhatsApp Business Account and phone number to connect with Waaiio.
-                    </p>
-
-                    {/* WABA Selection (if multiple) */}
-                    {discoveredWabas.length > 1 && (
-                      <div className="mt-6">
-                        <label className="mb-2 block text-sm font-medium text-gray-700">WhatsApp Business Account</label>
-                        <div className="space-y-2">
-                          {discoveredWabas.map((waba) => (
-                            <button
-                              key={waba.waba_id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedWabaId(waba.waba_id);
-                                if (waba.phones.length > 0) {
-                                  setSelectedPhoneId(waba.phones[0].id);
-                                } else {
-                                  setSelectedPhoneId('');
-                                }
-                              }}
-                              className={`flex w-full items-center gap-3 rounded-xl border-2 p-4 text-left transition ${
-                                selectedWabaId === waba.waba_id ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
-                              }`}
-                            >
-                              <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
-                                selectedWabaId === waba.waba_id ? 'border-brand bg-brand' : 'border-gray-300'
-                              }`}>
-                                {selectedWabaId === waba.waba_id && (
-                                  <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                  </svg>
-                                )}
-                              </div>
-                              <div>
-                                <p className="text-sm font-semibold text-gray-900">{waba.waba_name}</p>
-                                <p className="text-xs text-gray-500">ID: {waba.waba_id} &middot; {waba.phones.length} phone{waba.phones.length !== 1 ? 's' : ''}</p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Single WABA display */}
-                    {discoveredWabas.length === 1 && (
-                      <div className="mt-6 rounded-xl border border-gray-200 bg-gray-50 p-4">
-                        <div className="flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
-                            <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                            </svg>
-                          </div>
-                          <div>
-                            <p className="text-sm font-semibold text-gray-900">{discoveredWabas[0].waba_name}</p>
-                            <p className="text-xs text-gray-500">WhatsApp Business Account ID: {discoveredWabas[0].waba_id}</p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Phone Number Selection */}
-                    {(() => {
-                      const currentWaba = discoveredWabas.find(w => w.waba_id === selectedWabaId);
-                      const phones = currentWaba?.phones || [];
-                      return (
-                        <div className="mt-6">
-                          <label className="mb-2 block text-sm font-medium text-gray-700">
-                            Phone Number {phones.length > 1 ? '(select one)' : ''}
-                          </label>
-                          {phones.length === 0 ? (
-                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                              <p className="text-sm text-amber-800">No phone numbers found for this account.</p>
-                              <p className="mt-1 text-xs text-amber-600">
-                                Please add a phone number in the Facebook Embedded Signup flow or try again.
-                              </p>
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              {phones.map((phone) => (
-                                <button
-                                  key={phone.id}
-                                  type="button"
-                                  onClick={() => setSelectedPhoneId(phone.id)}
-                                  className={`flex w-full items-center gap-4 rounded-xl border-2 p-4 text-left transition ${
-                                    selectedPhoneId === phone.id ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
-                                  }`}
-                                >
-                                  <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
-                                    selectedPhoneId === phone.id ? 'border-brand bg-brand' : 'border-gray-300'
-                                  }`}>
-                                    {selectedPhoneId === phone.id && (
-                                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                      </svg>
-                                    )}
-                                  </div>
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <p className="text-sm font-semibold text-gray-900">{phone.display_phone_number}</p>
-                                      {phone.quality_rating && (
-                                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                          phone.quality_rating === 'GREEN' ? 'bg-green-100 text-green-700' :
-                                          phone.quality_rating === 'YELLOW' ? 'bg-amber-100 text-amber-700' :
-                                          'bg-red-100 text-red-700'
-                                        }`}>
-                                          {phone.quality_rating === 'GREEN' ? 'High Quality' :
-                                           phone.quality_rating === 'YELLOW' ? 'Medium Quality' :
-                                           phone.quality_rating}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {phone.verified_name && (
-                                      <p className="text-xs text-gray-500">{phone.verified_name}</p>
-                                    )}
-                                    <p className="text-[11px] text-gray-400">ID: {phone.id}</p>
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })()}
-
-                    {/* Warning */}
-                    <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                      <div className="flex gap-3">
-                        <svg className="h-5 w-5 flex-shrink-0 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <div className="flex items-center gap-3 mb-2">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
+                        <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        <div>
-                          <p className="text-sm font-semibold text-amber-800">Important</p>
-                          <p className="mt-1 text-xs leading-relaxed text-amber-700">
-                            This phone number will be connected to Waaiio for WhatsApp Business API messaging.
-                            {waMethod === 'transfer' && ' You will no longer be able to use this number for personal WhatsApp.'}
-                          </p>
-                        </div>
+                      </div>
+                      <div>
+                        <h2 className="text-xl font-bold text-gray-900">Facebook Connected</h2>
+                        <p className="text-xs text-gray-500">Account: {discoveredWabas[0]?.waba_name || 'Connected'}</p>
                       </div>
                     </div>
+
+                    <p className="mt-3 text-sm text-gray-500">
+                      Enter the phone number and display name you want to use with Waaiio.
+                    </p>
+
+                    <div className="mt-6 space-y-4">
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Phone Number *</label>
+                        <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
+                        <p className="mt-1 text-xs text-gray-400">
+                          {waMethod === 'transfer'
+                            ? 'This number will be transferred to Waaiio for WhatsApp Business API.'
+                            : 'The number registered on your WhatsApp Business app.'}
+                        </p>
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Display Name *</label>
+                        <input
+                          type="text"
+                          value={fbConnectionData?.display_name || ''}
+                          onChange={(e) => setFbConnectionData(prev => prev ? { ...prev, display_name: e.target.value } : null)}
+                          placeholder={name || 'Your business name'}
+                          className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
+                        />
+                        <p className="mt-1 text-xs text-gray-400">This name will appear on WhatsApp when customers message you.</p>
+                      </div>
+                    </div>
+
+                    {/* WABA selector (only if multiple) */}
+                    {discoveredWabas.length > 1 && (
+                      <div className="mt-4">
+                        <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Business Account</label>
+                        <select
+                          value={selectedWabaId}
+                          onChange={(e) => setSelectedWabaId(e.target.value)}
+                          className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
+                        >
+                          {discoveredWabas.map((waba) => (
+                            <option key={waba.waba_id} value={waba.waba_id}>{waba.waba_name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
                     <div className="mt-8 flex gap-3">
                       <button
@@ -1959,22 +1883,20 @@ function OnboardingWizard() {
                       <button
                         type="button"
                         onClick={() => {
-                          // Update connection data with selected values
                           if (fbConnectionData) {
                             const selectedWaba = discoveredWabas.find(w => w.waba_id === selectedWabaId);
-                            const selectedPhone = selectedWaba?.phones.find(p => p.id === selectedPhoneId);
+                            const firstPhone = selectedWaba?.phones?.[0];
                             setFbConnectionData({
                               ...fbConnectionData,
                               waba_id: selectedWabaId,
-                              phone_number_id: selectedPhoneId,
-                              display_name: selectedPhone?.verified_name,
-                              phone_number: selectedPhone?.display_phone_number,
+                              phone_number_id: firstPhone?.id || '',
+                              phone_number: ownPhone,
                             });
                           }
                           setFbConnected(true);
                           setConnectSubStep('setup');
                         }}
-                        disabled={!selectedWabaId || !selectedPhoneId}
+                        disabled={!ownPhone || !fbConnectionData?.display_name}
                         className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                       >
                         {(successStep === 'whatsapp' && successBusinessId) ? 'Connect Number' : 'Confirm & Continue'}

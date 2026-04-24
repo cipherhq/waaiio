@@ -29,12 +29,12 @@ export async function POST(request: NextRequest) {
     await loadCountries();
     await loadCategories();
     const body = await request.json();
-    const { first_name, last_name, name, city, neighborhood, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
+    const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
-    if (!name || !city || !neighborhood || !address || !phone || !category) {
+    if (!name || !city || !address || !phone || !category) {
       return NextResponse.json(
-        { message: 'Missing required fields: name, city, neighborhood, address, phone, category' },
+        { message: 'Missing required fields: name, city, address, phone, category' },
         { status: 400 },
       );
     }
@@ -43,14 +43,6 @@ export async function POST(request: NextRequest) {
     if (!validCategories.includes(category)) {
       return NextResponse.json(
         { message: 'Invalid category' },
-        { status: 400 },
-      );
-    }
-
-    const validCities = Object.keys(getCitiesForCountry(countryCode));
-    if (!validCities.includes(city)) {
-      return NextResponse.json(
-        { message: 'Invalid city for selected country' },
         { status: 400 },
       );
     }
@@ -138,7 +130,8 @@ export async function POST(request: NextRequest) {
         slug: finalSlug,
         bot_code: botCode,
         city,
-        neighborhood,
+        state: state || null,
+        zip_code: zip_code || null,
         address,
         phone,
         category,
