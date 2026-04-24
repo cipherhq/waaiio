@@ -95,6 +95,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Hash, label: 'Bot Keywords', path: '/bot-keywords' },
       { icon: BrainCircuit, label: 'LLM Logs', path: '/llm-logs' },
       { icon: MessageCircle, label: 'WhatsApp Channels', path: '/whatsapp-channels' },
+      { icon: FileText, label: 'WA Templates', path: '/whatsapp-templates' },
       { icon: Bell, label: 'Notifications', path: '/notifications' },
       { icon: Megaphone, label: 'Broadcasts', path: '/broadcasts' },
       { icon: LifeBuoy, label: 'Support', path: '/support' },

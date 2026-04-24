@@ -40,6 +40,9 @@ export default function CapabilitiesPage() {
     setSaving(true);
     const supabase = createClient();
 
+    // Detect newly enabled capabilities (for provisioning)
+    const newlyEnabled = enabled.filter(cap => !business.capabilities.includes(cap));
+
     // Disable all
     await supabase
       .from('business_capabilities')
@@ -54,6 +57,20 @@ export default function CapabilitiesPage() {
           { business_id: business.id, capability: cap, is_enabled: true },
           { onConflict: 'business_id,capability' },
         );
+    }
+
+    // Auto-provision templates for newly enabled capabilities
+    for (const cap of newlyEnabled) {
+      try {
+        await fetch('/api/whatsapp/templates/provision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ business_id: business.id, capability: cap }),
+        });
+      } catch {
+        // Non-blocking: provisioning failure shouldn't prevent capability save
+        console.warn(`Template provisioning failed for capability: ${cap}`);
+      }
     }
 
     setSaving(false);

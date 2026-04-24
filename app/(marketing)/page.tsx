@@ -1,16 +1,91 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import CounterAnimation from '@/components/marketing/CounterAnimation';
+import HeroAutomationFlow from '@/components/marketing/HeroAutomationFlow';
 import { formatCurrency, getPricingTiers } from '@/lib/constants';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
 const PRICING_TIERS = getPricingTiers('NG');
 const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
+
+const FAQ_DATA = [
+  {
+    question: 'What types of businesses can use Waaiio?',
+    answer: `Any business or organisation that wants WhatsApp automation — restaurants, barbers, spas, churches, mosques, schools, NGOs, clinics, shops, event companies, hotels, pharmacies, and much more. We support ${CATEGORY_COUNT}+ categories with 4 automation flows.`,
+  },
+  {
+    question: 'Is there really a free plan?',
+    answer: 'Yes! Start with our Free plan — 7-day trial with zero fees, then a small per-transaction fee. No monthly subscription required.',
+  },
+  {
+    question: 'How do payments work?',
+    answer: 'When a customer needs to pay, they receive a secure payment link in the chat via Paystack (Nigeria, Ghana), Square (US), or Stripe (UK, Canada). Funds go directly to your account.',
+  },
+  {
+    question: 'Can I customise the messages?',
+    answer: 'Yes. You can set a custom assistant name, greeting, and personality that matches your brand. Business-tier users get full white-label.',
+  },
+  {
+    question: 'What happens outside operating hours?',
+    answer: 'The automation works 24/7 — it will take bookings and orders even at 2 AM. You can set operating hours so only available time slots are offered.',
+  },
+  {
+    question: 'Is there a long-term contract?',
+    answer: 'No. All plans are month-to-month with no lock-in. You can upgrade, downgrade, or cancel at any time.',
+  },
+];
+
+const JSON_LD_ORG = {
+  '@context': 'https://schema.org',
+  '@type': 'Organization',
+  name: 'Waaiio',
+  url: 'https://waaiio.com',
+  logo: 'https://waaiio.com/logo.png',
+  description: 'AI-Powered WhatsApp Automation for Every Business',
+  contactPoint: {
+    '@type': 'ContactPoint',
+    contactType: 'customer support',
+    url: 'https://waaiio.com/contact',
+    email: 'hello@waaiio.com',
+  },
+};
+
+const JSON_LD_APP = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: 'Waaiio',
+  applicationCategory: 'BusinessApplication',
+  operatingSystem: 'Web',
+  url: 'https://waaiio.com',
+  description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries',
+  offers: {
+    '@type': 'Offer',
+    price: '0',
+    priceCurrency: 'USD',
+    description: 'Free plan with 7-day trial',
+  },
+  aggregateRating: {
+    '@type': 'AggregateRating',
+    ratingValue: '5',
+    ratingCount: '100',
+    bestRating: '5',
+  },
+};
+
+const JSON_LD_FAQ = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: FAQ_DATA.map((item) => ({
+    '@type': 'Question',
+    name: item.question,
+    acceptedAnswer: { '@type': 'Answer', text: item.answer },
+  })),
+};
 
 export default function HomePage() {
   useCategoryConfig(); // trigger DB load for category templates
@@ -20,6 +95,9 @@ export default function HomePage() {
 
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_ORG) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_APP) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_FAQ) }} />
       {/* ── 1. Hero ── */}
       <section className="relative min-h-screen overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700">
         {/* Decorative blobs */}
@@ -134,8 +212,8 @@ export default function HomePage() {
               </motion.div>
             </div>
 
-            {/* Right: Rotating chat mockup */}
-            <HeroChatMockup />
+            {/* Right: Automation flow visualization */}
+            <HeroAutomationFlow />
           </div>
         </motion.div>
 
@@ -664,32 +742,14 @@ export default function HomePage() {
 
           <div className="mx-auto mt-12 grid max-w-4xl gap-x-12 gap-y-0 lg:grid-cols-2">
             <div className="space-y-0">
-              <FaqItem
-                question="What types of businesses can use Waaiio?"
-                answer={`Any business or organisation that wants WhatsApp automation — restaurants, barbers, spas, churches, mosques, schools, NGOs, clinics, shops, event companies, hotels, pharmacies, and much more. We support ${CATEGORY_COUNT}+ categories with 4 automation flows.`}
-              />
-              <FaqItem
-                question="Is there really a free plan?"
-                answer="Yes! Start with our Free plan — 7-day trial with zero fees, then a small per-transaction fee. No monthly subscription required."
-              />
-              <FaqItem
-                question="How do payments work?"
-                answer="When a customer needs to pay, they receive a secure payment link in the chat via Paystack (Nigeria, Ghana), Square (US), or Stripe (UK, Canada). Funds go directly to your account."
-              />
+              {FAQ_DATA.slice(0, 3).map((item) => (
+                <FaqItem key={item.question} question={item.question} answer={item.answer} />
+              ))}
             </div>
             <div className="space-y-0">
-              <FaqItem
-                question="Can I customise the messages?"
-                answer="Yes. You can set a custom assistant name, greeting, and personality that matches your brand. Business-tier users get full white-label."
-              />
-              <FaqItem
-                question="What happens outside operating hours?"
-                answer="The automation works 24/7 — it will take bookings and orders even at 2 AM. You can set operating hours so only available time slots are offered."
-              />
-              <FaqItem
-                question="Is there a long-term contract?"
-                answer="No. All plans are month-to-month with no lock-in. You can upgrade, downgrade, or cancel at any time."
-              />
+              {FAQ_DATA.slice(3).map((item) => (
+                <FaqItem key={item.question} question={item.question} answer={item.answer} />
+              ))}
             </div>
           </div>
         </div>
@@ -886,21 +946,6 @@ function IndustryShowcase({ categoryCount }: { categoryCount: number }) {
   );
 }
 
-function ChatBubble({ from, children }: { from: 'bot' | 'user'; children: React.ReactNode }) {
-  const isBot = from === 'bot';
-  return (
-    <div className={`flex ${isBot ? 'justify-start' : 'justify-end'}`}>
-      <div
-        className={`max-w-[85%] whitespace-pre-line rounded-lg px-3 py-2 text-sm ${
-          isBot ? 'bg-white text-gray-800' : 'text-white'
-        }`}
-        style={!isBot ? { backgroundColor: '#DCF8C6', color: '#111' } : undefined}
-      >
-        {children}
-      </div>
-    </div>
-  );
-}
 
 function WhyCard({ number, title, desc, color }: { number: string; title: string; desc: string; color: string }) {
   const borderColor = color === 'brand' ? 'border-brand/20 hover:border-brand' : color === 'accent' ? 'border-accent/20 hover:border-accent' : 'border-[#25D366]/20 hover:border-[#25D366]';
@@ -1007,146 +1052,6 @@ function TestimonialCard({ quote, name, role, stat, metric }: { quote: string; n
   );
 }
 
-const HERO_DEMOS = [
-  {
-    name: "King's Cuts",
-    avatar: 'K',
-    messages: [
-      { from: 'bot' as const, text: "Welcome to King's Cuts! \ud83d\udc88 I can help you book an appointment.\n\nWhat service would you like?\n1. Haircut\n2. Beard Trim\n3. Full Grooming" },
-      { from: 'user' as const, text: '1' },
-      { from: 'bot' as const, text: 'Great choice! When would you like to come in?' },
-      { from: 'user' as const, text: 'Tomorrow 2pm' },
-      { from: 'bot' as const, text: "\u2705 Appointment confirmed!\n\n\ud83d\udc88 Haircut\n\ud83d\udcc5 Tomorrow, 2:00 PM\n\ud83d\udccd King's Cuts \u2014 VI\n\ud83d\udd16 Ref: BW-7291" },
-    ],
-  },
-  {
-    name: 'New Life Church',
-    avatar: 'N',
-    messages: [
-      { from: 'bot' as const, text: "Welcome to New Life Church! \u26ea\n\nHow can I help you today?\n1. Pay Tithe\n2. Give Offering\n3. Seed / Donation\n4. View Upcoming Events" },
-      { from: 'user' as const, text: '1' },
-      { from: 'bot' as const, text: 'How much would you like to give as tithe?' },
-      { from: 'user' as const, text: '50000' },
-      { from: 'bot' as const, text: "\u2705 Tithe of \u20a650,000 recorded!\n\n\ud83d\udcb3 Pay here: pay.waaiio.com/t/NLC-4821\n\n\ud83d\ude4f God bless you!" },
-    ],
-  },
-  {
-    name: 'Al-Noor Mosque',
-    avatar: 'A',
-    messages: [
-      { from: 'bot' as const, text: "Assalamu Alaikum! Welcome to Al-Noor Mosque \ud83d\udd4c\n\nHow can we assist you?\n1. Pay Zakat\n2. Sadaqah / Donation\n3. Friday Jummah Info\n4. Ramadan Schedule" },
-      { from: 'user' as const, text: '1' },
-      { from: 'bot' as const, text: 'JazakAllah Khair. How much would you like to give as Zakat?' },
-      { from: 'user' as const, text: '\u00a3500' },
-      { from: 'bot' as const, text: "\u2705 Zakat of \u00a3500 recorded!\n\n\ud83d\udcb3 Pay here: pay.waaiio.com/z/ANM-1093\n\nMay Allah accept your ibadah \ud83e\udd32" },
-    ],
-  },
-  {
-    name: 'Fresh Bites',
-    avatar: 'F',
-    messages: [
-      { from: 'bot' as const, text: "Welcome to Fresh Bites! \ud83c\udf54\n\nWhat would you like to order?\n1. Jollof Rice & Chicken\n2. Pounded Yam & Egusi\n3. Shawarma Platter\n4. View Full Menu" },
-      { from: 'user' as const, text: '1' },
-      { from: 'bot' as const, text: 'How many portions?' },
-      { from: 'user' as const, text: '2' },
-      { from: 'bot' as const, text: "\u2705 Order placed!\n\n\ud83c\udf5b 2x Jollof Rice & Chicken\n\ud83d\udcb0 \u20a67,000\n\ud83d\ude9a Delivery in 30-45 mins\n\ud83d\udd16 Ref: FB-5518" },
-    ],
-  },
-  {
-    name: "King's Cuts",
-    avatar: 'K',
-    messages: [
-      { from: 'bot' as const, text: "Welcome to King's Cuts! \ud83d\udc88 How can I help?" },
-      { from: 'user' as const, text: 'Abeg I wan barb tomorrow for morning' },
-      { from: 'bot' as const, text: "Got it! Looking up *Haircut* on *tomorrow* in the *morning* for you... \u2728" },
-      { from: 'bot' as const, text: "I have these morning slots for tomorrow:\n1. 8:00 AM\n2. 9:00 AM\n3. 10:00 AM\n4. 11:00 AM\n\nWhich one works for you?" },
-      { from: 'user' as const, text: '2' },
-      { from: 'bot' as const, text: "\u2705 Appointment confirmed!\n\n\ud83d\udc88 Haircut\n\ud83d\udcc5 Tomorrow, 9:00 AM\n\ud83d\udccd King's Cuts\n\ud83d\udd16 Ref: BW-4821" },
-    ],
-  },
-];
-
-function HeroChatMockup() {
-  const [demoIndex, setDemoIndex] = useState(0);
-  const demo = HERO_DEMOS[demoIndex];
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setDemoIndex((prev) => (prev + 1) % HERO_DEMOS.length);
-    }, 6000);
-    return () => clearInterval(timer);
-  }, []);
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: 0.5, duration: 0.8 }}
-      className="relative mx-auto w-full max-w-sm lg:mx-0"
-    >
-      {/* Floating platform badges */}
-      <motion.div
-        animate={{ y: [0, -8, 0] }}
-        transition={{ repeat: Infinity, duration: 3 }}
-        className="absolute -left-6 top-4 z-10 rounded-xl bg-white px-3 py-2 shadow-lg"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">&#x1F4AC;</span>
-          <span className="text-xs font-bold text-gray-800">WhatsApp</span>
-        </div>
-      </motion.div>
-      <motion.div
-        animate={{ y: [0, -8, 0] }}
-        transition={{ repeat: Infinity, duration: 4, delay: 1 }}
-        className="absolute -right-4 top-1/3 z-10 rounded-xl bg-white px-3 py-2 shadow-lg"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">&#x1F916;</span>
-          <span className="text-xs font-bold text-gray-800">AI Bot</span>
-        </div>
-      </motion.div>
-      <motion.div
-        animate={{ y: [0, -8, 0] }}
-        transition={{ repeat: Infinity, duration: 3.5, delay: 0.5 }}
-        className="absolute -left-3 bottom-16 z-10 rounded-xl bg-white px-3 py-2 shadow-lg"
-      >
-        <div className="flex items-center gap-2">
-          <span className="text-lg">&#x1F4B3;</span>
-          <span className="text-xs font-bold text-gray-800">Payments</span>
-        </div>
-      </motion.div>
-
-      {/* Phone mockup */}
-      <div className="relative overflow-hidden rounded-[2rem] border-4 border-white/20 bg-white shadow-2xl">
-        <div className="flex items-center gap-3 px-4 py-3" style={{ backgroundColor: '#075E54' }}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
-            {demo.avatar}
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-white">{demo.name}</p>
-            <p className="text-xs text-green-200">online</p>
-          </div>
-        </div>
-
-        <div className="space-y-2.5 p-3" style={{ backgroundColor: '#ECE5DD', minHeight: '280px' }}>
-          {demo.messages.map((msg, i) => (
-            <ChatBubble key={`${demoIndex}-${i}`} from={msg.from}>{msg.text}</ChatBubble>
-          ))}
-        </div>
-
-        <div className="flex items-center justify-center gap-2 bg-white py-2">
-          {HERO_DEMOS.map((_, i) => (
-            <button
-              key={i}
-              onClick={() => setDemoIndex(i)}
-              className={`h-2 rounded-full transition-all ${i === demoIndex ? 'w-6 bg-brand' : 'w-2 bg-gray-300'}`}
-            />
-          ))}
-        </div>
-      </div>
-    </motion.div>
-  );
-}
 
 function FaqItem({ question, answer }: { question: string; answer: string }) {
   const [open, setOpen] = useState(false);

@@ -15,6 +15,7 @@ import Subscriptions from './pages/Subscriptions';
 import Support from './pages/Support';
 import BotManagement from './pages/BotManagement';
 import WhatsAppChannels from './pages/WhatsAppChannels';
+import WhatsAppTemplates from './pages/WhatsAppTemplates';
 import Notifications from './pages/Notifications';
 import Broadcasts from './pages/Broadcasts';
 import ContentManagement from './pages/ContentManagement';
@@ -71,6 +72,7 @@ export const router = createBrowserRouter([
       { path: 'bot-keywords', Component: BotKeywords },
       { path: 'llm-logs', Component: LLMClassifications },
       { path: 'whatsapp-channels', Component: WhatsAppChannels },
+      { path: 'whatsapp-templates', Component: WhatsAppTemplates },
       { path: 'notifications', Component: Notifications },
       { path: 'broadcasts', Component: Broadcasts },
       { path: 'support', Component: Support },

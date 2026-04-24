@@ -72,18 +72,36 @@ export default function Navbar() {
 
           <div className="flex items-center gap-3">
             {loggedIn ? (
-              <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                <Link
-                  href="/dashboard"
-                  className={`hidden rounded-xl px-5 py-2 text-sm font-semibold transition sm:inline-flex ${
-                    scrolled || !isHeroPage
-                      ? 'bg-brand text-white hover:bg-brand-500'
-                      : 'bg-white text-gray-900 hover:bg-gray-100'
-                  }`}
-                >
-                  Dashboard
-                </Link>
-              </motion.div>
+              <div className="hidden items-center gap-2 sm:flex">
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <Link
+                    href="/dashboard"
+                    className={`rounded-xl px-5 py-2 text-sm font-semibold transition ${
+                      scrolled || !isHeroPage
+                        ? 'bg-brand text-white hover:bg-brand-500'
+                        : 'bg-white text-gray-900 hover:bg-gray-100'
+                    }`}
+                  >
+                    Dashboard
+                  </Link>
+                </motion.div>
+                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                  <button
+                    onClick={async () => {
+                      const supabase = createClient();
+                      await supabase.auth.signOut();
+                      window.location.href = '/';
+                    }}
+                    className={`rounded-xl px-4 py-2 text-sm font-medium transition ${
+                      scrolled || !isHeroPage
+                        ? 'border border-gray-300 text-gray-600 hover:bg-gray-100'
+                        : 'border border-white/30 text-white/90 hover:bg-white/10'
+                    }`}
+                  >
+                    Log Out
+                  </button>
+                </motion.div>
+              </div>
             ) : (
               <>
                 <Link

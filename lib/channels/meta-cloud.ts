@@ -60,6 +60,40 @@ export interface CloudDocumentMessage {
   caption?: string;
 }
 
+// ── Template Types ──
+
+export interface TemplateComponent {
+  type: 'HEADER' | 'BODY' | 'FOOTER' | 'BUTTONS';
+  format?: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+  text?: string;
+  example?: { header_text?: string[]; body_text?: string[][] };
+  buttons?: Array<{
+    type: 'PHONE_NUMBER' | 'URL' | 'QUICK_REPLY';
+    text: string;
+    phone_number?: string;
+    url?: string;
+    example?: string[];
+  }>;
+}
+
+export interface MessageTemplate {
+  id: string;
+  name: string;
+  status: 'APPROVED' | 'PENDING' | 'REJECTED' | 'PAUSED' | 'DISABLED';
+  category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION';
+  language: string;
+  components: TemplateComponent[];
+  quality_score?: { score: string };
+}
+
+export interface CreateTemplateInput {
+  name: string;
+  language: string;
+  category: 'UTILITY' | 'MARKETING' | 'AUTHENTICATION';
+  components: TemplateComponent[];
+  allow_category_change?: boolean;
+}
+
 interface CloudApiResponse {
   messaging_product: string;
   contacts: Array<{ input: string; wa_id: string }>;
@@ -291,6 +325,60 @@ export class MetaCloudService {
       }
     );
     if (!res.ok) throw new Error(`Failed to register phone: ${res.status}`);
+    return res.json();
+  }
+
+  // ── Message Template Management ──
+
+  async getTemplates(params?: {
+    limit?: number;
+    after?: string;
+    fields?: string;
+  }): Promise<{
+    data: MessageTemplate[];
+    paging?: { cursors: { after: string }; next?: string };
+  }> {
+    const fields = params?.fields || 'id,name,status,category,language,components,quality_score';
+    let url = `${this.baseUrl}/${this.wabaId}/message_templates?fields=${fields}&limit=${params?.limit || 100}`;
+    if (params?.after) url += `&after=${params.after}`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${this.accessToken}` },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Failed to get templates: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async createTemplate(template: CreateTemplateInput): Promise<{ id: string; status: string; category: string }> {
+    const res = await fetch(`${this.baseUrl}/${this.wabaId}/message_templates`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(template),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Failed to create template: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async deleteTemplate(name: string): Promise<{ success: boolean }> {
+    const res = await fetch(
+      `${this.baseUrl}/${this.wabaId}/message_templates?name=${encodeURIComponent(name)}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+      }
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Failed to delete template: ${res.status}`);
+    }
     return res.json();
   }
 

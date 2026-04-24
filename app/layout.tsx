@@ -21,18 +21,12 @@ export const metadata: Metadata = {
   openGraph: {
     siteName: 'Waaiio',
     type: 'website',
-    images: [
-      {
-        url: '/og-image.png',
-        width: 1200,
-        height: 630,
-        alt: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
-      },
-    ],
   },
   twitter: {
     card: 'summary_large_image',
-    images: ['/og-image.png'],
+  },
+  alternates: {
+    canonical: './',
   },
 };
 

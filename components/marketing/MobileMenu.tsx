@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import { createClient } from '@/lib/supabase/client';
 
 interface MobileMenuProps {
   isOpen: boolean;
@@ -73,13 +74,26 @@ export default function MobileMenu({ isOpen, onClose, links, loggedIn }: MobileM
               className="mt-8 flex flex-col gap-3"
             >
               {loggedIn ? (
-                <Link
-                  href="/dashboard"
-                  onClick={onClose}
-                  className="inline-block rounded-xl bg-brand px-8 py-3 text-center text-lg font-semibold text-white transition hover:bg-brand-500"
-                >
-                  Dashboard
-                </Link>
+                <>
+                  <Link
+                    href="/dashboard"
+                    onClick={onClose}
+                    className="inline-block rounded-xl bg-brand px-8 py-3 text-center text-lg font-semibold text-white transition hover:bg-brand-500"
+                  >
+                    Dashboard
+                  </Link>
+                  <button
+                    onClick={async () => {
+                      const supabase = createClient();
+                      await supabase.auth.signOut();
+                      onClose();
+                      window.location.href = '/';
+                    }}
+                    className="inline-block rounded-xl border border-white/20 px-8 py-3 text-center text-lg font-semibold text-white transition hover:bg-white/10"
+                  >
+                    Log Out
+                  </button>
+                </>
               ) : (
                 <>
                   <Link
