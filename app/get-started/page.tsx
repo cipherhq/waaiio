@@ -72,7 +72,7 @@ const CATEGORY_GROUPS: { label: string; keys: BusinessCategoryKey[] }[] = [
   },
 ];
 
-type WizardStep = 'auth' | 'category' | 'details' | 'persona' | 'connect' | 'plan' | 'success';
+type WizardStep = 'auth' | 'category' | 'plan' | 'details' | 'success';
 type AuthSubStep = 'phone' | 'otp';
 type AuthMode = 'phone' | 'email';
 type WhatsAppMethod = 'shared' | 'transfer' | 'coexist';
@@ -89,33 +89,21 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   },
   category: {
     title: 'Tell us about your business',
-    subtitle: 'We support 40+ business categories with 6 capability types.',
-    bullets: ['Scheduling, payments, ordering, ticketing', 'Crowdfunding and reminders', 'Mix & match capabilities per business', 'Industry-specific customizations'],
+    subtitle: 'Select your country and industry to get started.',
+    bullets: ['Available in 5 countries', '40+ business categories', 'Industry-specific automation'],
     visual: '&#x1F3ED;',
-  },
-  details: {
-    title: 'Business information',
-    subtitle: 'This helps us customize your WhatsApp bot for your location and customers.',
-    bullets: ['Available in 5 countries', 'Localized payment gateways', 'Google address autocomplete'],
-    visual: '&#x1F4CD;',
-  },
-  persona: {
-    title: 'Make it yours',
-    subtitle: 'Give your bot a name and greeting that matches your brand personality.',
-    bullets: ['Custom assistant name', 'Personalized greeting message', 'Live preview as you type'],
-    visual: '&#x1F916;',
-  },
-  connect: {
-    title: 'Connect WhatsApp',
-    subtitle: 'Choose how to connect your business to WhatsApp. Reach 2 billion users worldwide.',
-    bullets: ['Use our shared number instantly', 'Transfer your own number', 'Coexist with WhatsApp Business', 'Facebook Business integration'],
-    visual: '&#x1F4AC;',
   },
   plan: {
     title: 'Choose your plan',
-    subtitle: 'Start free and upgrade when you\'re ready. No contracts, cancel anytime.',
-    bullets: ['Free 7-day trial', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime'],
+    subtitle: 'Each plan unlocks more capabilities for your business.',
+    bullets: ['Free 7-day trial', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
     visual: '&#x1F4B3;',
+  },
+  details: {
+    title: 'Business information',
+    subtitle: 'Set up your business profile and WhatsApp connection.',
+    bullets: ['Google address autocomplete', 'Localized payment gateways', 'Custom WhatsApp bot code'],
+    visual: '&#x1F4CD;',
   },
   success: {
     title: 'You\'re live!',
@@ -357,7 +345,7 @@ function OnboardingWizard() {
           setStep('success');
         } else if (successStep === 'whatsapp' && successBusinessId) {
           setBusinessId(successBusinessId);
-          setStep('connect');
+          setStep('success');
         } else {
           setStep('category');
         }
@@ -373,10 +361,8 @@ function OnboardingWizard() {
     const stepMap: Record<WizardStep, string> = {
       auth: 'onboarding_auth',
       category: 'onboarding_category',
-      details: 'onboarding_details',
-      persona: 'onboarding_persona',
-      connect: 'onboarding_connect',
       plan: 'onboarding_plan',
+      details: 'onboarding_details',
       success: 'onboarding_success',
     };
     ph.capture(stepMap[step], { step, category: category || undefined, country: selectedCountry });
@@ -869,7 +855,33 @@ function OnboardingWizard() {
       if (!res.ok) { setError(data.message || 'Registration failed'); return; }
       setBusinessId(data.business_id);
       setBotCode(data.bot_code);
-      setStep('plan');
+
+      if (selectedPlan === 'free') {
+        // Free plan: verify immediately and go to success
+        const verifyRes = await fetch('/api/onboarding/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ business_id: data.business_id, plan: 'free' }),
+        });
+        const verifyData = await verifyRes.json();
+        if (verifyData.bot_code) {
+          setSuccessData({ bot_code: verifyData.bot_code, business_id: verifyData.business_id });
+          setBotCode(verifyData.bot_code);
+          setStep('success');
+        } else {
+          setError(verifyData.message || 'Activation failed');
+        }
+      } else {
+        // Paid plan: redirect to payment gateway
+        const payRes = await fetch('/api/onboarding/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ business_id: data.business_id, plan: selectedPlan }),
+        });
+        const payData = await payRes.json();
+        if (!payRes.ok) { setError(payData.message || 'Payment initialization failed'); return; }
+        window.location.href = payData.authorization_url || payData.url;
+      }
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -950,10 +962,8 @@ function OnboardingWizard() {
   const steps: { key: WizardStep; label: string }[] = [
     { key: 'auth', label: 'Sign Up' },
     { key: 'category', label: 'Category' },
-    { key: 'details', label: 'Details' },
-    { key: 'persona', label: 'Persona' },
-    { key: 'connect', label: 'Connect' },
     { key: 'plan', label: 'Plan' },
+    { key: 'details', label: 'Details' },
     { key: 'success', label: 'Live!' },
   ];
 
@@ -969,9 +979,7 @@ function OnboardingWizard() {
 
   const countryCities = getCitiesForCountry(selectedCountry);
   const cityOptions = Object.entries(countryCities).map(([key, val]) => ({ value: key, label: val.name }));
-  const neighborhoodOptions = city && countryCities[city as keyof typeof countryCities]
-    ? countryCities[city as keyof typeof countryCities].neighborhoods.map((n: string) => ({ value: n, label: n }))
-    : [];
+  // neighborhoodOptions removed — using Google Places autocomplete now
 
   // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
   // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)
@@ -1170,15 +1178,14 @@ function OnboardingWizard() {
             {/* ── Step 2: Category ── */}
             {step === 'category' && (
               <div>
-                {!showCapabilities ? (
-                  <>
+                <>
                     <h2 className="text-2xl font-bold text-gray-900">Where is your business?</h2>
                     <p className="mt-1 text-sm text-gray-500">Select your country and industry</p>
                     <div className="mt-6">
                       <label className="mb-2 block text-sm font-medium text-gray-700">Country</label>
                       <div className="flex flex-wrap gap-2">
                         {countryList.map(c => (
-                          <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); setNeighborhood(''); }}
+                          <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); }}
                             className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${selectedCountry === c.code ? 'border-brand bg-brand-50 text-brand' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
                             <span>{c.flag}</span><span>{c.name}</span>
                           </button>
@@ -1221,82 +1228,95 @@ function OnboardingWizard() {
                       </div>
                     )}
                     <div className="mt-8">
-                      <button type="button" onClick={() => setShowCapabilities(true)} disabled={!category} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
+                      <button type="button" onClick={() => setStep('plan')} disabled={!category} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
                     </div>
                   </>
-                ) : (
-                  <>
-                    <button type="button" onClick={() => setShowCapabilities(false)} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                      Change category
-                    </button>
-                    <h2 className="text-2xl font-bold text-gray-900">Confirm capabilities</h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      These are the default capabilities for <span className="font-semibold text-brand">{categoryInfo?.label}</span>. Toggle to customize.
-                    </p>
-                    <div className="mt-6 space-y-3">
-                      {CAPABILITIES.map((cap) => {
-                        const isSelected = selectedCapabilities.includes(cap.id);
-                        const isDefault = (CATEGORY_DEFAULT_CAPABILITIES[category as BusinessCategoryKey] || []).includes(cap.id);
-                        return (
-                          <button
-                            key={cap.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedCapabilities(prev =>
-                                prev.includes(cap.id)
-                                  ? prev.filter(c => c !== cap.id)
-                                  : [...prev, cap.id]
-                              );
-                            }}
-                            className={`flex w-full items-center gap-4 rounded-xl border-2 p-4 text-left transition ${
-                              isSelected ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
-                            }`}
-                          >
-                            <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 ${
-                              isSelected ? 'border-brand bg-brand' : 'border-gray-300'
-                            }`}>
-                              {isSelected && (
-                                <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="text-lg">{cap.icon}</span>
-                                <span className="text-sm font-semibold text-gray-900">{cap.label}</span>
-                                {isDefault && (
-                                  <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[10px] font-bold text-brand">Default</span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-xs text-gray-500">{cap.description}</p>
-                            </div>
-                          </button>
-                        );
-                      })}
+              </div>
+            )}
+
+            {/* ── Step 3: Plan ── */}
+            {step === 'plan' && (
+              <div>
+                <button type="button" onClick={() => setStep('category')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                  Back
+                </button>
+                <h2 className="text-2xl font-bold text-gray-900">Choose your plan</h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Select the plan that fits your business needs. Each tier unlocks more capabilities.
+                </p>
+
+                <div className="mt-6 space-y-4">
+                  {/* Free */}
+                  <button type="button" onClick={() => setSelectedPlan('free')} className={`w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900">{localTiers.free.name}</h3>
+                        <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">7-day trial</span></p>
+                      </div>
+                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'free' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                        {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                      </div>
                     </div>
-                    {selectedCapabilities.length === 0 && (
-                      <p className="mt-3 text-xs text-red-500">Select at least one capability to continue.</p>
-                    )}
-                    <div className="mt-8">
-                      <button
-                        type="button"
-                        onClick={() => setStep('details')}
-                        disabled={selectedCapabilities.length === 0}
-                        className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                      >
-                        Continue
-                      </button>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {['Scheduling', 'Payments', 'Ordering', 'Ticketing', 'Feedback', 'Chat'].map(c => (
+                        <span key={c} className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600">{c}</span>
+                      ))}
                     </div>
-                  </>
-                )}
+                    <p className="mt-2 text-xs text-gray-400">Shared WhatsApp number &middot; 50 bookings/month &middot; {localTiers.free.feePercentage}% + {formatCurrency(localTiers.free.feeFlat, selectedCountry)} per transaction</p>
+                  </button>
+
+                  {/* Growth / Pro */}
+                  <button type="button" onClick={() => setSelectedPlan('growth')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                    <span className="absolute -top-3 right-4 rounded-full bg-accent px-3 py-0.5 text-xs font-bold text-gray-900">Most Popular</span>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900">{localTiers.growth.name}</h3>
+                        <p className="text-2xl font-bold text-brand">{formatCurrency(localTiers.growth.price as number, selectedCountry)}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+                      </div>
+                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'growth' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                        {selectedPlan === 'growth' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {['Scheduling', 'Payments', 'Ordering', 'Ticketing', 'Feedback', 'Chat', 'Reservations', 'Reminders', 'Loyalty', 'Referral'].map(c => (
+                        <span key={c} className="rounded-full bg-brand-100 px-2.5 py-1 text-xs text-brand-700">{c}</span>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-gray-400">Own WhatsApp number available &middot; 500 bookings/month &middot; {localTiers.growth.feePercentage}% + {formatCurrency(localTiers.growth.feeFlat, selectedCountry)} per transaction</p>
+                  </button>
+
+                  {/* Business / Premium */}
+                  <button type="button" onClick={() => setSelectedPlan('business')} className={`w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'business' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-gray-900">{localTiers.business.name}</h3>
+                        <p className="text-2xl font-bold text-brand">{formatCurrency(localTiers.business.price as number, selectedCountry)}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+                      </div>
+                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'business' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                        {selectedPlan === 'business' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                      </div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {['Scheduling', 'Payments', 'Ordering', 'Ticketing', 'Feedback', 'Chat', 'Reservations', 'Reminders', 'Loyalty', 'Referral', 'WhatsApp Sign', 'Queue', 'Waitlist', 'Reports', 'Staff', 'Crowdfunding', 'Invoices'].map(c => (
+                        <span key={c} className="rounded-full bg-purple-100 px-2.5 py-1 text-xs text-purple-700">{c}</span>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-gray-400">Own WhatsApp number available &middot; Unlimited bookings &middot; Whitelabel &middot; {localTiers.business.feePercentage}% + {formatCurrency(localTiers.business.feeFlat, selectedCountry)} per transaction</p>
+                  </button>
+                </div>
+
+                <div className="mt-8">
+                  <button type="button" onClick={() => setStep('details')} disabled={!selectedPlan} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
+                    Continue
+                  </button>
+                </div>
               </div>
             )}
 
             {/* ── Step 3: Details ── */}
             {step === 'details' && (
-              <form onSubmit={(e) => { e.preventDefault(); setStep('persona'); }}>
+              <form onSubmit={handleRegister}>
                 <h2 className="text-2xl font-bold text-gray-900">{categoryInfo ? `${categoryInfo.label} Details` : 'Business Details'}</h2>
                 <p className="mt-1 text-sm text-gray-500">Tell us about your {categoryInfo?.label.toLowerCase() || 'business'}</p>
                 <div className="mt-6 space-y-4">
@@ -1409,530 +1429,56 @@ function OnboardingWizard() {
                     <PhoneInput value={businessPhone} onChange={setBusinessPhone} />
                   </div>
                 </div>
+                {/* WhatsApp Connection (Pro/Premium only) */}
+                {selectedPlan !== 'free' && (
+                  <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-5">
+                    <h3 className="text-sm font-bold text-gray-900">WhatsApp Connection</h3>
+                    <p className="mt-1 text-xs text-gray-500">As a {selectedPlan === 'growth' ? 'Pro' : 'Premium'} user, you can connect your own WhatsApp number.</p>
+                    <div className="mt-4 space-y-2">
+                      <button type="button" onClick={() => setWaMethod('shared')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod === 'shared' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+                        <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod === 'shared' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                          {waMethod === 'shared' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Use Waaiio&apos;s shared number</p>
+                          <p className="text-xs text-gray-500">Get started instantly — no setup needed</p>
+                        </div>
+                      </button>
+                      <button type="button" onClick={() => setWaMethod('transfer')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod !== 'shared' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
+                        <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod !== 'shared' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
+                          {waMethod !== 'shared' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Connect my own WhatsApp number</p>
+                          <p className="text-xs text-gray-500">Use your existing business or personal number</p>
+                        </div>
+                      </button>
+                    </div>
+                    {waMethod !== 'shared' && (
+                      <div className="mt-4 space-y-3 rounded-xl border border-gray-200 bg-white p-4">
+                        <div>
+                          <label className="mb-1.5 block text-sm font-medium text-gray-700">Phone Number</label>
+                          <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
+                        </div>
+                        <p className="text-xs text-gray-400">You can also connect via Facebook after signup from your dashboard settings.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
+
                 <div className="mt-8 flex gap-3">
-                  <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="submit" disabled={!firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
+                  <button type="button" onClick={() => setStep('plan')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
+                  <button type="submit" disabled={loading || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
+                    {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
+                  </button>
                 </div>
               </form>
             )}
 
-            {/* ── Step 4: Persona ── */}
-            {step === 'persona' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Customize your bot</h2>
-                <p className="mt-1 text-sm text-gray-500">Give your WhatsApp assistant a name and greeting (optional)</p>
-                <div className="mt-6 space-y-5">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Assistant Name <span className="text-gray-400">(optional)</span></label>
-                    <input type="text" value={botAlias} onChange={(e) => setBotAlias(e.target.value)}
-                      placeholder={category === 'barber' ? 'e.g. King, Blade' : category === 'church' ? 'e.g. Grace Bot' : 'e.g. Your Assistant Name'}
-                      className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Custom Greeting <span className="text-gray-400">(optional)</span></label>
-                    <textarea value={botGreeting} onChange={(e) => setBotGreeting(e.target.value)} placeholder={defaultGreeting} rows={3} className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" />
-                  </div>
-                  {/* Live preview */}
-                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-5">
-                    <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">Live Preview</p>
-                    <div className="mx-auto max-w-xs overflow-hidden rounded-2xl border border-gray-200 shadow-lg">
-                      <div className="flex items-center gap-3 px-4 py-2.5" style={{ backgroundColor: '#075E54' }}>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-xs font-bold text-white">{(botAlias || name || 'S').charAt(0)}</div>
-                        <div>
-                          <p className="text-sm font-semibold text-white">{botAlias || name || 'Waaiio'}</p>
-                          <p className="text-[10px] text-green-200">online</p>
-                        </div>
-                      </div>
-                      <div className="space-y-2 p-3" style={{ backgroundColor: '#ECE5DD' }}>
-                        <div className="flex justify-start">
-                          <div className="max-w-[85%] whitespace-pre-line rounded-lg bg-white px-3 py-2 text-xs leading-relaxed text-gray-800">{botGreeting || defaultGreeting}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-8 flex gap-3">
-                  <button type="button" onClick={() => setStep('details')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="button" onClick={() => { setStep('connect'); setConnectSubStep('choose'); }} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600">Continue</button>
-                </div>
-              </div>
-            )}
-
-            {/* ── Step 5: Connect WhatsApp ── */}
-            {step === 'connect' && (
-              <div>
-                {/* Sub-step: Choose method */}
-                {connectSubStep === 'choose' && (
-                  <>
-                    <h2 className="text-2xl font-bold text-gray-900">How would you like to connect?</h2>
-                    <p className="mt-1 text-sm text-gray-500">Reach 2 billion WhatsApp users worldwide</p>
-
-                    <div className="mt-6 space-y-3">
-                      {WA_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          onClick={() => setWaMethod(opt.key)}
-                          className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${
-                            waMethod === opt.key ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h3 className="text-sm font-bold text-gray-900">{opt.title}</h3>
-                                {opt.badge && (
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${opt.badgeColor}`}>{opt.badge}</span>
-                                )}
-                              </div>
-                              <p className="mt-1 text-xs text-gray-500">{opt.description}</p>
-                            </div>
-                            <div className={`mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${
-                              waMethod === opt.key ? 'border-brand bg-brand' : 'border-gray-300'
-                            }`}>
-                              {waMethod === opt.key && (
-                                <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Pros & Cons */}
-                          {waMethod === opt.key && (
-                            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                              <div>
-                                <p className="text-xs font-semibold text-green-700 mb-1.5">Advantages</p>
-                                <ul className="space-y-1">
-                                  {opt.pros.map((p) => (
-                                    <li key={p} className="flex items-start gap-1.5 text-xs text-gray-600">
-                                      <svg className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                      </svg>
-                                      {p}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                              <div>
-                                <p className="text-xs font-semibold text-red-600 mb-1.5">Limitations</p>
-                                <ul className="space-y-1">
-                                  {opt.cons.map((c) => (
-                                    <li key={c} className="flex items-start gap-1.5 text-xs text-gray-600">
-                                      <svg className="mt-0.5 h-3 w-3 flex-shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                      </svg>
-                                      {c}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="mt-8 flex gap-3">
-                      <button type="button" onClick={() => setStep('persona')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                      <button type="button" onClick={handleConnectContinue}
-                        className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-                        {waMethod === 'shared' ? 'Continue' : 'Next'}
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                {/* Sub-step: Warnings */}
-                {connectSubStep === 'warnings' && (
-                  <>
-                    <button type="button" onClick={() => setConnectSubStep('choose')} className="mb-6 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                      Back
-                    </button>
-
-                    <h2 className="text-2xl font-bold text-gray-900">Know before connecting your {waMethod === 'transfer' ? 'own' : 'business'} number</h2>
-                    <p className="mt-1 text-sm text-gray-500">Please read these important points carefully</p>
-
-                    <div className="mt-8 space-y-5">
-                      {(waMethod === 'transfer' ? OWN_NUMBER_WARNINGS : COEXIST_WARNINGS).map((w) => (
-                        <div key={w.number} className="flex gap-4">
-                          <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm font-bold text-white ${
-                            w.number === 1 ? 'bg-red-500' : w.number === 2 ? 'bg-amber-500' : w.number === 3 ? 'bg-blue-500' : 'bg-gray-500'
-                          }`}>
-                            {w.number}
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-semibold text-gray-900">{w.title}</h3>
-                            <p className="mt-1 text-sm leading-relaxed text-gray-600">{w.text}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    <div className="mt-10 flex gap-3">
-                      <button type="button" onClick={() => setConnectSubStep('choose')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                      <button type="button" onClick={() => setConnectSubStep('setup')} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600">
-                        I Understand, Continue
-                      </button>
-                    </div>
-
-                    <p className="mt-4 text-center text-sm text-gray-400">
-                      <button type="button" onClick={() => { setWaMethod('shared'); setConnectSubStep('choose'); }} className="text-brand hover:underline">
-                        Use Waaiio&apos;s number instead (no setup needed)
-                      </button>
-                    </p>
-                  </>
-                )}
-
-                {/* Sub-step: Facebook Business Setup */}
-                {connectSubStep === 'setup' && (
-                  <>
-                    <button type="button" onClick={() => { setConnectSubStep('warnings'); setFbConnected(false); setFbConnecting(false); setFbConnectionData(null); setShowManualGuide(false); }} className="mb-6 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                      Back
-                    </button>
-
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      {waMethod === 'transfer' ? 'Connect your WhatsApp number' : 'Set up WhatsApp Business coexistence'}
-                    </h2>
-                    <p className="mt-1 text-sm text-gray-500">
-                      {fbConnected
-                        ? 'Your WhatsApp number is connected! Continue to choose your plan.'
-                        : 'Connect your number instantly through Facebook, or set up manually.'}
-                    </p>
-
-                    {/* ── Success State ── */}
-                    {fbConnected && fbConnectionData && (
-                      <div className="mt-6">
-                        <div className="rounded-2xl border-2 border-green-200 bg-green-50 p-6">
-                          <div className="flex items-center gap-3">
-                            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100">
-                              <svg className="h-6 w-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            </div>
-                            <div>
-                              <h3 className="text-sm font-bold text-green-900">WhatsApp Connected Successfully</h3>
-                              <p className="text-xs text-green-700">Your number is ready for automation</p>
-                            </div>
-                          </div>
-                          {(fbConnectionData.display_name || fbConnectionData.phone_number) && (
-                            <div className="mt-4 space-y-2 rounded-xl bg-white/60 p-3">
-                              {fbConnectionData.display_name && (
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-500">Display Name</span>
-                                  <span className="font-medium text-gray-900">{fbConnectionData.display_name}</span>
-                                </div>
-                              )}
-                              {fbConnectionData.phone_number && (
-                                <div className="flex items-center justify-between text-sm">
-                                  <span className="text-gray-500">Phone Number</span>
-                                  <span className="font-medium text-gray-900">{fbConnectionData.phone_number}</span>
-                                </div>
-                              )}
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Connection Type</span>
-                                <span className="font-medium text-gray-900 capitalize">{waMethod}</span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="mt-8 flex gap-3">
-                          <button type="button" onClick={() => { setFbConnected(false); setFbConnectionData(null); }} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Reconnect</button>
-                          <button
-                            type="button"
-                            onClick={handleFbConnectAndRegister}
-                            disabled={loading}
-                            className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                          >
-                            {loading ? 'Setting up...' : (successStep === 'whatsapp' && successBusinessId) ? 'Save & Go to Dashboard' : 'Continue to Plan'}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* ── Connecting State ── */}
-                    {fbConnecting && !fbConnected && (
-                      <div className="mt-8 flex flex-col items-center py-8">
-                        <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-                        <p className="mt-4 text-sm font-medium text-gray-700">Connecting to Facebook...</p>
-                        <p className="mt-1 text-xs text-gray-500">Complete the signup in the popup window</p>
-                        <button
-                          type="button"
-                          onClick={() => setFbConnecting(false)}
-                          className="mt-4 text-sm text-gray-500 hover:text-brand underline"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-
-                    {/* ── Default State: Connect Buttons ── */}
-                    {!fbConnected && !fbConnecting && (
-                      <>
-                        {/* Primary: Facebook Embedded Signup */}
-                        <div className="mt-6">
-                          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                            <div className="mb-4 flex items-center gap-3">
-                              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1877F2]">
-                                <svg className="h-5 w-5 text-white" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                                </svg>
-                              </div>
-                              <div>
-                                <h3 className="text-sm font-bold text-gray-900">Quick Setup with Facebook</h3>
-                                <p className="text-xs text-gray-500">Connect in under 2 minutes — no manual steps</p>
-                              </div>
-                            </div>
-                            <p className="text-sm leading-relaxed text-gray-600">
-                              Sign in with Facebook to automatically connect your WhatsApp Business number.
-                              We&apos;ll handle the technical setup — no need to copy IDs or configure anything manually.
-                            </p>
-                            <button
-                              type="button"
-                              onClick={launchWhatsAppSignup}
-                              disabled={!fbSdkReady}
-                              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877F2] py-3.5 text-sm font-bold text-white transition hover:bg-[#166FE5] disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                              </svg>
-                              {fbSdkReady ? 'Connect with Facebook' : 'Loading Facebook...'}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Divider */}
-                        <div className="mt-6 flex items-center gap-4">
-                          <div className="h-px flex-1 bg-gray-200" />
-                          <span className="text-xs font-medium text-gray-400">or</span>
-                          <div className="h-px flex-1 bg-gray-200" />
-                        </div>
-
-                        {/* Secondary: Manual Setup */}
-                        <div className="mt-6">
-                          <button
-                            type="button"
-                            onClick={() => setShowManualGuide(!showManualGuide)}
-                            className="flex w-full items-center justify-between rounded-xl border border-gray-200 px-5 py-4 text-left transition hover:bg-gray-50"
-                          >
-                            <div>
-                              <h3 className="text-sm font-semibold text-gray-900">Set up manually</h3>
-                              <p className="text-xs text-gray-500">Follow step-by-step instructions to connect via Facebook Business Manager</p>
-                            </div>
-                            <svg className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showManualGuide ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </button>
-
-                          {showManualGuide && (
-                            <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-6">
-                              {/* Phone number input */}
-                              <div className="mb-6">
-                                <label className="mb-2 block text-sm font-semibold text-gray-900">Phone number to connect</label>
-                                <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
-                                <p className="mt-2 text-xs text-gray-500">
-                                  {waMethod === 'transfer'
-                                    ? 'This number will be disconnected from personal WhatsApp and connected to Waaiio.'
-                                    : 'This must be the number registered on your WhatsApp Business app.'}
-                                </p>
-                              </div>
-
-                              {/* Before You Start */}
-                              <div className="mb-6">
-                                <h3 className="text-sm font-bold text-gray-900">Before you start</h3>
-                                <p className="mt-1 text-xs text-gray-500">Make sure you have the following ready:</p>
-                                <ul className="mt-3 space-y-2">
-                                  {[
-                                    'A Facebook account (personal — used to manage your business)',
-                                    'Access to Facebook Business Manager (or create one)',
-                                    'A verified WhatsApp Business Account (WABA)',
-                                    'The phone number you want to connect',
-                                    'Access to receive SMS or calls on that number (for verification)',
-                                  ].map((item, i) => (
-                                    <li key={i} className="flex items-start gap-2 text-xs text-gray-600">
-                                      <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full bg-brand-100 text-[10px] font-bold text-brand">{i + 1}</span>
-                                      {item}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-
-                              {/* Step-by-step guide */}
-                              <div className="mb-6">
-                                <h3 className="text-sm font-bold text-gray-900">Setup steps</h3>
-                                <div className="mt-4 space-y-5">
-                                  <SetupStep number={1} title="Create or access Facebook Business Manager" description="Go to Facebook Business Manager and create an account if you don't have one. Use your personal Facebook login." link="https://business.facebook.com" linkLabel="Open Facebook Business Manager" />
-                                  <SetupStep number={2} title="Verify your WABA (WhatsApp Business Account)" description="In Business Manager, go to Business Settings > Accounts > WhatsApp Accounts. Create one if you don't have it." link="https://business.facebook.com/settings/whatsapp-business-accounts" linkLabel="WhatsApp Business Accounts Settings" />
-                                  <SetupStep number={3} title="Add your phone number" description="In your WABA settings, click 'Add Phone Number' and verify via SMS or phone call." link="https://business.facebook.com/latest/whatsapp_manager/phone_numbers" linkLabel="WhatsApp Manager — Phone Numbers" />
-                                  <SetupStep number={4} title="Verify the phone number" description="Enter the 6-digit verification code sent to your phone. Once verified, your number will show as 'Connected'." />
-                                  <SetupStep number={5} title="Set your display name" description={`Set your display name to "${name || 'Your Business Name'}". Meta will review and approve it.`} link="https://www.facebook.com/business/help/338047025165344" linkLabel="Display Name Guidelines" />
-                                  <SetupStep number={6} title="Share your WABA ID with us" description="Copy your WABA ID from Business Manager. We'll connect it to your Waaiio bot." note="Find your WABA ID in Business Settings > Accounts > WhatsApp Accounts." />
-                                </div>
-                              </div>
-
-                              {/* Help links */}
-                              <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 p-4">
-                                <p className="text-xs font-semibold text-blue-800">Need help?</p>
-                                <ul className="mt-2 space-y-1.5">
-                                  <li><a href="https://www.facebook.com/business/help" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">Facebook Business Help Center &rarr;</a></li>
-                                  <li><a href="https://faq.whatsapp.com/general/account-and-profile/about-whatsapp-business-accounts" target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline">About WhatsApp Business Accounts &rarr;</a></li>
-                                </ul>
-                              </div>
-
-                              <div className="flex gap-3">
-                                <button type="button" onClick={() => setConnectSubStep('warnings')} className="rounded-xl border border-gray-300 px-5 py-3 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRegister({ preventDefault: () => {} } as React.FormEvent)}
-                                  disabled={loading || !ownPhone}
-                                  className="flex-1 rounded-xl bg-whatsapp py-3 text-sm font-bold text-white transition hover:opacity-90 disabled:opacity-50"
-                                >
-                                  {loading ? 'Connecting...' : 'Connect & Continue'}
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Fallback to shared number */}
-                        <p className="mt-6 text-center text-sm text-gray-400">
-                          Don&apos;t have a Facebook Business account?{' '}
-                          <button type="button" onClick={() => { setWaMethod('shared'); handleRegister({ preventDefault: () => {} } as React.FormEvent); }} className="text-brand hover:underline">
-                            Use Waaiio&apos;s number instead
-                          </button>
-                        </p>
-                      </>
-                    )}
-                  </>
-                )}
-
-                {/* Sub-step: WABA Phone Selection */}
-                {connectSubStep === 'phone_select' && discoveredWabas.length > 0 && (
-                  <>
-                    <button type="button" onClick={() => { setConnectSubStep('setup'); setDiscoveredWabas([]); setFbConnectionData(null); }} className="mb-6 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                      Back
-                    </button>
-
-                    <div className="flex items-center gap-3 mb-2">
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
-                        <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                        </svg>
-                      </div>
-                      <div>
-                        <h2 className="text-xl font-bold text-gray-900">Facebook Connected</h2>
-                        <p className="text-xs text-gray-500">Account: {discoveredWabas[0]?.waba_name || 'Connected'}</p>
-                      </div>
-                    </div>
-
-                    <p className="mt-3 text-sm text-gray-500">
-                      Enter the phone number and display name you want to use with Waaiio.
-                    </p>
-
-                    <div className="mt-6 space-y-4">
-                      <div>
-                        <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Phone Number *</label>
-                        <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
-                        <p className="mt-1 text-xs text-gray-400">
-                          {waMethod === 'transfer'
-                            ? 'This number will be transferred to Waaiio for WhatsApp Business API.'
-                            : 'The number registered on your WhatsApp Business app.'}
-                        </p>
-                      </div>
-                      <div>
-                        <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Display Name *</label>
-                        <input
-                          type="text"
-                          value={fbConnectionData?.display_name || ''}
-                          onChange={(e) => setFbConnectionData(prev => prev ? { ...prev, display_name: e.target.value } : null)}
-                          placeholder={name || 'Your business name'}
-                          className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
-                        />
-                        <p className="mt-1 text-xs text-gray-400">This name will appear on WhatsApp when customers message you.</p>
-                      </div>
-                    </div>
-
-                    {/* WABA selector (only if multiple) */}
-                    {discoveredWabas.length > 1 && (
-                      <div className="mt-4">
-                        <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Business Account</label>
-                        <select
-                          value={selectedWabaId}
-                          onChange={(e) => setSelectedWabaId(e.target.value)}
-                          className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
-                        >
-                          {discoveredWabas.map((waba) => (
-                            <option key={waba.waba_id} value={waba.waba_id}>{waba.waba_name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="mt-8 flex gap-3">
-                      <button
-                        type="button"
-                        onClick={() => { setConnectSubStep('setup'); setDiscoveredWabas([]); setFbConnectionData(null); }}
-                        className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50"
-                      >
-                        Back
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (fbConnectionData) {
-                            const selectedWaba = discoveredWabas.find(w => w.waba_id === selectedWabaId);
-                            const firstPhone = selectedWaba?.phones?.[0];
-                            setFbConnectionData({
-                              ...fbConnectionData,
-                              waba_id: selectedWabaId,
-                              phone_number_id: firstPhone?.id || '',
-                              phone_number: ownPhone,
-                            });
-                          }
-                          setFbConnected(true);
-                          setConnectSubStep('setup');
-                        }}
-                        disabled={!ownPhone || !fbConnectionData?.display_name}
-                        className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                      >
-                        {(successStep === 'whatsapp' && successBusinessId) ? 'Connect Number' : 'Confirm & Continue'}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* ── Step 6: Plan & Pay ── */}
-            {step === 'plan' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Choose your plan</h2>
-                <p className="mt-1 text-sm text-gray-500">Start free with a 7-day trial, or upgrade for more features</p>
-
-                <div className="mt-6 space-y-3">
-                  <PlanOption selected={selectedPlan === 'free'} onClick={() => setSelectedPlan('free')} name={localTiers.free.name} price={formatCurrency(0, selectedCountry)} period="" features={localTiers.free.features} />
-                  <PlanOption selected={selectedPlan === 'growth'} onClick={() => setSelectedPlan('growth')} name={localTiers.growth.name} price={formatCurrency(localTiers.growth.price as number, selectedCountry)} period="/mo" features={localTiers.growth.features} popular />
-                  <PlanOption selected={selectedPlan === 'business'} onClick={() => setSelectedPlan('business')} name={localTiers.business.name} price={formatCurrency(localTiers.business.price as number, selectedCountry)} period="/mo" features={localTiers.business.features} />
-                </div>
-
-                <div className="mt-8 flex gap-3">
-                  <button type="button" onClick={() => { setStep('connect'); setConnectSubStep('choose'); }} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  {selectedPlan === 'free' ? (
-                    <button type="button" onClick={handleStartFree} disabled={loading} className="flex-1 rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-                      {loading ? 'Activating...' : 'Start Free Trial'}
-                    </button>
-                  ) : (
-                    <button type="button" onClick={handlePay} disabled={loading} className="flex-1 rounded-xl bg-accent py-3.5 text-sm font-bold text-gray-900 shadow-lg shadow-accent/20 transition hover:bg-accent-400 disabled:opacity-50">
-                      {loading ? 'Processing...' : `Pay ${formatCurrency(localTiers[selectedPlan].price as number, selectedCountry)}`}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
+            {/* Persona and Connect steps removed — persona is post-signup, connect is merged into details */}
+            {/* Old plan step removed — now in step 3 above */}
 
             {/* ── Step 7: Success ── */}
             {step === 'success' && (
