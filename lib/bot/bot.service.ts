@@ -2091,9 +2091,13 @@ export class BotService {
   }
 
   private async sendText(to: string, text: string): Promise<void> {
-    logger.debug('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
-    const result = await this.messageSender.sendText({ to, text });
-    logger.debug('[BOT] sendText result:', JSON.stringify(result));
+    try {
+      logger.debug('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
+      const result = await this.messageSender.sendText({ to, text });
+      logger.debug('[BOT] sendText result:', JSON.stringify(result));
+    } catch (err) {
+      logger.error('[BOT] sendText FAILED to:', to, 'error:', err);
+    }
   }
 
   /**

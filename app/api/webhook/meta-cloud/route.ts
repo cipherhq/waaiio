@@ -231,7 +231,20 @@ export async function POST(request: NextRequest) {
           const standalone = new StandaloneService(supabase);
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
-          await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
+          try {
+            await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
+          } catch (botErr) {
+            logger.error('[META-WEBHOOK] Bot handling failed for', source, ':', botErr);
+            // Try to send error message to user so they know something went wrong
+            try {
+              await resolved.sender.sendText({
+                to: source,
+                text: 'Sorry, we encountered an error processing your message. Please try again.',
+              });
+            } catch (fallbackErr) {
+              logger.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
+            }
+          }
 
           // Already marked as processed via upsert above
         }

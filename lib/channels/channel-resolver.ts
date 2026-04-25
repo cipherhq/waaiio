@@ -35,10 +35,12 @@ export class ChannelResolver {
    * Build the correct MessageSender for a channel based on its provider.
    */
   private buildSender(channel: ChannelRecord): MessageSender {
-    if (channel.provider === 'meta_cloud' && channel.meta_access_token && channel.phone_number_id) {
+    if (channel.provider === 'meta_cloud' && channel.phone_number_id) {
+      // Use channel-specific token, falling back to env var for shared channels
+      const accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
       return new MetaCloudSender(
         new MetaCloudService({
-          accessToken: channel.meta_access_token,
+          accessToken,
           phoneNumberId: channel.phone_number_id,
           wabaId: channel.waba_id || undefined,
         })
