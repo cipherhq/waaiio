@@ -177,12 +177,20 @@ export class SquareGateway implements PaymentGateway {
       const order = orderResult.order as Record<string, unknown> | undefined;
 
       if (order?.state === 'COMPLETED') {
+        // Detect actual payment method from order tenders
+        const tenders = (order.tenders || []) as Array<{ type?: string }>;
+        const tenderType = tenders[0]?.type || '';
+        const paymentMethod = tenderType === 'CASH_APP' ? 'cash_app_pay'
+          : tenderType === 'WALLET' ? 'apple_pay'
+          : tenderType === 'CARD' ? 'card'
+          : 'square';
+
         await supabase
           .from('payments')
           .update({
             status: 'success',
             gateway_status: 'completed',
-            payment_method: 'cash_app_pay',
+            payment_method: paymentMethod,
             paid_at: new Date().toISOString(),
           })
           .eq('id', paymentRecord.id);
