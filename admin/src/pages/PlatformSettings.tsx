@@ -20,8 +20,12 @@ interface GroupDef {
 
 const GROUPS: GroupDef[] = [
   {
-    label: 'Fees & Limits',
-    keys: ['platform_fee_percentage', 'max_bot_sessions_per_business'],
+    label: 'Pricing & Fees',
+    keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'platform_fee_percentage'],
+  },
+  {
+    label: 'Booking Defaults',
+    keys: ['booking_defaults', 'max_bot_sessions_per_business'],
   },
   {
     label: 'Countries & Currencies',

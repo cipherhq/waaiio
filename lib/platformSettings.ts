@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import {
   PRICING_TIERS,
   BROADCAST_LIMITS,
+  CONVERSATION_LIMITS,
   TRIAL_DAYS,
   BOOKING_DEFAULTS,
   type SubscriptionTier,
@@ -31,6 +32,7 @@ export interface BookingDefaultsConfig {
 export interface PlatformSettings {
   pricing_tiers: Record<SubscriptionTier, PricingTierConfig>;
   broadcast_limits: Record<SubscriptionTier, BroadcastLimitConfig>;
+  conversation_limits: Record<SubscriptionTier, number>;
   trial_days: number;
   booking_defaults: BookingDefaultsConfig;
 }
@@ -72,6 +74,7 @@ function buildFallback(): PlatformSettings {
       growth: { ...BROADCAST_LIMITS.growth },
       business: { ...BROADCAST_LIMITS.business },
     },
+    conversation_limits: { ...CONVERSATION_LIMITS },
     trial_days: TRIAL_DAYS,
     booking_defaults: { ...BOOKING_DEFAULTS, reminderHours: [...BOOKING_DEFAULTS.reminderHours] },
   };
@@ -104,7 +107,7 @@ export async function loadPlatformSettings(
     const { data, error } = await supabase
       .from('platform_settings')
       .select('key, value')
-      .in('key', ['pricing_tiers', 'broadcast_limits', 'trial_days', 'booking_defaults']);
+      .in('key', ['pricing_tiers', 'broadcast_limits', 'conversation_limits', 'trial_days', 'booking_defaults']);
 
     if (error) throw error;
 
@@ -118,6 +121,9 @@ export async function loadPlatformSettings(
       broadcast_limits: map.has('broadcast_limits')
         ? convertSentinels(map.get('broadcast_limits') as Record<SubscriptionTier, BroadcastLimitConfig>)
         : fallback.broadcast_limits,
+      conversation_limits: map.has('conversation_limits')
+        ? convertSentinels(map.get('conversation_limits') as Record<SubscriptionTier, number>)
+        : fallback.conversation_limits,
       trial_days: map.has('trial_days')
         ? (map.get('trial_days') as number)
         : fallback.trial_days,
