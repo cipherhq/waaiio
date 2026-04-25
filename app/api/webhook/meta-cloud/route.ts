@@ -142,10 +142,12 @@ export async function POST(request: NextRequest) {
 
         const supabase = createServiceClient(); // single instance for all messages in this change
         const intelligenceSvc = getIntelligence();
-        const resolver = getChannelResolver();
+        // Fresh resolver each request to avoid stale cached credentials
+        const resolver = new ChannelResolver(supabase);
 
         // Resolve channel by phone_number_id
         const resolved = await resolver.resolveByPhoneNumberId(phoneNumberId);
+        logger.debug('[META-WEBHOOK] Resolved channel:', resolved ? { channelId: resolved.channel.id, provider: resolved.channel.provider, phoneNumberId: resolved.channel.phone_number_id, hasToken: !!(resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN) } : 'NULL');
         if (!resolved) {
           logger.debug('[META-WEBHOOK] No channel found for phone_number_id:', phoneNumberId);
           continue;
@@ -232,9 +234,11 @@ export async function POST(request: NextRequest) {
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
           try {
+            logger.debug('[META-WEBHOOK] Calling bot.handleMessage for', source, 'text:', text, 'preResolvedBiz:', preResolvedBusinessId);
             await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
+            logger.debug('[META-WEBHOOK] bot.handleMessage completed for', source);
           } catch (botErr) {
-            logger.error('[META-WEBHOOK] Bot handling failed for', source, ':', botErr);
+            logger.error('[META-WEBHOOK] Bot handling failed for', source, ':', (botErr as Error)?.message || botErr);
             // Try to send error message to user so they know something went wrong
             try {
               await resolved.sender.sendText({
