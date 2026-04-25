@@ -1111,18 +1111,9 @@ function OnboardingWizard() {
             {step === 'auth' && (
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">Create your account</h2>
-                <p className="mt-1 text-sm text-gray-500">Get started with WhatsApp automation in minutes</p>
+                <p className="mt-1 text-sm text-gray-500">Sign up with your email and password</p>
 
-                <div className="mt-6 flex rounded-xl bg-gray-100 p-1">
-                  <button type="button" onClick={() => { setAuthMode('email'); setError(''); }} className={`flex-1 rounded-lg py-2.5 text-sm font-medium transition ${authMode === 'email' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>Email</button>
-                  <button type="button" onClick={() => { setAuthMode('phone'); setError(''); }} className={`flex-1 rounded-lg py-2.5 text-sm font-medium transition ${authMode === 'phone' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}>Phone</button>
-                </div>
-
-                <p className="mt-4 text-sm text-gray-500">
-                  {authMode === 'email' ? 'Sign up with your email and password' : authStep === 'phone' ? 'Enter your phone number to get started' : `We sent a 6-digit code to ${phone}`}
-                </p>
-
-                {authMode === 'email' && emailSent ? (
+                {emailSent ? (
                   <div className="mt-6 rounded-xl border border-brand-100 bg-brand-50 p-6 text-center">
                     <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 text-2xl">
                       &#9993;
@@ -1153,7 +1144,7 @@ function OnboardingWizard() {
                       Use a different email
                     </button>
                   </div>
-                ) : authMode === 'email' ? (
+                ) : (
                   <form onSubmit={handleEmailSignup} className="mt-6 space-y-4">
                     <div>
                       <label className="mb-1.5 block text-sm font-medium text-gray-700">Email</label>
@@ -1171,30 +1162,7 @@ function OnboardingWizard() {
                       <a href="/login" className="font-medium text-brand hover:underline">Log in</a>
                     </p>
                   </form>
-                ) : authStep === 'phone' ? (
-                  <form onSubmit={handleSendOtp} className="mt-6 space-y-4">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Phone Number</label>
-                      <PhoneInput value={phone} onChange={setPhone} disabled={authLoading} />
-                    </div>
-                    <button type="submit" disabled={!phone || authLoading} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-                      {authLoading ? 'Sending...' : 'Send OTP'}
-                    </button>
-                  </form>
-                ) : (
-                  <form onSubmit={handleVerifyOtp} className="mt-6 space-y-4">
-                    <OtpInput value={otp} onChange={setOtp} disabled={authLoading} />
-                    <button type="submit" disabled={otp.length !== 6 || authLoading} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-                      {authLoading ? 'Verifying...' : 'Verify & Continue'}
-                    </button>
-                    <button type="button" onClick={() => { setAuthStep('phone'); setOtp(''); setError(''); }} className="w-full text-center text-sm text-gray-500 hover:text-brand">Change phone number</button>
-                  </form>
                 )}
-
-                <p className="mt-8 text-center text-sm text-gray-500">
-                  Already have an account?{' '}
-                  <Link href="/login?redirect=/get-started" className="font-semibold text-brand hover:underline">Sign in</Link>
-                </p>
               </div>
             )}
 
