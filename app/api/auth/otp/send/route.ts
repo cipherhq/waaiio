@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-const PHONE_REGEX = /^\+234[0-9]{10}$/;
+// Support all Waaiio countries: NG (+234), US (+1), GB (+44), CA (+1), GH (+233)
+const PHONE_REGEX = /^\+[1-9][0-9]{6,14}$/;
 
 // In-memory rate limiter (replace with Redis in production)
 const rateLimits = new Map<string, { count: number; windowStart: number }>();
@@ -12,7 +13,7 @@ export async function POST(request: NextRequest) {
 
     if (!phone || !PHONE_REGEX.test(phone)) {
       return NextResponse.json(
-        { message: 'Invalid Nigerian phone number. Use format: +234XXXXXXXXXX' },
+        { message: 'Invalid phone number. Use international format: +1XXXXXXXXXX' },
         { status: 400 },
       );
     }
