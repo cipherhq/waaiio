@@ -1081,6 +1081,25 @@ function OnboardingWizard() {
         {/* Main content area */}
         <div className="flex flex-1 items-start justify-center overflow-y-auto px-4 py-8 lg:px-10">
           <div className="w-full max-w-xl">
+            {/* Cancel / Exit button */}
+            {step !== 'auth' && step !== 'success' && (
+              <div className="mb-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (confirm('Are you sure you want to cancel? Your progress will not be saved.')) {
+                      const supabase = createClient();
+                      await supabase.auth.signOut();
+                      window.location.href = '/';
+                    }
+                  }}
+                  className="text-xs text-gray-400 hover:text-red-500 transition"
+                >
+                  Cancel &amp; Exit
+                </button>
+              </div>
+            )}
+
             {error && (
               <div className="mb-6 rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
                 {error}
@@ -1147,6 +1166,10 @@ function OnboardingWizard() {
                     <button type="submit" disabled={!email || !password || authLoading} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
                       {authLoading ? 'Creating account...' : 'Create Account'}
                     </button>
+                    <p className="mt-4 text-center text-sm text-gray-500">
+                      Already have an account?{' '}
+                      <a href="/login" className="font-medium text-brand hover:underline">Log in</a>
+                    </p>
                   </form>
                 ) : authStep === 'phone' ? (
                   <form onSubmit={handleSendOtp} className="mt-6 space-y-4">
