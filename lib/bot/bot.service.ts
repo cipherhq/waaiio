@@ -1101,6 +1101,17 @@ export class BotService {
           customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
         }
 
+        // Check existing conversation to determine if this is a new 24h window
+        const { data: existingConv } = await this.supabase
+          .from('chat_conversations')
+          .select('id, last_message_at')
+          .eq('business_id', session.business_id)
+          .eq('customer_phone', from)
+          .maybeSingle();
+
+        const isNewConversation = !existingConv || !existingConv.last_message_at ||
+          (Date.now() - new Date(existingConv.last_message_at).getTime()) > 24 * 60 * 60 * 1000;
+
         // Upsert conversation record
         await this.supabase.from('chat_conversations').upsert({
           business_id: session.business_id,
@@ -1110,13 +1121,12 @@ export class BotService {
           last_message_at: new Date().toISOString(),
         }, { onConflict: 'business_id,customer_phone' });
 
-        // Get conversation_id for linking
-        const { data: chatConv } = await this.supabase
+        const chatConvId = existingConv?.id || (await this.supabase
           .from('chat_conversations')
           .select('id')
           .eq('business_id', session.business_id)
           .eq('customer_phone', from)
-          .maybeSingle();
+          .maybeSingle()).data?.id;
 
         await this.supabase.from('chat_messages').insert({
           business_id: session.business_id,
@@ -1125,10 +1135,19 @@ export class BotService {
           direction: 'inbound',
           message_text: text,
           is_read: false,
-          conversation_id: chatConv?.id || null,
+          conversation_id: chatConvId || null,
           media_url: mediaUrl || null,
           media_type: mediaUrl ? (messageType || 'image') : null,
         });
+
+        // Track conversation usage (non-blocking)
+        Promise.resolve(
+          this.supabase.rpc('increment_message_usage', {
+            p_business_id: session.business_id,
+            p_direction: 'inbound',
+            p_is_new_conversation: isNewConversation,
+          })
+        ).catch((err) => logger.error('[BOT] Usage tracking failed:', err));
 
         // Try FAQ auto-response first
         if (text && session.business_id) {

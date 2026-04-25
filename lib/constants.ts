@@ -380,6 +380,12 @@ export const BROADCAST_LIMITS: Record<SubscriptionTier, {
   business: { maxBroadcasts: Infinity, maxRecipients: Infinity },
 };
 
+export const CONVERSATION_LIMITS: Record<SubscriptionTier, number> = {
+  free: 200,
+  growth: 1000,
+  business: 999999, // effectively unlimited
+};
+
 // ── Tier Feature Sets (single source of truth) ──
 
 export interface TierFeatureSet {

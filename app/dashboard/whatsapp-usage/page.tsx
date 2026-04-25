@@ -50,6 +50,10 @@ export default function WhatsAppUsagePage() {
   const [broadcastCount, setBroadcastCount] = useState(0);
   const [recipientCount, setRecipientCount] = useState(0);
 
+  // Conversation usage (monthly)
+  const [monthlyConversations, setMonthlyConversations] = useState(0);
+  const [conversationLimit, setConversationLimit] = useState(200);
+
   // Bot sessions
   const [totalBotSessions, setTotalBotSessions] = useState(0);
   const [handedOffSessions, setHandedOffSessions] = useState(0);
@@ -76,6 +80,7 @@ export default function WhatsAppUsagePage() {
         channelRes,
         contractDeliveryRes,
         invoiceDeliveryRes,
+        convUsageRes,
       ] = await Promise.all([
         // Messages in time range
         supabase
@@ -127,6 +132,14 @@ export default function WhatsAppUsagePage() {
           .select('wa_delivery_status')
           .eq('business_id', business.id)
           .not('wa_delivery_status', 'is', null),
+
+        // Conversation usage this month
+        supabase
+          .from('conversation_usage')
+          .select('conversation_count, inbound_count, outbound_count, template_count')
+          .eq('business_id', business.id)
+          .eq('month_key', monthKey)
+          .maybeSingle(),
       ]);
 
       // Process messages
@@ -186,6 +199,12 @@ export default function WhatsAppUsagePage() {
       setDeliveryDelivered(allDelivery.filter((s) => s === 'delivered').length);
       setDeliveryRead(allDelivery.filter((s) => s === 'read').length);
       setDeliveryFailed(allDelivery.filter((s) => s === 'failed').length);
+
+      // Conversation usage
+      setMonthlyConversations(convUsageRes.data?.conversation_count ?? 0);
+      const tier = (business as any).subscription_tier || 'free';
+      const limits: Record<string, number> = { free: 200, growth: 1000, business: 999999 };
+      setConversationLimit(limits[tier] || 200);
 
       setLoading(false);
     }
@@ -337,6 +356,40 @@ export default function WhatsAppUsagePage() {
             </div>
           </div>
         )}
+
+        {/* Monthly Conversation Usage */}
+        <div className="rounded-xl border border-gray-100 bg-white p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Conversations This Month</h2>
+              <p className="mt-0.5 text-xs text-gray-400">WhatsApp conversations included in your plan</p>
+            </div>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${
+              monthlyConversations >= conversationLimit ? 'bg-red-100 text-red-700' :
+              monthlyConversations >= conversationLimit * 0.8 ? 'bg-amber-100 text-amber-700' :
+              'bg-green-100 text-green-700'
+            }`}>
+              {monthlyConversations} / {conversationLimit >= 999999 ? 'Unlimited' : conversationLimit.toLocaleString()}
+            </span>
+          </div>
+          <div className="mt-4">
+            <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  monthlyConversations >= conversationLimit ? 'bg-red-500' :
+                  monthlyConversations >= conversationLimit * 0.8 ? 'bg-amber-500' :
+                  'bg-brand'
+                }`}
+                style={{ width: `${Math.min((monthlyConversations / (conversationLimit >= 999999 ? 1000 : conversationLimit)) * 100, 100)}%` }}
+              />
+            </div>
+          </div>
+          {monthlyConversations >= conversationLimit * 0.8 && conversationLimit < 999999 && (
+            <p className="mt-3 text-xs text-amber-600">
+              You&apos;re approaching your conversation limit. Consider upgrading for more conversations.
+            </p>
+          )}
+        </div>
 
         {/* Broadcast Usage */}
         <div className="rounded-xl border border-gray-100 bg-white p-6">
