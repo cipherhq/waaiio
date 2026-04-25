@@ -17,6 +17,9 @@ export interface InitPaymentOpts {
   subaccountCode?: string;
   /** Stripe Connect account ID for split payments */
   stripeAccountId?: string;
+  /** Square OAuth merchant ID + access token for split payments */
+  squareMerchantId?: string;
+  squareAccessToken?: string;
   /** Platform fee in base currency units (e.g. naira, dollars — NOT kobo/cents) */
   platformFeeAmount?: number;
   /** BYO: use business's own gateway API key instead of platform key */

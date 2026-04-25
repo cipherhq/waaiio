@@ -36,6 +36,8 @@ export async function initializePayment(
     // Fetch payout account for split payments
     let subaccountCode: string | undefined;
     let stripeAccountId: string | undefined;
+    let squareMerchantId: string | undefined;
+    let squareAccessToken: string | undefined;
     let platformFeeAmount: number | undefined;
 
     // BYO credential fields
@@ -119,7 +121,7 @@ export async function initializePayment(
 
         const { data: payout } = await supabase
           .from('payout_accounts')
-          .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
+          .select('subaccount_code, stripe_account_id, square_merchant_id, square_access_token, platform_percentage, gateway')
           .eq('business_id', opts.businessId)
           .eq('is_active', true)
           .maybeSingle();
@@ -128,6 +130,8 @@ export async function initializePayment(
         if (biz?.payout_mode === 'direct_split' && payout) {
           subaccountCode = payout.subaccount_code || undefined;
           stripeAccountId = payout.stripe_account_id || undefined;
+          squareMerchantId = payout.square_merchant_id || undefined;
+          squareAccessToken = payout.square_access_token || undefined;
           platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
         }
         // platform_managed: no split params, full amount goes to platform
@@ -148,6 +152,8 @@ export async function initializePayment(
       userEmail: opts.userEmail,
       subaccountCode,
       stripeAccountId,
+      squareMerchantId,
+      squareAccessToken,
       platformFeeAmount,
       byoSecretKey,
       byoPlatformSubaccount,

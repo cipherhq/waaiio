@@ -66,6 +66,10 @@ export class SquareGateway implements PaymentGateway {
       const amountInCents = Math.round(opts.amount * 100);
       const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
+      // Use merchant's own token + location if connected via OAuth, else platform's
+      const useToken = opts.squareAccessToken || squareAccessToken;
+      const useLocation = squareLocationId; // TODO: fetch merchant's location via their token
+
       const paymentLinkBody: Record<string, unknown> = {
         idempotency_key: idempotencyKey,
         quick_pay: {
@@ -74,7 +78,7 @@ export class SquareGateway implements PaymentGateway {
             amount: amountInCents,
             currency: opts.currency.toUpperCase(),
           },
-          location_id: squareLocationId,
+          location_id: useLocation,
         },
         checkout_options: {
           redirect_url: `${callbackUrl}/api/payments/square-callback?ref=${idempotencyKey}`,
@@ -90,7 +94,32 @@ export class SquareGateway implements PaymentGateway {
         },
       };
 
-      const result = await squareRequest('/v2/online-checkout/payment-links', paymentLinkBody);
+      // Add platform fee for connected merchants (split payment)
+      if (opts.squareMerchantId && opts.platformFeeAmount) {
+        const feeInCents = Math.round(opts.platformFeeAmount * 100);
+        (paymentLinkBody.checkout_options as Record<string, unknown>).app_fee_money = {
+          amount: feeInCents,
+          currency: opts.currency.toUpperCase(),
+        };
+      }
+
+      // Use the connected merchant's token if available
+      const requestFn = opts.squareAccessToken
+        ? async (path: string, body: Record<string, unknown>) => {
+            const response = await fetch(`${getSquareBaseUrl()}${path}`, {
+              method: 'POST',
+              headers: {
+                'Square-Version': '2024-12-18',
+                Authorization: `Bearer ${opts.squareAccessToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(body),
+            });
+            return response.json() as Promise<Record<string, unknown>>;
+          }
+        : squareRequest;
+
+      const result = await requestFn('/v2/online-checkout/payment-links', paymentLinkBody);
 
       const paymentLink = result.payment_link as Record<string, unknown> | undefined;
       if (!paymentLink?.id || !paymentLink?.url) {

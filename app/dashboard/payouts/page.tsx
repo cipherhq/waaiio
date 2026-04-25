@@ -284,6 +284,29 @@ export default function PayoutsPage() {
     }
   }
 
+  // Square Connect
+  async function handleSquareConnect() {
+    setStripeLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/payouts/square-connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Failed to start Square onboarding');
+        setStripeLoading(false);
+        return;
+      }
+      window.location.href = data.url;
+    } catch {
+      setError('Network error. Please try again.');
+      setStripeLoading(false);
+    }
+  }
+
   // Handle change account
   function handleChangeAccount() {
     setExisting(null);
@@ -716,6 +739,28 @@ export default function PayoutsPage() {
                 'Connect with Stripe'
               )}
             </button>
+
+            <div className="mt-4 flex items-center gap-3">
+              <div className="h-px flex-1 bg-gray-200" />
+              <span className="text-xs text-gray-400">or</span>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+
+            <button
+              onClick={handleSquareConnect}
+              disabled={stripeLoading}
+              className="mt-4 w-full rounded-xl border-2 border-gray-200 bg-white px-6 py-3 text-sm font-bold text-gray-900 transition hover:border-gray-300 hover:bg-gray-50 disabled:opacity-50"
+            >
+              {stripeLoading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
+                  Connecting...
+                </span>
+              ) : (
+                'Connect with Square (CashApp)'
+              )}
+            </button>
+            <p className="mt-2 text-center text-xs text-gray-400">Accept CashApp, Apple Pay &amp; Google Pay via Square</p>
           </div>
         ) : (
           /* Paystack/Flutterwave Bank Flow */
