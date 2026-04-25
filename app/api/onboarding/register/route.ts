@@ -16,9 +16,14 @@ import { initCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { sendEmail } from '@/lib/email/client';
 import { welcomeEmail, businessRegisteredEmail } from '@/lib/email/templates';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit: max 5 registrations per IP per hour
+    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'onboarding-register'), 5, 3600_000);
+    if (rateLimit) return rateLimit;
+
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 

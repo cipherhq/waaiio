@@ -31,12 +31,17 @@ function getChannelResolver() {
 
 export async function POST(request: NextRequest) {
   try {
-    // Webhook secret verification (verify when configured, warn when not)
+    // Webhook secret verification (required in production)
     const webhookSecret = request.headers.get('x-webhook-secret');
     const expectedSecret = process.env.GUPSHUP_WEBHOOK_SECRET;
-    if (expectedSecret && webhookSecret !== expectedSecret) {
-      console.warn('[WEBHOOK] Invalid webhook secret');
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (expectedSecret) {
+      if (webhookSecret !== expectedSecret) {
+        console.warn('[WEBHOOK] Invalid webhook secret');
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    } else if (process.env.NODE_ENV === 'production') {
+      console.error('[WEBHOOK] GUPSHUP_WEBHOOK_SECRET not configured — rejecting request');
+      return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
 
     const rawBody = await request.text();

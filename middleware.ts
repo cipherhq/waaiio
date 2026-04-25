@@ -17,7 +17,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://js.stripe.com https://js.squareup.com https://js.paystack.co https://connect.facebook.net https://us-assets.i.posthog.com",
+      "script-src 'self' 'unsafe-inline' https://js.stripe.com https://js.squareup.com https://js.paystack.co https://connect.facebook.net https://us-assets.i.posthog.com https://maps.googleapis.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' https: data: blob:",
       "font-src 'self' data:",

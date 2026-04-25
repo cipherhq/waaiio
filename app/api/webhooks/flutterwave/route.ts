@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
@@ -8,10 +9,16 @@ const FLUTTERWAVE_SECRET_HASH = process.env.FLUTTERWAVE_WEBHOOK_HASH || '';
 
 export async function POST(request: NextRequest) {
   try {
-    // Validate webhook signature
-    const verifHash = request.headers.get('verif-hash');
-    if (FLUTTERWAVE_SECRET_HASH && verifHash !== FLUTTERWAVE_SECRET_HASH) {
-      return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
+    // Validate webhook signature (timing-safe)
+    const verifHash = request.headers.get('verif-hash') || '';
+    if (FLUTTERWAVE_SECRET_HASH) {
+      try {
+        if (!verifHash || !timingSafeEqual(Buffer.from(verifHash), Buffer.from(FLUTTERWAVE_SECRET_HASH))) {
+          return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
+        }
+      } catch {
+        return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
+      }
     }
 
     const body = await request.json();
