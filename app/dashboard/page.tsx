@@ -14,6 +14,7 @@ import type { Recommendation } from '@/lib/intelligence/recommendations';
 import { getCategoryByKey } from '@/lib/categoryConfig';
 import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
+import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
 
 interface Stats {
   totalBookings: number;
@@ -206,6 +207,9 @@ export default function DashboardOverview() {
 
   return (
     <div>
+      {/* Onboarding checklist for new businesses */}
+      <OnboardingChecklist />
+
       {/* Verification banner */}
       {(!verificationLevel || verificationLevel === 'unverified') && (
         <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4">
