@@ -167,6 +167,7 @@ export async function POST(request: NextRequest) {
       bot_greeting: defaultGreeting,
       bot_alias: bot_alias || null,
       auto_confirm: true,
+      welcome_buttons: getDefaultWelcomeButtons(category as BusinessCategoryKey),
     });
 
     // Auto-create default services — prefer DB template, fall back to constants
@@ -258,6 +259,68 @@ export async function POST(request: NextRequest) {
       { message: 'Internal server error', error: (error as Error).message },
       { status: 500 },
     );
+  }
+}
+
+function getDefaultWelcomeButtons(category: BusinessCategoryKey): Array<{ label: string; action: string; payload?: string }> {
+  switch (category) {
+    case 'barber':
+    case 'salon':
+    case 'spa':
+    case 'tattoo':
+      return [
+        { label: 'Book Appointment', action: 'start_flow' },
+        { label: 'Chat with Us', action: 'quick_reply', payload: 'chat' },
+      ];
+    case 'restaurant':
+    case 'food_delivery':
+    case 'catering':
+      return [
+        { label: 'Place Order', action: 'start_flow' },
+        { label: 'Book a Table', action: 'quick_reply', payload: 'book' },
+      ];
+    case 'church':
+    case 'mosque':
+      return [
+        { label: 'Give / Pay', action: 'start_flow' },
+        { label: 'Upcoming Events', action: 'quick_reply', payload: 'events' },
+      ];
+    case 'shop':
+    case 'instagram_vendor':
+    case 'pharmacy':
+      return [
+        { label: 'Browse Products', action: 'start_flow' },
+        { label: 'Track Order', action: 'quick_reply', payload: 'my orders' },
+      ];
+    case 'events':
+    case 'cinema':
+      return [
+        { label: 'Buy Tickets', action: 'start_flow' },
+        { label: 'View Events', action: 'quick_reply', payload: 'events' },
+      ];
+    case 'clinic':
+    case 'dental':
+    case 'veterinary':
+      return [
+        { label: 'Book Appointment', action: 'start_flow' },
+        { label: 'Chat with Us', action: 'quick_reply', payload: 'chat' },
+      ];
+    case 'hotel':
+    case 'shortlet':
+      return [
+        { label: 'Book a Stay', action: 'start_flow' },
+        { label: 'Check Availability', action: 'quick_reply', payload: 'book' },
+      ];
+    case 'gym':
+      return [
+        { label: 'Book Session', action: 'start_flow' },
+        { label: 'My Membership', action: 'quick_reply', payload: 'my subscriptions' },
+      ];
+    default:
+      return [
+        { label: 'Get Started', action: 'start_flow' },
+        { label: 'Chat with Us', action: 'quick_reply', payload: 'chat' },
+      ];
   }
 }
 
