@@ -625,7 +625,7 @@ export const paymentFlow: FlowDefinition = {
         } else {
           // Stripe: create subscription checkout
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-          const email = (d.customer_email as string) || `${phone.replace('+', '')}@whatsapp.waaiio.com`;
+          const email = (d.customer_email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
           const checkout = await createRecurringCheckout({
             businessName: ctx.business.name,

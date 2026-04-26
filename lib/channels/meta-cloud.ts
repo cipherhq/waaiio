@@ -104,7 +104,7 @@ export class MetaCloudService {
   private readonly accessToken: string;
   private readonly phoneNumberId: string;
   private readonly wabaId: string;
-  private readonly baseUrl = 'https://graph.facebook.com/v21.0';
+  private readonly baseUrl = `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}`;
 
   constructor(credentials?: MetaCloudCredentials) {
     this.accessToken = credentials?.accessToken || process.env.META_CLOUD_ACCESS_TOKEN || '';
@@ -284,7 +284,7 @@ export class MetaCloudService {
     const appId = process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '';
     const appSecret = process.env.META_APP_SECRET || '';
     const res = await fetch(
-      `https://graph.facebook.com/v21.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`
+      `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`
     );
     if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
     return res.json();

@@ -32,7 +32,7 @@ async function sendWhatsApp(to: string, text: string): Promise<boolean> {
   try {
     const phone = to.replace('+', '');
     const response = await fetch(
-      `https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`,
+      `https://graph.facebook.com/v22.0/${whatsappPhoneId}/messages`,
       {
         method: 'POST',
         headers: {

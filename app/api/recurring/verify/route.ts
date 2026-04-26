@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
       const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
       if (whatsappToken && whatsappPhoneId) {
-        await fetch(`https://graph.facebook.com/v18.0/${whatsappPhoneId}/messages`, {
+        await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${whatsappPhoneId}/messages`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${whatsappToken}`,

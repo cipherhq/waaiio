@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
             try {
               const metaToken = resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
               // Get media URL from Meta
-              const mediaRes = await fetch(`https://graph.facebook.com/v21.0/${msg.audio.id}`, {
+              const mediaRes = await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${msg.audio.id}`, {
                 headers: { Authorization: `Bearer ${metaToken}` },
               });
               const mediaData = await mediaRes.json();

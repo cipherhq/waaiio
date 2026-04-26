@@ -11,7 +11,7 @@ export class PaystackGateway implements PaymentGateway {
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     const idempotencyKey = randomUUID();
     const amountInKobo = Math.round(opts.amount * 100);
-    const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.waaiio.com`;
+    const email = opts.userEmail || `${opts.phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
     // Connect mode: use platform key; BYO: business's own key; else: platform key
     const secretKey = opts.connectAccountId

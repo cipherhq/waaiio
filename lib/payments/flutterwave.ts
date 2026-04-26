@@ -10,7 +10,7 @@ export class FlutterwaveGateway implements PaymentGateway {
 
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     const txRef = `flw_${randomUUID().replace(/-/g, '').slice(0, 20)}`;
-    const email = opts.userEmail || `${opts.phone.replace('+', '')}@whatsapp.waaiio.com`;
+    const email = opts.userEmail || `${opts.phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
     // BYO: use business's own API key; platform flow: use platform key
     const secretKey = opts.isByo && opts.byoSecretKey ? opts.byoSecretKey : flutterwaveSecretKey;
