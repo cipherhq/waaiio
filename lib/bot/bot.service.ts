@@ -398,7 +398,7 @@ export class BotService {
           current_step: 'select_business_suggestion',
           session_data: { suggestions: detection.suggestions },
           is_active: true,
-          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
         return;
       }
@@ -499,7 +499,7 @@ export class BotService {
           current_step: 'select_business_suggestion',
           session_data: { suggestions: pendingSuggestions, isCategory: isCategoryMatch },
           is_active: true,
-          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 min expiry
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(), // 30 min expiry
         }).select().single();
 
         if (sugSession) {
@@ -816,7 +816,7 @@ export class BotService {
           current_step: 'select_business_suggestion',
           session_data: { suggestions: quickPick },
           is_active: true,
-          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
         });
 
         await this.messageSender.sendButtons({
@@ -840,11 +840,11 @@ export class BotService {
       return;
     }
 
-    // Check session expiry — auto-restart instead of blocking
+    // Check session expiry — clean up and let user start fresh
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-      // Re-process this message as a fresh session instead of asking for "Hi"
-      return this.handleMessage(from, messageText, messageType, destinationPhone, preResolvedBusinessId);
+      await this.sendText(from, 'Your previous session has expired. Send *Hi* to start again. 🙏');
+      return;
     }
 
     // ── Escape hatches (hardcoded, never overridable) ──
