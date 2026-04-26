@@ -240,12 +240,53 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', business_id);
 
-    // Register the phone number for Cloud API messaging
+    // ── Full automation chain (all non-fatal) ──
+
+    // 1. Register the phone number for Cloud API messaging
     try {
       await cloudService.registerPhoneNumber();
+      logger.debug('[FB-CALLBACK] Phone registered for Cloud API');
     } catch (err) {
-      logger.error('Phone registration warning:', err);
-      // Non-fatal — might already be registered
+      logger.error('[FB-CALLBACK] Phone registration warning:', err);
+    }
+
+    // 2. Subscribe Waaiio app to receive webhooks from their WABA
+    try {
+      const subRes = await fetch(
+        `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waba_id}/subscribed_apps`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${longLivedToken}` },
+        }
+      );
+      const subData = await subRes.json();
+      logger.debug('[FB-CALLBACK] Webhook subscription:', subData.success ? 'ok' : 'failed');
+    } catch (err) {
+      logger.error('[FB-CALLBACK] Webhook subscription warning:', err);
+    }
+
+    // 3. Auto-provision message templates for enabled capabilities
+    try {
+      const { data: capRows } = await service
+        .from('business_capabilities')
+        .select('capability')
+        .eq('business_id', business_id)
+        .eq('is_enabled', true);
+
+      const capabilities = (capRows || []).map(r => r.capability);
+
+      for (const cap of capabilities) {
+        try {
+          await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/api/whatsapp/templates/provision`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ business_id, capability: cap }),
+          });
+        } catch {}
+      }
+      logger.debug('[FB-CALLBACK] Templates provisioned for', capabilities.length, 'capabilities');
+    } catch (err) {
+      logger.error('[FB-CALLBACK] Template provisioning warning:', err);
     }
 
     return NextResponse.json({

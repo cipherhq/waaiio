@@ -22,9 +22,9 @@ export function OnboardingChecklist() {
 
   const items: ChecklistItem[] = [
     {
-      key: 'services',
-      label: 'Add your services',
-      description: 'Create the services or products you offer so customers can book or order.',
+      key: 'setup',
+      label: 'Set up your business',
+      description: 'Add your services, prices, and operating hours so customers can book or order.',
       href: '/dashboard/services',
       check: async () => {
         const supabase = createClient();
@@ -33,20 +33,9 @@ export function OnboardingChecklist() {
       },
     },
     {
-      key: 'hours',
-      label: 'Set operating hours',
-      description: 'Define when your business is open so the bot only offers available times.',
-      href: '/dashboard/settings',
-      check: async () => {
-        const supabase = createClient();
-        const { data } = await supabase.from('businesses').select('operating_hours').eq('id', business.id).single();
-        return !!(data?.operating_hours && Object.keys(data.operating_hours).length > 0);
-      },
-    },
-    {
-      key: 'whatsapp',
-      label: 'Test your WhatsApp bot',
-      description: 'Send a message to your WhatsApp number to make sure the bot responds.',
+      key: 'test',
+      label: 'Test your bot',
+      description: 'Send a message to your WhatsApp number and see the bot respond.',
       href: '/dashboard/whatsapp',
       check: async () => {
         const supabase = createClient();
@@ -55,25 +44,14 @@ export function OnboardingChecklist() {
       },
     },
     {
-      key: 'payout',
-      label: 'Set up payouts',
-      description: 'Connect your bank account or Stripe so you can receive payments.',
+      key: 'launch',
+      label: 'Get paid & go live',
+      description: 'Connect your payout account and share your WhatsApp link with customers.',
       href: '/dashboard/payouts',
       check: async () => {
         const supabase = createClient();
         const { count } = await supabase.from('payout_accounts').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('is_active', true);
         return (count || 0) > 0;
-      },
-    },
-    {
-      key: 'share',
-      label: 'Share your WhatsApp link',
-      description: 'Copy your WhatsApp link and share it with customers.',
-      href: '/dashboard/qr-code',
-      check: async () => {
-        // Consider done after 3 days (they've had time to share)
-        const createdAt = new Date(business.created_at);
-        return (Date.now() - createdAt.getTime()) > 3 * 24 * 60 * 60 * 1000;
       },
     },
   ];
