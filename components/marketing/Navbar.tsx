@@ -11,8 +11,8 @@ import { createClient } from '@/lib/supabase/client';
 const NAV_LINKS = [
   { href: '/features', label: 'Features' },
   { href: '/pricing', label: 'Pricing' },
+  { href: '/directory', label: 'Directory' },
   { href: '/about', label: 'About' },
-  { href: '/#faq', label: 'FAQ' },
 ];
 
 export default function Navbar() {
