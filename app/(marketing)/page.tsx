@@ -6,6 +6,7 @@ import { motion, useScroll, useTransform } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import CounterAnimation from '@/components/marketing/CounterAnimation';
 import HeroAutomationFlow from '@/components/marketing/HeroAutomationFlow';
+import LiveBotDemo from '@/components/marketing/LiveBotDemo';
 import { formatCurrency, getPricingTiers } from '@/lib/constants';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -280,6 +281,24 @@ export default function HomePage() {
           <AnimatedSection delay={0.4}>
             <p className="text-3xl font-extrabold text-white sm:text-4xl">24/7</p>
             <p className="mt-1 text-sm text-gray-400">Always Available</p>
+          </AnimatedSection>
+        </div>
+      </section>
+
+      {/* ── Live Bot Demo ── */}
+      <section className="bg-gradient-to-b from-gray-50 to-white py-20">
+        <div className="mx-auto max-w-6xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Try it yourself</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              See the bot in action
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-gray-600">
+              Type a message below and watch the AI respond instantly. This is exactly what your customers experience.
+            </p>
+          </AnimatedSection>
+          <AnimatedSection className="mt-12">
+            <LiveBotDemo />
           </AnimatedSection>
         </div>
       </section>
