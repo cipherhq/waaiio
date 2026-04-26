@@ -116,6 +116,23 @@ const feedbackThanksStep: FlowStepConfig = {
 
     const messages: PromptMessage[] = [{ type: 'text', text: thanks }];
 
+    // Prompt for Google review after positive feedback (4-5 stars)
+    if (rating >= 4 && ctx.business) {
+      const { data: biz } = await ctx.supabase
+        .from('businesses')
+        .select('google_place_id')
+        .eq('id', ctx.business.id)
+        .single();
+
+      if (biz?.google_place_id) {
+        const reviewUrl = `https://search.google.com/local/writereview?placeid=${biz.google_place_id}`;
+        messages.push({
+          type: 'text',
+          text: `We'd love it if you could share your experience on Google too! It really helps us grow.\n\n${reviewUrl}`,
+        });
+      }
+    }
+
     // Show capability buttons so user can continue without hitting the greeting again
     if (ctx.business) {
       try {

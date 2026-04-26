@@ -9,7 +9,7 @@ import { getLocale, type BusinessCategoryKey, type FlowType, type CountryCode } 
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse } from './translate';
+import { translateBotResponse, detectLanguage } from './translate';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
@@ -119,6 +119,9 @@ export class BotService {
     const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|sessions?|upcoming|schedule)$/i.test(text)
       || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|schedule)$/i.test(text);
 
+    // Detect reschedule intent — shortcut to my_bookings flow
+    const isRescheduleQuery = /^(reschedule|change\s+(my\s+)?(time|date|appointment|booking)|move\s+(my\s+)?(appointment|booking))$/i.test(text);
+
     const isHistoryQuery = /^(my\s+)?(transaction\s*|payment\s*)?history$/i.test(text)
       || /^(show\s+)?(my\s+)?transaction\s*history$/i.test(text)
       || /^(all|past)\s+(transactions?|payments?)$/i.test(text);
@@ -146,7 +149,7 @@ export class BotService {
 
     let session = await this.getActiveSession(from);
 
-    if (isBookingsQuery) {
+    if (isBookingsQuery || isRescheduleQuery) {
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
@@ -602,6 +605,18 @@ export class BotService {
         logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
         await this.sendText(from, 'Sorry, something went wrong. Please try again.');
         return;
+      }
+
+      // Auto-detect language from first message (non-blocking)
+      if (text.length >= 3) {
+        detectLanguage(text).then(async (lang) => {
+          if (lang !== 'en') {
+            await this.supabase.from('bot_sessions')
+              .update({ session_data: { ...sessionData, _detected_language: lang } })
+              .eq('id', newSession.id);
+            logger.debug('[BOT] Auto-detected language:', lang, 'for', from);
+          }
+        }).catch(() => {});
       }
 
       session = newSession as BotSession;
