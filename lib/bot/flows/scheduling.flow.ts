@@ -1065,7 +1065,24 @@ export const schedulingFlow: FlowDefinition = {
           }).catch(err => console.error('[SCHEDULING] Post-completion error:', err));
         }
 
-        return [{ type: 'text', text: message }];
+        // Add helpful tips about what customer can do next
+        const tips = [
+          'Type *my bookings* to view your appointments',
+          'Type *reschedule* to change the date/time',
+          'Type *cancel* to cancel this booking',
+        ];
+        if (ctx.business) {
+          try {
+            const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+            const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
+            if (caps.includes('loyalty')) tips.push('Type *my points* to check your loyalty balance');
+            if (caps.includes('referral')) tips.push('Type *refer* to invite friends and earn rewards');
+            if (caps.includes('ordering')) tips.push('Type *order* to place an order');
+          } catch {}
+        }
+        const helpText = `\n\n💡 *What you can do:*\n${tips.map(t => `• ${t}`).join('\n')}`;
+
+        return [{ type: 'text', text: message + helpText }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input === 'accept_terms') {
@@ -1139,9 +1156,11 @@ export const schedulingFlow: FlowDefinition = {
               'See you there! 🎉',
             ].filter(Boolean);
 
+            const payTips = '\n\n💡 *What you can do:*\n• Type *my bookings* to view your appointments\n• Type *reschedule* to change the date/time\n• Type *cancel* to cancel\n• Type *receipt* to get your payment receipt';
+
             await ctx.sender.sendText({
               to: ctx.from,
-              text: confirmLines.join('\n'),
+              text: confirmLines.join('\n') + payTips,
             });
 
             // Notify business owner (email always, WhatsApp for dedicated numbers)

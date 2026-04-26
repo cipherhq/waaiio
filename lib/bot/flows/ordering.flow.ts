@@ -2448,6 +2448,8 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => console.error('[ORDERING] Post-completion error:', err));
         }
 
+        const orderTips = '\n\n💡 *What you can do:*\n• Type *my orders* to track your order status\n• Type *receipt* to get your receipt\n• Type *Hi* to place another order';
+
         return [{
           type: 'text',
           text: getOrderConfirmationMessage({
@@ -2461,7 +2463,7 @@ export const orderingFlow: FlowDefinition = {
             deliveryZonePrice: zoneName ? zonePrice : undefined,
             addonsTotal: addonsTotal || undefined,
             volumeDiscountAmount: volumeDiscountTotal || undefined,
-          }),
+          }) + orderTips,
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
