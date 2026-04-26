@@ -121,11 +121,11 @@ export default function HomePage() {
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
                 </span>
-                Keep your WhatsApp number. We make it 10x smarter.
+                Every message handled. Every opportunity captured.
               </motion.span>
 
               <h1 className="mt-6 text-balance text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-[3.5rem]">
-                {'Your WhatsApp Number, '.split(' ').map((word, i) => (
+                {'Your WhatsApp. '.split(' ').map((word, i) => (
                   <motion.span
                     key={i}
                     initial={{ opacity: 0, y: 30 }}
@@ -136,21 +136,30 @@ export default function HomePage() {
                     {word}
                   </motion.span>
                 ))}
+                <br />
                 <motion.span
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.7, duration: 0.5 }}
-                  className="inline-block text-accent mr-[0.25em]"
+                  transition={{ delay: 0.5, duration: 0.5 }}
+                  className="inline-block mr-[0.25em]"
                 >
-                  Supercharged
+                  Now
                 </motion.span>
                 <motion.span
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.77, duration: 0.5 }}
+                  transition={{ delay: 0.6, duration: 0.5 }}
+                  className="inline-block text-accent mr-[0.25em]"
+                >
+                  10x
+                </motion.span>
+                <motion.span
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.7, duration: 0.5 }}
                   className="inline-block"
                 >
-                  with AI
+                  Smarter.
                 </motion.span>
               </h1>
 
@@ -160,8 +169,7 @@ export default function HomePage() {
                 transition={{ delay: 0.9, duration: 0.6 }}
                 className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
               >
-                Turn your WhatsApp into a business operating system. Auto-book appointments, collect payments,
-                take orders, and grow revenue — while you sleep. For {CATEGORY_COUNT}+ industries across 5 countries.
+                Automate bookings, payments, orders, and engagement on WhatsApp — for any business, any industry, any country.
               </motion.p>
 
               <motion.div
