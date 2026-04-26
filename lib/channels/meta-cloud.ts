@@ -328,6 +328,41 @@ export class MetaCloudService {
     return res.json();
   }
 
+  // ── Send WhatsApp Flow ──
+
+  async sendFlow(message: {
+    to: string;
+    bodyText: string;
+    flowId: string;
+    flowCta: string;
+    screen: string;
+    data?: Record<string, unknown>;
+  }): Promise<{ messageId: string }> {
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to: message.to,
+      type: 'interactive',
+      interactive: {
+        type: 'flow',
+        body: { text: message.bodyText },
+        action: {
+          name: 'flow',
+          parameters: {
+            flow_message_version: '3',
+            flow_id: message.flowId,
+            flow_cta: message.flowCta,
+            flow_action: 'navigate',
+            flow_action_payload: {
+              screen: message.screen,
+              data: message.data || {},
+            },
+          },
+        },
+      },
+    });
+    return { messageId: response.messages[0].id };
+  }
+
   // ── Message Template Management ──
 
   async getTemplates(params?: {

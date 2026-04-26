@@ -46,6 +46,14 @@ export interface MessageSender {
     templateName: string;
     templateParams: string[];
   }): Promise<{ success?: boolean; messageId?: string }>;
+  sendFlow?(msg: {
+    to: string;
+    bodyText: string;
+    flowId: string;
+    flowCta: string;
+    screen: string;
+    data?: Record<string, unknown>;
+  }): Promise<{ success?: boolean; messageId?: string }>;
 }
 
 /**
@@ -164,6 +172,18 @@ export class MetaCloudSender implements MessageSender {
         parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })),
       }],
     });
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendFlow(msg: {
+    to: string;
+    bodyText: string;
+    flowId: string;
+    flowCta: string;
+    screen: string;
+    data?: Record<string, unknown>;
+  }) {
+    const result = await this.cloud.sendFlow(msg);
     return { success: true, messageId: result.messageId };
   }
 }
