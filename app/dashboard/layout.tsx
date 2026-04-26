@@ -83,12 +83,12 @@ export default async function DashboardLayout({
 
         return (
           <DashboardProvider business={businessWithCaps} userId={user.id}>
-            <div className="min-h-screen bg-gray-50">
+            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
               <ImpersonationBanner businessName={impersonatedBusinessName} />
               <AlertBanner />
               <Sidebar />
               <main className="lg:pl-64">
-                <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+                <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
                   {children}
                 </div>
               </main>
@@ -145,11 +145,11 @@ export default async function DashboardLayout({
 
   return (
     <DashboardProvider business={businessWithCaps} userId={user.id}>
-      <div className="min-h-screen bg-gray-50">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
         <AlertBanner />
         <Sidebar />
         <main className="lg:pl-64">
-          <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}
           </div>
         </main>

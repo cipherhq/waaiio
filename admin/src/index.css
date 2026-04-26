@@ -7,3 +7,22 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* Admin dark mode */
+.dark body { color: #e5e7eb; background: #111827; }
+.dark .bg-white { background-color: #1f2937 !important; }
+.dark .bg-gray-50 { background-color: #111827 !important; }
+.dark .bg-gray-100 { background-color: #1f2937 !important; }
+.dark .border-gray-100, .dark .border-gray-200 { border-color: #374151 !important; }
+.dark .border-gray-300 { border-color: #4b5563 !important; }
+.dark .text-gray-900 { color: #f3f4f6 !important; }
+.dark .text-gray-800 { color: #e5e7eb !important; }
+.dark .text-gray-700 { color: #d1d5db !important; }
+.dark .text-gray-600, .dark .text-gray-500 { color: #9ca3af !important; }
+.dark .text-gray-400 { color: #6b7280 !important; }
+.dark .hover\:bg-gray-50:hover, .dark .hover\:bg-gray-100:hover { background-color: #374151 !important; }
+.dark input, .dark textarea, .dark select { background-color: #1f2937 !important; border-color: #4b5563 !important; color: #e5e7eb !important; }
+.dark input::placeholder, .dark textarea::placeholder { color: #6b7280 !important; }
+.dark table th { color: #d1d5db !important; }
+.dark table td { color: #e5e7eb !important; }
+.dark .divide-y > * + * { border-color: #374151 !important; }

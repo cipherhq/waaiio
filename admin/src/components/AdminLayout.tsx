@@ -17,6 +17,15 @@ export function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Load saved theme preference
+  useEffect(() => {
+    const stored = localStorage.getItem('admin-theme');
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    if (stored === 'dark' || (!stored && prefersDark)) {
+      document.documentElement.classList.add('dark');
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 

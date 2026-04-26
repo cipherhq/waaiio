@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { ThemeToggle } from './ThemeToggle';
 import { useChatUnreadCount } from '@/hooks/useChatUnreadCount';
 
 interface NavItem {
@@ -452,11 +453,12 @@ export function Sidebar() {
         ))}
       </nav>
 
-      {/* Back to Website + Logout */}
-      <div className="border-t border-gray-100 p-3 space-y-0.5">
+      {/* Theme + Back to Website + Logout */}
+      <div className="border-t border-gray-100 dark:border-gray-700 p-3 space-y-0.5">
+        <ThemeToggle />
         <Link
           href="/"
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
         >
           <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path
@@ -491,7 +493,7 @@ export function Sidebar() {
       {/* Mobile hamburger */}
       <button
         onClick={() => setMobileOpen(true)}
-        className="fixed left-4 top-4 z-40 rounded-lg bg-white p-2 shadow-md lg:hidden"
+        className="fixed left-4 top-4 z-40 rounded-lg bg-white dark:bg-gray-800 p-2 shadow-md lg:hidden"
         aria-label="Open menu"
       >
         <svg className="h-5 w-5 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -503,7 +505,7 @@ export function Sidebar() {
       {mobileOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
           <div className="fixed inset-0 bg-black/30" onClick={() => setMobileOpen(false)} />
-          <div className="fixed inset-y-0 left-0 flex w-64 flex-col bg-white shadow-xl">
+          <div className="fixed inset-y-0 left-0 flex w-64 flex-col bg-white dark:bg-gray-800 shadow-xl">
             <button
               onClick={() => setMobileOpen(false)}
               className="absolute right-3 top-4 rounded p-1 text-gray-400 hover:text-gray-600"
@@ -518,7 +520,7 @@ export function Sidebar() {
       )}
 
       {/* Desktop sidebar */}
-      <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col lg:border-r lg:border-gray-100 lg:bg-white">
+      <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col lg:border-r lg:border-gray-100 dark:lg:border-gray-700 lg:bg-white dark:lg:bg-gray-800">
         {navContent}
       </aside>
     </>

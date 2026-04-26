@@ -34,6 +34,8 @@ import {
   Ticket,
   BrainCircuit,
   AlertTriangle,
+  Sun,
+  Moon,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { LucideIcon } from 'lucide-react';
@@ -182,8 +184,20 @@ export function AdminSidebar() {
         ))}
       </div>
 
-      {/* Logout */}
-      <div className="p-4 border-t border-gray-200">
+      {/* Theme + Logout */}
+      <div className="p-4 border-t border-gray-200 dark:border-gray-700 space-y-1">
+        <button
+          onClick={() => {
+            const isDark = document.documentElement.classList.toggle('dark');
+            localStorage.setItem('admin-theme', isDark ? 'dark' : 'light');
+          }}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition cursor-pointer"
+        >
+          <Sun className="w-4 h-4 hidden dark:block" />
+          <Moon className="w-4 h-4 block dark:hidden" />
+          <span className="hidden dark:inline">Light Mode</span>
+          <span className="inline dark:hidden">Dark Mode</span>
+        </button>
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 transition cursor-pointer"
