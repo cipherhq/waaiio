@@ -273,6 +273,21 @@ export default function PricingPage() {
         </AnimatedSection>
       </section>
 
+      {/* ROI Calculator */}
+      <section className="bg-white py-16">
+        <AnimatedSection>
+          <div className="mx-auto max-w-2xl px-4">
+            <h2 className="text-center text-2xl font-bold text-gray-900">
+              Calculate your ROI
+            </h2>
+            <p className="mt-2 text-center text-gray-600">
+              See how much Waaiio can earn for your business
+            </p>
+            <RoiCalculator country={country} />
+          </div>
+        </AnimatedSection>
+      </section>
+
       {/* Best for Business Feature Cards */}
       <section className="bg-gray-50 py-16">
         <AnimatedSection>
@@ -544,6 +559,94 @@ function PricingFaqItem({ question, answer }: { question: string; answer: string
           <p className="text-sm leading-relaxed text-gray-600">{answer}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RoiCalculator({ country }: { country: CountryCode }) {
+  const [bookingsPerDay, setBookingsPerDay] = useState(10);
+  const [avgPrice, setAvgPrice] = useState(country === 'NG' ? 5000 : country === 'GH' ? 50 : 30);
+  const tier: SubscriptionTier = bookingsPerDay <= 2 ? 'free' : bookingsPerDay <= 15 ? 'growth' : 'business';
+  const tiers = getPricingTiers(country);
+  const tierConfig = tiers[tier];
+  const feePercent = tierConfig.feePercentage;
+  const feeFlat = tierConfig.feeFlat;
+  const subscriptionPrice = tierConfig.price as number;
+
+  const monthlyBookings = bookingsPerDay * 26; // ~26 working days
+  const monthlyRevenue = monthlyBookings * avgPrice;
+  const platformFees = monthlyBookings * (avgPrice * feePercent / 100 + feeFlat);
+  const netRevenue = monthlyRevenue - platformFees - subscriptionPrice;
+  const roi = subscriptionPrice > 0 ? Math.round((netRevenue / (platformFees + subscriptionPrice)) * 100) : Math.round((netRevenue / Math.max(platformFees, 1)) * 100);
+
+  // What they lose without Waaiio (assume 30% no-shows and missed messages)
+  const missedRevenue = monthlyRevenue * 0.30;
+
+  return (
+    <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-6">
+      <div className="space-y-5">
+        <div>
+          <label className="flex items-center justify-between text-sm font-medium text-gray-700">
+            <span>Bookings per day</span>
+            <span className="text-lg font-bold text-brand">{bookingsPerDay}</span>
+          </label>
+          <input
+            type="range"
+            min={1}
+            max={50}
+            value={bookingsPerDay}
+            onChange={(e) => setBookingsPerDay(Number(e.target.value))}
+            className="mt-2 w-full accent-brand"
+          />
+          <div className="mt-1 flex justify-between text-xs text-gray-400">
+            <span>1</span><span>25</span><span>50</span>
+          </div>
+        </div>
+
+        <div>
+          <label className="flex items-center justify-between text-sm font-medium text-gray-700">
+            <span>Average price per booking</span>
+            <span className="text-lg font-bold text-brand">{formatCurrency(avgPrice, country)}</span>
+          </label>
+          <input
+            type="range"
+            min={country === 'NG' ? 1000 : country === 'GH' ? 10 : 10}
+            max={country === 'NG' ? 50000 : country === 'GH' ? 500 : 200}
+            step={country === 'NG' ? 500 : country === 'GH' ? 5 : 5}
+            value={avgPrice}
+            onChange={(e) => setAvgPrice(Number(e.target.value))}
+            className="mt-2 w-full accent-brand"
+          />
+        </div>
+      </div>
+
+      {/* Results */}
+      <div className="mt-6 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl bg-white p-4 text-center shadow-sm">
+          <p className="text-xs text-gray-500">Monthly revenue</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(monthlyRevenue, country)}</p>
+          <p className="text-xs text-gray-400">{monthlyBookings} bookings/mo</p>
+        </div>
+        <div className="rounded-xl bg-white p-4 text-center shadow-sm">
+          <p className="text-xs text-gray-500">Waaiio cost</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(platformFees + subscriptionPrice, country)}</p>
+          <p className="text-xs text-gray-400">{feePercent}% fee + {formatCurrency(subscriptionPrice, country)}/mo</p>
+        </div>
+        <div className="rounded-xl bg-green-50 p-4 text-center shadow-sm border border-green-100">
+          <p className="text-xs text-green-600">You keep</p>
+          <p className="mt-1 text-2xl font-bold text-green-700">{formatCurrency(netRevenue, country)}</p>
+          <p className="text-xs text-green-500">{roi}x return on investment</p>
+        </div>
+        <div className="rounded-xl bg-red-50 p-4 text-center shadow-sm border border-red-100">
+          <p className="text-xs text-red-500">Revenue lost without Waaiio</p>
+          <p className="mt-1 text-2xl font-bold text-red-600">{formatCurrency(missedRevenue, country)}</p>
+          <p className="text-xs text-red-400">~30% from no-shows &amp; missed messages</p>
+        </div>
+      </div>
+
+      <p className="mt-4 text-center text-xs text-gray-400">
+        Recommended plan: <span className="font-semibold text-brand">{tiers[tier].name}</span> ({formatCurrency(subscriptionPrice, country)}/mo)
+      </p>
     </div>
   );
 }
