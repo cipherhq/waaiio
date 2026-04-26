@@ -42,10 +42,23 @@ export async function translateBotResponse(
   // Skip very short messages or messages that are mostly formatting/emoji
   if (text.length < 5) return text;
 
-  const cacheKey = `${language}:${text}`;
+  // Template-aware caching: replace dynamic values (dates, times, amounts, names, ref codes)
+  // with placeholders so the same template structure only gets translated once
+  const replacements: string[] = [];
+  const templateText = text
+    .replace(/\b\d{1,2}:\d{2}\s*(AM|PM|am|pm)\b/g, (m) => { replacements.push(m); return `__V${replacements.length}__`; })
+    .replace(/\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Tomorrow|Today)\b/gi, (m) => { replacements.push(m); return `__V${replacements.length}__`; })
+    .replace(/\b\d{1,2}(st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s*,?\s*\d{0,4}\b/gi, (m) => { replacements.push(m); return `__V${replacements.length}__`; })
+    .replace(/[₦$£€¢]\s?[\d,]+(\.\d{2})?/g, (m) => { replacements.push(m); return `__V${replacements.length}__`; })
+    .replace(/\b[A-Z]{2,4}-\d{3,5}\b/g, (m) => { replacements.push(m); return `__V${replacements.length}__`; });
+
+  const cacheKey = `${language}:${templateText}`;
   const cached = cache.get(cacheKey);
   if (cached && cached.expiry > Date.now()) {
-    return cached.text;
+    // Re-insert original values
+    let result = cached.text;
+    replacements.forEach((val, i) => { result = result.replace(`__V${i + 1}__`, val); });
+    return result;
   }
 
   try {
@@ -56,13 +69,17 @@ export async function translateBotResponse(
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 300,
       system: `You translate WhatsApp bot messages from English to ${langName}. Keep it natural and conversational. Preserve any *bold* or _italic_ WhatsApp formatting. Preserve emojis. Return ONLY the translation, nothing else.`,
-      messages: [{ role: 'user', content: text }],
+      messages: [{ role: 'user', content: templateText }],
     });
 
-    const translated = response.content[0].type === 'text' ? response.content[0].text.trim() : text;
+    const translatedTemplate = response.content[0].type === 'text' ? response.content[0].text.trim() : templateText;
 
-    // Cache result
-    cache.set(cacheKey, { text: translated, expiry: Date.now() + CACHE_TTL });
+    // Cache the translated template (with placeholders)
+    cache.set(cacheKey, { text: translatedTemplate, expiry: Date.now() + CACHE_TTL });
+
+    // Re-insert original values into translated text
+    let translated = translatedTemplate;
+    replacements.forEach((val, i) => { translated = translated.replace(`__V${i + 1}__`, val); });
 
     // Prune cache
     if (cache.size > 300) {

@@ -24,7 +24,11 @@ export async function getPlatformFees(
 
   const feePercentage = tierConfig.feePercentage;
   const feeFlat = tierConfig.feeFlat;
-  const feeTotal = Math.round(amount * feePercentage / 100) + feeFlat;
 
-  return { feePercentage, feeFlat, feeTotal };
+  // Waive flat fee on micro-transactions to protect small merchants
+  // If flat fee would be more than 10% of the transaction, skip it
+  const effectiveFeeFlat = (feeFlat > 0 && amount > 0 && feeFlat / amount > 0.10) ? 0 : feeFlat;
+  const feeTotal = Math.round(amount * feePercentage / 100) + effectiveFeeFlat;
+
+  return { feePercentage, feeFlat: effectiveFeeFlat, feeTotal };
 }

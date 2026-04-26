@@ -460,6 +460,11 @@ export async function parseSmartIntentHybrid(
     const llmResult = await classifyWithLLM(text, businessCategory);
     const latency = Date.now() - start;
 
+    // Track AI usage (non-blocking)
+    if (supabase && businessId) {
+      Promise.resolve(supabase.rpc('increment_ai_usage', { p_business_id: businessId, p_call_type: 'intent' })).catch(() => {});
+    }
+
     // Only use LLM result if confidence is reasonable
     if (llmResult.confidence < 0.3) {
       logClassification(supabase, {
