@@ -18,10 +18,12 @@ export default function PricingPage() {
     loadCountries().then(() => setCountryList(getCountryList()));
   }, []);
 
+  const avgTransaction: Record<CountryCode, number> = { NG: 5000, US: 40, GB: 35, CA: 45, GH: 50 };
+  const avgTx = avgTransaction[country] || 40;
   const feeEstimates = {
-    free: Math.round(billingVolume * (2.5 / 100) * 5000 + billingVolume * tiers.free.feeFlat),
-    growth: Math.round(billingVolume * (1.5 / 100) * 5000 + billingVolume * tiers.growth.feeFlat),
-    business: Math.round(billingVolume * (1.0 / 100) * 5000 + billingVolume * tiers.business.feeFlat),
+    free: Math.round(billingVolume * (2.5 / 100) * avgTx + billingVolume * tiers.free.feeFlat),
+    growth: Math.round(billingVolume * (1.5 / 100) * avgTx + billingVolume * tiers.growth.feeFlat),
+    business: Math.round(billingVolume * (1.0 / 100) * avgTx + billingVolume * tiers.business.feeFlat),
   };
 
   return (
@@ -209,7 +211,7 @@ export default function PricingPage() {
             </div>
 
             <p className="mt-6 text-xs text-gray-500">
-              Assuming average transaction of {formatCurrency(5000, country)}
+              Assuming average transaction of {formatCurrency(avgTx, country)}
             </p>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -227,7 +229,7 @@ export default function PricingPage() {
                   >
                     <p className="text-xs font-semibold text-gray-500">{plan.name}</p>
                     <p className="mt-2 text-xl font-bold text-gray-900">{formatCurrency(total, country)}</p>
-                    <p className="text-xs text-gray-500">/month estimated total</p>
+                    <p className="text-xs text-gray-500">/month platform cost</p>
                     <div className="mt-3 space-y-1 text-xs text-gray-600">
                       <p>Subscription: {formatCurrency(plan.monthly, country)}</p>
                       <p>Transaction fees: ~{formatCurrency(fee, country)}</p>
