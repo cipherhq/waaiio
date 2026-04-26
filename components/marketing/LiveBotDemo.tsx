@@ -86,7 +86,7 @@ export default function LiveBotDemo() {
     }
   }, [messages, typing]);
 
-  function handleSend(text?: string) {
+  async function handleSend(text?: string) {
     const msg = (text || input).trim();
     if (!msg) return;
 
@@ -95,14 +95,26 @@ export default function LiveBotDemo() {
     setInput('');
     setTyping(true);
 
-    // Simulate bot thinking
-    const delay = 400 + Math.random() * 800;
-    setTimeout(() => {
-      const response = findResponse(msg);
-      const botMsg: Message = { from: 'bot', text: response.text, buttons: response.buttons };
+    try {
+      const res = await fetch('/api/demo/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, category: 'barber' }),
+      });
+      const data = await res.json();
+      const botMsg: Message = {
+        from: 'bot',
+        text: data.text || 'Sorry, try again.',
+        buttons: data.buttons?.map((b: { id: string; title: string }) => b.title),
+      };
       setMessages(prev => [...prev, botMsg]);
+    } catch {
+      // Fallback to local response if API fails
+      const response = findResponse(msg);
+      setMessages(prev => [...prev, { from: 'bot', text: response.text, buttons: response.buttons }]);
+    } finally {
       setTyping(false);
-    }, delay);
+    }
   }
 
   return (
