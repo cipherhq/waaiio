@@ -37,7 +37,12 @@ export class ChannelResolver {
   private buildSender(channel: ChannelRecord): MessageSender {
     if (channel.provider === 'meta_cloud' && channel.phone_number_id) {
       // Use channel-specific token, falling back to env var for shared channels
-      const accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
+      // Decrypt token if encrypted (backwards compatible with plaintext)
+      let accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
+      try {
+        const { decryptToken } = require('@/lib/encryption');
+        accessToken = decryptToken(accessToken);
+      } catch {}
       return new MetaCloudSender(
         new MetaCloudService({
           accessToken,
