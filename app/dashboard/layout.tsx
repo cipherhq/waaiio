@@ -84,11 +84,12 @@ export default async function DashboardLayout({
         return (
           <DashboardProvider business={businessWithCaps} userId={user.id}>
             <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+              <a href="#main-content" className="skip-link">Skip to content</a>
               <ImpersonationBanner businessName={impersonatedBusinessName} />
               <AlertBanner />
               <Sidebar />
               <main className="lg:pl-64">
-                <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
+                <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
                   {children}
                 </div>
               </main>
@@ -146,10 +147,11 @@ export default async function DashboardLayout({
   return (
     <DashboardProvider business={businessWithCaps} userId={user.id}>
       <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+              <a href="#main-content" className="skip-link">Skip to content</a>
         <AlertBanner />
         <Sidebar />
         <main className="lg:pl-64">
-          <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
+          <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}
           </div>
         </main>
