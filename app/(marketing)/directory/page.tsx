@@ -240,7 +240,7 @@ export default function DirectoryPage() {
                             <div>
                               <p className="text-[10px] text-gray-400 uppercase font-semibold">Shared WhatsApp Number</p>
                               <p className="mt-1 text-xs text-gray-600">
-                                Text <span className="font-mono font-bold text-brand">{biz.bot_code}</span> to the Waaiio number
+                                Text <span className="font-mono font-bold text-brand">{biz.bot_code}</span> to <span className="font-medium text-gray-900">+{waNumber.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}</span>
                               </p>
                             </div>
                           ) : (
