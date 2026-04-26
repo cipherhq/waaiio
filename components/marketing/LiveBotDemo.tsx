@@ -211,6 +211,9 @@ export default function LiveBotDemo() {
           </button>
         </div>
       </div>
+      <p className="mt-3 text-center text-xs text-gray-400">
+        This is a simulation showing how the bot works. Sign up to get your own bot for your business.
+      </p>
     </div>
   );
 }
