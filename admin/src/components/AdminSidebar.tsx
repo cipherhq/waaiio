@@ -123,6 +123,8 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: CalendarDays, label: 'Events', path: '/events' },
       { icon: Target, label: 'Campaigns', path: '/campaigns' },
       { icon: Globe, label: 'Countries', path: '/countries' },
+      { icon: BrainCircuit, label: 'AI Usage', path: '/ai-usage' },
+      { icon: MessageCircle, label: 'Conversation Usage', path: '/conversation-usage' },
       { icon: Settings, label: 'Platform Settings', path: '/platform-settings' },
       { icon: ScrollText, label: 'Audit Log', path: '/audit-log' },
     ],
