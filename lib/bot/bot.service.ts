@@ -681,8 +681,10 @@ export class BotService {
         }
 
         // ── Welcome Buttons: send interactive menu after greeting ──
+        // Only show welcome buttons if single capability (no capability selection step)
+        // Multi-capability businesses get the capability selection menu instead
         try {
-          if (waConfig.welcome_buttons.length > 0) {
+          if (waConfig.welcome_buttons.length > 0 && capabilities.length <= 1) {
             const buttons = waConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
               id: `wb_${i}`,
               title: btn.label.slice(0, 20),
