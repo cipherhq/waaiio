@@ -1082,6 +1082,22 @@ export const schedulingFlow: FlowDefinition = {
         }
         const helpText = `\n\n💡 *What you can do:*\n${tips.map(t => `• ${t}`).join('\n')}`;
 
+        // Sync to Google Calendar (non-blocking)
+        if (ctx.business) {
+          import('@/lib/integrations/google-calendar').then(({ syncBookingToCalendar }) => {
+            syncBookingToCalendar(ctx.supabase, ctx.business!.id, {
+              id: booking.id,
+              service_name: (d.service_name as string) || 'Appointment',
+              customer_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer',
+              customer_phone: ctx.from,
+              booking_date: (d.date as string) || '',
+              booking_time: (d.time as string) || '',
+              duration_minutes: d.duration_minutes as number | undefined,
+              reference_code: booking.reference_code,
+            }).catch(err => console.error('[SCHEDULING] Calendar sync error:', err));
+          }).catch(() => {});
+        }
+
         return [{ type: 'text', text: message + helpText }];
       },
       async validate(input: string): Promise<ValidationResult> {

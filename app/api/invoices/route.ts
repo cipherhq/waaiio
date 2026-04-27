@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
       business_id, customer_name, customer_phone, customer_email, customer_address,
       customer_profile_id, items, tax_rate, discount_type, discount_value,
       due_date, notes, terms, currency, issue_date,
+      is_recurring, recurring_frequency, recurring_next_date, recurring_end_date,
     } = body;
 
     if (!business_id || !customer_name || !items?.length) {
@@ -95,6 +96,10 @@ export async function POST(request: NextRequest) {
         notes: notes || null,
         terms: terms || null,
         status: 'draft',
+        is_recurring: is_recurring || false,
+        recurring_frequency: is_recurring ? (recurring_frequency || 'monthly') : null,
+        recurring_next_date: is_recurring ? (recurring_next_date || due_date || null) : null,
+        recurring_end_date: is_recurring && recurring_end_date ? recurring_end_date : null,
       })
       .select('id, reference_code')
       .single();
