@@ -107,7 +107,7 @@ const EMPTY_PRODUCT: Omit<Product, 'id'> = {
   track_inventory: false,
   low_stock_threshold: 5,
   refundable: false,
-  allow_promo: true,
+  allow_promo: false,
   has_variants: false,
   shipping_cost: null,
   min_order_qty: 1,
