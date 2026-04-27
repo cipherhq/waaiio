@@ -96,6 +96,9 @@ export default function InvoicesPage() {
   const [discountType, setDiscountType] = useState<'flat' | 'percent'>('flat');
   const [discountValue, setDiscountValue] = useState(0);
   const [dueDate, setDueDate] = useState('');
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringFrequency, setRecurringFrequency] = useState('monthly');
+  const [recurringEndDate, setRecurringEndDate] = useState('');
   const [notes, setNotes] = useState('');
   const [terms, setTerms] = useState('');
   const [saving, setSaving] = useState(false);
@@ -231,6 +234,10 @@ export default function InvoicesPage() {
         discount_type: discountValue > 0 ? discountType : undefined,
         discount_value: discountValue || undefined,
         due_date: dueDate || undefined,
+        is_recurring: isRecurring,
+        recurring_frequency: isRecurring ? recurringFrequency : undefined,
+        recurring_next_date: isRecurring && dueDate ? dueDate : undefined,
+        recurring_end_date: isRecurring && recurringEndDate ? recurringEndDate : undefined,
         notes: notes || undefined,
         terms: terms || undefined,
       };
@@ -755,6 +762,50 @@ export default function InvoicesPage() {
                   onChange={e => setDueDate(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                 />
+              </div>
+
+              {/* Recurring */}
+              <div className="rounded-lg border border-gray-200 p-4">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isRecurring}
+                    onChange={e => setIsRecurring(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-gray-900">Recurring Invoice</span>
+                    <p className="text-xs text-gray-500">Automatically re-send this invoice on a schedule</p>
+                  </div>
+                </label>
+                {isRecurring && (
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Frequency</label>
+                      <select
+                        value={recurringFrequency}
+                        onChange={e => setRecurringFrequency(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                      >
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Every 2 Weeks</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">End Date (optional)</label>
+                      <input
+                        type="date"
+                        value={recurringEndDate}
+                        onChange={e => setRecurringEndDate(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                      />
+                      <p className="mt-1 text-xs text-gray-400">Leave empty to repeat indefinitely</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Notes & Terms */}
