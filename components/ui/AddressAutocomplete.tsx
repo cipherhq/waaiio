@@ -12,6 +12,7 @@ interface AddressResult {
 
 interface AddressAutocompleteProps {
   onSelect: (result: AddressResult) => void;
+  onManualChange?: (value: string) => void;
   defaultValue?: string;
   countryCode?: string;
   className?: string;
@@ -19,6 +20,7 @@ interface AddressAutocompleteProps {
 
 export default function AddressAutocomplete({
   onSelect,
+  onManualChange,
   defaultValue = '',
   countryCode,
   className = '',
@@ -115,7 +117,11 @@ export default function AddressAutocomplete({
       ref={inputRef}
       type="text"
       value={value}
-      onChange={(e) => setValue(e.target.value)}
+      onChange={(e) => {
+        setValue(e.target.value);
+        // Update parent address on manual typing (don't clear city/state/zip)
+        onManualChange?.(e.target.value);
+      }}
       placeholder="Start typing your address..."
       className={`w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100 ${className}`}
     />

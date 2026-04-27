@@ -1398,6 +1398,7 @@ function OnboardingWizard() {
                         setState(result.state);
                         setZipCode(result.zipCode);
                       }}
+                      onManualChange={(val) => setAddress(val)}
                     />
                     <p className="mt-1 text-xs text-gray-400">Start typing to search — city, state, and zip will auto-fill</p>
                   </div>
