@@ -1238,7 +1238,7 @@ function OnboardingWizard() {
                 </p>
 
                 <div className="mt-6 space-y-4">
-                  {/* Free */}
+                  {/* Free / Starter */}
                   <button type="button" onClick={() => setSelectedPlan('free')} className={`w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
                     <div className="flex items-center justify-between">
                       <div>
@@ -1249,12 +1249,13 @@ function OnboardingWizard() {
                         {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                       </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {['Scheduling', 'Payments', 'Ordering', 'Ticketing', 'Feedback', 'Chat'].map(c => (
-                        <span key={c} className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-gray-600">{c}</span>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-xs text-gray-400">Shared WhatsApp number &middot; 50 bookings/month &middot; {localTiers.free.feePercentage}% + {formatCurrency(localTiers.free.feeFlat, selectedCountry)} per transaction</p>
+                    <p className="mt-2 text-sm text-gray-600">Try Waaiio risk-free. Accept bookings, collect payments, and chat with customers on WhatsApp.</p>
+                    <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Auto-book appointments &amp; take orders</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Collect payments via WhatsApp</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 50 bookings/month</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> {localTiers.free.feePercentage}% per transaction — no monthly fee</li>
+                    </ul>
                   </button>
 
                   {/* Growth / Pro */}
@@ -1269,12 +1270,14 @@ function OnboardingWizard() {
                         {selectedPlan === 'growth' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                       </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {['Scheduling', 'Payments', 'Ordering', 'Ticketing', 'Feedback', 'Chat', 'Reservations', 'Reminders', 'Loyalty', 'Referral'].map(c => (
-                        <span key={c} className="rounded-full bg-brand-100 px-2.5 py-1 text-xs text-brand-700">{c}</span>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-xs text-gray-400">Own WhatsApp number available &middot; 500 bookings/month &middot; {localTiers.growth.feePercentage}% + {formatCurrency(localTiers.growth.feeFlat, selectedCountry)} per transaction</p>
+                    <p className="mt-2 text-sm text-gray-600">Grow faster with automated reminders, loyalty rewards, and your own WhatsApp number.</p>
+                    <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Starter</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Automated reminders — reduce no-shows by 60%</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Loyalty points &amp; referral program — customers come back</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {localTiers.growth.feePercentage}% fees</li>
+                      <li className="flex items-center gap-2"><span className="text-brand">&#9733;</span> <span className="font-medium text-gray-700">Connect your own WhatsApp number</span></li>
+                    </ul>
                   </button>
 
                   {/* Business / Premium */}
@@ -1288,12 +1291,15 @@ function OnboardingWizard() {
                         {selectedPlan === 'business' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                       </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {['Scheduling', 'Payments', 'Ordering', 'Ticketing', 'Feedback', 'Chat', 'Reservations', 'Reminders', 'Loyalty', 'Referral', 'WhatsApp Sign', 'Queue', 'Waitlist', 'Reports', 'Staff', 'Crowdfunding', 'Invoices'].map(c => (
-                        <span key={c} className="rounded-full bg-purple-100 px-2.5 py-1 text-xs text-purple-700">{c}</span>
-                      ))}
-                    </div>
-                    <p className="mt-2 text-xs text-gray-400">Own WhatsApp number available &middot; Unlimited bookings &middot; Whitelabel &middot; {localTiers.business.feePercentage}% + {formatCurrency(localTiers.business.feeFlat, selectedCountry)} per transaction</p>
+                    <p className="mt-2 text-sm text-gray-600">Full platform with unlimited bookings, e-signatures, staff management, and your brand — not ours.</p>
+                    <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Pro</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Unlimited bookings &amp; conversations</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> WhatsApp Sign — send documents for e-signature</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Staff management, queue, waitlist, invoices</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Whitelabel — your brand, not Waaiio</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Lowest fees: {localTiers.business.feePercentage}% per transaction</li>
+                    </ul>
                   </button>
                 </div>
 
