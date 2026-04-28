@@ -190,11 +190,11 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // ── Per-Country Pricing ──
 
 const COUNTRY_PRICING: Record<CountryCode, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 200 }, growth: { price: 15_000, feeFlat: 50 }, business: { price: 50_000, feeFlat: 50 } },
-  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 15, feeFlat: 0.25 }, business: { price: 50, feeFlat: 0.25 } },
-  GB: { free: { price: 0, feeFlat: 0.40 }, growth: { price: 12, feeFlat: 0.20 }, business: { price: 40, feeFlat: 0.20 } },
-  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 20, feeFlat: 0.25 }, business: { price: 65, feeFlat: 0.25 } },
-  GH: { free: { price: 0, feeFlat: 5 }, growth: { price: 150, feeFlat: 2 }, business: { price: 500, feeFlat: 2 } },
+  NG: { free: { price: 0, feeFlat: 200 }, growth: { price: 15_000, feeFlat: 100 }, business: { price: 50_000, feeFlat: 50 } },
+  US: { free: { price: 0, feeFlat: 0.99 }, growth: { price: 29, feeFlat: 0.59 }, business: { price: 79, feeFlat: 0.49 } },
+  GB: { free: { price: 0, feeFlat: 0.69 }, growth: { price: 19, feeFlat: 0.49 }, business: { price: 59, feeFlat: 0.39 } },
+  CA: { free: { price: 0, feeFlat: 0.99 }, growth: { price: 29, feeFlat: 0.59 }, business: { price: 79, feeFlat: 0.49 } },
+  GH: { free: { price: 0, feeFlat: 5 }, growth: { price: 150, feeFlat: 3 }, business: { price: 500, feeFlat: 2 } },
 };
 
 // ── Business Categories ──
@@ -324,7 +324,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   free: {
     name: 'Starter',
     price: 0,
-    feePercentage: 2.5,
+    feePercentage: 3.9,
     feeFlat: 100,
     maxBookings: 50,
     whitelabel: false,
@@ -333,13 +333,13 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '2.5% + ₦100 per transaction after trial',
+      '3.9% + flat fee per transaction after trial',
     ],
   },
   growth: {
     name: 'Growth',
     price: 15_000,
-    feePercentage: 1.5,
+    feePercentage: 2.9,
     feeFlat: 50,
     maxBookings: 500,
     whitelabel: false,
@@ -349,13 +349,13 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
-      '1.5% + ₦50 per transaction',
+      '2.9% + flat fee per transaction',
     ],
   },
   business: {
     name: 'Business',
     price: 50_000,
-    feePercentage: 1.0,
+    feePercentage: 2.5,
     feeFlat: 50,
     maxBookings: Infinity,
     whitelabel: true,
