@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { createClient } from '@/lib/supabase/server';
 
 export const metadata: Metadata = {
   title: 'Contact Us',
@@ -6,7 +7,13 @@ export const metadata: Metadata = {
     'Get in touch with the Waaiio team. Reach us via email or WhatsApp for support, partnerships, or general enquiries.',
 };
 
-export default function ContactPage() {
+export default async function ContactPage() {
+  const supabase = await createClient();
+  const { data } = await supabase.from('platform_settings').select('value').eq('key', 'contact_emails').single();
+  const emails = (data?.value as Record<string, string>) || {};
+  const generalEmail = emails.general || '{generalEmail}';
+  const dpoEmail = emails.dpo || 'dpo@waaiio.com';
+  const abuseEmail = emails.abuse || 'abuse@waaiio.com';
   return (
     <div className="mx-auto max-w-3xl px-4 py-24 sm:py-32">
       <h1 className="text-3xl font-bold tracking-tight text-gray-900 sm:text-4xl">
@@ -30,10 +37,10 @@ export default function ContactPage() {
             For general enquiries, support, or partnership requests.
           </p>
           <a
-            href="mailto:hello@waaiio.com"
+            href="mailto:${generalEmail}"
             className="mt-4 inline-block text-sm font-medium text-brand hover:underline"
           >
-            hello@waaiio.com
+            {generalEmail}
           </a>
         </div>
 
@@ -65,15 +72,15 @@ export default function ContactPage() {
         <ul className="mt-3 space-y-2 text-sm text-gray-600">
           <li>
             <strong>Data protection:</strong>{' '}
-            <a href="mailto:dpo@waaiio.com" className="text-brand hover:underline">dpo@waaiio.com</a>
+            <a href="mailto:${dpoEmail}" className="text-brand hover:underline">{dpoEmail}</a>
           </li>
           <li>
             <strong>Abuse reports:</strong>{' '}
-            <a href="mailto:abuse@waaiio.com" className="text-brand hover:underline">abuse@waaiio.com</a>
+            <a href="mailto:${abuseEmail}" className="text-brand hover:underline">{abuseEmail}</a>
           </li>
           <li>
             <strong>Partnerships:</strong>{' '}
-            <a href="mailto:hello@waaiio.com" className="text-brand hover:underline">hello@waaiio.com</a>
+            <a href="mailto:${generalEmail}" className="text-brand hover:underline">{generalEmail}</a>
           </li>
         </ul>
       </div>

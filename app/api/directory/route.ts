@@ -6,6 +6,7 @@ import { createServiceClient } from '@/lib/supabase/service';
  *
  * Public API for the business directory.
  * Returns active businesses with their services and capabilities.
+ * Respects admin-configured featured/hidden lists from platform_settings.
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -15,6 +16,7 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
+  // Fetch businesses and directory settings in parallel
   let query = supabase
     .from('businesses')
     .select(`
@@ -29,19 +31,34 @@ export async function GET(request: NextRequest) {
   if (category) query = query.eq('category', category);
   if (search) query = query.ilike('name', `%${search}%`);
 
-  const { data, error } = await query;
+  const [{ data, error }, { data: settingsData }] = await Promise.all([
+    query,
+    supabase.from('platform_settings').select('key, value').in('key', ['directory_hidden', 'directory_featured']),
+  ]);
 
   if (error) {
     return NextResponse.json({ error: 'Failed to load directory' }, { status: 500 });
   }
 
-  // Get capabilities for each business
-  const businessIds = (data || []).map(b => b.id);
-  const { data: capRows } = await supabase
-    .from('business_capabilities')
-    .select('business_id, capability')
-    .in('business_id', businessIds)
-    .eq('is_enabled', true);
+  // Apply directory visibility settings
+  const settingsMap = new Map((settingsData || []).map(s => [s.key, s.value]));
+  const hiddenIds = (settingsMap.get('directory_hidden') as string[]) || [];
+  const featuredIds = (settingsMap.get('directory_featured') as string[]) || [];
+
+  const visible = (data || []).filter(b => !hiddenIds.includes(b.id));
+  const featured = visible.filter(b => featuredIds.includes(b.id));
+  const rest = visible.filter(b => !featuredIds.includes(b.id));
+  const sorted = [...featured, ...rest];
+
+  // Get capabilities for visible businesses
+  const businessIds = sorted.map(b => b.id);
+  const { data: capRows } = businessIds.length > 0
+    ? await supabase
+        .from('business_capabilities')
+        .select('business_id, capability')
+        .in('business_id', businessIds)
+        .eq('is_enabled', true)
+    : { data: [] };
 
   const capMap = new Map<string, string[]>();
   for (const row of (capRows || [])) {
@@ -50,9 +67,10 @@ export async function GET(request: NextRequest) {
     capMap.set(row.business_id, existing);
   }
 
-  const businesses = (data || []).map(b => ({
+  const businesses = sorted.map(b => ({
     ...b,
     capabilities: capMap.get(b.id) || [],
+    is_featured: featuredIds.includes(b.id),
   }));
 
   return NextResponse.json({ businesses });

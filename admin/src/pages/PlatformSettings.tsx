@@ -20,8 +20,20 @@ interface GroupDef {
 
 const GROUPS: GroupDef[] = [
   {
+    label: 'Website Content',
+    keys: ['hero_content', 'contact_emails', 'social_links', 'default_greetings'],
+  },
+  {
     label: 'Pricing & Fees',
     keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'platform_fee_percentage'],
+  },
+  {
+    label: 'WhatsApp',
+    keys: ['whatsapp_shared_numbers'],
+  },
+  {
+    label: 'Directory',
+    keys: ['directory_featured', 'directory_hidden'],
   },
   {
     label: 'Booking Defaults',
