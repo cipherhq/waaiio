@@ -54,6 +54,18 @@ export interface MessageSender {
     screen: string;
     data?: Record<string, unknown>;
   }): Promise<{ success?: boolean; messageId?: string }>;
+  sendReaction?(msg: {
+    to: string;
+    messageId: string;
+    emoji: string;
+  }): Promise<{ success?: boolean; messageId?: string }>;
+  sendLocation?(msg: {
+    to: string;
+    latitude: number;
+    longitude: number;
+    name?: string;
+    address?: string;
+  }): Promise<{ success?: boolean; messageId?: string }>;
 }
 
 /**
@@ -184,6 +196,16 @@ export class MetaCloudSender implements MessageSender {
     data?: Record<string, unknown>;
   }) {
     const result = await this.cloud.sendFlow(msg);
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendReaction(msg: { to: string; messageId: string; emoji: string }) {
+    const result = await this.cloud.sendReaction(msg);
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string }) {
+    const result = await this.cloud.sendLocation(msg);
     return { success: true, messageId: result.messageId };
   }
 }

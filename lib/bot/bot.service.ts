@@ -122,6 +122,10 @@ export class BotService {
     // Detect reschedule intent — shortcut to my_bookings flow
     const isRescheduleQuery = /^(reschedule|change\s+(my\s+)?(time|date|appointment|booking)|move\s+(my\s+)?(appointment|booking))$/i.test(text);
 
+    // Detect location/address queries
+    const isLocationQuery = /^(where|location|address|directions?|how\s+to\s+get|find\s+you|map)$/i.test(text)
+      || /^(where\s+(are|is)\s+(you|the|your))/i.test(text);
+
     const isHistoryQuery = /^(my\s+)?(transaction\s*|payment\s*)?history$/i.test(text)
       || /^(show\s+)?(my\s+)?transaction\s*history$/i.test(text)
       || /^(all|past)\s+(transactions?|payments?)$/i.test(text);
@@ -148,6 +152,33 @@ export class BotService {
       || /^(check|view|show|pay)\s+(my\s+)?(invoices?|bills?)$/i.test(text);
 
     let session = await this.getActiveSession(from);
+
+    // Handle location query — send business address/location
+    if (isLocationQuery && session?.business_id) {
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('name, address, metadata')
+        .eq('id', session.business_id)
+        .single();
+      if (biz?.address) {
+        // Try to send location pin if coordinates available, otherwise text
+        const meta = biz.metadata as Record<string, unknown> | null;
+        const lat = meta?.latitude as number | undefined;
+        const lng = meta?.longitude as number | undefined;
+        if (lat && lng && this.messageSender.sendLocation) {
+          try {
+            await this.messageSender.sendLocation({ to: from, latitude: lat, longitude: lng, name: biz.name, address: biz.address });
+          } catch {
+            await this.sendText(from, `📍 *${biz.name}*\n${biz.address}`);
+          }
+        } else {
+          await this.sendText(from, `📍 *${biz.name}*\n${biz.address}`);
+        }
+      } else {
+        await this.sendText(from, 'Sorry, no address is available for this business.');
+      }
+      return;
+    }
 
     if (isBookingsQuery || isRescheduleQuery) {
       if (session) {

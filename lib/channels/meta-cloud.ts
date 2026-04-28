@@ -328,6 +328,80 @@ export class MetaCloudService {
     return res.json();
   }
 
+  // ── React to a Message ──
+
+  async sendReaction(message: { to: string; messageId: string; emoji: string }): Promise<{ messageId: string }> {
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to: message.to,
+      type: 'reaction',
+      reaction: {
+        message_id: message.messageId,
+        emoji: message.emoji,
+      },
+    });
+    return { messageId: response.messages[0].id };
+  }
+
+  // ── Send Location ──
+
+  async sendLocation(message: {
+    to: string;
+    latitude: number;
+    longitude: number;
+    name?: string;
+    address?: string;
+  }): Promise<{ messageId: string }> {
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to: message.to,
+      type: 'location',
+      location: {
+        latitude: message.latitude,
+        longitude: message.longitude,
+        name: message.name || undefined,
+        address: message.address || undefined,
+      },
+    });
+    return { messageId: response.messages[0].id };
+  }
+
+  // ── Set Business Profile ──
+
+  async setBusinessProfile(profile: {
+    about?: string;
+    address?: string;
+    description?: string;
+    email?: string;
+    websites?: string[];
+    vertical?: string;
+  }): Promise<boolean> {
+    const res = await fetch(`${this.baseUrl}/${this.phoneNumberId}/whatsapp_business_profile`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        ...profile,
+      }),
+    });
+    return res.ok;
+  }
+
+  // ── Get Business Profile ──
+
+  async getBusinessProfile(): Promise<Record<string, unknown> | null> {
+    const res = await fetch(
+      `${this.baseUrl}/${this.phoneNumberId}/whatsapp_business_profile?fields=about,address,description,email,websites,vertical,profile_picture_url`,
+      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+    );
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.data?.[0] || null;
+  }
+
   // ── Send WhatsApp Flow ──
 
   async sendFlow(message: {

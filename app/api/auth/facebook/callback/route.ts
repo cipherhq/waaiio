@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     // Verify business ownership
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, owner_id, name, country_code')
+      .select('id, owner_id, name, country_code, address')
       .eq('id', business_id)
       .single();
 
@@ -250,7 +250,20 @@ export async function POST(request: NextRequest) {
       logger.error('[FB-CALLBACK] Phone registration warning:', err);
     }
 
-    // 2. Subscribe Waaiio app to receive webhooks from their WABA
+    // 2. Auto-set WhatsApp Business Profile
+    try {
+      await cloudService.setBusinessProfile({
+        about: `${business.name} — powered by Waaiio`,
+        description: `Book appointments, make payments, and more — all on WhatsApp.`,
+        address: business.address || undefined,
+        websites: ['https://waaiio.com'],
+      });
+      logger.debug('[FB-CALLBACK] Business profile set');
+    } catch (err) {
+      logger.error('[FB-CALLBACK] Business profile warning:', err);
+    }
+
+    // 3. Subscribe Waaiio app to receive webhooks from their WABA
     try {
       const subRes = await fetch(
         `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waba_id}/subscribed_apps`,
