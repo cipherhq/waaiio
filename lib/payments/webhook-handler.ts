@@ -52,6 +52,22 @@ export async function processPaystackChargeSuccess(
   const posthog = getServerPostHog();
   posthog?.capture({ distinctId: reference, event: 'payment_success', properties: { gateway: 'paystack', amount: existingPayment.amount } });
 
+  // Run fraud detection (non-blocking)
+  import('@/lib/fraud/detect').then(({ checkPaymentFraud }) => {
+    const customer = data.customer as Record<string, string> | undefined;
+    const ipAddress = data.ip_address as string | undefined;
+    const metadata = data.metadata as Record<string, string> | undefined;
+    checkPaymentFraud(supabase, {
+      paymentId: existingPayment.id,
+      businessId: metadata?.business_id || '',
+      amount: existingPayment.amount,
+      currency: (data.currency as string) || 'NGN',
+      customerPhone: customer?.phone || '',
+      payerIp: ipAddress,
+      payerCountry: (data.authorization as Record<string, string>)?.country_code,
+    });
+  }).catch(() => {});
+
   if (existingPayment.booking_id) {
     await supabase
       .from('bookings')
