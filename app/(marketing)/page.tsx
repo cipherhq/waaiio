@@ -244,52 +244,20 @@ export default function HomePage() {
         </motion.div>
       </section>
 
-      {/* ── Social Proof Bar ── */}
-      <section className="border-b border-gray-100 bg-white py-8">
-        <div className="mx-auto max-w-6xl px-4">
-          <AnimatedSection>
-            <p className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400">
-              Empowering businesses across 5 countries
-            </p>
-            <div className="mt-6 flex flex-wrap items-center justify-center gap-x-10 gap-y-4">
-              {[
-                { flag: '\ud83c\uddf3\ud83c\uddec', name: 'Nigeria', gateway: 'Paystack' },
-                { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Square' },
-                { flag: '\ud83c\uddec\ud83c\udde7', name: 'United Kingdom', gateway: 'Stripe' },
-                { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada', gateway: 'Stripe' },
-                { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana', gateway: 'Paystack' },
-              ].map((c) => (
-                <div key={c.name} className="flex items-center gap-2">
-                  <span className="text-xl">{c.flag}</span>
-                  <span className="text-sm font-medium text-gray-700">{c.name}</span>
-                  <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">{c.gateway}</span>
-                </div>
-              ))}
-            </div>
-          </AnimatedSection>
-        </div>
-      </section>
-
-      {/* ── Stats Bar ── */}
-      <section className="bg-gray-950 py-16">
-        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 text-center md:grid-cols-5">
+      {/* ── Compact Stats ── */}
+      <section className="border-b border-gray-100 bg-white py-6">
+        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-6 px-4 sm:gap-10">
           {[
-            { value: 100, suffix: '+', label: 'Businesses Served' },
-            { value: 25000, suffix: '+', label: 'Transactions Processed' },
-            { value: 4, suffix: '', label: 'Payment Gateways' },
-            { value: 20, suffix: '+', label: 'Capabilities' },
-          ].map((s, i) => (
-            <AnimatedSection key={s.label} delay={i * 0.1}>
-              <p className="text-3xl font-extrabold text-white sm:text-4xl">
-                <CounterAnimation target={s.value} suffix={s.suffix} />
-              </p>
-              <p className="mt-1 text-sm text-gray-400">{s.label}</p>
-            </AnimatedSection>
+            { value: '100+', label: 'Businesses' },
+            { value: '25K+', label: 'Transactions' },
+            { value: '5', label: 'Countries' },
+            { value: '24/7', label: 'Always On' },
+          ].map(s => (
+            <div key={s.label} className="text-center">
+              <p className="text-lg font-extrabold text-gray-900 sm:text-xl">{s.value}</p>
+              <p className="text-xs text-gray-400">{s.label}</p>
+            </div>
           ))}
-          <AnimatedSection delay={0.4}>
-            <p className="text-3xl font-extrabold text-white sm:text-4xl">24/7</p>
-            <p className="mt-1 text-sm text-gray-400">Always Available</p>
-          </AnimatedSection>
         </div>
       </section>
 
@@ -378,259 +346,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── WhatsApp Business vs Waaiio ── */}
-      <section className="bg-white py-20">
-        <div className="mx-auto max-w-4xl px-4">
-          <AnimatedSection className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">The difference</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              WhatsApp Business vs Waaiio
-            </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-gray-600">
-              WhatsApp Business is a messaging app. Waaiio is a business operating system that runs on WhatsApp.
-            </p>
-          </AnimatedSection>
-
-          <AnimatedSection delay={0.2}>
-            <div className="mt-12 overflow-hidden rounded-2xl border border-gray-200">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="bg-gray-50">
-                    <th className="px-6 py-4 text-left font-semibold text-gray-500">Feature</th>
-                    <th className="px-6 py-4 text-center font-semibold text-gray-400">WhatsApp Business</th>
-                    <th className="px-6 py-4 text-center font-semibold text-brand">Waaiio</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {[
-                    { feature: 'Auto-book appointments', wa: false, waaiio: true },
-                    { feature: 'Collect payments in chat', wa: false, waaiio: true },
-                    { feature: 'Customer memory & history', wa: false, waaiio: true },
-                    { feature: 'AI revenue recommendations', wa: false, waaiio: true },
-                    { feature: 'Automated reminders', wa: false, waaiio: true },
-                    { feature: 'Loyalty & referral programs', wa: false, waaiio: true },
-                    { feature: 'Multi-step follow-up sequences', wa: false, waaiio: true },
-                    { feature: 'Win-back dormant customers', wa: false, waaiio: true },
-                    { feature: '7 African languages', wa: false, waaiio: true },
-                    { feature: 'Use your own WhatsApp number', wa: true, waaiio: true },
-                    { feature: 'Product catalog', wa: true, waaiio: true },
-                    { feature: 'Greeting messages', wa: true, waaiio: true },
-                  ].map((row) => (
-                    <tr key={row.feature} className="hover:bg-gray-50/50">
-                      <td className="px-6 py-3 text-gray-700 font-medium">{row.feature}</td>
-                      <td className="px-6 py-3 text-center">
-                        {row.wa ? (
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 text-gray-500">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                          </span>
-                        ) : (
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-gray-300">
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-3 text-center">
-                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-brand text-white">
-                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </AnimatedSection>
-        </div>
-      </section>
-
       {/* ── Industry Showcase ── */}
       <IndustryShowcase categoryCount={CATEGORY_COUNT} />
-
-      {/* ── Four Flows ── */}
-      <section className="bg-gray-50 py-20">
-        <div className="mx-auto max-w-6xl px-4">
-          <AnimatedSection className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">4 automation flows</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              We auto-configure the right flow for your industry
-            </h2>
-          </AnimatedSection>
-
-          <div className="mt-12 grid gap-6 sm:grid-cols-2">
-            {[
-              { emoji: '&#x1F4C5;', title: 'Scheduling', description: 'Appointments and reservations with date, time, and service selection. Automatic reminders reduce no-shows.', industries: 'Restaurants, Barbers, Spas, Salons, Gyms, Clinics, Hotels, Car Wash, Tattoo, Dental, Vet, Laundry, Tutors, Photographers, Real Estate, Travel, Coworking', color: 'border-blue-200 bg-blue-50/50' },
-              { emoji: '&#x1F4B3;', title: 'Payments', description: 'Category-based payments with custom amounts. Perfect for tithes, offerings, donations, fees, and dues.', industries: 'Churches, Mosques, Schools, NGOs, Government, Crowdfunding, Parking, Taxi, Funeral Services', color: 'border-green-200 bg-green-50/50' },
-              { emoji: '&#x1F6D2;', title: 'Ordering', description: 'Product catalog, cart management, delivery or pickup, and checkout with inventory tracking.', industries: 'Shops, Food Delivery, Online Vendors, Pharmacies, Mall Vendors, Logistics, Catering, Tailors', color: 'border-amber-200 bg-amber-50/50' },
-              { emoji: '&#x1F3AB;', title: 'Ticketing', description: 'Event listings, ticket selection, availability checks, and instant purchase.', industries: 'Events, Transport, Cinemas', color: 'border-purple-200 bg-purple-50/50' },
-            ].map((flow, i) => (
-              <AnimatedSection key={flow.title} delay={i * 0.1}>
-                <FlowCard {...flow} />
-              </AnimatedSection>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Intelligent AI Section ── */}
-      <section className="bg-brand py-20">
-        <div className="mx-auto max-w-6xl px-4">
-          <div className="grid items-center gap-12 lg:grid-cols-2">
-            <AnimatedSection direction="left">
-              <p className="text-xs font-bold uppercase tracking-widest text-brand-200">Intelligent AI</p>
-              <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
-                AI that grows your revenue
-              </h2>
-              <p className="mt-4 text-lg leading-relaxed text-brand-200">
-                Not just a chatbot — an AI business partner that understands customers, remembers their history, and tells you exactly how to earn more.
-              </p>
-
-              <div className="mt-8 space-y-4">
-                {[
-                  { title: 'Understands 7 Languages', desc: 'English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French. Customers speak naturally — the AI gets it.' },
-                  { title: 'Remembers Every Customer', desc: '"Welcome back! Last time you had Full Grooming." Personalized greetings and repeat booking suggestions based on visit history.' },
-                  { title: 'Revenue Recommendations', desc: '"Enable deposits to cut no-shows by 60%. 23 customers are at risk — send a win-back." AI tells you what to do next.' },
-                  { title: 'Smart Upselling', desc: 'Suggests add-ons based on what customers ordered before. Knows their favorites and spending patterns.' },
-                ].map((item, i) => (
-                  <motion.div
-                    key={item.title}
-                    initial={{ opacity: 0, x: -20 }}
-                    whileInView={{ opacity: 1, x: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: 0.2 + i * 0.1 }}
-                    className="flex gap-3"
-                  >
-                    <div className="mt-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-accent">
-                      <svg className="h-3 w-3 text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-white">{item.title}</p>
-                      <p className="mt-0.5 text-sm text-brand-200">{item.desc}</p>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </AnimatedSection>
-
-            {/* AI visual */}
-            <AnimatedSection direction="right">
-              <div className="mx-auto max-w-sm">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur">
-                  <div className="space-y-3">
-                    <div className="rounded-lg bg-white/10 p-3">
-                      <p className="text-xs text-brand-200">Customer says:</p>
-                      <p className="mt-1 text-sm font-medium text-white">&quot;abeg I wan cut hair tomorrow for morning&quot;</p>
-                    </div>
-                    <div className="flex items-center gap-2 text-accent">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      <span className="text-xs font-bold">AI Processing</span>
-                    </div>
-                    <div className="rounded-lg bg-white/10 p-3">
-                      <p className="text-xs text-brand-200">Detected intent:</p>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        <span className="rounded-full bg-accent/20 px-2 py-0.5 text-xs font-medium text-accent">booking</span>
-                        <span className="rounded-full bg-green-400/20 px-2 py-0.5 text-xs font-medium text-green-300">haircut</span>
-                        <span className="rounded-full bg-blue-400/20 px-2 py-0.5 text-xs font-medium text-blue-300">tomorrow AM</span>
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-[#25D366]/20 p-3">
-                      <p className="text-xs text-brand-200">Bot responds:</p>
-                      <p className="mt-1 text-sm text-white">
-                        &#x2705; I&apos;ve got you! I have these morning slots for tomorrow:{'\n'}
-                        1. 8:00 AM{'\n'}
-                        2. 9:00 AM{'\n'}
-                        3. 10:00 AM{'\n'}
-                        Which one works for you?
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </AnimatedSection>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Full Platform Capabilities ── */}
-      <section className="bg-gray-950 py-20">
-        <div className="mx-auto max-w-6xl px-4">
-          <AnimatedSection className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand-300">Full Platform</p>
-            <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
-              20+ capabilities, one platform
-            </h2>
-            <p className="mx-auto mt-3 max-w-2xl text-gray-400">
-              Everything you need to run and grow your business on WhatsApp — beyond the 4 core flows.
-            </p>
-          </AnimatedSection>
-
-          <div className="mt-14 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {[
-              { group: 'Operations', items: [
-                { icon: '&#x1F4C5;', label: 'Appointments' },
-                { icon: '&#x1F4CB;', label: 'Queue & Waitlist' },
-                { icon: '&#x23F0;', label: 'Smart Reminders' },
-                { icon: '&#x1F4C6;', label: 'Calendar Sync' },
-                { icon: '&#x1F465;', label: 'Staff Management' },
-              ]},
-              { group: 'Commerce', items: [
-                { icon: '&#x1F4B3;', label: 'Payments' },
-                { icon: '&#x1F6D2;', label: 'Ordering' },
-                { icon: '&#x1F3AB;', label: 'Ticketing' },
-                { icon: '&#x1F501;', label: 'Recurring Billing' },
-                { icon: '&#x1F4B0;', label: 'Deposits & Payouts' },
-              ]},
-              { group: 'Engagement', items: [
-                { icon: '&#x1F4E2;', label: 'Broadcasts' },
-                { icon: '&#x1F3C6;', label: 'Loyalty Program' },
-                { icon: '&#x1F91D;', label: 'Referrals' },
-                { icon: '&#x2B50;', label: 'Reviews' },
-                { icon: '&#x1F514;', label: 'Notifications' },
-              ]},
-              { group: 'Tools', items: [
-                { icon: '&#x1F4CA;', label: 'Analytics' },
-                { icon: '&#x1F3F7;', label: 'Promo Codes' },
-                { icon: '&#x1F310;', label: 'Custom Pages' },
-                { icon: '&#x1F4F1;', label: 'QR Codes' },
-                { icon: '&#x1F4E4;', label: 'CSV Export' },
-              ]},
-            ].map((group, gi) => (
-              <AnimatedSection key={group.group} delay={gi * 0.1}>
-                <p className="mb-3 text-xs font-bold uppercase tracking-widest text-gray-500">{group.group}</p>
-                <div className="space-y-2">
-                  {group.items.map((item) => (
-                    <motion.div
-                      key={item.label}
-                      whileHover={{ scale: 1.03 }}
-                      className="flex items-center gap-2.5 rounded-lg border border-white/5 bg-white/5 px-3 py-2 transition hover:bg-white/10"
-                    >
-                      <span className="text-base" dangerouslySetInnerHTML={{ __html: item.icon }} />
-                      <span className="text-sm text-gray-300">{item.label}</span>
-                    </motion.div>
-                  ))}
-                </div>
-              </AnimatedSection>
-            ))}
-          </div>
-
-          <AnimatedSection delay={0.3} className="mt-10 text-center">
-            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="inline-block">
-              <Link
-                href="/features"
-                className="inline-flex items-center gap-2 rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-500"
-              >
-                Explore All Features
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-                </svg>
-              </Link>
-            </motion.div>
-          </AnimatedSection>
-        </div>
-      </section>
 
       {/* ── Testimonials ── */}
       <section className="bg-white py-20">
@@ -724,60 +441,15 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ── Get Started Steps ── */}
-      <section className="bg-white py-20">
-        <div className="mx-auto max-w-4xl px-4 text-center">
-          <AnimatedSection>
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">How it works</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Get started in 3 simple steps
-            </h2>
-          </AnimatedSection>
-
-          <div className="mt-14 grid gap-8 sm:grid-cols-3">
-            {[
-              { step: '1', title: 'Sign Up & Pick Your Category', description: `Create your account and tell us what kind of business or organisation you run. We support ${CATEGORY_COUNT}+ categories.`, icon: '&#x1F464;' },
-              { step: '2', title: 'Customize Your Bot', description: 'Set your greeting, services, operating hours, and persona. We connect WhatsApp automatically via Gupshup.', icon: '&#x2699;&#xFE0F;' },
-              { step: '3', title: 'Go Live & Grow', description: 'Share your WhatsApp link with customers. The bot handles bookings, payments, and orders 24/7.', icon: '&#x1F680;' },
-            ].map((s, i) => (
-              <AnimatedSection key={s.step} delay={i * 0.15}>
-                <div className="relative">
-                  <motion.div
-                    whileHover={{ scale: 1.1 }}
-                    className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-50 text-2xl"
-                  >
-                    <span dangerouslySetInnerHTML={{ __html: s.icon }} />
-                  </motion.div>
-                  <h3 className="mt-4 text-base font-semibold text-gray-900">{s.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{s.description}</p>
-                </div>
-              </AnimatedSection>
-            ))}
-          </div>
-        </div>
-      </section>
 
       {/* ── FAQ ── */}
-      <section id="faq" className="bg-gray-50 py-20">
-        <div className="mx-auto max-w-6xl px-4">
-          <AnimatedSection className="text-center">
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">FAQ</p>
-            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Frequently Asked Questions
-            </h2>
-          </AnimatedSection>
-
-          <div className="mx-auto mt-12 grid max-w-4xl gap-x-12 gap-y-0 lg:grid-cols-2">
-            <div className="space-y-0">
-              {FAQ_DATA.slice(0, 3).map((item) => (
-                <FaqItem key={item.question} question={item.question} answer={item.answer} />
-              ))}
-            </div>
-            <div className="space-y-0">
-              {FAQ_DATA.slice(3).map((item) => (
-                <FaqItem key={item.question} question={item.question} answer={item.answer} />
-              ))}
-            </div>
+      <section id="faq" className="bg-gray-50 py-16">
+        <div className="mx-auto max-w-3xl px-4">
+          <h2 className="text-center text-2xl font-bold text-gray-900">Frequently Asked Questions</h2>
+          <div className="mt-8">
+            {FAQ_DATA.map((item) => (
+              <FaqItem key={item.question} question={item.question} answer={item.answer} />
+            ))}
           </div>
         </div>
       </section>
