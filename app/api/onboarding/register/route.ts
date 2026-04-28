@@ -37,6 +37,20 @@ export async function POST(request: NextRequest) {
     const { first_name, last_name, name, city, state, zip_code, address, phone, category, country, bot_alias, bot_greeting, wa_method, wa_own_phone, capabilities, bot_code: customBotCode } = body;
     const countryCode: CountryCode = isValidCountryCode(country) ? country : 'NG';
 
+    // Validate country matches phone number to prevent fee arbitrage
+    const phoneDialingCodes: Record<string, CountryCode[]> = {
+      '+234': ['NG'], '+233': ['GH'], '+1': ['US', 'CA'], '+44': ['GB'],
+    };
+    if (phone) {
+      const matchedCountries = Object.entries(phoneDialingCodes).find(([code]) => phone.startsWith(code));
+      if (matchedCountries && !matchedCountries[1].includes(countryCode)) {
+        return NextResponse.json(
+          { message: `Phone number doesn't match selected country. A ${phone.slice(0, 4)} number should use ${matchedCountries[1].join(' or ')}.` },
+          { status: 400 },
+        );
+      }
+    }
+
     if (!name || !city || !address || !phone || !category) {
       return NextResponse.json(
         { message: 'Missing required fields: name, city, address, phone, category' },

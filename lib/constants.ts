@@ -189,12 +189,17 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 
 // ── Per-Country Pricing ──
 
+// Pricing = Gateway fee + 2% markup to ensure profit
+// Stripe (US/CA): 2.9% + $0.30 → Waaiio: 4.9% + $0.50
+// Stripe (UK): 2.5% + £0.20 → Waaiio: 4.5% + £0.40
+// Paystack (NG): 1.5% + ₦100 → Waaiio: 3.5% + ₦150
+// Paystack (GH): 1.5% + GH₵ → Waaiio: 3.5% + GH₵3
 const COUNTRY_PRICING: Record<CountryCode, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 200 }, growth: { price: 15_000, feeFlat: 100 }, business: { price: 50_000, feeFlat: 50 } },
-  US: { free: { price: 0, feeFlat: 0.99 }, growth: { price: 29, feeFlat: 0.59 }, business: { price: 79, feeFlat: 0.49 } },
-  GB: { free: { price: 0, feeFlat: 0.69 }, growth: { price: 19, feeFlat: 0.49 }, business: { price: 59, feeFlat: 0.39 } },
-  CA: { free: { price: 0, feeFlat: 0.99 }, growth: { price: 29, feeFlat: 0.59 }, business: { price: 79, feeFlat: 0.49 } },
-  GH: { free: { price: 0, feeFlat: 5 }, growth: { price: 150, feeFlat: 3 }, business: { price: 500, feeFlat: 2 } },
+  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 9_999, feeFlat: 100 }, business: { price: 29_999, feeFlat: 75 } },
+  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 16.99, feeFlat: 0.40 }, business: { price: 49.99, feeFlat: 0.35 } },
+  GB: { free: { price: 0, feeFlat: 0.40 }, growth: { price: 12.99, feeFlat: 0.30 }, business: { price: 39.99, feeFlat: 0.25 } },
+  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 16.99, feeFlat: 0.40 }, business: { price: 49.99, feeFlat: 0.35 } },
+  GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 99, feeFlat: 2 }, business: { price: 299, feeFlat: 1.50 } },
 };
 
 // ── Business Categories ──
@@ -324,7 +329,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   free: {
     name: 'Starter',
     price: 0,
-    feePercentage: 3.9,
+    feePercentage: 4.9,
     feeFlat: 100,
     maxBookings: 50,
     whitelabel: false,
@@ -333,13 +338,13 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '3.9% + flat fee per transaction after trial',
+      '4.9% + flat fee per transaction after trial',
     ],
   },
   growth: {
     name: 'Growth',
     price: 15_000,
-    feePercentage: 2.9,
+    feePercentage: 3.9,
     feeFlat: 50,
     maxBookings: 500,
     whitelabel: false,
@@ -349,13 +354,13 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
-      '2.9% + flat fee per transaction',
+      '3.9% + flat fee per transaction',
     ],
   },
   business: {
     name: 'Business',
     price: 50_000,
-    feePercentage: 2.5,
+    feePercentage: 3.5,
     feeFlat: 50,
     maxBookings: Infinity,
     whitelabel: true,
