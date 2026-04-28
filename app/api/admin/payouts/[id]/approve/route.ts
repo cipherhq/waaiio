@@ -199,7 +199,30 @@ export async function POST(
         }
       }
     }
-    // Manual transfers: mark as paid immediately
+    // Notify business owner of payout (for all transfer types)
+    try {
+      const { data: bizData } = await supabase.from('businesses').select('name, owner_id').eq('id', payout.business_id).single();
+      if (bizData) {
+        const { data: ownerProfile } = await supabase.from('profiles').select('email, phone').eq('id', bizData.owner_id).single();
+        if (ownerProfile?.email && (finalStatus === 'paid' || finalStatus === 'processing')) {
+          const { sendEmail } = await import('@/lib/email/client');
+          await sendEmail({
+            to: ownerProfile.email,
+            subject: `💰 Payout sent — ${bizData.name}`,
+            html: `<div style="font-family:system-ui,sans-serif;max-width:500px">
+              <h2 style="color:#6C2BD9">Your payout has been sent!</h2>
+              <p>Amount: <strong>${payout.currency} ${Number(payout.net_amount).toLocaleString()}</strong></p>
+              <p>Period: ${payout.period_start} to ${payout.period_end}</p>
+              ${reference ? `<p>Reference: ${reference}</p>` : ''}
+              <p>It should arrive in your bank within 1-3 business days.</p>
+              <p style="color:#9CA3AF;font-size:12px;margin-top:24px">View your payout history at <a href="https://waaiio.com/dashboard/payouts">waaiio.com/dashboard/payouts</a></p>
+            </div>`,
+          });
+        }
+      }
+    } catch (notifErr) {
+      logger.error('[APPROVE] Notification error (non-fatal):', notifErr);
+    }
 
     const { error: updateError } = await supabase
       .from('business_payouts')
