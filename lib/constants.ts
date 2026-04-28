@@ -84,7 +84,7 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
     currencyCode: 'USD',
     currencySymbol: '$',
     currencyLocale: 'en-US',
-    paymentGateway: 'square',
+    paymentGateway: 'stripe',
     phoneDigits: 10,
     phonePattern: /^[2-9]\d{9}$/,
     phonePlaceholder: '2025551234',
