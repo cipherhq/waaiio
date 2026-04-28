@@ -234,11 +234,6 @@ export async function POST(request: NextRequest) {
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
           try {
-            // Quick reaction to acknowledge receipt (non-blocking)
-            if (msg.id && resolved.sender.sendReaction) {
-              resolved.sender.sendReaction({ to: source, messageId: msg.id, emoji: '👀' }).catch(() => {});
-            }
-
             logger.debug('[META-WEBHOOK] Calling bot.handleMessage for', source, 'text:', text, 'preResolvedBiz:', preResolvedBusinessId);
             await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
             logger.debug('[META-WEBHOOK] bot.handleMessage completed for', source);
