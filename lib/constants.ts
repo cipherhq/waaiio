@@ -322,7 +322,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   features: string[];
 }> = {
   free: {
-    name: 'Free',
+    name: 'Starter',
     price: 0,
     feePercentage: 2.5,
     feeFlat: 100,

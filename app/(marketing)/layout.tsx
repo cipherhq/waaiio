@@ -18,6 +18,15 @@ export default function MarketingLayout({
       <Navbar />
       <main>{children}</main>
       <Footer />
+      {/* Sticky mobile CTA */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur-sm sm:hidden">
+        <a
+          href="/get-started"
+          className="block w-full rounded-xl bg-brand py-3 text-center text-sm font-bold text-white shadow-lg transition hover:bg-brand-600"
+        >
+          Get Started Free
+        </a>
+      </div>
     </>
   );
 }

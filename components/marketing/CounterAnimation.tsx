@@ -16,10 +16,16 @@ export default function CounterAnimation({
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const isInView = useInView(ref, { once: true, margin: '-80px' });
-  const [value, setValue] = useState(0);
+  const [mounted, setMounted] = useState(false);
+  const [value, setValue] = useState(target); // Start at target for SSR/crawlers
 
   useEffect(() => {
-    if (!isInView) return;
+    setMounted(true);
+    setValue(0); // Reset to 0 for animation on client
+  }, []);
+
+  useEffect(() => {
+    if (!isInView || !mounted) return;
 
     const start = performance.now();
     const step = (now: number) => {
@@ -30,7 +36,7 @@ export default function CounterAnimation({
       if (progress < 1) requestAnimationFrame(step);
     };
     requestAnimationFrame(step);
-  }, [isInView, target, duration]);
+  }, [isInView, mounted, target, duration]);
 
   return (
     <span ref={ref}>
