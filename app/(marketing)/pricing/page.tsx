@@ -36,7 +36,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            Start free with our 7-day trial. No credit card required. Pay only for what you use — or lock in a monthly plan for lower fees.
+            Start free with our 30-day trial. No credit card required. Pay only for what you use — or lock in a monthly plan for lower fees.
           </p>
 
           {/* Country picker */}
@@ -368,8 +368,8 @@ export default function PricingPage() {
                 answer="Absolutely. You can upgrade or downgrade at any time from your dashboard settings. Changes take effect immediately."
               />
               <PricingFaqItem
-                question="What happens after my 7-day trial?"
-                answer="After 7 days, the Starter plan's per-transaction fees kick in (2.5% + flat fee). Your bot keeps working — there's no interruption."
+                question="What happens after my 30-day trial?"
+                answer="After 30 days, the Starter plan's per-transaction fees kick in (2.5% + flat fee). Your bot keeps working — there's no interruption."
               />
               <PricingFaqItem
                 question="Are there any hidden fees?"
@@ -405,7 +405,7 @@ export default function PricingPage() {
                 Start automating your business today
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-brand-200">
-                7-day free trial. No credit card. No setup fees. No risk.
+                30-day free trial. No credit card. No setup fees. No risk.
               </p>
               <Link
                 href="/get-started"

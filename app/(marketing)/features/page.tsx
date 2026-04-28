@@ -377,7 +377,7 @@ export default function FeaturesPage() {
                 Ready to unlock every feature?
               </h2>
               <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-                Start with a 7-day free trial. No credit card required. Upgrade anytime to unlock more capabilities.
+                Start with a 30-day free trial. No credit card required. Upgrade anytime to unlock more capabilities.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
                 <Link

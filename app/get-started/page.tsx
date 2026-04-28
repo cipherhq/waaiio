@@ -84,7 +84,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   auth: {
     title: 'Join 100+ businesses',
     subtitle: 'Create your account in seconds to get started with WhatsApp automation.',
-    bullets: ['No credit card required', '7-day free trial', 'Setup in under 5 minutes'],
+    bullets: ['No credit card required', '30-day free trial', 'Setup in under 5 minutes'],
     visual: '&#x1F512;',
   },
   category: {
@@ -96,7 +96,7 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
   plan: {
     title: 'Choose your plan',
     subtitle: 'Each plan unlocks more capabilities for your business.',
-    bullets: ['Free 7-day trial', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
+    bullets: ['Free 30-day trial', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
     visual: '&#x1F4B3;',
   },
   details: {
@@ -1243,7 +1243,7 @@ function OnboardingWizard() {
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-gray-900">{localTiers.free.name}</h3>
-                        <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">7-day trial</span></p>
+                        <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">30-day trial</span></p>
                       </div>
                       <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'free' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
                         {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}

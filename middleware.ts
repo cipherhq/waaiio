@@ -22,7 +22,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
       "img-src 'self' https: data: blob:",
       "font-src 'self' data:",
       "media-src 'self' https://*.supabase.co blob:",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.paystack.co https://api.stripe.com https://connect.squareup.com https://api.flutterwave.com https://graph.facebook.com https://www.facebook.com https://us.i.posthog.com https://eu.i.posthog.com",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.paystack.co https://api.stripe.com https://connect.squareup.com https://api.flutterwave.com https://graph.facebook.com https://www.facebook.com https://us.i.posthog.com https://eu.i.posthog.com https://maps.googleapis.com https://*.googleapis.com",
       "frame-src 'self' https://js.stripe.com https://js.squareup.com https://checkout.paystack.com https://checkout.flutterwave.com https://www.facebook.com https://web.facebook.com",
       "object-src 'none'",
       "base-uri 'self'",

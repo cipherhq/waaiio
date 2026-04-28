@@ -5,7 +5,7 @@
 export const APP_NAME = 'Waaiio';
 export const APP_TAGLINE = 'WhatsApp Automation for Every Business';
 export const BOOKING_REF_PREFIX = 'BW';
-export const TRIAL_DAYS = 7;
+export const TRIAL_DAYS = 30;
 
 // ── Flow Types ──
 export type FlowType = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'queue';
@@ -329,7 +329,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
     maxBookings: 50,
     whitelabel: false,
     features: [
-      '7-day free trial (no fees)',
+      '30-day free trial (no fees)',
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
@@ -409,7 +409,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },
     highlights: [
-      '7-day free trial (no fees)',
+      '30-day free trial (no fees)',
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',

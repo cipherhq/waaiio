@@ -21,7 +21,7 @@ const FAQ_DATA = [
   },
   {
     question: 'Is there really a free plan?',
-    answer: 'Yes! Start with our Free plan — 7-day trial with zero fees, then a small per-transaction fee. No monthly subscription required.',
+    answer: 'Yes! Start with our Free plan — 30-day trial with zero fees, then a small per-transaction fee. No monthly subscription required.',
   },
   {
     question: 'How do payments work?',
@@ -68,7 +68,7 @@ const JSON_LD_APP = {
     '@type': 'Offer',
     price: '0',
     priceCurrency: 'USD',
-    description: 'Free plan with 7-day trial',
+    description: 'Free plan with 30-day trial',
   },
   aggregateRating: {
     '@type': 'AggregateRating',
