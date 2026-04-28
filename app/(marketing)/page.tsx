@@ -11,7 +11,7 @@ import { formatCurrency, getPricingTiers } from '@/lib/constants';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 
-const PRICING_TIERS = getPricingTiers('NG');
+const DEFAULT_PRICING = getPricingTiers('NG');
 const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 
 const FAQ_DATA = [
@@ -88,11 +88,21 @@ const JSON_LD_FAQ = {
   })),
 };
 
+const PRICE_COUNTRIES = [
+  { code: 'NG' as const, flag: '🇳🇬', label: 'Nigeria' },
+  { code: 'US' as const, flag: '🇺🇸', label: 'US' },
+  { code: 'GB' as const, flag: '🇬🇧', label: 'UK' },
+  { code: 'CA' as const, flag: '🇨🇦', label: 'Canada' },
+  { code: 'GH' as const, flag: '🇬🇭', label: 'Ghana' },
+];
+
 export default function HomePage() {
-  useCategoryConfig(); // trigger DB load for category templates
+  useCategoryConfig();
   const { scrollYProgress } = useScroll();
   const heroY = useTransform(scrollYProgress, [0, 0.3], [0, 120]);
   const heroOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
+  const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH'>('NG');
+  const PRICING_TIERS = getPricingTiers(priceCountry);
 
   return (
     <>
@@ -397,13 +407,24 @@ export default function HomePage() {
             <p className="mt-2 text-gray-600">
               Start free. Upgrade when you&apos;re ready.
             </p>
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
+              {PRICE_COUNTRIES.map(c => (
+                <button
+                  key={c.code}
+                  onClick={() => setPriceCountry(c.code)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${priceCountry === c.code ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  {c.flag} {c.label}
+                </button>
+              ))}
+            </div>
           </AnimatedSection>
 
           <div className="mt-12 grid gap-6 sm:grid-cols-3">
             <AnimatedSection delay={0}>
               <PlanCard
                 name={PRICING_TIERS.free.name}
-                price={formatCurrency(0, 'NG')}
+                price={formatCurrency(0, priceCountry)}
                 period=""
                 features={PRICING_TIERS.free.features}
                 cta={{ label: 'Start Free', href: '/get-started' }}
@@ -412,7 +433,7 @@ export default function HomePage() {
             <AnimatedSection delay={0.1}>
               <PlanCard
                 name={PRICING_TIERS.growth.name}
-                price={formatCurrency(PRICING_TIERS.growth.price as number, 'NG')}
+                price={formatCurrency(PRICING_TIERS.growth.price as number, priceCountry)}
                 period="/month"
                 highlight
                 features={PRICING_TIERS.growth.features}
@@ -422,7 +443,7 @@ export default function HomePage() {
             <AnimatedSection delay={0.2}>
               <PlanCard
                 name={PRICING_TIERS.business.name}
-                price={formatCurrency(PRICING_TIERS.business.price as number, 'NG')}
+                price={formatCurrency(PRICING_TIERS.business.price as number, priceCountry)}
                 period="/month"
                 features={PRICING_TIERS.business.features}
                 cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
