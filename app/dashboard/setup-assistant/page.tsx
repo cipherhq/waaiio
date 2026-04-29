@@ -76,11 +76,28 @@ export default function SetupAssistantPage() {
   // Quick-start prompts — let users pick instead of typing from scratch
   const [showQuickStart, setShowQuickStart] = useState(true);
 
-  const quickStartOptions = [
-    { label: 'I offer services (appointments)', prompt: `I run a ${business.category || 'business'} called "${business.name}". I offer appointment-based services. Let me tell you what I offer and my hours.` },
-    { label: 'I sell products (store/food)', prompt: `I run a ${business.category || 'business'} called "${business.name}". I sell products to customers. Let me tell you what I sell and my hours.` },
-    { label: 'Both services and products', prompt: `I run a ${business.category || 'business'} called "${business.name}". I offer both services and sell products. Let me describe what I do.` },
-    { label: 'Just set up my hours and greeting', prompt: `I run a ${business.category || 'business'} called "${business.name}". I just need help setting up my operating hours and bot greeting message.` },
+  // Category-aware quick-start options
+  const cat = business.category || 'other';
+  const faithBased = ['church', 'mosque'].includes(cat);
+  const foodBased = ['restaurant', 'food_delivery', 'catering'].includes(cat);
+  const retailBased = ['shop', 'instagram_vendor', 'mall_vendor', 'pharmacy'].includes(cat);
+  const eventBased = ['events', 'cinema'].includes(cat);
+
+  const quickStartOptions = faithBased ? [
+    { label: 'Set up our service times & schedule', prompt: `I run a ${cat} called "${business.name}". I want to set up our weekly service times and schedule.` },
+    { label: 'Set up tithes, offerings & donations', prompt: `I run a ${cat} called "${business.name}". I want to set up payment collection for tithes, offerings, and donations.` },
+    { label: 'Set up everything (schedule + payments)', prompt: `I run a ${cat} called "${business.name}". I want to set up our service schedule, payment collection, and bot greeting.` },
+  ] : foodBased || retailBased ? [
+    { label: 'Add my menu / product list', prompt: `I run a ${cat} called "${business.name}". I want to add my menu items / products with prices.` },
+    { label: 'Upload a photo of my menu / price list', prompt: `I run a ${cat} called "${business.name}". I'll upload a photo of my menu. Can you read it?` },
+    { label: 'Set up everything (menu + hours + greeting)', prompt: `I run a ${cat} called "${business.name}". I want to set up my full menu, operating hours, and bot greeting.` },
+  ] : eventBased ? [
+    { label: 'Set up our events & ticketing', prompt: `I run a ${cat} called "${business.name}". I want to set up our events and ticket sales.` },
+    { label: 'Set up everything (events + hours + greeting)', prompt: `I run a ${cat} called "${business.name}". I want to set up our events, schedule, and bot greeting.` },
+  ] : [
+    { label: 'Add my services with prices', prompt: `I run a ${cat} called "${business.name}". I want to add my services with prices and duration.` },
+    { label: 'Upload a photo of my price list', prompt: `I run a ${cat} called "${business.name}". I'll upload a photo of my price list. Can you read it?` },
+    { label: 'Set up everything (services + hours + greeting)', prompt: `I run a ${cat} called "${business.name}". I want to set up my services, operating hours, and bot greeting.` },
   ];
 
   // Send initial greeting
