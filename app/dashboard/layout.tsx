@@ -154,9 +154,9 @@ export default async function DashboardLayout({
         <main className="lg:pl-64">
           <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}
+            <FloatingHelp />
           </div>
         </main>
-        <FloatingHelp />
       </div>
     </DashboardProvider>
   );
