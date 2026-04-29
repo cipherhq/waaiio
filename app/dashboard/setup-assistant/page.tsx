@@ -73,20 +73,45 @@ export default function SetupAssistantPage() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, thinking]);
 
+  // Quick-start prompts — let users pick instead of typing from scratch
+  const [showQuickStart, setShowQuickStart] = useState(true);
+
+  const quickStartOptions = [
+    { label: 'I offer services (appointments)', prompt: `I run a ${business.category || 'business'} called "${business.name}". I offer appointment-based services. Let me tell you what I offer and my hours.` },
+    { label: 'I sell products (store/food)', prompt: `I run a ${business.category || 'business'} called "${business.name}". I sell products to customers. Let me tell you what I sell and my hours.` },
+    { label: 'Both services and products', prompt: `I run a ${business.category || 'business'} called "${business.name}". I offer both services and sell products. Let me describe what I do.` },
+    { label: 'Just set up my hours and greeting', prompt: `I run a ${business.category || 'business'} called "${business.name}". I just need help setting up my operating hours and bot greeting message.` },
+  ];
+
   // Send initial greeting
   useEffect(() => {
     if (messages.length === 0) {
       setMessages([{
         role: 'assistant',
-        content: `Hi! I'm your AI setup assistant. Tell me about your business and I'll help configure everything.\n\nFor example:\n- "I run a barbershop, I offer haircuts for $15, beard trim for $10, and kids cut for $12. Open Mon-Sat 9am-7pm"\n- "We're a restaurant serving jollof rice, pepper soup, and suya"\n\nOr upload a photo of your menu/price list below!`,
+        content: `Hi! I'll help you set up your WhatsApp bot in seconds.\n\nPick an option below to get started, or just describe what your business does!`,
       }]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const handleQuickStart = (prompt: string) => {
+    setShowQuickStart(false);
+    setInput(prompt);
+    // Auto-send after a tick so the input shows briefly
+    setTimeout(() => {
+      sendMessageWithText(prompt);
+    }, 100);
+  };
+
   const sendMessage = async () => {
     const text = input.trim();
     if (!text || thinking) return;
+    sendMessageWithText(text);
+  };
+
+  const sendMessageWithText = async (text: string) => {
+    if (!text || thinking) return;
+    setShowQuickStart(false);
 
     const newMessages: ChatMessage[] = [...messages, { role: 'user', content: text }];
     setMessages(newMessages);
@@ -298,6 +323,20 @@ export default function SetupAssistantPage() {
                   </div>
                 </div>
               ))}
+              {/* Quick-start buttons */}
+              {showQuickStart && !thinking && messages.length <= 1 && (
+                <div className="space-y-1.5 px-1">
+                  {quickStartOptions.map((opt, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleQuickStart(opt.prompt)}
+                      className="w-full text-left px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300 transition"
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {thinking && (
                 <div className="flex justify-start">
                   <div className="bg-gray-100 dark:bg-gray-700 rounded-2xl px-4 py-2.5 text-sm text-gray-500">
