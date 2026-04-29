@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import Anthropic from '@anthropic-ai/sdk';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -22,7 +23,7 @@ From the conversation, extract:
 2. products: [{ name, price, description, category }] (only for businesses that sell physical items)
 3. operating_hours: { monday: { open: "09:00", close: "17:00" }, tuesday: ..., sunday: { closed: true } }
 4. greeting: A warm, short WhatsApp greeting message for their bot (1-2 sentences, include business name)
-5. capabilities: Which Waaiio features they need from: ["scheduling", "ordering", "payment", "feedback", "chat"]
+5. capabilities: Which Waaiio features they need — ONLY from the allowed list provided in the context (varies by subscription tier)
 
 RULES:
 - Be conversational, warm, and brief. This is a chat, not an essay.
@@ -58,12 +59,19 @@ export async function POST(request: NextRequest) {
   // Verify ownership + get business context
   const { data: biz } = await supabase
     .from('businesses')
-    .select('id, name, category, country_code, city')
+    .select('id, name, category, country_code, city, subscription_tier')
     .eq('id', business_id)
     .eq('owner_id', user.id)
     .single();
 
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+
+  // Determine which capabilities are allowed on this tier
+  const tier = (biz.subscription_tier || 'free') as 'free' | 'growth' | 'business';
+  const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
+  const allowedCapabilities = Object.entries(CAPABILITY_TIER_REQUIREMENTS)
+    .filter(([, requiredTier]) => tierRank[tier] >= tierRank[requiredTier])
+    .map(([capId]) => capId);
 
   try {
     const anthropic = getClient();
@@ -79,7 +87,8 @@ export async function POST(request: NextRequest) {
 
     messages.push({ role: 'user', content: message });
 
-    const contextNote = `[Context: Business "${biz.name}", category: ${biz.category || 'general'}, location: ${biz.city || 'unknown'}, country: ${biz.country_code || 'NG'}]`;
+    const contextNote = `[Context: Business "${biz.name}", category: ${biz.category || 'general'}, location: ${biz.city || 'unknown'}, country: ${biz.country_code || 'NG'}, subscription tier: ${tier}]
+[IMPORTANT — Tier restriction: This business is on the "${tier}" plan. ONLY suggest capabilities from this allowed list: ${JSON.stringify(allowedCapabilities)}. Do NOT suggest capabilities outside this list. If the business describes features that require a higher tier, mention they can upgrade to access those features.]`;
 
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
@@ -101,9 +110,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Enforce tier gating on capabilities — strip any the AI hallucinated
+    if (suggestion?.capabilities) {
+      suggestion.capabilities = (suggestion.capabilities as string[]).filter(
+        (cap: string) => allowedCapabilities.includes(cap)
+      );
+    }
+
     return NextResponse.json({
       reply: text,
       suggestion,
+      allowed_capabilities: allowedCapabilities,
+      tier,
     });
   } catch (error) {
     logger.error('[AI-SETUP] Chat error:', (error as Error).message);

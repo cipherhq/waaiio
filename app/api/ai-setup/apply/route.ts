@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 
 interface ServiceItem {
   name: string;
@@ -39,14 +40,21 @@ export async function POST(request: NextRequest) {
 
   if (!business_id) return NextResponse.json({ error: 'Missing business_id' }, { status: 400 });
 
-  // Verify ownership
+  // Verify ownership + get tier
   const { data: biz } = await supabase
     .from('businesses')
-    .select('id')
+    .select('id, subscription_tier')
     .eq('id', business_id)
     .eq('owner_id', user.id)
     .single();
   if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+
+  // Determine allowed capabilities for this tier
+  const tier = (biz.subscription_tier || 'free') as 'free' | 'growth' | 'business';
+  const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
+  const allowedCapabilities = Object.entries(CAPABILITY_TIER_REQUIREMENTS)
+    .filter(([, requiredTier]) => tierRank[tier] >= tierRank[requiredTier])
+    .map(([capId]) => capId);
 
   const service = createServiceClient();
   const results: Record<string, unknown> = {};
@@ -129,11 +137,20 @@ export async function POST(request: NextRequest) {
       results.greeting = { updated: !error, error: error?.message };
     }
 
-    // 5. Update capabilities
+    // 5. Update capabilities — enforce tier gating
     if (capabilities?.length) {
-      const { setCapabilities } = await import('@/lib/capabilities/service');
-      await setCapabilities(service, business_id, capabilities as import('@/lib/capabilities/types').CapabilityId[]);
-      results.capabilities = { updated: true };
+      const filtered = capabilities.filter(cap => allowedCapabilities.includes(cap));
+      const blocked = capabilities.filter(cap => !allowedCapabilities.includes(cap));
+
+      if (filtered.length > 0) {
+        const { setCapabilities } = await import('@/lib/capabilities/service');
+        await setCapabilities(service, business_id, filtered as CapabilityId[]);
+      }
+      results.capabilities = {
+        updated: filtered.length > 0,
+        enabled: filtered,
+        blocked_by_tier: blocked.length > 0 ? blocked : undefined,
+      };
     }
 
     return NextResponse.json({ success: true, results });
