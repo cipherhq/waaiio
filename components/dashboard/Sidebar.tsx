@@ -10,6 +10,7 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { ThemeToggle } from './ThemeToggle';
 import { useChatUnreadCount } from '@/hooks/useChatUnreadCount';
+import { PAGE_TOOLTIPS } from '@/lib/tooltips';
 
 interface NavItem {
   href: string;
@@ -427,6 +428,7 @@ export function Sidebar() {
                   key={item.href}
                   href={item.href}
                   onClick={() => setMobileOpen(false)}
+                  title={PAGE_TOOLTIPS[item.href.split('/dashboard/')[1] || 'overview'] || ''}
                   className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition ${
                     isActive(item.href)
                       ? 'bg-brand text-white'
