@@ -263,10 +263,12 @@ export const reservationFlow: FlowDefinition = {
           countryCode: cc,
         });
 
+        // Send summary first, then buttons — so customer reads details before acting
+        await ctx.sender.sendText({ to: ctx.from, text: summary });
         return [
           {
             type: 'buttons',
-            body: summary + '\n\nConfirm this reservation?',
+            body: 'Confirm this reservation?',
             buttons: [
               { id: 'confirm', title: 'Confirm ✓' },
               { id: 'cancel', title: 'Cancel' },
