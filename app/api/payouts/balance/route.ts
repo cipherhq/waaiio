@@ -27,14 +27,29 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Get total successful payments for this business
-    const { data: payments } = await supabase
-      .from('payments')
-      .select('amount')
-      .eq('business_id', businessId)
-      .eq('status', 'success');
+    // Get total successful payments via bookings and orders
+    const [{ data: bookingPayments }, { data: orderPayments }, { data: invoicePayments }] = await Promise.all([
+      supabase
+        .from('bookings')
+        .select('total_amount, deposit_amount, deposit_status')
+        .eq('business_id', businessId)
+        .eq('deposit_status', 'paid'),
+      supabase
+        .from('orders')
+        .select('total_amount, payment_status')
+        .eq('business_id', businessId)
+        .eq('payment_status', 'paid'),
+      supabase
+        .from('invoices')
+        .select('total_amount, status')
+        .eq('business_id', businessId)
+        .eq('status', 'paid'),
+    ]);
 
-    const gross = (payments || []).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const bookingGross = (bookingPayments || []).reduce((sum, b) => sum + Number(b.deposit_amount || b.total_amount || 0), 0);
+    const orderGross = (orderPayments || []).reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+    const invoiceGross = (invoicePayments || []).reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
+    const gross = bookingGross + orderGross + invoiceGross;
 
     // Get platform fees
     let totalFees = 0;
