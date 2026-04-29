@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice';
+export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -29,6 +29,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'referral', label: 'Referral', description: 'Customer referral program with reward tracking', icon: '🤝' },
   { id: 'staff', label: 'Staff', description: 'Staff management with service assignments and scheduling', icon: '👥' },
   { id: 'invoice', label: 'Invoices', description: 'Create and send invoices with online payment links', icon: '🧾' },
+  { id: 'survey', label: 'Surveys', description: 'Create and send customer surveys via WhatsApp', icon: '📊' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -59,6 +60,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   staff: 'business',
   crowdfunding: 'business',
   invoice: 'business',
+  survey: 'growth',
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };
@@ -96,12 +98,12 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   spa: ['scheduling', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
   salon: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],
   gym: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral'],
-  clinic: ['scheduling', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff'],
-  consultant: ['scheduling', 'feedback', 'chat', 'referral'],
+  clinic: ['scheduling', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff', 'survey'],
+  consultant: ['scheduling', 'feedback', 'chat', 'referral', 'survey'],
   church: ['payment', 'ticketing', 'feedback', 'chat'],
   mosque: ['payment', 'ticketing', 'feedback', 'chat'],
-  school: ['payment', 'feedback', 'chat'],
-  ngo: ['payment', 'feedback', 'chat', 'referral'],
+  school: ['payment', 'feedback', 'chat', 'survey'],
+  ngo: ['payment', 'feedback', 'chat', 'referral', 'survey'],
   shop: ['ordering', 'feedback', 'loyalty', 'chat', 'referral'],
   food_delivery: ['ordering', 'feedback', 'loyalty', 'referral'],
   events: ['ticketing', 'feedback', 'waitlist', 'referral'],
@@ -124,7 +126,7 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   photographer: ['scheduling', 'payment', 'feedback', 'chat', 'referral', 'staff'],
   mall_vendor: ['payment', 'ordering', 'feedback', 'loyalty', 'chat'],
   pharmacy: ['ordering', 'payment', 'feedback', 'loyalty', 'chat'],
-  hotel: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
+  hotel: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff', 'survey'],
   car_wash: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'referral'],
   catering: ['ordering', 'payment', 'feedback', 'chat', 'referral'],
   funeral: ['payment', 'scheduling', 'feedback', 'chat'],

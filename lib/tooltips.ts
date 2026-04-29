@@ -56,5 +56,6 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   tickets: 'View and manage event ticket sales.',
   notifications: 'View system notifications and alerts for your business.',
   locations: 'Manage multiple business locations.',
+  surveys: 'Create custom surveys and send them to customers via WhatsApp. Track responses and analyze results.',
   verification: 'Verify your business to unlock higher payout limits.',
 };
