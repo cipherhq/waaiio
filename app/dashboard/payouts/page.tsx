@@ -457,8 +457,26 @@ export default function PayoutsPage() {
           </Link>
         </div>
 
+        {/* Earnings Stats */}
+        {balance && balance.gross > 0 && (
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <p className="text-xs font-medium text-gray-500">Total Earnings</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(balance.gross, country)}</p>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <p className="text-xs font-medium text-gray-500">Platform Fees</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(balance.fees, country)}</p>
+            </div>
+            <div className="rounded-xl border border-green-200 bg-green-50 p-5">
+              <p className="text-xs font-medium text-green-600">{isPlatformManaged ? 'Available for Payout' : 'Net Earned'}</p>
+              <p className="mt-1 text-2xl font-bold text-green-700">{formatCurrency(balance.net_available, country)}</p>
+            </div>
+          </div>
+        )}
+
         {/* Mode badge */}
-        <div className="mt-4">
+        <div className="mt-6">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
             isPlatformManaged
               ? 'bg-blue-100 text-blue-700'
