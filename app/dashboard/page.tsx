@@ -15,6 +15,7 @@ import { getCategoryByKey } from '@/lib/categoryConfig';
 import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
+import { AISetupCard } from '@/components/dashboard/AISetupCard';
 
 interface Stats {
   totalBookings: number;
@@ -207,6 +208,9 @@ export default function DashboardOverview() {
 
   return (
     <div>
+      {/* AI setup assistant for new businesses */}
+      <AISetupCard />
+
       {/* Onboarding checklist for new businesses */}
       <OnboardingChecklist />
 
