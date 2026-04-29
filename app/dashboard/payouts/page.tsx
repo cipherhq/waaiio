@@ -458,7 +458,7 @@ export default function PayoutsPage() {
         </div>
 
         {/* Earnings Stats */}
-        {balance && balance.gross > 0 && (
+        {balance && (
           <div className="mt-6 grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-gray-200 bg-white p-5">
               <p className="text-xs font-medium text-gray-500">Total Earnings</p>
