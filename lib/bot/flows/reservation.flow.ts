@@ -264,10 +264,9 @@ export const reservationFlow: FlowDefinition = {
         });
 
         return [
-          { type: 'text', text: summary },
           {
             type: 'buttons',
-            body: 'Confirm this reservation?',
+            body: summary + '\n\nConfirm this reservation?',
             buttons: [
               { id: 'confirm', title: 'Confirm ✓' },
               { id: 'cancel', title: 'Cancel' },
