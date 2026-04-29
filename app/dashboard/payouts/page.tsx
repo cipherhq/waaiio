@@ -308,14 +308,65 @@ export default function PayoutsPage() {
   }
 
   // Handle change account
-  function handleChangeAccount() {
-    setExisting(null);
-    setBankCode('');
-    setAccountNumber('');
-    setResolvedName('');
-    setStep('idle');
+  const [showChangeConfirm, setShowChangeConfirm] = useState(false);
+  const [changePassword, setChangePassword] = useState('');
+  const [changingAccount, setChangingAccount] = useState(false);
+
+  async function handleChangeAccount() {
+    setShowChangeConfirm(true);
+  }
+
+  async function confirmChangeAccount() {
+    if (!changePassword) {
+      setError('Please enter your password to confirm');
+      return;
+    }
+    setChangingAccount(true);
     setError('');
-    setPageView('setup');
+
+    try {
+      // Verify password
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.email) { setError('Authentication error'); return; }
+
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: changePassword,
+      });
+
+      if (authError) {
+        setError('Incorrect password. Please try again.');
+        return;
+      }
+
+      // Send notification email about the change
+      try {
+        await fetch('/api/email/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            to: user.email,
+            subject: `⚠️ Payout account change requested — ${business.name}`,
+            html: `<p>Someone requested to change the payout account for <strong>${business.name}</strong>.</p><p>If this wasn't you, please contact support immediately at <a href="https://waaiio.com/dashboard/support">waaiio.com/dashboard/support</a>.</p><p>Time: ${new Date().toLocaleString()}</p>`,
+          }),
+        });
+      } catch {}
+
+      // Proceed with change
+      setExisting(null);
+      setBankCode('');
+      setAccountNumber('');
+      setResolvedName('');
+      setStep('idle');
+      setShowChangeConfirm(false);
+      setChangePassword('');
+      setPageView('setup');
+    } catch {
+      setError('Something went wrong. Try again.');
+    } finally {
+      setChangingAccount(false);
+    }
   }
 
   // Loading state
@@ -595,6 +646,36 @@ export default function PayoutsPage() {
               Change account
             </button>
           </div>
+
+          {/* Password confirmation for account change */}
+          {showChangeConfirm && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-semibold text-amber-900">Confirm account change</p>
+              <p className="mt-1 text-xs text-amber-700">For security, enter your password to change your payout account. An email notification will be sent.</p>
+              <input
+                type="password"
+                value={changePassword}
+                onChange={(e) => setChangePassword(e.target.value)}
+                placeholder="Enter your password"
+                className="mt-3 w-full rounded-lg border border-amber-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+              />
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={confirmChangeAccount}
+                  disabled={changingAccount || !changePassword}
+                  className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-amber-700 disabled:opacity-50"
+                >
+                  {changingAccount ? 'Verifying...' : 'Confirm Change'}
+                </button>
+                <button
+                  onClick={() => { setShowChangeConfirm(false); setChangePassword(''); setError(''); }}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Recent Payouts */}
