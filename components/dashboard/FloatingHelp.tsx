@@ -15,9 +15,7 @@ export function FloatingHelp() {
 
   // Get current page key from pathname
   const pageKey = pathname.replace('/dashboard/', '').replace('/dashboard', 'overview').split('/')[0] || 'overview';
-  const tooltip = PAGE_TOOLTIPS[pageKey];
-
-  if (!tooltip) return null;
+  const tooltip = PAGE_TOOLTIPS[pageKey] || 'Need help? Click to learn about this page or contact support.';
 
   return (
     <>
