@@ -309,6 +309,7 @@ export default function PayoutsPage() {
 
   // Handle change account
   const [showChangeConfirm, setShowChangeConfirm] = useState(false);
+  const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [changePassword, setChangePassword] = useState('');
   const [changingAccount, setChangingAccount] = useState(false);
 
@@ -645,6 +646,13 @@ export default function PayoutsPage() {
             >
               Change account
             </button>
+            <span className="text-gray-300">|</span>
+            <button
+              onClick={() => { setShowDisconnectConfirm(true); setChangePassword(''); setError(''); }}
+              className="text-sm font-medium text-red-500 hover:text-red-700 hover:underline"
+            >
+              Disconnect
+            </button>
           </div>
 
           {/* Password confirmation for account change */}
@@ -669,6 +677,69 @@ export default function PayoutsPage() {
                 </button>
                 <button
                   onClick={() => { setShowChangeConfirm(false); setChangePassword(''); setError(''); }}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Disconnect confirmation */}
+          {showDisconnectConfirm && (
+            <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-semibold text-red-900">Disconnect payout account</p>
+              <p className="mt-1 text-xs text-red-700">This will disconnect your bank account from Waaiio. Payments will be held until you connect a new account. Enter your password to confirm.</p>
+              <input
+                type="password"
+                value={changePassword}
+                onChange={(e) => setChangePassword(e.target.value)}
+                placeholder="Enter your password"
+                className="mt-3 w-full rounded-lg border border-red-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+              />
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={async () => {
+                    if (!changePassword) { setError('Enter your password'); return; }
+                    setChangingAccount(true);
+                    try {
+                      const supabase = createClient();
+                      const { data: { user } } = await supabase.auth.getUser();
+                      if (!user?.email) { setError('Auth error'); return; }
+                      const { error: authErr } = await supabase.auth.signInWithPassword({ email: user.email, password: changePassword });
+                      if (authErr) { setError('Incorrect password'); return; }
+
+                      // Deactivate payout account
+                      await supabase.from('payout_accounts').update({ is_active: false, updated_at: new Date().toISOString() }).eq('business_id', business.id).eq('is_active', true);
+                      // Reset business payout mode
+                      await supabase.from('businesses').update({ payout_mode: 'platform_managed' }).eq('id', business.id);
+
+                      // Send notification
+                      try {
+                        await fetch('/api/email/send', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            to: user.email,
+                            subject: `⚠️ Payout account disconnected — ${business.name}`,
+                            html: `<p>The payout account for <strong>${business.name}</strong> has been disconnected.</p><p>Payments will be held until a new account is connected.</p><p>If this wasn't you, contact support immediately.</p>`,
+                          }),
+                        });
+                      } catch {}
+
+                      setExisting(null);
+                      setShowDisconnectConfirm(false);
+                      setChangePassword('');
+                      setPageView('setup');
+                    } catch { setError('Something went wrong'); } finally { setChangingAccount(false); }
+                  }}
+                  disabled={changingAccount || !changePassword}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-xs font-bold text-white transition hover:bg-red-700 disabled:opacity-50"
+                >
+                  {changingAccount ? 'Disconnecting...' : 'Disconnect Account'}
+                </button>
+                <button
+                  onClick={() => { setShowDisconnectConfirm(false); setChangePassword(''); setError(''); }}
                   className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50"
                 >
                   Cancel
