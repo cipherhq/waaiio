@@ -155,9 +155,9 @@ export default function PayoutHistoryPage() {
     [monthlyBuckets],
   );
 
-  // Monthly summary rows (newest first, only months with data)
+  // Monthly summary rows (newest first, only months with actual data)
   const monthlySummaryRows = useMemo(
-    () => [...monthlyBuckets].reverse(),
+    () => [...monthlyBuckets].reverse().filter(m => m.count > 0 || m.gross > 0),
     [monthlyBuckets],
   );
 
