@@ -679,7 +679,7 @@ export default function PayoutsPage() {
         </div>
 
         {/* Recent Payouts */}
-        {isPlatformManaged && (
+        {(
           <div className="mt-6 max-w-lg rounded-xl border border-gray-200 bg-white p-5">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-gray-900">Recent Payouts</h3>
