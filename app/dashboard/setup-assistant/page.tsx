@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
 
@@ -23,228 +23,163 @@ interface OperatingHours {
   [day: string]: { open?: string; close?: string; closed?: boolean };
 }
 
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-interface AISuggestion {
-  services?: ServiceItem[];
-  products?: ProductItem[];
-  operating_hours?: OperatingHours;
-  greeting?: string;
-  capabilities?: string[];
-}
-
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
 const DAY_LABELS: Record<string, string> = {
   monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed', thursday: 'Thu',
   friday: 'Fri', saturday: 'Sat', sunday: 'Sun',
 };
 
+// Category-aware labels
+const CATEGORY_CONFIG: Record<string, { itemLabel: string; itemPlural: string; priceLabel: string; durationLabel: string; examples: string; hoursPresets: { label: string; hours: OperatingHours }[] }> = {
+  church: {
+    itemLabel: 'Service / Gathering',
+    itemPlural: 'Services & Gatherings',
+    priceLabel: 'Fee',
+    durationLabel: 'Duration (min)',
+    examples: 'e.g., Sunday Worship, Midweek Service, Bible Study, Prayer Meeting',
+    hoursPresets: [
+      { label: 'Sunday only', hours: { monday: { closed: true }, tuesday: { closed: true }, wednesday: { closed: true }, thursday: { closed: true }, friday: { closed: true }, saturday: { closed: true }, sunday: { open: '08:00', close: '14:00' } } },
+      { label: 'Sun + Midweek', hours: { monday: { closed: true }, tuesday: { closed: true }, wednesday: { open: '17:00', close: '20:00' }, thursday: { closed: true }, friday: { closed: true }, saturday: { closed: true }, sunday: { open: '08:00', close: '14:00' } } },
+      { label: 'Multiple days', hours: { monday: { closed: true }, tuesday: { open: '17:00', close: '20:00' }, wednesday: { open: '17:00', close: '20:00' }, thursday: { closed: true }, friday: { open: '18:00', close: '21:00' }, saturday: { closed: true }, sunday: { open: '08:00', close: '14:00' } } },
+    ],
+  },
+  mosque: {
+    itemLabel: 'Prayer / Program',
+    itemPlural: 'Prayers & Programs',
+    priceLabel: 'Fee',
+    durationLabel: 'Duration (min)',
+    examples: 'e.g., Jummah Prayer, Quran Class, Ramadan Tafsir',
+    hoursPresets: [
+      { label: 'Friday only', hours: { monday: { closed: true }, tuesday: { closed: true }, wednesday: { closed: true }, thursday: { closed: true }, friday: { open: '12:00', close: '15:00' }, saturday: { closed: true }, sunday: { closed: true } } },
+      { label: 'Daily prayers', hours: { monday: { open: '05:00', close: '21:00' }, tuesday: { open: '05:00', close: '21:00' }, wednesday: { open: '05:00', close: '21:00' }, thursday: { open: '05:00', close: '21:00' }, friday: { open: '05:00', close: '21:00' }, saturday: { open: '05:00', close: '21:00' }, sunday: { open: '05:00', close: '21:00' } } },
+    ],
+  },
+  default: {
+    itemLabel: 'Service',
+    itemPlural: 'Services',
+    priceLabel: 'Price',
+    durationLabel: 'Duration (min)',
+    examples: 'e.g., Haircut, Consultation, Basic Package',
+    hoursPresets: [
+      { label: 'Mon-Fri 9am-5pm', hours: { monday: { open: '09:00', close: '17:00' }, tuesday: { open: '09:00', close: '17:00' }, wednesday: { open: '09:00', close: '17:00' }, thursday: { open: '09:00', close: '17:00' }, friday: { open: '09:00', close: '17:00' }, saturday: { closed: true }, sunday: { closed: true } } },
+      { label: 'Mon-Sat 9am-7pm', hours: { monday: { open: '09:00', close: '19:00' }, tuesday: { open: '09:00', close: '19:00' }, wednesday: { open: '09:00', close: '19:00' }, thursday: { open: '09:00', close: '19:00' }, friday: { open: '09:00', close: '19:00' }, saturday: { open: '09:00', close: '19:00' }, sunday: { closed: true } } },
+      { label: 'Every day 8am-10pm', hours: { monday: { open: '08:00', close: '22:00' }, tuesday: { open: '08:00', close: '22:00' }, wednesday: { open: '08:00', close: '22:00' }, thursday: { open: '08:00', close: '22:00' }, friday: { open: '08:00', close: '22:00' }, saturday: { open: '08:00', close: '22:00' }, sunday: { open: '08:00', close: '22:00' } } },
+    ],
+  },
+};
+
+type Step = 'what' | 'items' | 'hours' | 'greeting' | 'review';
+
 export default function SetupAssistantPage() {
   const business = useBusiness();
   const router = useRouter();
-
-  // Chat state
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [thinking, setThinking] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  // Editable preview state
-  const [services, setServices] = useState<ServiceItem[]>([]);
-  const [products, setProducts] = useState<ProductItem[]>([]);
-  const [hours, setHours] = useState<OperatingHours>({});
-  const [greeting, setGreeting] = useState('');
-  const [capabilities, setCapabilities] = useState<string[]>([]);
-  const [hasSuggestion, setHasSuggestion] = useState(false);
-
-  // Image upload state
-  const [parsing, setParsing] = useState(false);
-  const [imageType, setImageType] = useState<'services' | 'products'>('services');
-
-  // Apply state
-  const [applying, setApplying] = useState(false);
-  const [applied, setApplied] = useState(false);
-
-  // Auto-scroll chat
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, thinking]);
-
-  // Quick-start prompts — let users pick instead of typing from scratch
-  const [showQuickStart, setShowQuickStart] = useState(true);
-
-  // Category-aware quick-start options
   const cat = business.category || 'other';
+  const config = CATEGORY_CONFIG[cat] || CATEGORY_CONFIG.default;
+
   const faithBased = ['church', 'mosque'].includes(cat);
   const foodBased = ['restaurant', 'food_delivery', 'catering'].includes(cat);
   const retailBased = ['shop', 'instagram_vendor', 'mall_vendor', 'pharmacy'].includes(cat);
-  const eventBased = ['events', 'cinema'].includes(cat);
 
-  const quickStartOptions = faithBased ? [
-    { label: 'Set up our service times & schedule', prompt: `I run a ${cat} called "${business.name}". I want to set up our weekly service times and schedule.` },
-    { label: 'Set up tithes, offerings & donations', prompt: `I run a ${cat} called "${business.name}". I want to set up payment collection for tithes, offerings, and donations.` },
-    { label: 'Set up everything (schedule + payments)', prompt: `I run a ${cat} called "${business.name}". I want to set up our service schedule, payment collection, and bot greeting.` },
-  ] : foodBased || retailBased ? [
-    { label: 'Add my menu / product list', prompt: `I run a ${cat} called "${business.name}". I want to add my menu items / products with prices.` },
-    { label: 'Upload a photo of my menu / price list', prompt: `I run a ${cat} called "${business.name}". I'll upload a photo of my menu. Can you read it?` },
-    { label: 'Set up everything (menu + hours + greeting)', prompt: `I run a ${cat} called "${business.name}". I want to set up my full menu, operating hours, and bot greeting.` },
-  ] : eventBased ? [
-    { label: 'Set up our events & ticketing', prompt: `I run a ${cat} called "${business.name}". I want to set up our events and ticket sales.` },
-    { label: 'Set up everything (events + hours + greeting)', prompt: `I run a ${cat} called "${business.name}". I want to set up our events, schedule, and bot greeting.` },
-  ] : [
-    { label: 'Add my services with prices', prompt: `I run a ${cat} called "${business.name}". I want to add my services with prices and duration.` },
-    { label: 'Upload a photo of my price list', prompt: `I run a ${cat} called "${business.name}". I'll upload a photo of my price list. Can you read it?` },
-    { label: 'Set up everything (services + hours + greeting)', prompt: `I run a ${cat} called "${business.name}". I want to set up my services, operating hours, and bot greeting.` },
-  ];
+  // Wizard step
+  const [step, setStep] = useState<Step>('what');
+  const [businessType, setBusinessType] = useState<'services' | 'products' | 'both' | null>(
+    faithBased ? 'services' : foodBased || retailBased ? 'products' : null
+  );
 
-  // Send initial greeting
-  useEffect(() => {
-    if (messages.length === 0) {
-      setMessages([{
-        role: 'assistant',
-        content: `Hi, I'm Ace! I'll help you set up your WhatsApp bot in seconds.\n\nPick an option below to get started, or just describe what your business does!`,
-      }]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Items
+  const [services, setServices] = useState<ServiceItem[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [freeTextItems, setFreeTextItems] = useState('');
+  const [parsingText, setParsingText] = useState(false);
 
-  const handleQuickStart = (prompt: string) => {
-    setShowQuickStart(false);
-    setInput(prompt);
-    // Auto-send after a tick so the input shows briefly
-    setTimeout(() => {
-      sendMessageWithText(prompt);
-    }, 100);
+  // Hours
+  const [hours, setHours] = useState<OperatingHours>({});
+
+  // Greeting
+  const [greeting, setGreeting] = useState('');
+
+  // Image upload
+  const [parsing, setParsing] = useState(false);
+
+  // Apply
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState(false);
+
+  // ── Step 1: What type of business ──
+  const handleBusinessType = (type: 'services' | 'products' | 'both') => {
+    setBusinessType(type);
+    setStep('items');
   };
 
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || thinking) return;
-    sendMessageWithText(text);
-  };
+  // ── Add item manually ──
+  const addService = () => setServices([...services, { name: '', price: 0, duration_minutes: 30, deposit_amount: 0, description: '' }]);
+  const addProduct = () => setProducts([...products, { name: '', price: 0, description: '', category: '' }]);
 
-  const sendMessageWithText = async (text: string) => {
-    if (!text || thinking) return;
-    setShowQuickStart(false);
-
-    const newMessages: ChatMessage[] = [...messages, { role: 'user', content: text }];
-    setMessages(newMessages);
-    setInput('');
-    setThinking(true);
-
+  // ── Parse free text with AI (ONE call) ──
+  const parseTextWithAI = async () => {
+    if (!freeTextItems.trim()) return;
+    setParsingText(true);
     try {
       const res = await fetch('/api/ai-setup/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           business_id: business.id,
-          message: text,
-          conversation_history: newMessages.slice(1), // Skip initial greeting
+          message: `Here are my ${businessType === 'products' ? 'products' : 'services'}: ${freeTextItems}`,
         }),
       });
-
-      if (!res.ok) throw new Error('Failed');
-
-      const data = await res.json();
-      setMessages([...newMessages, { role: 'assistant', content: data.reply }]);
-
-      // If AI returned structured suggestions, populate preview
-      if (data.suggestion) {
-        applySuggestion(data.suggestion);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.suggestion?.services?.length) {
+          setServices(prev => [...prev, ...data.suggestion.services.map((s: ServiceItem) => ({
+            name: s.name || '', price: s.price || 0, duration_minutes: s.duration_minutes || 30,
+            deposit_amount: s.deposit_amount || 0, description: s.description || '',
+          }))]);
+        }
+        if (data.suggestion?.products?.length) {
+          setProducts(prev => [...prev, ...data.suggestion.products.map((p: ProductItem) => ({
+            name: p.name || '', price: p.price || 0, description: p.description || '', category: p.category || '',
+          }))]);
+        }
+        setFreeTextItems('');
       }
-    } catch {
-      setMessages([...newMessages, { role: 'assistant', content: 'Sorry, something went wrong. Please try again.' }]);
-    }
-    setThinking(false);
+    } catch { /* ignore */ }
+    setParsingText(false);
   };
 
-  const applySuggestion = (s: AISuggestion) => {
-    if (s.services?.length) {
-      setServices(s.services.map(svc => ({
-        name: svc.name || '',
-        price: svc.price || 0,
-        duration_minutes: svc.duration_minutes || 30,
-        deposit_amount: svc.deposit_amount || 0,
-        description: svc.description || '',
-      })));
-    }
-    if (s.products?.length) {
-      setProducts(s.products.map(p => ({
-        name: p.name || '',
-        price: p.price || 0,
-        description: p.description || '',
-        category: p.category || '',
-      })));
-    }
-    if (s.operating_hours) setHours(s.operating_hours);
-    if (s.greeting) setGreeting(s.greeting);
-    if (s.capabilities?.length) setCapabilities(s.capabilities);
-    setHasSuggestion(true);
-  };
-
+  // ── Image upload → AI extracts items ──
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setParsing(true);
     const formData = new FormData();
     formData.append('file', file);
     formData.append('business_id', business.id);
-    formData.append('type', imageType);
-
+    formData.append('type', businessType === 'products' ? 'products' : 'services');
     try {
-      const res = await fetch('/api/ai-setup/parse-image', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!res.ok) throw new Error('Failed');
-
-      const data = await res.json();
-      const items = data.items || [];
-
-      if (items.length === 0) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: "Hmm, I couldn't find any items with prices in that image. Try a clearer photo of your menu or price list, or just describe your services to me in the chat!",
-        }]);
-      } else {
-        if (data.type === 'services' || imageType === 'services') {
-          setServices(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
-            name: (item.name as string) || '',
-            price: (item.price as number) || 0,
-            duration_minutes: (item.duration_minutes as number) || 30,
-            deposit_amount: 0,
-            description: (item.description as string) || '',
+      const res = await fetch('/api/ai-setup/parse-image', { method: 'POST', body: formData });
+      if (res.ok) {
+        const data = await res.json();
+        const items = data.items || [];
+        if (data.type === 'products' || businessType === 'products') {
+          setProducts(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
+            name: (item.name as string) || '', price: (item.price as number) || 0,
+            description: (item.description as string) || '', category: (item.category as string) || '',
           }))]);
         } else {
-          setProducts(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
-            name: (item.name as string) || '',
-            price: (item.price as number) || 0,
+          setServices(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
+            name: (item.name as string) || '', price: (item.price as number) || 0,
+            duration_minutes: (item.duration_minutes as number) || 30, deposit_amount: 0,
             description: (item.description as string) || '',
-            category: (item.category as string) || '',
           }))]);
         }
-        setHasSuggestion(true);
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: `I found ${items.length} item${items.length !== 1 ? 's' : ''} in your image! Check the preview panel — you can edit names, prices, or remove anything that's not right.`,
-        }]);
       }
-    } catch {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Sorry, I had trouble reading that image. Please try another photo or describe your items in the chat.',
-      }]);
-    }
+    } catch { /* ignore */ }
     setParsing(false);
-    // Reset input
     e.target.value = '';
   };
 
+  // ── Apply setup ──
   const handleApply = async () => {
     setApplying(true);
     try {
@@ -253,29 +188,20 @@ export default function SetupAssistantPage() {
       if (products.length > 0) payload.products = products.filter(p => p.name.trim());
       if (Object.keys(hours).length > 0) payload.operating_hours = hours;
       if (greeting.trim()) payload.greeting = greeting.trim();
-      if (capabilities.length > 0) payload.capabilities = capabilities;
-
       const res = await fetch('/api/ai-setup/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-
-      if (!res.ok) throw new Error('Failed');
-
-      setApplied(true);
-    } catch {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Something went wrong applying your setup. Please try again.',
-      }]);
-    }
+      if (res.ok) setApplied(true);
+    } catch { /* ignore */ }
     setApplying(false);
   };
 
-  // ── Applied success ──
+  const totalItems = services.filter(s => s.name.trim()).length + products.filter(p => p.name.trim()).length;
+
+  // ── Success ──
   if (applied) {
-    const totalItems = services.filter(s => s.name.trim()).length + products.filter(p => p.name.trim()).length;
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center max-w-md">
@@ -288,130 +214,138 @@ export default function SetupAssistantPage() {
           </p>
           <p className="text-sm text-gray-400 mb-6">Your WhatsApp bot is ready to go.</p>
           <div className="flex gap-3 justify-center">
-            <button
-              onClick={() => router.push('/dashboard/services')}
-              className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800"
-            >
-              View Services
-            </button>
-            <button
-              onClick={() => router.push('/dashboard')}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
-            >
-              Go to Dashboard
-            </button>
+            <button onClick={() => router.push('/dashboard/services')} className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">View Services</button>
+            <button onClick={() => router.push('/dashboard')} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300">Dashboard</button>
           </div>
         </div>
       </div>
     );
   }
 
-  const totalItems = services.filter(s => s.name.trim()).length + products.filter(p => p.name.trim()).length;
-
   return (
-    <div className="space-y-4">
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Ace</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Your AI assistant — describe your business or upload a menu and Ace will set everything up.</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Ace AI Assistant</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+            {step === 'what' && 'Let\'s get your WhatsApp bot set up.'}
+            {step === 'items' && `Add your ${businessType === 'products' ? 'products' : config.itemPlural.toLowerCase()}.`}
+            {step === 'hours' && 'Set your operating hours.'}
+            {step === 'greeting' && 'Customize your bot\'s greeting message.'}
+            {step === 'review' && 'Review everything before we create it.'}
+          </p>
         </div>
-        <button
-          onClick={() => router.push('/dashboard')}
-          className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
-        >
-          Skip for now
-        </button>
+        <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Skip</button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* ── Left: Chat + Image Upload ── */}
+      {/* Progress */}
+      <div className="flex gap-1">
+        {['what', 'items', 'hours', 'greeting', 'review'].map((s, i) => (
+          <div key={s} className={`h-1.5 flex-1 rounded-full ${
+            ['what', 'items', 'hours', 'greeting', 'review'].indexOf(step) >= i
+              ? 'bg-black dark:bg-white' : 'bg-gray-200 dark:bg-gray-700'
+          }`} />
+        ))}
+      </div>
+
+      {/* ══════════ Step 1: What type ══════════ */}
+      {step === 'what' && (
         <div className="space-y-3">
-          {/* Chat */}
-          <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 flex flex-col" style={{ height: '460px' }}>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {messages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap ${
-                    msg.role === 'user'
-                      ? 'bg-black text-white dark:bg-white dark:text-black'
-                      : 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200'
-                  }`}>
-                    {msg.content}
-                  </div>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">What does {business.name} do?</h2>
+          <div className="space-y-2">
+            {faithBased ? (
+              <>
+                <StepButton label={`We hold ${cat === 'mosque' ? 'prayers & programs' : 'services & gatherings'}`} onClick={() => handleBusinessType('services')} />
+                <StepButton label="We also collect tithes, offerings, or donations" onClick={() => handleBusinessType('services')} />
+              </>
+            ) : (
+              <>
+                <StepButton label="We offer services (appointments, consultations, treatments)" onClick={() => handleBusinessType('services')} />
+                <StepButton label="We sell products (food, retail, online store)" onClick={() => handleBusinessType('products')} />
+                <StepButton label="Both — services and products" onClick={() => handleBusinessType('both')} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ Step 2: Add items ══════════ */}
+      {step === 'items' && (
+        <div className="space-y-4">
+          {/* Services section */}
+          {(businessType === 'services' || businessType === 'both') && (
+            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{config.itemPlural} ({services.length})</h3>
+                <button onClick={addService} className="text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add manually</button>
+              </div>
+              <p className="text-xs text-gray-400">{config.examples}</p>
+
+              {services.map((s, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input value={s.name} onChange={e => { const c = [...services]; c[i] = { ...c[i], name: e.target.value }; setServices(c); }}
+                    placeholder={config.itemLabel} className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <input type="number" value={s.price || ''} onChange={e => { const c = [...services]; c[i] = { ...c[i], price: Number(e.target.value) }; setServices(c); }}
+                    placeholder={config.priceLabel} className="w-20 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <input type="number" value={s.duration_minutes || ''} onChange={e => { const c = [...services]; c[i] = { ...c[i], duration_minutes: Number(e.target.value) }; setServices(c); }}
+                    placeholder="Min" title={config.durationLabel} className="w-16 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <button onClick={() => setServices(services.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
                 </div>
               ))}
-              {/* Quick-start buttons */}
-              {showQuickStart && !thinking && messages.length <= 1 && (
-                <div className="space-y-1.5 px-1">
-                  {quickStartOptions.map((opt, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleQuickStart(opt.prompt)}
-                      className="w-full text-left px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300 transition"
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {thinking && (
-                <div className="flex justify-start">
-                  <div className="bg-gray-100 dark:bg-gray-700 rounded-2xl px-4 py-2.5 text-sm text-gray-500">
-                    <span className="inline-flex gap-1">
-                      <span className="animate-bounce" style={{ animationDelay: '0ms' }}>.</span>
-                      <span className="animate-bounce" style={{ animationDelay: '150ms' }}>.</span>
-                      <span className="animate-bounce" style={{ animationDelay: '300ms' }}>.</span>
-                    </span>
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
             </div>
-            <div className="border-t border-gray-200 dark:border-gray-700 p-3">
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={e => setInput(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                  placeholder="Describe your business..."
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                  disabled={thinking}
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={thinking || !input.trim()}
-                  className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
-                >
-                  Send
-                </button>
+          )}
+
+          {/* Products section */}
+          {(businessType === 'products' || businessType === 'both') && (
+            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Products ({products.length})</h3>
+                <button onClick={addProduct} className="text-xs text-blue-600 hover:text-blue-800 font-medium">+ Add manually</button>
               </div>
+
+              {products.map((p, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input value={p.name} onChange={e => { const c = [...products]; c[i] = { ...c[i], name: e.target.value }; setProducts(c); }}
+                    placeholder="Product name" className="flex-1 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <input type="number" value={p.price || ''} onChange={e => { const c = [...products]; c[i] = { ...c[i], price: Number(e.target.value) }; setProducts(c); }}
+                    placeholder="Price" className="w-20 text-sm border border-gray-200 rounded px-2 py-1.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                  <button onClick={() => setProducts(products.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              ))}
             </div>
+          )}
+
+          {/* Paste text → AI extracts */}
+          <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-4 space-y-3">
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Paste your list and let Ace extract it</p>
+            <textarea
+              value={freeTextItems}
+              onChange={e => setFreeTextItems(e.target.value)}
+              rows={3}
+              placeholder={`Paste your ${businessType === 'products' ? 'product' : 'service'} list here, e.g.:\nHaircut - $15\nBeard trim - $10\nKids cut - $12`}
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            />
+            <button
+              onClick={parseTextWithAI}
+              disabled={parsingText || !freeTextItems.trim()}
+              className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
+            >
+              {parsingText ? 'Ace is reading...' : 'Extract with Ace'}
+            </button>
           </div>
 
-          {/* Image Upload */}
+          {/* Upload image → AI extracts */}
           <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-4">
-            <div className="flex items-center gap-3 mb-3">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Or upload a menu / price list</p>
-              <select
-                value={imageType}
-                onChange={e => setImageType(e.target.value as 'services' | 'products')}
-                className="text-xs border border-gray-300 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300"
-              >
-                <option value="services">As services</option>
-                <option value="products">As products</option>
-              </select>
-            </div>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Or upload a photo of your menu / price list</p>
             <label className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-600 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-                disabled={parsing}
-              />
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" disabled={parsing} />
               {parsing ? (
-                <span className="text-sm text-gray-500">Reading image...</span>
+                <span className="text-sm text-gray-500">Ace is reading your image...</span>
               ) : (
                 <>
                   <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -422,191 +356,219 @@ export default function SetupAssistantPage() {
               )}
             </label>
           </div>
-        </div>
 
-        {/* ── Right: Editable Preview ── */}
-        <div className="space-y-3">
-          {!hasSuggestion ? (
-            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-8 text-center" style={{ height: '460px' }}>
-              <div className="flex flex-col items-center justify-center h-full">
-                <div className="text-4xl mb-3 opacity-50">✨</div>
-                <h3 className="text-lg font-medium text-gray-400 dark:text-gray-500">Preview</h3>
-                <p className="text-sm text-gray-400 dark:text-gray-500 mt-1 max-w-[260px]">
-                  Describe your business in the chat or upload a photo — AI will fill this in for you to review.
-                </p>
+          <div className="flex justify-between">
+            <button onClick={() => setStep('what')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+            <button onClick={() => setStep('hours')} className="px-6 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
+              Next: Hours
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ Step 3: Operating hours ══════════ */}
+      {step === 'hours' && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Operating Hours</h2>
+
+          {/* Presets */}
+          <div className="flex flex-wrap gap-2">
+            {config.hoursPresets.map((preset, i) => (
+              <button
+                key={i}
+                onClick={() => setHours(preset.hours)}
+                className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300"
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Manual hours */}
+          <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-2">
+            {DAYS.map(day => {
+              const h = hours[day] || {};
+              const isClosed = h.closed === true;
+              return (
+                <div key={day} className="flex items-center gap-3">
+                  <span className="w-10 text-xs font-medium text-gray-500 uppercase">{DAY_LABELS[day]}</span>
+                  <input
+                    type="checkbox"
+                    checked={!isClosed && !!hours[day]}
+                    onChange={e => {
+                      const copy = { ...hours };
+                      copy[day] = e.target.checked ? { open: '09:00', close: '17:00' } : { closed: true };
+                      setHours(copy);
+                    }}
+                    className="rounded"
+                  />
+                  {!isClosed && hours[day] ? (
+                    <>
+                      <input type="time" value={h.open || '09:00'}
+                        onChange={e => { const copy = { ...hours }; copy[day] = { ...copy[day], open: e.target.value }; setHours(copy); }}
+                        className="text-xs border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                      <span className="text-xs text-gray-400">to</span>
+                      <input type="time" value={h.close || '17:00'}
+                        onChange={e => { const copy = { ...hours }; copy[day] = { ...copy[day], close: e.target.value }; setHours(copy); }}
+                        className="text-xs border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100" />
+                    </>
+                  ) : (
+                    <span className="text-xs text-gray-400">{hours[day] ? 'Closed' : 'Not set'}</span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={() => setStep('items')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+            <button onClick={() => setStep('greeting')} className="px-6 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
+              Next: Greeting
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ Step 4: Bot greeting ══════════ */}
+      {step === 'greeting' && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Bot Greeting Message</h2>
+          <p className="text-sm text-gray-500">This is what customers see when they first message your WhatsApp bot.</p>
+
+          {/* Preset suggestions */}
+          <div className="space-y-2">
+            {[
+              faithBased
+                ? `Welcome to ${business.name}! ${cat === 'mosque' ? 'Assalamu Alaikum.' : ''} How can we help you today?`
+                : `Hi! Welcome to ${business.name}. How can I help you today?`,
+              `Hello! Thanks for reaching out to ${business.name}. What would you like to do?`,
+              faithBased
+                ? `God bless you! Welcome to ${business.name}. Tap a button below to get started.`
+                : `Hey there! ${business.name} here. Ready to assist you!`,
+            ].map((suggestion, i) => (
+              <button
+                key={i}
+                onClick={() => setGreeting(suggestion)}
+                className={`w-full text-left px-3 py-2 text-sm rounded-lg border transition ${
+                  greeting === suggestion
+                    ? 'border-black bg-gray-50 dark:border-white dark:bg-gray-700'
+                    : 'border-gray-200 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700/50'
+                } text-gray-700 dark:text-gray-300`}
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">Or write your own:</label>
+            <textarea
+              value={greeting}
+              onChange={e => setGreeting(e.target.value)}
+              rows={2}
+              placeholder="Type a custom greeting..."
+              className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            />
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={() => setStep('hours')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+            <button onClick={() => setStep('review')} className="px-6 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
+              Review
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════ Step 5: Review & confirm ══════════ */}
+      {step === 'review' && (
+        <div className="space-y-4">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Review Your Setup</h2>
+
+          {/* Services summary */}
+          {services.filter(s => s.name.trim()).length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">{config.itemPlural} ({services.filter(s => s.name.trim()).length})</h3>
+              <div className="space-y-1">
+                {services.filter(s => s.name.trim()).map((s, i) => (
+                  <div key={i} className="flex justify-between text-sm">
+                    <span className="text-gray-700 dark:text-gray-300">{s.name}</span>
+                    <span className="text-gray-500">{s.price > 0 ? `${s.price}` : 'Free'} &middot; {s.duration_minutes}min</span>
+                  </div>
+                ))}
               </div>
             </div>
-          ) : (
-            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 overflow-y-auto" style={{ maxHeight: '560px' }}>
-              {/* Services */}
-              {services.length > 0 && (
-                <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Services ({services.length})</h3>
-                    <button
-                      onClick={() => setServices([...services, { name: '', price: 0, duration_minutes: 30, deposit_amount: 0, description: '' }])}
-                      className="text-xs text-blue-600 hover:text-blue-800"
-                    >
-                      + Add
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {services.map((s, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input
-                          value={s.name}
-                          onChange={e => { const c = [...services]; c[i] = { ...c[i], name: e.target.value }; setServices(c); }}
-                          placeholder="Service name"
-                          className="flex-1 text-sm border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                        />
-                        <input
-                          type="number"
-                          value={s.price}
-                          onChange={e => { const c = [...services]; c[i] = { ...c[i], price: Number(e.target.value) }; setServices(c); }}
-                          className="w-20 text-sm border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                          placeholder="Price"
-                        />
-                        <input
-                          type="number"
-                          value={s.duration_minutes}
-                          onChange={e => { const c = [...services]; c[i] = { ...c[i], duration_minutes: Number(e.target.value) }; setServices(c); }}
-                          className="w-16 text-sm border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                          placeholder="Min"
-                          title="Duration (minutes)"
-                        />
-                        <button onClick={() => setServices(services.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+          )}
 
-              {/* Products */}
-              {products.length > 0 && (
-                <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Products ({products.length})</h3>
-                    <button
-                      onClick={() => setProducts([...products, { name: '', price: 0, description: '', category: '' }])}
-                      className="text-xs text-blue-600 hover:text-blue-800"
-                    >
-                      + Add
-                    </button>
+          {/* Products summary */}
+          {products.filter(p => p.name.trim()).length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Products ({products.filter(p => p.name.trim()).length})</h3>
+              <div className="space-y-1">
+                {products.filter(p => p.name.trim()).map((p, i) => (
+                  <div key={i} className="flex justify-between text-sm">
+                    <span className="text-gray-700 dark:text-gray-300">{p.name}</span>
+                    <span className="text-gray-500">{p.price}</span>
                   </div>
-                  <div className="space-y-2">
-                    {products.map((p, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input
-                          value={p.name}
-                          onChange={e => { const c = [...products]; c[i] = { ...c[i], name: e.target.value }; setProducts(c); }}
-                          placeholder="Product name"
-                          className="flex-1 text-sm border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                        />
-                        <input
-                          type="number"
-                          value={p.price}
-                          onChange={e => { const c = [...products]; c[i] = { ...c[i], price: Number(e.target.value) }; setProducts(c); }}
-                          className="w-20 text-sm border border-gray-200 rounded px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                          placeholder="Price"
-                        />
-                        <button onClick={() => setProducts(products.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
-                          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Operating Hours */}
-              {Object.keys(hours).length > 0 && (
-                <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Operating Hours</h3>
-                  <div className="space-y-1.5">
-                    {DAYS.map(day => {
-                      const h = hours[day] || {};
-                      const isClosed = h.closed === true;
-                      return (
-                        <div key={day} className="flex items-center gap-2">
-                          <span className="w-10 text-xs font-medium text-gray-500 uppercase">{DAY_LABELS[day]}</span>
-                          <label className="flex items-center gap-1 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={!isClosed}
-                              onChange={e => {
-                                const copy = { ...hours };
-                                copy[day] = e.target.checked ? { open: '09:00', close: '17:00' } : { closed: true };
-                                setHours(copy);
-                              }}
-                              className="rounded"
-                            />
-                          </label>
-                          {!isClosed ? (
-                            <>
-                              <input
-                                type="time"
-                                value={h.open || '09:00'}
-                                onChange={e => { const copy = { ...hours }; copy[day] = { ...copy[day], open: e.target.value }; setHours(copy); }}
-                                className="text-xs border border-gray-200 rounded px-1.5 py-0.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                              />
-                              <span className="text-xs text-gray-400">to</span>
-                              <input
-                                type="time"
-                                value={h.close || '17:00'}
-                                onChange={e => { const copy = { ...hours }; copy[day] = { ...copy[day], close: e.target.value }; setHours(copy); }}
-                                className="text-xs border border-gray-200 rounded px-1.5 py-0.5 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                              />
-                            </>
-                          ) : (
-                            <span className="text-xs text-gray-400">Closed</span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Bot Greeting */}
-              {greeting && (
-                <div className="p-4 border-b border-gray-100 dark:border-gray-700">
-                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Bot Greeting</h3>
-                  <textarea
-                    value={greeting}
-                    onChange={e => setGreeting(e.target.value)}
-                    rows={2}
-                    className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                  />
-                </div>
-              )}
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Confirm Button */}
-          {hasSuggestion && (
-            <div className="rounded-lg border border-blue-100 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-900/20 p-4">
-              <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
-                Does this look right? Edit anything above, then confirm when ready.
-              </p>
-              <p className="text-xs text-gray-500 mb-3">
-                Will create: {services.filter(s => s.name.trim()).length > 0 && `${services.filter(s => s.name.trim()).length} service${services.filter(s => s.name.trim()).length !== 1 ? 's' : ''}`}
-                {products.filter(p => p.name.trim()).length > 0 && `${services.length > 0 ? ', ' : ''}${products.filter(p => p.name.trim()).length} product${products.filter(p => p.name.trim()).length !== 1 ? 's' : ''}`}
-                {Object.keys(hours).length > 0 && ', set hours'}
-                {greeting && ', update greeting'}
-              </p>
-              <button
-                onClick={handleApply}
-                disabled={applying || totalItems === 0}
-                className="w-full py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {applying ? 'Setting up...' : `Looks good — create ${totalItems} item${totalItems !== 1 ? 's' : ''}`}
-              </button>
+          {/* Hours summary */}
+          {Object.keys(hours).length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Operating Hours</h3>
+              <div className="space-y-0.5">
+                {DAYS.map(day => {
+                  const h = hours[day];
+                  if (!h) return null;
+                  return (
+                    <div key={day} className="flex justify-between text-sm">
+                      <span className="text-gray-700 dark:text-gray-300 capitalize">{day}</span>
+                      <span className="text-gray-500">{h.closed ? 'Closed' : `${h.open} - ${h.close}`}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
+
+          {/* Greeting summary */}
+          {greeting && (
+            <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Bot Greeting</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-400 italic">&ldquo;{greeting}&rdquo;</p>
+            </div>
+          )}
+
+          {totalItems === 0 && Object.keys(hours).length === 0 && !greeting && (
+            <p className="text-sm text-gray-400 text-center py-4">Nothing to create yet. Go back and add some items.</p>
+          )}
+
+          <div className="flex justify-between">
+            <button onClick={() => setStep('greeting')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
+            <button
+              onClick={handleApply}
+              disabled={applying || (totalItems === 0 && Object.keys(hours).length === 0 && !greeting)}
+              className="px-6 py-2.5 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {applying ? 'Setting up...' : 'Confirm & Create'}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
+  );
+}
+
+function StepButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left px-4 py-3 text-sm rounded-xl border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-700 dark:text-gray-300 transition"
+    >
+      {label}
+    </button>
   );
 }
