@@ -5,6 +5,7 @@ import { DashboardProvider } from '@/components/dashboard/DashboardProvider';
 import { Sidebar } from '@/components/dashboard/Sidebar';
 import { ImpersonationBanner } from '@/components/dashboard/ImpersonationBanner';
 import { AlertBanner } from '@/components/dashboard/AlertBanner';
+import { FloatingHelp } from '@/components/dashboard/FloatingHelp';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
@@ -155,6 +156,7 @@ export default async function DashboardLayout({
             {children}
           </div>
         </main>
+        <FloatingHelp />
       </div>
     </DashboardProvider>
   );
