@@ -38,15 +38,15 @@ export function AISetupCard() {
             ✨
           </div>
           <div>
-            <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Set up with AI</h3>
+            <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100">Meet Ace</h3>
             <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400 max-w-sm">
-              Describe your business or upload a menu photo — AI will create your services, set hours, and configure your bot in seconds.
+              Ace is your AI assistant. Describe your business or upload a menu photo — Ace will create your services, set hours, and configure your bot in seconds.
             </p>
             <Link
               href="/dashboard/setup-assistant"
               className="mt-2 inline-flex items-center gap-1 rounded-lg bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
             >
-              Start AI Setup
+              Chat with Ace
               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
             </Link>
           </div>

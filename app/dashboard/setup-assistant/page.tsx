@@ -88,7 +88,7 @@ export default function SetupAssistantPage() {
     if (messages.length === 0) {
       setMessages([{
         role: 'assistant',
-        content: `Hi! I'll help you set up your WhatsApp bot in seconds.\n\nPick an option below to get started, or just describe what your business does!`,
+        content: `Hi, I'm Ace! I'll help you set up your WhatsApp bot in seconds.\n\nPick an option below to get started, or just describe what your business does!`,
       }]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,7 +192,7 @@ export default function SetupAssistantPage() {
       if (items.length === 0) {
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: "I couldn't find any items with prices in that image. Try a clearer photo of your menu or price list, or just describe your services in the chat.",
+          content: "Hmm, I couldn't find any items with prices in that image. Try a clearer photo of your menu or price list, or just describe your services to me in the chat!",
         }]);
       } else {
         if (data.type === 'services' || imageType === 'services') {
@@ -214,7 +214,7 @@ export default function SetupAssistantPage() {
         setHasSuggestion(true);
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: `I found ${items.length} item${items.length !== 1 ? 's' : ''} in your image! Check the preview panel on the right — you can edit names, prices, or remove anything that's not right.`,
+          content: `I found ${items.length} item${items.length !== 1 ? 's' : ''} in your image! Check the preview panel — you can edit names, prices, or remove anything that's not right.`,
         }]);
       }
     } catch {
@@ -295,8 +295,8 @@ export default function SetupAssistantPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">AI Setup Assistant</h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Describe your business or upload a menu — AI will set everything up for you.</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Ace</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Your AI assistant — describe your business or upload a menu and Ace will set everything up.</p>
         </div>
         <button
           onClick={() => router.push('/dashboard')}
