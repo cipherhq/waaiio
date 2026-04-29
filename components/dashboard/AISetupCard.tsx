@@ -3,11 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useBusiness } from './DashboardProvider';
-import { createClient } from '@/lib/supabase/client';
 
 /**
- * Shows an AI setup prompt on the dashboard overview for new businesses
- * (those with fewer than 3 services). Dismissible via localStorage.
+ * Shows an AI setup prompt on the dashboard overview.
+ * Dismissible via localStorage. Available to all businesses.
  */
 export function AISetupCard() {
   const business = useBusiness();
@@ -20,18 +19,8 @@ export function AISetupCard() {
       setLoading(false);
       return;
     }
-
-    async function check() {
-      const supabase = createClient();
-      const { count } = await supabase
-        .from('services')
-        .select('id', { count: 'exact', head: true })
-        .eq('business_id', business.id);
-      // Show card if business has fewer than 3 services
-      setShow((count || 0) < 3);
-      setLoading(false);
-    }
-    check();
+    setShow(true);
+    setLoading(false);
   }, [business.id]);
 
   if (loading || !show) return null;
