@@ -7,6 +7,7 @@ import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
 import { logger } from '@/lib/logger';
 import { transcribeAudio } from '@/lib/bot/transcription';
+import { checkAIFeature, incrementAIUsage, getVoiceNotSupportedMessage } from '@/lib/bot/ai-tier-guard';
 
 /**
  * POST /api/webhook/meta-cloud
@@ -206,19 +207,33 @@ export async function POST(request: NextRequest) {
                   .getPublicUrl(storagePath);
                 mediaUrl = urlData.publicUrl;
 
-                // Transcribe audio with Whisper
-                try {
-                  const transcript = await transcribeAudio(
-                    audioBuffer,
-                    msg.audio.mime_type || 'audio/ogg',
-                    `meta-${msg.id || source}`,
-                  );
-                  if (transcript) {
-                    text = transcript;
-                    logger.debug('[META-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+                // Transcribe audio with Whisper (tier-gated)
+                if (preResolvedBusinessId) {
+                  const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', preResolvedBusinessId).single();
+                  const tier = bizTier?.subscription_tier || 'free';
+                  const { allowed } = await checkAIFeature(supabase, preResolvedBusinessId, tier, 'voice_transcription');
+
+                  if (allowed) {
+                    try {
+                      const transcript = await transcribeAudio(
+                        audioBuffer,
+                        msg.audio.mime_type || 'audio/ogg',
+                        `meta-${msg.id || source}`,
+                      );
+                      if (transcript) {
+                        text = transcript;
+                        await incrementAIUsage(supabase, preResolvedBusinessId, 'voice_transcription');
+                        logger.debug('[META-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+                      }
+                    } catch (transcribeErr) {
+                      logger.error('[META-WEBHOOK] Transcription error:', transcribeErr);
+                    }
+                  } else {
+                    // Free tier: tell customer to type instead
+                    try {
+                      await resolved.sender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
+                    } catch { /* ignore */ }
                   }
-                } catch (transcribeErr) {
-                  logger.error('[META-WEBHOOK] Transcription error:', transcribeErr);
                 }
               }
             } catch (err) {

@@ -10,6 +10,7 @@ import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { translateBotResponse, detectLanguage, getLanguageName } from './translate';
+import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
@@ -638,8 +639,9 @@ export class BotService {
         return;
       }
 
-      // Auto-detect language from first message — ask for confirmation before switching
-      if (text.length >= 3) {
+      // Auto-detect language from first message — tier-gated (Growth+ only)
+      const bizTier = business?.subscription_tier || 'free';
+      if (text.length >= 3 && isLanguageAllowed(bizTier, 'non-en')) {
         detectLanguage(text).then(async (lang) => {
           if (lang !== 'en') {
             // Store as pending — don't activate until user confirms

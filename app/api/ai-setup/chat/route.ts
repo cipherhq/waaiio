@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
+import { checkAIFeature, incrementAIUsage } from '@/lib/bot/ai-tier-guard';
 
 let client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -183,6 +184,12 @@ export async function POST(request: NextRequest) {
 
   // Determine which capabilities are allowed on this tier
   const tier = (biz.subscription_tier || 'free') as 'free' | 'growth' | 'business';
+
+  // Check AI usage limits for Ace
+  const { allowed, reason } = await checkAIFeature(supabase, business_id, tier, 'ace_setup');
+  if (!allowed) {
+    return NextResponse.json({ error: reason || 'AI setup limit reached. Upgrade your plan for more.' }, { status: 403 });
+  }
   const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
   const allowedCapabilities = Object.entries(CAPABILITY_TIER_REQUIREMENTS)
     .filter(([, requiredTier]) => tierRank[tier] >= tierRank[requiredTier])
@@ -237,6 +244,9 @@ ${categoryGuide}
         (cap: string) => allowedCapabilities.includes(cap)
       );
     }
+
+    // Track usage
+    await incrementAIUsage(supabase, business_id, 'ace_setup');
 
     return NextResponse.json({
       reply: text,
