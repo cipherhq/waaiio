@@ -48,6 +48,12 @@ const JSON_LD_ORG = {
   url: 'https://waaiio.com',
   logo: 'https://waaiio.com/logo.png',
   description: 'AI-Powered WhatsApp Automation for Every Business',
+  award: 'Meta Verified Tech Provider',
+  memberOf: {
+    '@type': 'Organization',
+    name: 'Meta Business Partners',
+    url: 'https://www.facebook.com/business/partner-directory',
+  },
   contactPoint: {
     '@type': 'ContactPoint',
     contactType: 'customer support',
@@ -94,6 +100,7 @@ const PRICE_COUNTRIES = [
   { code: 'GB' as const, flag: '🇬🇧', label: 'UK' },
   { code: 'CA' as const, flag: '🇨🇦', label: 'Canada' },
   { code: 'GH' as const, flag: '🇬🇭', label: 'Ghana' },
+  { code: 'IN' as const, flag: '🇮🇳', label: 'India' },
 ];
 
 export default function HomePage() {
@@ -101,7 +108,7 @@ export default function HomePage() {
   const { scrollYProgress } = useScroll();
   const heroY = useTransform(scrollYProgress, [0, 0.3], [0, 120]);
   const heroOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
-  const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH'>('NG');
+  const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH' | 'IN'>('NG');
   const PRICING_TIERS = getPricingTiers(priceCountry);
 
   return (
@@ -227,6 +234,22 @@ export default function HomePage() {
                     ))}
                   </div>
                   <p className="text-xs text-brand-200">Trusted by <strong className="text-white">100+</strong> businesses</p>
+                </div>
+              </motion.div>
+
+              {/* Meta Business Partner Badge */}
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1.6, duration: 0.6 }}
+                className="mt-5 flex items-center justify-center gap-2 lg:justify-start"
+              >
+                <div className="flex items-center gap-2 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 px-4 py-2">
+                  <svg className="h-4 w-4 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 2C6.477 2 2 6.477 2 12c0 5.523 4.477 10 10 10s10-4.477 10-10S17.523 2 12 2zm4.586 7.414l-5.293 5.293a1 1 0 01-1.414 0L7.172 12a1 1 0 111.414-1.414l2.293 2.293 4.586-4.586a1 1 0 111.414 1.414z" />
+                  </svg>
+                  <span className="text-xs font-medium text-white/90">Meta Business Partner</span>
+                  <span className="text-[10px] text-white/50">Verified Tech Provider</span>
                 </div>
               </motion.div>
             </div>

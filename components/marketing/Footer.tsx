@@ -25,6 +25,12 @@ export default function Footer() {
               </svg>
               Built on WhatsApp Business Platform
             </p>
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-white/5 border border-white/10 px-3 py-1">
+              <svg className="h-3.5 w-3.5 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.477 2 2 6.477 2 12c0 5.523 4.477 10 10 10s10-4.477 10-10S17.523 2 12 2zm4.586 7.414l-5.293 5.293a1 1 0 01-1.414 0L7.172 12a1 1 0 111.414-1.414l2.293 2.293 4.586-4.586a1 1 0 111.414 1.414z" />
+              </svg>
+              <span className="text-[11px] font-medium text-gray-300">Meta Business Partner</span>
+            </div>
             {/* TODO: Replace # with real social media URLs */}
             <div className="mt-4 flex items-center gap-3 text-gray-500">
               <a href="https://wa.me/2349060009740" target="_blank" rel="noopener noreferrer" className="transition hover:text-[#25D366]" aria-label="WhatsApp">
