@@ -36,6 +36,7 @@ import {
   AlertTriangle,
   Sun,
   Moon,
+  Zap,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { LucideIcon } from 'lucide-react';
@@ -81,6 +82,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Repeat, label: 'Recurring', path: '/recurring' },
       { icon: Ticket, label: 'Tickets', path: '/tickets' },
       { icon: AlertTriangle, label: 'Alerts', path: '/alerts' },
+      { icon: ClipboardList, label: 'Surveys', path: '/surveys' },
     ],
   },
   {
@@ -123,6 +125,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: CalendarDays, label: 'Events', path: '/events' },
       { icon: Target, label: 'Campaigns', path: '/campaigns' },
       { icon: Globe, label: 'Countries', path: '/countries' },
+      { icon: Zap, label: 'Ace Setup Log', path: '/ai-setup-log' },
       { icon: BrainCircuit, label: 'AI Usage', path: '/ai-usage' },
       { icon: MessageCircle, label: 'Conversation Usage', path: '/conversation-usage' },
       { icon: Settings, label: 'Platform Settings', path: '/platform-settings' },

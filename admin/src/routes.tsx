@@ -38,6 +38,8 @@ import LLMClassifications from './pages/LLMClassifications';
 import Alerts from './pages/Alerts';
 import AIUsage from './pages/AIUsage';
 import ConversationUsage from './pages/ConversationUsage';
+import Surveys from './pages/Surveys';
+import AISetupLog from './pages/AISetupLog';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -86,6 +88,8 @@ export const router = createBrowserRouter([
       { path: 'events', Component: Events },
       { path: 'campaigns', Component: Campaigns },
       { path: 'countries', Component: Countries },
+      { path: 'surveys', Component: Surveys },
+      { path: 'ai-setup-log', Component: AISetupLog },
       { path: 'ai-usage', Component: AIUsage },
       { path: 'conversation-usage', Component: ConversationUsage },
       { path: 'platform-settings', Component: PlatformSettings },
