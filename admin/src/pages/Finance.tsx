@@ -28,9 +28,21 @@ interface Refund {
   created_at: string;
 }
 
+interface Subscription {
+  id: string;
+  business_id: string;
+  tier: string;
+  amount: number;
+  currency: string;
+  status: string;
+  created_at: string;
+}
+
 interface Business {
   id: string;
   category: string;
+  country_code: string;
+  subscription_tier: string;
 }
 
 export default function Finance() {
@@ -40,15 +52,17 @@ export default function Finance() {
   const [payouts, setPayouts] = useState<BusinessPayout[]>([]);
   const [refunds, setRefunds] = useState<Refund[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
 
   useEffect(() => {
     async function load() {
-      const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes] = await Promise.all([
+      const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
         supabase.from('payments').select('id, amount, status, business_id, created_at'),
         supabase.from('platform_fees').select('fee_total, waived, created_at'),
         supabase.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
         supabase.from('refunds').select('amount, status, created_at').eq('status', 'success'),
-        supabase.from('businesses').select('id, category'),
+        supabase.from('businesses').select('id, category, country_code, subscription_tier'),
+        supabase.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
       ]);
 
       setPayments(paymentsRes.data || []);
@@ -56,6 +70,7 @@ export default function Finance() {
       setPayouts(payoutsRes.data || []);
       setRefunds(refundsRes.data || []);
       setBusinesses(bizRes.data || []);
+      setSubscriptions(subsRes.data || []);
       setLoading(false);
     }
     load();
@@ -288,6 +303,120 @@ export default function Finance() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Revenue by Country */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Businesses by Country</h3>
+          <div className="mt-4 space-y-3">
+            {(() => {
+              const byCountry = new Map<string, { count: number; revenue: number; subs: number }>();
+              const bizMap = new Map(businesses.map(b => [b.id, b]));
+              for (const b of businesses) {
+                const cc = b.country_code || 'Unknown';
+                const row = byCountry.get(cc) || { count: 0, revenue: 0, subs: 0 };
+                row.count++;
+                byCountry.set(cc, row);
+              }
+              for (const p of payments) {
+                if (p.status !== 'success' || !p.business_id) continue;
+                const biz = bizMap.get(p.business_id);
+                const cc = biz?.country_code || 'Unknown';
+                const row = byCountry.get(cc) || { count: 0, revenue: 0, subs: 0 };
+                row.revenue += Number(p.amount || 0);
+                byCountry.set(cc, row);
+              }
+              for (const s of subscriptions) {
+                const biz = bizMap.get(s.business_id);
+                const cc = biz?.country_code || 'Unknown';
+                const row = byCountry.get(cc) || { count: 0, revenue: 0, subs: 0 };
+                row.subs++;
+                byCountry.set(cc, row);
+              }
+              const FLAG: Record<string, string> = { NG: '🇳🇬', US: '🇺🇸', GB: '🇬🇧', CA: '🇨🇦', GH: '🇬🇭', IN: '🇮🇳' };
+              return Array.from(byCountry.entries())
+                .sort((a, b) => b[1].count - a[1].count)
+                .map(([cc, data]) => (
+                  <div key={cc} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700">{FLAG[cc] || '🌍'} {cc}</span>
+                    <div className="text-right space-x-3">
+                      <span className="text-gray-500">{data.count} biz</span>
+                      <span className="text-gray-500">{data.subs} paid</span>
+                      <span className="font-medium text-gray-900">{formatMoney(data.revenue)}</span>
+                    </div>
+                  </div>
+                ));
+            })()}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Businesses by Subscription Tier</h3>
+          <div className="mt-4 space-y-3">
+            {(() => {
+              const byTier = new Map<string, { count: number; mrr: number }>();
+              for (const b of businesses) {
+                const tier = b.subscription_tier || 'free';
+                const row = byTier.get(tier) || { count: 0, mrr: 0 };
+                row.count++;
+                byTier.set(tier, row);
+              }
+              for (const s of subscriptions) {
+                const tier = s.tier || 'free';
+                const row = byTier.get(tier) || { count: 0, mrr: 0 };
+                row.mrr += Number(s.amount || 0);
+                byTier.set(tier, row);
+              }
+              const TIER_COLORS: Record<string, string> = {
+                free: 'bg-gray-200', growth: 'bg-amber-400', business: 'bg-purple-500',
+              };
+              const TIER_LABELS: Record<string, string> = {
+                free: 'Starter (Free)', growth: 'Growth (Pro)', business: 'Premium',
+              };
+              const totalBiz = businesses.length || 1;
+              return ['free', 'growth', 'business'].map(tier => {
+                const data = byTier.get(tier) || { count: 0, mrr: 0 };
+                const pct = Math.round((data.count / totalBiz) * 100);
+                return (
+                  <div key={tier}>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="text-gray-700">{TIER_LABELS[tier] || tier}</span>
+                      <div className="text-right space-x-3">
+                        <span className="text-gray-500">{data.count} ({pct}%)</span>
+                        <span className="font-medium text-green-700">MRR: {formatMoney(data.mrr)}</span>
+                      </div>
+                    </div>
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${TIER_COLORS[tier] || 'bg-gray-300'}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </div>
+      </div>
+
+      {/* Subscription MRR Summary */}
+      {subscriptions.length > 0 && (
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          <MetricCard
+            label="Total MRR (Subscriptions)"
+            value={formatMoney(subscriptions.reduce((s, sub) => s + Number(sub.amount || 0), 0))}
+            color="green"
+          />
+          <MetricCard
+            label="Active Paid Subscribers"
+            value={String(subscriptions.length)}
+            color="blue"
+          />
+          <MetricCard
+            label="Avg Revenue Per Subscriber"
+            value={formatMoney(subscriptions.length > 0 ? subscriptions.reduce((s, sub) => s + Number(sub.amount || 0), 0) / subscriptions.length : 0)}
+            color="purple"
+          />
         </div>
       )}
 
