@@ -54,6 +54,27 @@ const CATEGORY_CONFIG: Record<string, { itemLabel: string; itemPlural: string; p
       { label: 'Daily prayers', hours: { monday: { open: '05:00', close: '21:00' }, tuesday: { open: '05:00', close: '21:00' }, wednesday: { open: '05:00', close: '21:00' }, thursday: { open: '05:00', close: '21:00' }, friday: { open: '05:00', close: '21:00' }, saturday: { open: '05:00', close: '21:00' }, sunday: { open: '05:00', close: '21:00' } } },
     ],
   },
+  ngo: {
+    itemLabel: 'Program / Initiative',
+    itemPlural: 'Programs & Initiatives',
+    priceLabel: 'Fee',
+    durationLabel: 'Duration (min)',
+    examples: 'e.g., Youth Empowerment Program, Community Outreach, Skills Workshop',
+    hoursPresets: [
+      { label: 'Mon-Fri 9am-5pm', hours: { monday: { open: '09:00', close: '17:00' }, tuesday: { open: '09:00', close: '17:00' }, wednesday: { open: '09:00', close: '17:00' }, thursday: { open: '09:00', close: '17:00' }, friday: { open: '09:00', close: '17:00' }, saturday: { closed: true }, sunday: { closed: true } } },
+      { label: 'Mon-Sat 9am-5pm', hours: { monday: { open: '09:00', close: '17:00' }, tuesday: { open: '09:00', close: '17:00' }, wednesday: { open: '09:00', close: '17:00' }, thursday: { open: '09:00', close: '17:00' }, friday: { open: '09:00', close: '17:00' }, saturday: { open: '09:00', close: '17:00' }, sunday: { closed: true } } },
+    ],
+  },
+  crowdfunding_org: {
+    itemLabel: 'Campaign / Cause',
+    itemPlural: 'Campaigns & Causes',
+    priceLabel: 'Goal',
+    durationLabel: 'Duration (days)',
+    examples: 'e.g., School Building Fund, Medical Support, Community Project',
+    hoursPresets: [
+      { label: 'Always open', hours: { monday: { open: '00:00', close: '23:59' }, tuesday: { open: '00:00', close: '23:59' }, wednesday: { open: '00:00', close: '23:59' }, thursday: { open: '00:00', close: '23:59' }, friday: { open: '00:00', close: '23:59' }, saturday: { open: '00:00', close: '23:59' }, sunday: { open: '00:00', close: '23:59' } } },
+    ],
+  },
   default: {
     itemLabel: 'Service',
     itemPlural: 'Services',
@@ -77,6 +98,8 @@ export default function SetupAssistantPage() {
   const config = CATEGORY_CONFIG[cat] || CATEGORY_CONFIG.default;
 
   const faithBased = ['church', 'mosque'].includes(cat);
+  const nonProfit = ['ngo', 'crowdfunding_org'].includes(cat);
+  const noProductCategory = faithBased || nonProfit; // These categories never sell products
   const foodBased = ['restaurant', 'food_delivery', 'catering'].includes(cat);
   const retailBased = ['shop', 'instagram_vendor', 'mall_vendor', 'pharmacy'].includes(cat);
 
@@ -260,6 +283,12 @@ export default function SetupAssistantPage() {
                 <StepButton label={`We collect ${cat === 'mosque' ? 'Zakat, Sadaqah, or donations' : 'tithes, offerings, or donations'}`} onClick={() => handleBusinessType('services')} />
                 <StepButton label={`Both — ${cat === 'mosque' ? 'prayers & donations' : 'services & tithes/offerings'}`} onClick={() => handleBusinessType('services')} />
               </>
+            ) : nonProfit ? (
+              <>
+                <StepButton label="We run programs and initiatives" onClick={() => handleBusinessType('services')} />
+                <StepButton label="We collect donations and contributions" onClick={() => handleBusinessType('services')} />
+                <StepButton label="Both — programs and donations" onClick={() => handleBusinessType('services')} />
+              </>
             ) : (
               <>
                 <StepButton label="We offer services (appointments, consultations, treatments)" onClick={() => handleBusinessType('services')} />
@@ -323,12 +352,22 @@ export default function SetupAssistantPage() {
 
           {/* Paste text → AI extracts */}
           <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-4 space-y-3">
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Paste your list and let Ace extract it</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Paste your list and let Ace extract it
+            </p>
             <textarea
               value={freeTextItems}
               onChange={e => setFreeTextItems(e.target.value)}
               rows={3}
-              placeholder={`Paste your ${businessType === 'products' ? 'product' : 'service'} list here, e.g.:\nHaircut - $15\nBeard trim - $10\nKids cut - $12`}
+              placeholder={
+                faithBased
+                  ? `Paste your schedule here, e.g.:\nSunday Worship - 9am\nMidweek Service - Wednesday 6pm\nBible Study - Friday 5pm`
+                  : nonProfit
+                  ? `Paste your programs here, e.g.:\nYouth Empowerment Program\nCommunity Outreach\nSkills Workshop - $5`
+                  : businessType === 'products'
+                  ? `Paste your product list here, e.g.:\nJollof Rice - 2500\nPepper Soup - 1500\nChapman - 800`
+                  : `Paste your ${config.itemPlural.toLowerCase()} here, e.g.:\nHaircut - $15\nBeard trim - $10\nKids cut - $12`
+              }
               className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
             />
             <button
@@ -340,9 +379,12 @@ export default function SetupAssistantPage() {
             </button>
           </div>
 
-          {/* Upload image → AI extracts */}
+          {/* Upload image → AI extracts (hidden for faith-based and non-profit) */}
+          {!noProductCategory && (
           <div className="rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 p-4">
-            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Or upload a photo of your menu / price list</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
+              Or upload a photo of your {businessType === 'products' ? 'product catalog' : 'price list'}
+            </p>
             <label className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border border-gray-200 dark:border-gray-600 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition">
               <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" disabled={parsing} />
               {parsing ? (
@@ -357,6 +399,7 @@ export default function SetupAssistantPage() {
               )}
             </label>
           </div>
+          )}
 
           <div className="flex justify-between">
             <button onClick={() => setStep('what')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Back</button>
