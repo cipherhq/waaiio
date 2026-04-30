@@ -437,6 +437,71 @@ export class MetaCloudService {
     return { messageId: response.messages[0].id };
   }
 
+  // ── WhatsApp Catalog / Commerce ──
+
+  /**
+   * Send a single product message from a catalog.
+   */
+  async sendProduct(message: {
+    to: string;
+    catalogId: string;
+    productId: string;
+    body?: string;
+    footer?: string;
+  }): Promise<{ messageId: string }> {
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to: message.to,
+      type: 'interactive',
+      interactive: {
+        type: 'product',
+        body: message.body ? { text: message.body } : undefined,
+        footer: message.footer ? { text: message.footer } : undefined,
+        action: {
+          catalog_id: message.catalogId,
+          product_retailer_id: message.productId,
+        },
+      },
+    });
+    return { messageId: response.messages[0].id };
+  }
+
+  /**
+   * Send a multi-product message (product list) from a catalog.
+   * Sections group products by category.
+   */
+  async sendProductList(message: {
+    to: string;
+    catalogId: string;
+    headerText: string;
+    bodyText: string;
+    footerText?: string;
+    sections: Array<{
+      title: string;
+      productIds: string[];
+    }>;
+  }): Promise<{ messageId: string }> {
+    const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to: message.to,
+      type: 'interactive',
+      interactive: {
+        type: 'product_list',
+        header: { type: 'text', text: message.headerText },
+        body: { text: message.bodyText },
+        footer: message.footerText ? { text: message.footerText } : undefined,
+        action: {
+          catalog_id: message.catalogId,
+          sections: message.sections.map(s => ({
+            title: s.title,
+            product_items: s.productIds.map(id => ({ product_retailer_id: id })),
+          })),
+        },
+      },
+    });
+    return { messageId: response.messages[0].id };
+  }
+
   // ── Message Template Management ──
 
   async getTemplates(params?: {
