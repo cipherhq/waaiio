@@ -63,8 +63,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'OTP not required for this contract' }, { status: 400 });
     }
 
-    // Generate 6-digit OTP
-    const otp = String(Math.floor(100000 + Math.random() * 900000));
+    // Generate 6-digit OTP using cryptographically secure random
+    const { randomInt } = await import('crypto');
+    const otp = String(randomInt(100000, 999999));
     const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
 
     if (signerRow) {
@@ -104,7 +105,7 @@ export async function POST(request: NextRequest) {
         if (gupshup.isConfigured) {
           await gupshup.sendText({ to: phone, text: message });
         } else {
-          console.log(`[mock] OTP to ${phone}: ${otp}`);
+          console.log(`[mock] OTP sent to ${phone} (value redacted)`);
         }
       }
     }

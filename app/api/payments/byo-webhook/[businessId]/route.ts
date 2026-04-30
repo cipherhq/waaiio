@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
 
@@ -47,7 +47,7 @@ export async function POST(
     } else if (creds.gateway === 'flutterwave') {
       const verifyHash = request.headers.get('verif-hash') || '';
       const secretHash = process.env.FLW_SECRET_HASH || creds.secret_key;
-      if (verifyHash !== secretHash) {
+      if (!verifyHash || !secretHash || !timingSafeEqual(Buffer.from(verifyHash), Buffer.from(secretHash))) {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
       }
     }

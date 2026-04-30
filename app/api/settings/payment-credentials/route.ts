@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { encryptToken } from '@/lib/encryption';
 
 const PLATFORM_PAYSTACK_KEY = process.env.PAYSTACK_SECRET_KEY || '';
 const PLATFORM_FLUTTERWAVE_KEY = process.env.FLUTTERWAVE_SECRET_KEY || '';
@@ -152,7 +153,7 @@ export async function POST(request: NextRequest) {
       .insert({
         business_id,
         gateway,
-        secret_key,
+        secret_key: encryptToken(secret_key),
         public_key: public_key || null,
         platform_subaccount_code: platformSubaccountCode,
         is_active: true,
