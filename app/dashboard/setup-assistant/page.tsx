@@ -257,7 +257,8 @@ export default function SetupAssistantPage() {
             {faithBased ? (
               <>
                 <StepButton label={`We hold ${cat === 'mosque' ? 'prayers & programs' : 'services & gatherings'}`} onClick={() => handleBusinessType('services')} />
-                <StepButton label="We also collect tithes, offerings, or donations" onClick={() => handleBusinessType('services')} />
+                <StepButton label={`We collect ${cat === 'mosque' ? 'Zakat, Sadaqah, or donations' : 'tithes, offerings, or donations'}`} onClick={() => handleBusinessType('services')} />
+                <StepButton label={`Both — ${cat === 'mosque' ? 'prayers & donations' : 'services & tithes/offerings'}`} onClick={() => handleBusinessType('services')} />
               </>
             ) : (
               <>
