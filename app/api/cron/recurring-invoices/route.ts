@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { verifyCronAuth } from '@/lib/cron-auth';
 
 /**
  * GET /api/cron/recurring-invoices
@@ -10,7 +12,10 @@ import { logger } from '@/lib/logger';
  */
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
+
   const supabase = createServiceClient();
   let generated = 0;
 

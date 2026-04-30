@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { verifyCronAuth } from '@/lib/cron-auth';
 
 /**
  * Daily backup cron — exports critical table counts and metadata
@@ -10,11 +11,8 @@ import { createServiceClient } from '@/lib/supabase/service';
  * (e.g., sudden drops in row counts that might indicate accidental deletion).
  */
 export async function GET(request: NextRequest) {
-  // Verify cron secret
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
 
   const supabase = createServiceClient();
   const now = new Date().toISOString();

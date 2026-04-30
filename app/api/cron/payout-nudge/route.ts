@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
+import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { verifyCronAuth } from '@/lib/cron-auth';
 
 /**
  * GET /api/cron/payout-nudge
@@ -18,7 +20,10 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
  */
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
+
   const supabase = createServiceClient();
   let nudgesSent = 0;
 

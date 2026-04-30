@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
+import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+import { verifyCronAuth } from '@/lib/cron-auth';
 
 /**
  * GET /api/cron/auto-payout
@@ -26,7 +28,10 @@ const VELOCITY_THRESHOLD = 50;           // max transactions per day
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
+
   const supabase = createServiceClient();
   let generated = 0;
   let autoApproved = 0;

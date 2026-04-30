@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
+import { verifyCronAuth } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,9 +17,8 @@ function verifyCronSecret(authHeader: string | null): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  if (!verifyCronSecret(request.headers.get('authorization'))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
 
   const supabase = createServiceClient();
 

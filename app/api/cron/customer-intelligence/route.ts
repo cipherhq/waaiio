@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { verifyCronAuth } from '@/lib/cron-auth';
 
 /**
  * Daily cron — recalculate customer lifetime value, churn risk,
@@ -7,10 +8,8 @@ import { createServiceClient } from '@/lib/supabase/service';
  * Runs at 4 AM daily (configured in vercel.json).
  */
 export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
 
   const supabase = createServiceClient();
   const now = new Date();
