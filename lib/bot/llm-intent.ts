@@ -32,7 +32,7 @@ function getClient(): Anthropic {
 const SYSTEM_PROMPT = `You classify WhatsApp messages for businesses in Nigeria and West Africa.
 
 Given a user message and business category, return JSON only:
-{"intent":"booking"|"ordering"|"payment"|"ticketing"|null,"entities":{"serviceKeywords":[],"date":null,"timePreference":null,"quantity":null},"confidence":0.0-1.0,"language":"en"|"pcm"|"yo"|"ig"|"ha"|"tw"|"fr"}
+{"intent":"booking"|"ordering"|"payment"|"ticketing"|null,"entities":{"serviceKeywords":[],"date":null,"timePreference":null,"quantity":null},"confidence":0.0-1.0,"language":"en"|"pcm"|"yo"|"ig"|"ha"|"tw"|"fr"|"es"}
 
 Rules:
 - "booking" = appointments, reservations, check-ins, services
@@ -44,7 +44,7 @@ Rules:
 - timePreference: "morning"|"afternoon"|"evening" if mentioned
 - quantity: number of people/items if mentioned
 - confidence: how sure you are (0.0 to 1.0)
-- language: detect the primary language (en=English, pcm=Pidgin, yo=Yoruba, ig=Igbo, ha=Hausa, tw=Twi, fr=French)
+- language: detect the primary language (en=English, pcm=Pidgin, yo=Yoruba, ig=Igbo, ha=Hausa, tw=Twi, fr=French, es=Spanish)
 - Return ONLY valid JSON, no explanation`;
 
 export async function classifyWithLLM(

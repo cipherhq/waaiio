@@ -9,6 +9,7 @@ const SUPPORTED_LANGUAGES: Record<string, string> = {
   ha: 'Hausa',
   tw: 'Twi',
   fr: 'French',
+  es: 'Spanish',
 };
 
 // Cache translations to avoid repeat API calls
@@ -109,6 +110,7 @@ export async function detectLanguage(text: string): Promise<string> {
   const hausaMarkers = /\b(sannu|ina|yaya|barka|nagode|aboki|dan|kai|wane|mun|zan)\b/i;
   const twiMarkers = /\b(maakye|maaha|meda|wo ho|me din|mepa|yoo|wo|me|anka|na)\b/i;
   const frenchMarkers = /\b(bonjour|merci|oui|non|comment|je|vous|est-ce|s'il vous|bonsoir|salut)\b/i;
+  const spanishMarkers = /\b(hola|gracias|por favor|buenos|buenas|quiero|necesito|donde|cuando|como|tiene|puede|cita|reservar|cuanto|precio)\b/i;
 
   if (pidginMarkers.test(lower)) return 'pcm';
   if (yorubaMarkers.test(lower)) return 'yo';
@@ -116,6 +118,7 @@ export async function detectLanguage(text: string): Promise<string> {
   if (hausaMarkers.test(lower)) return 'ha';
   if (twiMarkers.test(lower)) return 'tw';
   if (frenchMarkers.test(lower)) return 'fr';
+  if (spanishMarkers.test(lower)) return 'es';
 
   // If text is short or clearly English, skip LLM
   if (lower.length < 10 || /^[a-z0-9\s.,!?'"-]+$/i.test(lower)) return 'en';
@@ -126,7 +129,7 @@ export async function detectLanguage(text: string): Promise<string> {
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 10,
-      system: `Detect the language of this text. Reply with ONLY the language code: en, pcm (Nigerian Pidgin), yo (Yoruba), ig (Igbo), ha (Hausa), tw (Twi), fr (French). If unsure, reply "en".`,
+      system: `Detect the language of this text. Reply with ONLY the language code: en, pcm (Nigerian Pidgin), yo (Yoruba), ig (Igbo), ha (Hausa), tw (Twi), fr (French), es (Spanish). If unsure, reply "en".`,
       messages: [{ role: 'user', content: text }],
     });
     const code = response.content[0].type === 'text' ? response.content[0].text.trim().toLowerCase() : 'en';
