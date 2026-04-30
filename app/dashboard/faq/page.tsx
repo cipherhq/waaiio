@@ -143,34 +143,38 @@ export default function FAQPage() {
     }
 
     try {
-      if (view === 'edit' && formId) {
-        await fetch('/api/faq', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: formId,
-            businessId: business.id,
-            question: formQuestion.trim(),
-            answer: formAnswer.trim(),
-            keywords: finalKeywords,
-            isActive: formIsActive,
-          }),
-        });
-      } else {
-        await fetch('/api/faq', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            businessId: business.id,
-            question: formQuestion.trim(),
-            answer: formAnswer.trim(),
-            keywords: finalKeywords,
-          }),
-        });
+      const res = view === 'edit' && formId
+        ? await fetch('/api/faq', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: formId,
+              businessId: business.id,
+              question: formQuestion.trim(),
+              answer: formAnswer.trim(),
+              keywords: finalKeywords,
+              isActive: formIsActive,
+            }),
+          })
+        : await fetch('/api/faq', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              businessId: business.id,
+              question: formQuestion.trim(),
+              answer: formAnswer.trim(),
+              keywords: finalKeywords,
+            }),
+          });
+      if (!res.ok) {
+        alert('Failed to save FAQ. Please try again.');
+        return;
       }
       resetForm();
       setView('list');
       fetchFaqs();
+    } catch {
+      alert('Failed to save FAQ. Please try again.');
     } finally {
       setSaving(false);
     }

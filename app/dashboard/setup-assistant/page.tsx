@@ -165,8 +165,12 @@ export default function SetupAssistantPage() {
           }))]);
         }
         setFreeTextItems('');
+      } else {
+        alert('Ace couldn\'t process that text. Try rephrasing or add items manually.');
       }
-    } catch { /* ignore */ }
+    } catch {
+      alert('Something went wrong. Please try again.');
+    }
     setParsingText(false);
   };
 
@@ -196,8 +200,12 @@ export default function SetupAssistantPage() {
             description: (item.description as string) || '',
           }))]);
         }
+      } else {
+        alert('Ace couldn\'t read that image. Try a clearer photo or add items manually.');
       }
-    } catch { /* ignore */ }
+    } catch {
+      alert('Something went wrong reading the image. Please try again.');
+    }
     setParsing(false);
     e.target.value = '';
   };
@@ -216,8 +224,14 @@ export default function SetupAssistantPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (res.ok) setApplied(true);
-    } catch { /* ignore */ }
+      if (res.ok) {
+        setApplied(true);
+      } else {
+        alert('Failed to apply setup. Please try again.');
+      }
+    } catch {
+      alert('Something went wrong. Please try again.');
+    }
     setApplying(false);
   };
 

@@ -106,28 +106,31 @@ export default function LocationsPage() {
         operatingHours: form.hours,
         ...(view === 'edit' ? { id: form.id, isActive: form.isActive } : {}),
       };
-      await fetch('/api/locations', {
+      const res = await fetch('/api/locations', {
         method: view === 'edit' ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+      if (!res.ok) { alert('Failed to save location. Please try again.'); return; }
       setView('list');
       fetchLocations();
-    } finally { setSaving(false); }
+    } catch { alert('Failed to save location. Please try again.'); } finally { setSaving(false); }
   }
 
   async function handleToggleActive(loc: Location) {
-    await fetch('/api/locations', {
+    const res = await fetch('/api/locations', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: loc.id, businessId: business.id, isActive: !loc.is_active }),
     });
+    if (!res.ok) alert('Failed to update location.');
     fetchLocations();
   }
 
   async function handleDelete(loc: Location) {
     if (!confirm(`Delete location "${loc.name}"?`)) return;
-    await fetch(`/api/locations?id=${loc.id}&businessId=${business.id}`, { method: 'DELETE' });
+    const res = await fetch(`/api/locations?id=${loc.id}&businessId=${business.id}`, { method: 'DELETE' });
+    if (!res.ok) alert('Failed to delete location.');
     if (view !== 'list') setView('list');
     fetchLocations();
   }
