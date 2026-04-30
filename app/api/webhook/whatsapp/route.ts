@@ -8,6 +8,7 @@ import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
 import { logger } from '@/lib/logger';
+import { transcribeAudio } from '@/lib/bot/transcription';
 
 // Singleton instances (persisted across warm invocations)
 let defaultGupshup: GupshupService;
@@ -95,7 +96,6 @@ export async function POST(request: NextRequest) {
     let mediaUrl: string | undefined;
     const payloadType = (payload.type as string) || '';
     if (payloadType === 'audio' && typeof innerPayload === 'object' && innerPayload && innerPayload.url) {
-      if (!text) text = '[Voice message]';
       try {
         const gupshupAudioUrl = innerPayload.url as string;
         const audioRes = await fetch(gupshupAudioUrl);
@@ -114,12 +114,24 @@ export async function POST(request: NextRequest) {
             .from('business-documents')
             .getPublicUrl(storagePath);
           mediaUrl = urlData.publicUrl;
+
+          // Transcribe audio with Whisper
+          try {
+            const transcript = await transcribeAudio(audioBuffer, contentType, `gupshup-${source}-${Date.now()}`);
+            if (transcript) {
+              text = transcript;
+              logger.debug('[GUPSHUP-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+            }
+          } catch (transcribeErr) {
+            logger.error('[GUPSHUP-WEBHOOK] Transcription error:', transcribeErr);
+          }
         }
       } catch (err) {
         logger.error('[WEBHOOK] Gupshup audio download/upload error:', err);
         // Fallback: use the expiring Gupshup URL directly
         mediaUrl = innerPayload.url as string;
       }
+      if (!text) text = '[Voice message]';
     }
 
     const msgType = (innerPayload?.type || payload.type || 'text') as string;
