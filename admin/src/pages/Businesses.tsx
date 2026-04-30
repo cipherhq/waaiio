@@ -15,6 +15,8 @@ const ALL_CAPABILITIES = [
   { id: 'payment', label: 'Payments', icon: '💳' },
   { id: 'ordering', label: 'Online Store', icon: '🛒' },
   { id: 'ticketing', label: 'Ticketing', icon: '🎟️' },
+  { id: 'reservation', label: 'Reservations', icon: '🏘️' },
+  { id: 'whatsapp_sign', label: 'WhatsApp Sign', icon: '✍️' },
   { id: 'feedback', label: 'Feedback', icon: '⭐' },
   { id: 'chat', label: 'Chat', icon: '💬' },
   { id: 'reminders', label: 'Reminders', icon: '🔔' },
@@ -25,14 +27,16 @@ const ALL_CAPABILITIES = [
   { id: 'reports', label: 'Reports', icon: '📄' },
   { id: 'staff', label: 'Staff', icon: '👥' },
   { id: 'crowdfunding', label: 'Crowdfunding', icon: '❤️' },
+  { id: 'invoice', label: 'Invoices', icon: '🧾' },
+  { id: 'survey', label: 'Surveys', icon: '📊' },
 ] as const;
 
 const TIER_REQUIREMENTS: Record<string, string> = {
   scheduling: 'free', payment: 'free', ordering: 'free', ticketing: 'free',
   feedback: 'free', chat: 'free',
-  reminders: 'growth', loyalty: 'growth', referral: 'growth',
-  queue: 'business', waitlist: 'business', reports: 'business',
-  staff: 'business', crowdfunding: 'business',
+  reservation: 'growth', reminders: 'growth', loyalty: 'growth', referral: 'growth', survey: 'growth',
+  whatsapp_sign: 'business', queue: 'business', waitlist: 'business', reports: 'business',
+  staff: 'business', crowdfunding: 'business', invoice: 'business',
 };
 
 const TIER_RANK: Record<string, number> = { free: 0, growth: 1, business: 2 };
