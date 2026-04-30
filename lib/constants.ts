@@ -194,12 +194,13 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // Stripe (UK): 2.5% + £0.20 → Waaiio: 4.5% + £0.40
 // Paystack (NG): 1.5% + ₦100 → Waaiio: 3.5% + ₦150
 // Paystack (GH): 1.5% + GH₵ → Waaiio: 3.5% + GH₵3
-const COUNTRY_PRICING: Record<CountryCode, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 9_999, feeFlat: 100 }, business: { price: 29_999, feeFlat: 75 } },
-  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 16.99, feeFlat: 0.40 }, business: { price: 49.99, feeFlat: 0.35 } },
-  GB: { free: { price: 0, feeFlat: 0.40 }, growth: { price: 12.99, feeFlat: 0.30 }, business: { price: 39.99, feeFlat: 0.25 } },
-  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 16.99, feeFlat: 0.40 }, business: { price: 49.99, feeFlat: 0.35 } },
-  GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 99, feeFlat: 2 }, business: { price: 299, feeFlat: 1.50 } },
+const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
+  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 14_999, feeFlat: 100 }, business: { price: 39_999, feeFlat: 75 } },
+  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.40 }, business: { price: 99, feeFlat: 0.35 } },
+  GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 29, feeFlat: 0.30 }, business: { price: 79, feeFlat: 0.25 } },
+  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.40 }, business: { price: 99, feeFlat: 0.35 } },
+  GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 149, feeFlat: 2 }, business: { price: 399, feeFlat: 1.50 } },
+  IN: { free: { price: 0, feeFlat: 10 }, growth: { price: 999, feeFlat: 5 }, business: { price: 2_999, feeFlat: 3 } },
 };
 
 // ── Business Categories ──

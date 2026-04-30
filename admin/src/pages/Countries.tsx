@@ -507,9 +507,9 @@ export default function Countries() {
                 <h4 className="text-sm font-semibold text-gray-700 mb-3">Pricing Tiers</h4>
                 <div className="space-y-3">
                   {PRICING_TIERS.map(tier => {
-                    const p = form.pricing[tier] || { price: 0, feeFlat: 0 };
+                    const p = form.pricing[tier] || { price: 0, feeFlat: 0, feePercentage: 2.5, trialDays: 14 };
                     return (
-                      <div key={tier} className="grid grid-cols-3 gap-3 items-end">
+                      <div key={tier} className="grid grid-cols-5 gap-3 items-end">
                         <div>
                           <label className={labelClass}>{tier}</label>
                           <span className="text-xs text-gray-400">Tier</span>
@@ -523,11 +523,27 @@ export default function Countries() {
                             }))} />
                         </div>
                         <div>
+                          <label className={labelClass}>Fee %</label>
+                          <input type="number" step="0.1" className={inputClass} value={(p as Record<string, unknown>).feePercentage as number || 2.5}
+                            onChange={e => setForm(f => ({
+                              ...f,
+                              pricing: { ...f.pricing, [tier]: { ...p, feePercentage: Number(e.target.value) } },
+                            }))} />
+                        </div>
+                        <div>
                           <label className={labelClass}>Flat Fee</label>
                           <input type="number" step="0.01" className={inputClass} value={p.feeFlat}
                             onChange={e => setForm(f => ({
                               ...f,
                               pricing: { ...f.pricing, [tier]: { ...p, feeFlat: Number(e.target.value) } },
+                            }))} />
+                        </div>
+                        <div>
+                          <label className={labelClass}>Trial Days</label>
+                          <input type="number" className={inputClass} value={(p as Record<string, unknown>).trialDays as number || 14}
+                            onChange={e => setForm(f => ({
+                              ...f,
+                              pricing: { ...f.pricing, [tier]: { ...p, trialDays: Number(e.target.value) } },
                             }))} />
                         </div>
                       </div>
