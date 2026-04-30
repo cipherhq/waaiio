@@ -9,7 +9,7 @@ import { getLocale, type BusinessCategoryKey, type FlowType, type CountryCode } 
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse, detectLanguage } from './translate';
+import { translateBotResponse, detectLanguage, getLanguageName } from './translate';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
@@ -638,14 +638,29 @@ export class BotService {
         return;
       }
 
-      // Auto-detect language from first message (non-blocking)
+      // Auto-detect language from first message — ask for confirmation before switching
       if (text.length >= 3) {
         detectLanguage(text).then(async (lang) => {
           if (lang !== 'en') {
+            // Store as pending — don't activate until user confirms
             await this.supabase.from('bot_sessions')
-              .update({ session_data: { ...sessionData, _detected_language: lang } })
+              .update({ session_data: { ...sessionData, _pending_language: lang } })
               .eq('id', newSession.id);
-            logger.debug('[BOT] Auto-detected language:', lang, 'for', from);
+            logger.debug('[BOT] Detected language:', lang, 'for', from, '— asking confirmation');
+
+            const langName = getLanguageName(lang);
+            try {
+              await this.messageSender.sendButtons({
+                to: from,
+                body: `I noticed you might prefer ${langName}. Would you like me to respond in ${langName}?`,
+                buttons: [
+                  { id: 'lang_yes', title: `Yes, ${langName}` },
+                  { id: 'lang_no', title: 'English is fine' },
+                ],
+              });
+            } catch (err) {
+              logger.error('[BOT] Language confirm send error:', err);
+            }
           }
         }).catch(() => {});
       }
@@ -738,9 +753,9 @@ export class BotService {
           try {
             const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null);
 
-            // Store detected language on session for future translations
-            if ('language' in parsed && parsed.language && parsed.language !== 'en') {
-              session.session_data._detected_language = parsed.language;
+            // Store detected language as pending — confirmation already sent during session creation
+            if ('language' in parsed && parsed.language && parsed.language !== 'en' && !session.session_data._detected_language) {
+              session.session_data._pending_language = parsed.language;
             }
 
             if (parsed.understood && business) {
@@ -892,6 +907,29 @@ export class BotService {
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       await this.sendText(from, 'Your previous session has expired. Send *Hi* to start again. 🙏');
+      return;
+    }
+
+    // ── Language confirmation handler ──
+    const pendingLang = session.session_data._pending_language as string | undefined;
+    if (pendingLang && (text === 'lang_yes' || text === 'lang_no')) {
+      const updatedData = { ...session.session_data };
+      delete updatedData._pending_language;
+
+      if (text === 'lang_yes') {
+        updatedData._detected_language = pendingLang;
+        const langName = getLanguageName(pendingLang);
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: updatedData })
+          .eq('id', session.id);
+        const confirmMsg = await translateBotResponse(`Great! I'll respond in ${langName} from now on.`, pendingLang);
+        await this.sendText(from, confirmMsg);
+      } else {
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: updatedData })
+          .eq('id', session.id);
+        await this.sendText(from, 'No problem! I\'ll keep responding in English.');
+      }
       return;
     }
 
