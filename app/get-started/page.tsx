@@ -12,7 +12,6 @@ import {
   CATEGORY_FLOW_MAP,
   formatCurrency,
   getPricingTiers,
-  getCitiesForCountry,
   type BusinessCategoryKey,
   type SubscriptionTier,
   type CountryCode,
@@ -977,9 +976,7 @@ function OnboardingWizard() {
     );
   }
 
-  const countryCities = getCitiesForCountry(selectedCountry);
-  const cityOptions = Object.entries(countryCities).map(([key, val]) => ({ value: key, label: val.name }));
-  // neighborhoodOptions removed — using Google Places autocomplete now
+  // City auto-filled by Google Places autocomplete — no pre-configured city list needed
 
   // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
   // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)

@@ -552,47 +552,7 @@ export default function Countries() {
                 </div>
               </section>
 
-              {/* Section 8: Cities */}
-              <section>
-                <h4 className="text-sm font-semibold text-gray-700 mb-3">Cities</h4>
-                {Object.entries(form.cities).map(([key, city]) => (
-                  <div key={key} className="mb-4 rounded-lg border border-gray-200 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-800">{city.name} <span className="text-xs text-gray-400">({key})</span></span>
-                      <button onClick={() => removeCity(key)} className="text-red-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5 mb-2">
-                      {city.neighborhoods.map((n, i) => (
-                        <span key={i} className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs text-gray-600">
-                          {n}
-                          <button onClick={() => removeNeighborhood(key, i)} className="text-gray-400 hover:text-red-500"><X className="w-3 h-3" /></button>
-                        </span>
-                      ))}
-                    </div>
-                    <div className="flex gap-2">
-                      <input
-                        className={inputClass}
-                        value={newNeighborhood[key] || ''}
-                        onChange={e => setNewNeighborhood(n => ({ ...n, [key]: e.target.value }))}
-                        placeholder="Add neighborhood"
-                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addNeighborhood(key))}
-                      />
-                      <button onClick={() => addNeighborhood(key)} className="shrink-0 rounded-lg bg-gray-100 px-3 text-sm font-medium text-gray-600 hover:bg-gray-200">
-                        <Plus className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <input className={inputClass} value={newCityKey} onChange={e => setNewCityKey(e.target.value)} placeholder="Key (e.g. lagos)" />
-                  <div className="flex gap-2">
-                    <input className={inputClass} value={newCityName} onChange={e => setNewCityName(e.target.value)} placeholder="Display name (e.g. Lagos)" />
-                    <button onClick={addCity} className="shrink-0 rounded-lg bg-gray-100 px-3 text-sm font-medium text-gray-600 hover:bg-gray-200">
-                      <Plus className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </section>
+              {/* Cities removed — Google Places autocomplete handles address/city globally */}
             </div>
 
             {/* Footer */}
