@@ -1012,6 +1012,19 @@ export const schedulingFlow: FlowDefinition = {
               },
             ];
           }
+
+          // Payment initialization failed — don't confirm without payment
+          return [
+            { type: 'text', text: 'Sorry, we couldn\'t set up payment right now. Your booking has been saved but is pending payment. Please try again or contact the business directly.' },
+            {
+              type: 'buttons',
+              body: 'What would you like to do?',
+              buttons: [
+                { id: 'retry_payment', title: 'Try Again' },
+                { id: 'cancel', title: 'Cancel Booking' },
+              ],
+            },
+          ];
         }
 
         // No deposit — booking confirmed
