@@ -3,6 +3,7 @@ import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQ
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { getSavedPaymentMethod, chargeSavedCard } from '@/lib/payments/charge-saved';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
@@ -934,7 +935,34 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (totalDeposit > 0) {
-          // Need payment
+          // Check for saved payment method — one-tap payment
+          const savedMethod = ctx.business ? await getSavedPaymentMethod(ctx.supabase, ctx.business.id, ctx.from) : null;
+
+          if (savedMethod && !d._skip_saved_card) {
+            // Offer one-tap payment with saved card
+            d._saved_method_id = savedMethod.id;
+            d._pending_deposit = totalDeposit;
+            d.booking_id = booking.id;
+            d.reference_code = booking.reference_code;
+            await ctx.supabase.from('bot_sessions')
+              .update({ session_data: d, current_step: 'saved_card_prompt' })
+              .eq('id', ctx.session.id);
+
+            const cardLabel = `${(savedMethod.card_brand || 'Card').toUpperCase()} ****${savedMethod.card_last4 || '????'}`;
+            return [
+              {
+                type: 'buttons',
+                body: `💳 Pay ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)} with your saved card?\n\n${cardLabel}`,
+                buttons: [
+                  { id: 'pay_saved', title: `Pay with ${savedMethod.card_last4 || 'card'}` },
+                  { id: 'pay_new', title: 'Use different card' },
+                  { id: 'cancel', title: 'Cancel' },
+                ],
+              },
+            ];
+          }
+
+          // No saved card — standard payment link
           const paymentResult = await initializePayment(ctx.supabase, {
             bookingId: booking.id,
             userId,
@@ -1115,6 +1143,66 @@ export const schedulingFlow: FlowDefinition = {
           return 'create_booking';
         }
         return null;
+      },
+    },
+
+    // ── Saved Card Prompt ──
+    {
+      id: 'saved_card_prompt',
+      async prompt(): Promise<PromptMessage[]> {
+        // Prompt already sent during create_booking step
+        return [];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
+        const action = input.toLowerCase().trim();
+
+        if (action === 'pay_saved') {
+          // Charge the saved card immediately
+          const savedMethod = await getSavedPaymentMethod(ctx.supabase, ctx.business!.id, ctx.from);
+          if (!savedMethod) {
+            return { valid: true, data: { _skip_saved_card: true } };
+          }
+
+          const amount = d._pending_deposit as number;
+          const bookingId = d.booking_id as string;
+          const refCode = d.reference_code as string;
+          const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          const email = (d.email as string) || `${phone.replace('+', '')}@whatsapp.waaiio.com`;
+
+          const result = await chargeSavedCard(ctx.supabase, {
+            savedMethod,
+            amount,
+            currency: ctx.business?.country_code === 'NG' ? 'NGN' : ctx.business?.country_code === 'GH' ? 'GHS' : 'USD',
+            email,
+            reference: `${refCode}-saved`,
+            businessId: ctx.business!.id,
+            bookingId,
+          });
+
+          if (result.success) {
+            return { valid: true, data: { _saved_card_paid: true, _action: 'payment_confirmed' } };
+          }
+          // Card failed — fall through to regular payment
+          return { valid: true, data: { _skip_saved_card: true, _saved_card_error: result.message } };
+        }
+
+        if (action === 'pay_new') {
+          return { valid: true, data: { _skip_saved_card: true } };
+        }
+
+        if (action === 'cancel') {
+          return { valid: true, data: { _action: 'cancel' } };
+        }
+
+        return { valid: false, errorMessage: 'Please select a payment option.' };
+      },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._action === 'cancel') return null;
+        if (d._saved_card_paid) return 'post_payment'; // Skip payment step
+        // Saved card failed or user chose new card — go to regular payment
+        return 'create_booking'; // Re-enter create_booking which will skip saved card this time
       },
     },
 

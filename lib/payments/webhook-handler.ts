@@ -35,18 +35,45 @@ export async function processPaystackChargeSuccess(
     return;
   }
 
-  const authorization = data.authorization as Record<string, string> | undefined;
+  const authorization = data.authorization as Record<string, unknown> | undefined;
   await supabase
     .from('payments')
     .update({
       status: 'success',
       gateway_status: 'success',
       payment_method: (data.channel as string) || 'card',
-      card_last_four: authorization?.last4 || null,
-      card_brand: authorization?.brand || null,
+      card_last_four: (authorization?.last4 as string) || null,
+      card_brand: (authorization?.brand as string) || null,
       paid_at: new Date().toISOString(),
     })
     .eq('gateway_reference', reference);
+
+  // Save reusable payment method for future one-tap payments
+  if (authorization?.reusable && authorization?.authorization_code) {
+    const customer = data.customer as Record<string, string> | undefined;
+    const metadata = data.metadata as Record<string, string> | undefined;
+    const businessId = metadata?.business_id;
+    const phone = customer?.phone;
+
+    if (businessId && phone) {
+      await supabase.from('saved_payment_methods').upsert({
+        business_id: businessId,
+        customer_phone: phone,
+        gateway: 'paystack',
+        authorization_code: authorization.authorization_code as string,
+        customer_code: (customer?.customer_code as string) || null,
+        card_last4: (authorization.last4 as string) || null,
+        card_brand: (authorization.brand as string) || null,
+        card_exp_month: authorization.exp_month ? Number(authorization.exp_month) : null,
+        card_exp_year: authorization.exp_year ? Number(authorization.exp_year) : null,
+        card_type: (authorization.card_type as string) || null,
+        bank_name: (authorization.bank as string) || null,
+        is_active: true,
+        last_used_at: new Date().toISOString(),
+      }, { onConflict: 'business_id,customer_phone,gateway' });
+      // Non-blocking — ignore upsert errors
+    }
+  }
 
   // Track payment success
   const posthog = getServerPostHog();
