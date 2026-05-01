@@ -314,19 +314,17 @@ export class FlowExecutor {
 
   private async sendMessages(to: string, messages: PromptMessage[]): Promise<void> {
     if (messages.length === 0) return;
-    if (messages.length === 1) {
+    // Send messages sequentially to preserve order in WhatsApp
+    for (let i = 0; i < messages.length; i++) {
       try {
-        await this.sendSingleMessage(to, messages[0]);
+        await this.sendSingleMessage(to, messages[i]);
+        // Small delay between messages to prevent WhatsApp reordering
+        if (i < messages.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
       } catch (err) {
-        logger.error('[EXECUTOR] Failed to send message to', to, ':', err);
+        logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
       }
-      return;
-    }
-    // Send all messages in parallel, don't let one failure block others
-    const results = await Promise.allSettled(messages.map(msg => this.sendSingleMessage(to, msg)));
-    const failed = results.filter(r => r.status === 'rejected');
-    if (failed.length > 0) {
-      logger.error('[EXECUTOR] Failed to send', failed.length, 'of', messages.length, 'messages to', to);
     }
   }
 
