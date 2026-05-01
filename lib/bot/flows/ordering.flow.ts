@@ -2244,7 +2244,7 @@ export const orderingFlow: FlowDefinition = {
         const orderPayload: Record<string, unknown> = {
           business_id: ctx.business!.id,
           user_id: userId,
-          status: 'confirmed',
+          status: total > 0 ? 'pending' : 'confirmed',
           delivery_address: (d.delivery_address as string) || null,
           delivery_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           total_amount: total,
@@ -2424,9 +2424,22 @@ export const orderingFlow: FlowDefinition = {
               },
             ];
           }
+
+          // Payment initialization failed — don't confirm without payment
+          return [
+            {
+              type: 'buttons',
+              body: 'Sorry, we couldn\'t set up payment right now. Your order has been saved but is pending payment.',
+              buttons: [
+                { id: 'retry_payment', title: 'Try Again' },
+                { id: 'chat_with_biz', title: 'Chat with Business' },
+                { id: 'cancel', title: 'Cancel Order' },
+              ],
+            },
+          ];
         }
 
-        // Free order or payment init failed
+        // Free order — confirm immediately
         await ctx.supabase
           .from('bot_sessions')
           .update({ current_step: 'complete', is_active: false })
@@ -2473,11 +2486,28 @@ export const orderingFlow: FlowDefinition = {
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
         }
+        if (input === 'retry_payment') {
+          return { valid: true, data: { _retry_payment: true } };
+        }
+        if (input === 'chat_with_biz') {
+          return { valid: true, data: { _chat_with_biz: true } };
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+        const d = ctx.session.session_data;
+        if (d._terms_accepted || d._terms_cancelled) {
           return 'process_order';
+        }
+        if (d._retry_payment) {
+          delete d._retry_payment;
+          return 'process_order';
+        }
+        if (d._chat_with_biz) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'chat_start', session_data: { ...d, active_capability: 'chat' } })
+            .eq('id', ctx.session.id);
+          return 'chat_start';
         }
         return null;
       },
