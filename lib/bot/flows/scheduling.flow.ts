@@ -538,11 +538,11 @@ export const schedulingFlow: FlowDefinition = {
         if (d.special_requests) lines.push(`📝 ${d.special_requests as string}`);
         if (d.book_for_other && d.other_name) lines.push(`👤 For: ${d.other_name as string}`);
 
+        // Combine summary + buttons in one message to prevent WhatsApp reordering
         return [
-          { type: 'text', text: lines.join('\n') },
           {
             type: 'buttons',
-            body: 'Confirm this booking?',
+            body: lines.join('\n') + '\n\nConfirm this booking?',
             buttons: [
               { id: 'confirm', title: 'Confirm ✓' },
               { id: 'cancel', title: 'Cancel' },
