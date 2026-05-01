@@ -199,7 +199,7 @@ const invoicePayStep: FlowStepConfig = {
       });
 
       if (!result) {
-        return [{ type: 'text', text: 'We couldn\u2019t generate a payment link right now. Send *my invoices* to try again, or contact the business directly.' }];
+        return [{ type: 'buttons', body: 'We couldn\u2019t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
       }
 
       // Update invoice status to viewed
@@ -221,7 +221,7 @@ const invoicePayStep: FlowStepConfig = {
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);
-      return [{ type: 'text', text: 'We couldn\u2019t generate a payment link right now. Send *my invoices* to try again, or contact the business directly.' }];
+      return [{ type: 'buttons', body: 'We couldn\u2019t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
     }
   },
 

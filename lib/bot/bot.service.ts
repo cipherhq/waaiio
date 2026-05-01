@@ -684,7 +684,13 @@ export class BotService {
         if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Waaiio_';
 
         if (!tierInfo.allowed) {
-          await this.sendText(from, `Thank you for contacting ${business.name}! We're currently unable to accept new bookings via WhatsApp. Please contact us directly.`);
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `Thank you for contacting ${business.name}! We're currently unable to accept new bookings via WhatsApp.`,
+            buttons: [
+              { id: 'cap_chat', title: 'Chat with Us' },
+            ],
+          });
           await this.deactivateSession(session.id);
           return;
         }

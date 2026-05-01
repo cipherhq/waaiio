@@ -1015,12 +1015,12 @@ export const schedulingFlow: FlowDefinition = {
 
           // Payment initialization failed — don't confirm without payment
           return [
-            { type: 'text', text: 'Sorry, we couldn\'t set up payment right now. Your booking has been saved but is pending payment. Please try again or contact the business directly.' },
             {
               type: 'buttons',
-              body: 'What would you like to do?',
+              body: 'Sorry, we couldn\'t set up payment right now. Your booking has been saved but is pending payment.',
               buttons: [
                 { id: 'retry_payment', title: 'Try Again' },
+                { id: 'chat_with_biz', title: 'Chat with Business' },
                 { id: 'cancel', title: 'Cancel Booking' },
               ],
             },
@@ -1148,12 +1148,31 @@ export const schedulingFlow: FlowDefinition = {
         if (input === 'cancel_terms') {
           return { valid: true, data: { _terms_cancelled: true } };
         }
+        if (input === 'retry_payment') {
+          return { valid: true, data: { _retry_payment: true } };
+        }
+        if (input === 'chat_with_biz') {
+          return { valid: true, data: { _chat_with_biz: true } };
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
         // After accepting/cancelling terms, re-enter this step to proceed
-        if (ctx.session.session_data._terms_accepted || ctx.session.session_data._terms_cancelled) {
+        if (d._terms_accepted || d._terms_cancelled) {
           return 'create_booking';
+        }
+        // Retry payment — re-enter create_booking
+        if (d._retry_payment) {
+          delete d._retry_payment;
+          return 'create_booking';
+        }
+        // Chat with business — hand off to chat flow
+        if (d._chat_with_biz) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'chat_start', session_data: { ...d, active_capability: 'chat' } })
+            .eq('id', ctx.session.id);
+          return 'chat_start';
         }
         return null;
       },
