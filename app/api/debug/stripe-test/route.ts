@@ -22,6 +22,12 @@ export async function GET() {
       businessId: 'adea3e0c-47b0-4976-b961-2709b512ab04', // Citadel
     });
 
+    // Check currency resolution
+    const { getCountry } = await import('@/lib/countries');
+    const country = getCountry('US');
+    result.countryResolved = !!country;
+    result.currencyCode = country?.currency_code || 'MISSING';
+
     if (paymentResult) {
       result.status = 'SUCCESS';
       result.url = paymentResult.url.slice(0, 80) + '...';
