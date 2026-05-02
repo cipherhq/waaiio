@@ -73,7 +73,7 @@ export class StripeGateway implements PaymentGateway {
         'metadata[user_id]': opts.userId,
         'metadata[reference_code]': opts.referenceCode,
         'metadata[channel]': 'whatsapp',
-        customer_email: opts.userEmail || '',
+        ...(opts.userEmail ? { customer_email: opts.userEmail } : {}),
       };
 
       // Stripe Connect split payment
