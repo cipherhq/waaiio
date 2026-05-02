@@ -126,13 +126,21 @@ export async function initializePayment(
           .eq('is_active', true)
           .maybeSingle();
 
-        // Only add split params for direct_split mode with an active payout account
+        // Only add split params if payout account gateway matches payment gateway
         if (biz?.payout_mode === 'direct_split' && payout) {
-          subaccountCode = payout.subaccount_code || undefined;
-          stripeAccountId = payout.stripe_account_id || undefined;
-          squareMerchantId = payout.square_merchant_id || undefined;
-          squareAccessToken = payout.square_access_token || undefined;
-          platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+          const payoutGw = payout.gateway || 'paystack';
+          const paymentGw = gateway.name;
+
+          // Only apply split params if gateways match
+          if (payoutGw === paymentGw || (payoutGw === 'paystack' && paymentGw === 'paystack') || (payoutGw === 'stripe' && paymentGw === 'stripe')) {
+            subaccountCode = payout.subaccount_code || undefined;
+            stripeAccountId = payout.stripe_account_id || undefined;
+            squareMerchantId = payout.square_merchant_id || undefined;
+            squareAccessToken = payout.square_access_token || undefined;
+            platformFeeAmount = Math.round(opts.amount * (payout.platform_percentage / 100));
+          }
+          // If gateways don't match (e.g., Paystack payout but Stripe payment),
+          // skip split — platform collects full amount
         }
         // platform_managed: no split params, full amount goes to platform
       }
