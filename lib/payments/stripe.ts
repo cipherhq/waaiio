@@ -3,13 +3,16 @@ import { randomUUID } from 'crypto';
 import type { PaymentGateway, InitPaymentOpts, InitPaymentResult, RefundPaymentOpts, RefundResult } from './types';
 import { logger } from '@/lib/logger';
 
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
+function getStripeKey(): string {
+  return process.env.STRIPE_SECRET_KEY || '';
+}
 
 async function stripeRequest(path: string, body: Record<string, string>): Promise<Record<string, unknown>> {
+  const key = getStripeKey();
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${stripeSecretKey}`,
+      Authorization: `Bearer ${key}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams(body).toString(),
@@ -18,8 +21,9 @@ async function stripeRequest(path: string, body: Record<string, string>): Promis
 }
 
 async function stripeGet(path: string): Promise<Record<string, unknown>> {
+  const key = getStripeKey();
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
-    headers: { Authorization: `Bearer ${stripeSecretKey}` },
+    headers: { Authorization: `Bearer ${key}` },
   });
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -31,6 +35,7 @@ export class StripeGateway implements PaymentGateway {
     const idempotencyKey = randomUUID();
 
     try {
+      const stripeSecretKey = getStripeKey();
       if (!stripeSecretKey) {
         if (process.env.NODE_ENV === 'production') {
           throw new Error('Payment gateway not configured: missing Stripe secret key');
@@ -82,7 +87,8 @@ export class StripeGateway implements PaymentGateway {
       const sessionData = await stripeRequest('/checkout/sessions', sessionParams);
 
       if (!sessionData.id || !sessionData.url) {
-        logger.error('Stripe session creation failed', sessionData);
+        logger.error('Stripe session creation failed:', JSON.stringify(sessionData).slice(0, 500));
+        logger.error('Stripe key present:', !!stripeSecretKey, 'key prefix:', stripeSecretKey.slice(0, 12));
         return null;
       }
 
@@ -120,7 +126,7 @@ export class StripeGateway implements PaymentGateway {
   }
 
   async verifyPayment(supabase: SupabaseClient, reference: string): Promise<boolean> {
-    if (!stripeSecretKey || reference.startsWith('mock_')) {
+    if (!getStripeKey() || reference.startsWith('mock_')) {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('Payment gateway not configured: missing Stripe secret key');
       }
@@ -183,7 +189,7 @@ export class StripeGateway implements PaymentGateway {
 
   async refundPayment(opts: RefundPaymentOpts): Promise<RefundResult> {
     // Mock mode
-    if (!stripeSecretKey || opts.gatewayReference.startsWith('mock_')) {
+    if (!getStripeKey() || opts.gatewayReference.startsWith('mock_')) {
       if (process.env.NODE_ENV === 'production') {
         throw new Error('Payment gateway not configured: missing Stripe secret key');
       }
