@@ -73,8 +73,10 @@ export class StripeGateway implements PaymentGateway {
         'metadata[user_id]': opts.userId,
         'metadata[reference_code]': opts.referenceCode,
         'metadata[channel]': 'whatsapp',
-        ...(opts.userEmail ? { customer_email: opts.userEmail } : {}),
       };
+      if (opts.userEmail) {
+        sessionParams.customer_email = opts.userEmail;
+      }
 
       // Stripe Connect split payment
       if (opts.stripeAccountId) {
@@ -121,7 +123,8 @@ export class StripeGateway implements PaymentGateway {
 
       return { url: sessionData.url as string, reference: stripeRef };
     } catch (error) {
-      logger.error('Stripe init error:', (error as Error).message);
+      const e = error as Error;
+      logger.error('Stripe init error:', e.message, e.stack?.split('\n').slice(0, 3).join(' '));
       return null;
     }
   }
