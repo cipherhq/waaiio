@@ -50,6 +50,7 @@ export async function GET() {
       businessId: 'adea3e0c-47b0-4976-b961-2709b512ab04',
     });
     result.test2_initPayment = payResult ? `SUCCESS: ${payResult.url.slice(0, 50)}...` : 'RETURNED NULL';
+    result.test2_lastError = (globalThis as Record<string, unknown>).__lastPaymentError || 'no error captured';
   } catch (e) {
     result.test2_initPayment = `THREW: ${(e as Error).message}`;
     result.test2_stack = (e as Error).stack?.split('\n').slice(0, 5);
