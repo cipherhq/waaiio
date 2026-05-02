@@ -66,7 +66,7 @@ export class StripeGateway implements PaymentGateway {
         'line_items[0][price_data][unit_amount]': String(amountInCents),
         'line_items[0][quantity]': '1',
         mode: 'payment',
-        success_url: `${callbackUrl}/api/payments/stripe-success?session_id={CHECKOUT_SESSION_ID}`,
+        success_url: `${callbackUrl}/payment-success`,
         cancel_url: `${callbackUrl}`,
         'metadata[booking_id]': opts.bookingId || '',
         'metadata[order_id]': opts.orderId || '',
