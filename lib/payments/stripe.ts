@@ -89,6 +89,7 @@ export class StripeGateway implements PaymentGateway {
       if (!sessionData.id || !sessionData.url) {
         logger.error('Stripe session creation failed:', JSON.stringify(sessionData).slice(0, 500));
         logger.error('Stripe key present:', !!stripeSecretKey, 'key prefix:', stripeSecretKey.slice(0, 12));
+        logger.error('Stripe params:', JSON.stringify(Object.fromEntries(Object.entries(sessionParams).filter(([k]) => !k.includes('secret')))).slice(0, 500));
         return null;
       }
 

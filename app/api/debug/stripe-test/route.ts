@@ -87,17 +87,46 @@ export async function GET() {
     const stripeData = await stripeRes.json();
     result.test3_stripeResponse = stripeData.url ? 'HAS_URL' : (stripeData.error?.message || JSON.stringify(stripeData).slice(0, 300));
 
-    // Now test through gateway class
-    const gwResult = await gw.initializePayment({
-      supabase,
-      userId: '00000000-0000-0000-0000-000000000001',
-      amount: 50,
-      currency: 'USD',
-      referenceCode: 'DBG-GW2-' + Date.now(),
-      businessName: 'Gateway Debug',
-      phone: '+12345678900',
+    // Now test through gateway's stripeRequest directly
+    const gwParams: Record<string, string> = {
+      'payment_method_types[0]': 'card',
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][product_data][name]': 'GW Class Test',
+      'line_items[0][price_data][unit_amount]': '5000',
+      'line_items[0][quantity]': '1',
+      mode: 'payment',
+      success_url: 'https://waaiio.com/success',
+      cancel_url: 'https://waaiio.com',
+      'metadata[user_id]': '16d175ec-86b5-446a-ae67-0085e987c19d',
+      'metadata[reference_code]': 'DBG-GW2-' + Date.now(),
+      'metadata[channel]': 'whatsapp',
+    };
+    const gwRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(gwParams).toString(),
     });
-    result.test3_gatewayDirect = gwResult ? `SUCCESS: ${gwResult.url.slice(0, 50)}...` : 'RETURNED NULL';
+    const gwData = await gwRes.json();
+
+    if (gwData.url) {
+      // Stripe works — try inserting payment record
+      try {
+        const { error: insertErr } = await supabase.from('payments').insert({
+          booking_id: null,
+          user_id: '16d175ec-86b5-446a-ae67-0085e987c19d',
+          amount: 50,
+          currency: 'USD',
+          gateway: 'stripe',
+          gateway_reference: gwData.id,
+          status: 'pending',
+          metadata: { reference_code: 'DBG', channel: 'whatsapp', order_id: null },
+        });
+        result.test3_paymentInsert = insertErr ? `INSERT FAILED: ${insertErr.message}` : 'INSERT SUCCESS';
+      } catch (insErr) {
+        result.test3_paymentInsert = `INSERT THREW: ${(insErr as Error).message}`;
+      }
+    }
+    result.test3_gatewayDirect = gwData.url ? 'STRIPE_OK' : gwData.error?.message;
   } catch (e) {
     result.test3_gatewayDirect = `THREW: ${(e as Error).message}`;
   }
