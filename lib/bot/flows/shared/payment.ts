@@ -164,7 +164,8 @@ export async function initializePayment(
 
     return result;
   } catch (error) {
-    console.error('[PAYMENT] initializePayment error:', (error as Error).message);
+    const err = error as Error;
+    console.error('[PAYMENT] initializePayment error:', err.message, err.stack?.split('\n').slice(0, 3).join(' | '));
     return null;
   }
 }

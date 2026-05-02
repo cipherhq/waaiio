@@ -1,49 +1,38 @@
 import { NextResponse } from 'next/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { initializePayment } from '@/lib/bot/flows/shared/payment';
 
 export async function GET() {
-  const key = process.env.STRIPE_SECRET_KEY || '';
-
   const result: Record<string, unknown> = {
-    keyPresent: !!key,
-    keyPrefix: key ? key.slice(0, 12) + '...' : 'MISSING',
-    keyLength: key.length,
+    stripeKey: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.slice(0, 12) + '...' : 'MISSING',
   };
 
-  if (!key) {
-    return NextResponse.json({ ...result, error: 'No Stripe key' });
-  }
-
   try {
-    const res = await fetch('https://api.stripe.com/v1/checkout/sessions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        'payment_method_types[0]': 'card',
-        'line_items[0][price_data][currency]': 'usd',
-        'line_items[0][price_data][product_data][name]': 'Debug Test',
-        'line_items[0][price_data][unit_amount]': '1000',
-        'line_items[0][quantity]': '1',
-        mode: 'payment',
-        success_url: 'https://waaiio.com/success',
-        cancel_url: 'https://waaiio.com',
-      }).toString(),
+    const supabase = createServiceClient();
+
+    // Simulate exact payment flow for Citadel
+    const paymentResult = await initializePayment(supabase, {
+      bookingId: undefined,
+      userId: '00000000-0000-0000-0000-000000000001',
+      amount: 100,
+      referenceCode: 'DEBUG-TEST-' + Date.now(),
+      businessName: 'Debug Test',
+      phone: '+1234567890',
+      countryCode: 'US',
+      businessId: 'adea3e0c-47b0-4976-b961-2709b512ab04', // Citadel
     });
 
-    const data = await res.json();
-
-    if (data.url) {
+    if (paymentResult) {
       result.status = 'SUCCESS';
-      result.checkoutUrl = (data.url as string).slice(0, 60) + '...';
+      result.url = paymentResult.url.slice(0, 80) + '...';
+      result.reference = paymentResult.reference;
     } else {
-      result.status = 'FAILED';
-      result.stripeError = data.error?.message || JSON.stringify(data).slice(0, 200);
+      result.status = 'FAILED - initializePayment returned null';
     }
   } catch (err) {
     result.status = 'ERROR';
     result.error = (err as Error).message;
+    result.stack = (err as Error).stack?.split('\n').slice(0, 5);
   }
 
   return NextResponse.json(result);
