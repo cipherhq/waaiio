@@ -51,6 +51,54 @@ export async function GET() {
     });
     result.test2_initPayment = payResult ? `SUCCESS: ${payResult.url.slice(0, 50)}...` : 'RETURNED NULL';
     result.test2_lastError = (globalThis as Record<string, unknown>).__lastPaymentError || 'no error captured';
+
+    // If failed, trace manually step by step
+    if (!payResult) {
+      const { getPaymentGateway: gPG } = await import('@/lib/payments/factory');
+      const { getCountry: gC2 } = await import('@/lib/countries');
+      const gw2 = gPG('US');
+      const curr2 = gC2('US')?.currency_code ?? 'NGN';
+      result.trace_gateway = gw2.name;
+      result.trace_currency = curr2;
+
+      // Check what the shared function passes to gateway
+      const { data: payout2 } = await supabase.from('payout_accounts')
+        .select('subaccount_code, stripe_account_id, platform_percentage, gateway')
+        .eq('business_id', 'adea3e0c-47b0-4976-b961-2709b512ab04')
+        .eq('is_active', true).maybeSingle();
+      const { data: biz2 } = await supabase.from('businesses')
+        .select('payout_mode, subscription_tier, trial_ends_at')
+        .eq('id', 'adea3e0c-47b0-4976-b961-2709b512ab04').single();
+
+      result.trace_payoutMode = biz2?.payout_mode;
+      result.trace_payoutGateway = payout2?.gateway;
+      result.trace_stripeAccountId = payout2?.stripe_account_id;
+      result.trace_subaccountCode = payout2?.subaccount_code;
+
+      // Calculate fee
+      const isInTrial2 = biz2?.trial_ends_at && new Date(biz2.trial_ends_at) > new Date();
+      result.trace_isInTrial = !!isInTrial2;
+      result.trace_tier = biz2?.subscription_tier;
+
+      // Try gateway with ALL the params the shared function would pass
+      try {
+        const gwResult2 = await gw2.initializePayment({
+          supabase,
+          userId: '16d175ec-86b5-446a-ae67-0085e987c19d',
+          amount: 100,
+          currency: curr2,
+          referenceCode: 'TRACE-' + Date.now(),
+          businessName: 'Citadel Trace',
+          phone: '+15712746425',
+          subaccountCode: payout2?.subaccount_code || undefined,
+          stripeAccountId: payout2?.stripe_account_id || undefined,
+          platformFeeAmount: payout2 ? Math.round(100 * (payout2.platform_percentage / 100)) : undefined,
+        });
+        result.trace_gwWithParams = gwResult2 ? `SUCCESS: ${gwResult2.url.slice(0, 50)}` : 'RETURNED NULL';
+      } catch (traceErr) {
+        result.trace_gwWithParams = `THREW: ${(traceErr as Error).message}`;
+      }
+    }
   } catch (e) {
     result.test2_initPayment = `THREW: ${(e as Error).message}`;
     result.test2_stack = (e as Error).stack?.split('\n').slice(0, 5);
