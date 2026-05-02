@@ -178,50 +178,16 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
 
-      let pointsMsg = `You earned *${pointsPerVisit} loyalty points*! Your balance: *${newBalance} points*.`;
-      if (newBalance >= rewardThreshold) {
-        pointsMsg += `\n\nYou've reached *${rewardThreshold} points* — you qualify for ${rewardDesc}! Ask staff to redeem.`;
-      }
-
-      await sender.sendText({ to: phone, text: pointsMsg });
+      // Loyalty points updated silently — don't spam customer after payment
+      // Customer can check their points anytime by typing "my points"
     } catch (err) {
       console.error('[POST-COMPLETION] Loyalty error:', err);
     }
   }
 
-  // 2. Feedback — start feedback session
-  if (capabilities.includes('feedback')) {
-    try {
-      // Create a new bot session at feedback_rating step
-      await supabase.from('bot_sessions').insert({
-        whatsapp_number: customerPhone,
-        business_id: businessId,
-        current_step: 'feedback_rating',
-        session_data: {
-          active_capability: 'feedback',
-          business_id: businessId,
-          customer_name: customerName,
-          service_type: serviceType || null,
-          reference_id: referenceId || null,
-        },
-        is_active: true,
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      });
-
-      // Send the rating prompt
-      await sender.sendButtons({
-        to: phone,
-        body: `How was your experience at ${bizName}? Rate us:`,
-        buttons: [
-          { id: 'rate_5', title: '5 - Excellent' },
-          { id: 'rate_4', title: '4 - Good' },
-          { id: 'rate_3', title: '3 - Average' },
-        ],
-      });
-    } catch (err) {
-      console.error('[POST-COMPLETION] Feedback error:', err);
-    }
-  }
+  // 2. Feedback — don't auto-prompt after payment
+  // Customer can leave feedback anytime by typing "feedback" or "rate"
+  // Business can trigger feedback via broadcast or automation rules
 
   // 2.5. Sequences & Rules — trigger automation after completion
   try {
@@ -252,10 +218,10 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     console.error('[POST-COMPLETION] Automation error (non-fatal):', err);
   }
 
-  // 3. Referral — generate code and send share link
+  // 3. Referral — generate code silently (customer can access via "refer" keyword)
+  // Don't auto-send referral message after every transaction
   if (capabilities.includes('referral')) {
     try {
-      // Check if customer already has a referral code for this business
       const { data: existingRef } = await supabase
         .from('referrals')
         .select('referral_code')
@@ -266,7 +232,6 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
       if (!existingRef) {
         const code = generateReferralCode();
-
         const rewardType = (meta.referral_reward_type as string) || 'points';
         const rewardAmount = (meta.referral_reward_amount as number) || 50;
 
@@ -279,11 +244,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           reward_type: rewardType,
           reward_amount: rewardAmount,
         });
-
-        await sender.sendText({
-          to: phone,
-          text: `Share ${bizName} with friends! Your referral code: *${code}*\n\nWhen a friend uses your code, you both earn rewards.`,
-        });
+        // Code generated silently — customer can type "refer" to see it
       }
     } catch (err) {
       console.error('[POST-COMPLETION] Referral error:', err);

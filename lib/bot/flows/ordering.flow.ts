@@ -1317,6 +1317,16 @@ export const orderingFlow: FlowDefinition = {
     // ── Apply Promo Code ──
     {
       id: 'apply_promo',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        if (!ctx.business) return true;
+        // Skip promo code step unless business has active promo codes
+        const { count } = await ctx.supabase
+          .from('promo_codes')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true);
+        return (count || 0) === 0;
+      },
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
