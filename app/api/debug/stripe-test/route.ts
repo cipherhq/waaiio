@@ -41,11 +41,11 @@ export async function GET() {
     const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
 
     const payResult = await initializePayment(supabase, {
-      userId: '00000000-0000-0000-0000-000000000001',
+      userId: '16d175ec-86b5-446a-ae67-0085e987c19d',
       amount: 100,
       referenceCode: 'DBG-' + Date.now(),
       businessName: 'Citadel Debug',
-      phone: '+12345678900',
+      phone: '+15712746425',
       countryCode: 'US',
       businessId: 'adea3e0c-47b0-4976-b961-2709b512ab04',
     });
