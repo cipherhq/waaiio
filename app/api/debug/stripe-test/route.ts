@@ -10,17 +10,39 @@ export async function GET() {
   try {
     const supabase = createServiceClient();
 
-    // Simulate exact payment flow for Citadel
-    const paymentResult = await initializePayment(supabase, {
-      bookingId: undefined,
-      userId: '00000000-0000-0000-0000-000000000001',
-      amount: 100,
-      referenceCode: 'DEBUG-TEST-' + Date.now(),
-      businessName: 'Debug Test',
-      phone: '+1234567890',
-      countryCode: 'US',
-      businessId: 'adea3e0c-47b0-4976-b961-2709b512ab04', // Citadel
-    });
+    // Simulate exact payment flow for Citadel — bypass initializePayment to find error
+    const { getPaymentGateway } = await import('@/lib/payments/factory');
+    const { getCountry: getC } = await import('@/lib/countries');
+    const cc = 'US';
+    const gateway = getPaymentGateway(cc);
+    const curr = getC(cc)?.currency_code ?? 'NGN';
+
+    // Check BYO creds
+    const { data: byoCreds } = await supabase
+      .from('business_payment_credentials')
+      .select('secret_key, platform_subaccount_code, gateway, connect_account_id, connection_type')
+      .eq('business_id', 'adea3e0c-47b0-4976-b961-2709b512ab04')
+      .eq('is_active', true)
+      .not('verified_at', 'is', null)
+      .maybeSingle();
+    result.byoCreds = byoCreds || 'none';
+
+    // Try calling gateway directly
+    let paymentResult = null;
+    try {
+      paymentResult = await gateway.initializePayment({
+        supabase,
+        userId: '00000000-0000-0000-0000-000000000001',
+        amount: 100,
+        currency: curr,
+        referenceCode: 'DEBUG-' + Date.now(),
+        businessName: 'Debug Test',
+        phone: '+1234567890',
+      });
+    } catch (gwErr) {
+      result.gatewayError = (gwErr as Error).message;
+      result.gatewayStack = (gwErr as Error).stack?.split('\n').slice(0, 5);
+    }
 
     // Check currency resolution
     const { getCountry } = await import('@/lib/countries');
