@@ -89,9 +89,16 @@ export class StripeGateway implements PaymentGateway {
       const sessionData = await stripeRequest('/checkout/sessions', sessionParams);
 
       if (!sessionData.id || !sessionData.url) {
+        // Store detailed error for debug endpoint
+        (globalThis as Record<string, unknown>).__stripeDebug = {
+          sessionData: JSON.stringify(sessionData).slice(0, 500),
+          keyPresent: !!stripeSecretKey,
+          keyPrefix: stripeSecretKey.slice(0, 15),
+          keyLength: stripeSecretKey.length,
+          currency: sessionParams['line_items[0][price_data][currency]'],
+          amount: sessionParams['line_items[0][price_data][unit_amount]'],
+        };
         logger.error('Stripe session creation failed:', JSON.stringify(sessionData).slice(0, 500));
-        logger.error('Stripe key present:', !!stripeSecretKey, 'key prefix:', stripeSecretKey.slice(0, 12));
-        logger.error('Stripe params:', JSON.stringify(Object.fromEntries(Object.entries(sessionParams).filter(([k]) => !k.includes('secret')))).slice(0, 500));
         return null;
       }
 

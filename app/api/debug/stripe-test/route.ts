@@ -56,6 +56,7 @@ export async function GET() {
 
     result.gatewayDirect = gwResult ? `SUCCESS: ${gwResult.url.slice(0, 60)}...` : 'NULL';
     result.gatewayError = gwError;
+    result.stripeDebug = (globalThis as Record<string, unknown>).__stripeDebug || 'not captured';
 
     // Raw Stripe test from THIS server
     const rawRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
