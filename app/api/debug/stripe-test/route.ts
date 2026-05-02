@@ -62,12 +62,38 @@ export async function GET() {
     const { getPaymentGateway } = await import('@/lib/payments/factory');
     const gw = getPaymentGateway('US');
 
+    // Call stripeRequest directly to see what Stripe returns
+    const stripeKey = process.env.STRIPE_SECRET_KEY || '';
+    const testParams = new URLSearchParams({
+      'payment_method_types[0]': 'card',
+      'line_items[0][price_data][currency]': 'usd',
+      'line_items[0][price_data][product_data][name]': 'GW Debug',
+      'line_items[0][price_data][unit_amount]': '5000',
+      'line_items[0][quantity]': '1',
+      mode: 'payment',
+      success_url: 'https://waaiio.com/api/payments/stripe-success?session_id={CHECKOUT_SESSION_ID}',
+      cancel_url: 'https://waaiio.com',
+      'metadata[booking_id]': '',
+      'metadata[order_id]': '',
+      'metadata[user_id]': '00000000-0000-0000-0000-000000000001',
+      'metadata[reference_code]': 'DBG-GW-' + Date.now(),
+      'metadata[channel]': 'whatsapp',
+    });
+    const stripeRes = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${stripeKey}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: testParams.toString(),
+    });
+    const stripeData = await stripeRes.json();
+    result.test3_stripeResponse = stripeData.url ? 'HAS_URL' : (stripeData.error?.message || JSON.stringify(stripeData).slice(0, 300));
+
+    // Now test through gateway class
     const gwResult = await gw.initializePayment({
       supabase,
       userId: '00000000-0000-0000-0000-000000000001',
       amount: 50,
       currency: 'USD',
-      referenceCode: 'DBG-GW-' + Date.now(),
+      referenceCode: 'DBG-GW2-' + Date.now(),
       businessName: 'Gateway Debug',
       phone: '+12345678900',
     });
