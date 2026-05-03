@@ -66,19 +66,57 @@ export default function ConnectWhatsAppPage() {
         if (response.authResponse) {
           const code = response.authResponse.code;
 
-          fetch('/api/whatsapp/embedded-signup', {
+          fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ business_id: business.id, code }),
+            body: JSON.stringify({ code }),
           })
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {
               if (!ok) {
-                setError((data.error || 'Failed to connect.') + (data.details ? ` (${data.details})` : ''));
-              } else {
-                setSuccess({ phone_number: data.phone_number });
+                setError((data.message || data.error || 'Failed to connect.') + (data.details ? ` (${data.details})` : ''));
+                setConnecting(false);
+                return;
               }
-              setConnecting(false);
+
+              // Discover returns WABAs — auto-connect the first one
+              const wabas = data.wabas || [];
+              if (wabas.length === 0) {
+                setError('No WhatsApp Business Account found. Please try again.');
+                setConnecting(false);
+                return;
+              }
+
+              const waba = wabas[0];
+              const phone = waba.phones?.[waba.phones.length - 1];
+
+              // Save the channel via the callback endpoint
+              fetch('/api/auth/facebook/callback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  business_id: business.id,
+                  waba_id: waba.waba_id,
+                  phone_number_id: phone?.id,
+                  access_token: data.access_token,
+                  token_expires_at: data.token_expires_at,
+                  display_name: phone?.display_phone_number || phone?.verified_name,
+                  phone_number: phone?.display_phone_number,
+                }),
+              })
+                .then(r => r.json().then(d2 => ({ ok: r.ok, d2 })))
+                .then(({ ok: ok2, d2 }) => {
+                  if (ok2) {
+                    setSuccess({ phone_number: phone?.display_phone_number || 'Connected' });
+                  } else {
+                    setError(d2.error || d2.message || 'Failed to save connection.');
+                  }
+                  setConnecting(false);
+                })
+                .catch(() => {
+                  setError('Failed to save connection. Please try again.');
+                  setConnecting(false);
+                });
             })
             .catch(() => {
               setError('Something went wrong. Please try again.');

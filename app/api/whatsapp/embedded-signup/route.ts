@@ -38,10 +38,21 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // 1. Exchange code for access token
+    // 1. Exchange code for short-lived token, then get long-lived token
+    // For FB JS SDK with response_type=code, use /oauth/access_token with the code directly
+    // Meta docs: https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow
     const tokenRes = await fetch(
-      `https://graph.facebook.com/${apiVersion}/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`,
-      { method: 'GET' }
+      `https://graph.facebook.com/${apiVersion}/oauth/access_token`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: appId,
+          client_secret: appSecret,
+          code,
+          redirect_uri: `https://waaiio.com/dashboard/whatsapp/connect`,
+        }).toString(),
+      }
     );
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
