@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
 
@@ -49,43 +49,49 @@ export default function ConnectWhatsAppPage() {
     };
   }, [appId]);
 
-  const startEmbeddedSignup = useCallback(() => {
-    if (!window.FB) {
-      setError('Facebook SDK not loaded. Please refresh the page.');
+  // Must be a plain function (not useCallback) called directly from onClick
+  // to avoid popup blockers. FB.login MUST be synchronous from user click.
+  function startEmbeddedSignup() {
+    const FB = window.FB;
+    if (!FB) {
+      setError('Facebook SDK not loaded. Please refresh the page and try again.');
       return;
     }
 
     setError(null);
     setConnecting(true);
 
-    window.FB.login(
-      async (response: { authResponse?: { code?: string } }) => {
+    // Call FB.login synchronously from click handler — critical for popup
+    FB.login(
+      function (response: { authResponse?: { code?: string } }) {
         if (!response.authResponse?.code) {
           setConnecting(false);
           setError('Connection cancelled or no access was granted.');
           return;
         }
 
-        try {
-          const res = await fetch('/api/whatsapp/embedded-signup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              business_id: business.id,
-              code: response.authResponse.code,
-            }),
+        // Process the auth code
+        fetch('/api/whatsapp/embedded-signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: business.id,
+            code: response.authResponse.code,
+          }),
+        })
+          .then(res => res.json().then(data => ({ ok: res.ok, data })))
+          .then(({ ok, data }) => {
+            if (!ok) {
+              setError(data.error || 'Failed to connect. Please try again.');
+            } else {
+              setSuccess({ phone_number: data.phone_number });
+            }
+            setConnecting(false);
+          })
+          .catch(() => {
+            setError('Something went wrong. Please try again.');
+            setConnecting(false);
           });
-
-          const data = await res.json();
-          if (!res.ok) {
-            setError(data.error || 'Failed to connect. Please try again.');
-          } else {
-            setSuccess({ phone_number: data.phone_number });
-          }
-        } catch {
-          setError('Something went wrong. Please try again.');
-        }
-        setConnecting(false);
       },
       {
         config_id: configId,
@@ -98,7 +104,7 @@ export default function ConnectWhatsAppPage() {
         },
       },
     );
-  }, [business.id, configId]);
+  }
 
   if (success) {
     return (
