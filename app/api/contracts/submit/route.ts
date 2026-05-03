@@ -391,8 +391,12 @@ export async function POST(request: NextRequest) {
     // Send WhatsApp confirmation to signer
     if (signerPhone) {
       try {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
-        const downloadUrl = `${appUrl}/sign/${activeContract.token}`;
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://waaiio.com';
+
+        // Link to PDF download if available, otherwise to the signed view page
+        const downloadUrl = pdfPath
+          ? `${appUrl}/api/contracts/pdf/${activeContract.id}`
+          : `${appUrl}/sign/${activeContract.token}`;
 
         const confirmMsg = [
           `\u2705 *Document Signed Successfully*`,
@@ -400,11 +404,9 @@ export async function POST(request: NextRequest) {
           `You have signed "${activeContract.title}" from ${businessName}.`,
           '',
           pdfPath
-            ? `Your signed copy is ready. Tap the link below to download it anytime:`
-            : `You can view your signature confirmation at:`,
+            ? `Your signed copy is ready:`
+            : `View your signed document:`,
           downloadUrl,
-          '',
-          `\ud83d\udd12 Keep this link for your records.`,
         ].join('\n');
 
         await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', signerPhone, confirmMsg);
