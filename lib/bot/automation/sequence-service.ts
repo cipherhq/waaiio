@@ -118,6 +118,14 @@ export async function processEnrollmentStep(
   const message = fillVariables(currentStep.message_content, enrollment.context);
   const phone = enrollment.customer_phone.replace(/^\+/, '');
 
+  // Check conversation limit before sending
+  const { checkConversationLimit, trackOutboundMessage } = await import('@/lib/bot/conversation-guard');
+  const limit = await checkConversationLimit(supabase, enrollment.business_id);
+  if (!limit.allowed) {
+    logger.debug('[SEQUENCE] Conversation limit reached for business', enrollment.business_id, '— skipping');
+    return;
+  }
+
   // Send message
   try {
     if (currentStep.message_type === 'image' && currentStep.image_url && sendImage) {
@@ -125,6 +133,8 @@ export async function processEnrollmentStep(
     } else {
       await sendMessage(phone, message);
     }
+    // Track outbound
+    trackOutboundMessage(supabase, enrollment.business_id).catch(() => {});
   } catch (err) {
     logger.error('[SEQUENCE] Failed to send message:', err);
     // Don't advance — will retry next cycle

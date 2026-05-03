@@ -38,6 +38,14 @@ export async function POST(request: NextRequest, { params }: Params) {
   const rateLimited = rateLimitResponse(`survey-send:${survey.business_id}`, 3, 60_000);
   if (rateLimited) return rateLimited;
 
+  // Check conversation limit
+  const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
+  const service0 = createServiceClient();
+  const convLimit = await checkConversationLimit(service0, survey.business_id);
+  if (!convLimit.allowed) {
+    return NextResponse.json({ error: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade for more.` }, { status: 403 });
+  }
+
   // Survey must be active
   if (survey.status !== 'active') {
     return NextResponse.json({ error: 'Survey must be active before sending' }, { status: 400 });

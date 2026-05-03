@@ -25,11 +25,14 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
   let remindersSent = 0;
 
-  // Get all businesses with their reminder config
+  // Get all businesses with their reminder config and tier
   const { data: businesses } = await supabase
     .from('businesses')
-    .select('id, metadata')
+    .select('id, metadata, subscription_tier')
     .limit(500);
+
+  // Conversation limit imports
+  const { checkConversationLimit, trackOutboundMessage } = await import('@/lib/bot/conversation-guard');
 
   // Build a set of all reminder hours across businesses (default [24, 2])
   const bizMap = new Map<string, number[]>();
@@ -62,6 +65,10 @@ export async function GET(request: NextRequest) {
       // Check this business uses this reminder hour
       const bizHours = bizMap.get(booking.business_id) || [24, 2];
       if (!bizHours.includes(hoursAhead)) continue;
+
+      // Check conversation limit for this business
+      const limit = await checkConversationLimit(supabase, booking.business_id);
+      if (!limit.allowed) continue;
 
       // Try guest_email first, then look up user profile
       let email = (booking as any).guest_email;

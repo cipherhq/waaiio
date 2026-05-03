@@ -61,7 +61,13 @@ export async function GET(request: NextRequest) {
       if (!existing || date > existing) lastNudge.set(n.business_id, date);
     }
 
+    let nudgesSent = 0;
+    const MAX_NUDGES_PER_RUN = 50; // Cap platform-initiated messages per cron run
+
     for (const biz of businesses) {
+      // Cap total nudges per run to control costs
+      if (nudgesSent >= MAX_NUDGES_PER_RUN) break;
+
       // Skip if already has payout account
       if (hasPayoutAccount.has(biz.id)) continue;
 

@@ -149,7 +149,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Business not found' }, { status: 403 });
     }
 
+    // Check conversation limit before sending WhatsApp messages
+    const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
     const service = createServiceClient();
+    const convLimit = await checkConversationLimit(service, business_id);
+    if (!convLimit.allowed) {
+      return NextResponse.json({ error: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade for more.` }, { status: 403 });
+    }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
