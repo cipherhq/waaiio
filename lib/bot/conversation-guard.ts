@@ -1,17 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 /**
  * Conversation Guard
  *
  * Enforces monthly conversation limits based on subscription tier.
- * Tracks outbound messages and blocks business-initiated messages
- * when the limit is reached.
- *
- * Limits:
- * - Free/Starter: 200 conversations/month
- * - Growth: 1,000 conversations/month
- * - Premium: 5,000 conversations/month (effectively unlimited for most businesses)
+ * Reads limits from platform_settings (admin-editable) with hardcoded fallbacks.
  *
  * A "conversation" = 1 unique customer 24h window (matches Meta billing).
  */
@@ -26,32 +21,47 @@ interface ConversationCheckResult {
 
 /**
  * Check if a business can send more messages this month.
- * Uses the DB function check_conversation_limit for accuracy.
+ * Reads limits from platform_settings (admin-editable via Admin Console).
  */
 export async function checkConversationLimit(
   supabase: SupabaseClient,
   businessId: string,
 ): Promise<ConversationCheckResult> {
   try {
-    const { data, error } = await supabase.rpc('check_conversation_limit', {
-      p_business_id: businessId,
-    });
+    // Get business tier
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('subscription_tier')
+      .eq('id', businessId)
+      .single();
 
-    if (error || !data || data.length === 0) {
-      // If check fails, allow by default (don't block due to DB error)
-      return { allowed: true, tier: 'unknown', used: 0, limit: 999999, remaining: 999999 };
-    }
+    const tier = (biz?.subscription_tier || 'free') as 'free' | 'growth' | 'business';
 
-    const row = data[0];
+    // Get limits from platform_settings (admin-editable)
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const tierLimit = settings.conversation_limits[tier] ?? 200;
+
+    // Get current month usage
+    const monthKey = new Date().toISOString().slice(0, 7);
+    const { data: usage } = await supabase
+      .from('conversation_usage')
+      .select('conversation_count')
+      .eq('business_id', businessId)
+      .eq('month_key', monthKey)
+      .maybeSingle();
+
+    const used = usage?.conversation_count || 0;
+
     return {
-      allowed: row.allowed,
-      tier: row.tier || 'free',
-      used: row.monthly_conversations || 0,
-      limit: row.monthly_limit || 200,
-      remaining: Math.max(0, (row.monthly_limit || 200) - (row.monthly_conversations || 0)),
+      allowed: used < tierLimit,
+      tier,
+      used,
+      limit: tierLimit,
+      remaining: Math.max(0, tierLimit - used),
     };
   } catch (err) {
     logger.error('[CONV-GUARD] Check failed:', (err as Error).message);
+    // Fail-open: allow if check fails (don't block due to DB error)
     return { allowed: true, tier: 'unknown', used: 0, limit: 999999, remaining: 999999 };
   }
 }
