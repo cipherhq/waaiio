@@ -74,7 +74,7 @@ export default function ConnectWhatsAppPage() {
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {
               if (!ok) {
-                setError(data.error || 'Failed to connect. Please try again.');
+                setError((data.error || 'Failed to connect.') + (data.details ? ` (${data.details})` : ''));
               } else {
                 setSuccess({ phone_number: data.phone_number });
               }

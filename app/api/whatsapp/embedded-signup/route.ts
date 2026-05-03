@@ -45,8 +45,11 @@ export async function POST(request: NextRequest) {
     );
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) {
-      logger.error('[EMBEDDED-SIGNUP] Token exchange failed:', tokenData);
-      return NextResponse.json({ error: 'Failed to exchange auth code' }, { status: 400 });
+      logger.error('[EMBEDDED-SIGNUP] Token exchange failed:', JSON.stringify(tokenData));
+      return NextResponse.json({
+        error: 'Failed to exchange auth code',
+        details: tokenData.error?.message || tokenData.error?.type || JSON.stringify(tokenData).slice(0, 200),
+      }, { status: 400 });
     }
 
     const accessToken = tokenData.access_token;
