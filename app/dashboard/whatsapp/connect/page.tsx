@@ -69,7 +69,7 @@ export default function ConnectWhatsAppPage() {
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, redirect_uri: window.location.origin + '/dashboard/whatsapp/connect' }),
+            body: JSON.stringify({ code }),
           })
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {
