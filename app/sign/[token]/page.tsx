@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 interface ContractInfo {
   id: string;
@@ -421,9 +422,8 @@ export default function SignPage() {
             </a>
           )}
 
-          <p className="mt-4 text-sm text-gray-400">
-            You can revisit this link anytime to download your copy.
-          </p>
+          <ReturnToWhatsApp />
+          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
         </div>
       </div>
     );
@@ -442,7 +442,8 @@ export default function SignPage() {
           <p className="mt-2 text-gray-600">
             You have declined to sign &quot;{contract?.title}&quot;. The sender has been notified.
           </p>
-          <p className="mt-4 text-sm text-gray-400">You can close this page now.</p>
+          <ReturnToWhatsApp />
+          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
         </div>
       </div>
     );
@@ -525,7 +526,8 @@ export default function SignPage() {
             </a>
           )}
 
-          <p className="mt-4 text-sm text-gray-400">You can close this page now.</p>
+          <ReturnToWhatsApp />
+          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
         </div>
       </div>
     );
