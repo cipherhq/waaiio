@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 interface InvoiceItem {
   id: string;
@@ -336,9 +337,14 @@ export default function InvoicePage() {
           </a>
         </div>
 
+        {/* Return to WhatsApp */}
+        <div className="mt-6 text-center">
+          <ReturnToWhatsApp />
+        </div>
+
         {/* Footer — hidden for whitelabel */}
         {!invoice.whitelabel && (
-          <p className="mt-8 text-center text-xs text-gray-400">
+          <p className="mt-4 text-center text-xs text-gray-400">
             Powered by Waaiio
           </p>
         )}
