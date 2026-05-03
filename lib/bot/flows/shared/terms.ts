@@ -1,7 +1,7 @@
 import type { PromptMessage } from '../types';
 
 const DEFAULT_TERMS = (businessName: string) =>
-  `Almost there! 🎉\n\nBy continuing, you confirm your order with *${businessName}* and acknowledge that:\n\n✅ Payment secures your booking/order\n✅ Contact *${businessName}* for any changes\n✅ Cancellations follow the business's policy\n\nThank you for your trust! 🙏`;
+  `Tap *Continue* to confirm your order with *${businessName}* and proceed to payment.`;
 
 export function getTermsPrompt(businessName: string, customTermsText?: string | null): PromptMessage[] {
   const body = customTermsText

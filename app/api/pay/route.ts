@@ -16,12 +16,14 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
 
-  // Look up payment by gateway_reference or booking reference_code
+  // Look up payment by gateway_reference (full or partial match)
   const { data: payment } = await supabase
     .from('payments')
     .select('gateway, gateway_reference, metadata')
-    .eq('gateway_reference', ref)
+    .like('gateway_reference', `%${ref}`)
     .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
 
   if (payment) {

@@ -170,10 +170,12 @@ export async function initializePayment(
       connectAccountId,
     });
 
-    // Shorten the payment URL for WhatsApp (long checkout URLs look ugly)
+    // Shorten the payment URL for WhatsApp
     if (result?.url && result.reference) {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-      result.url = `${appUrl}/api/pay?ref=${encodeURIComponent(result.reference)}`;
+      // Use last 8 chars of reference as short code
+      const shortRef = result.reference.slice(-8);
+      result.url = `${appUrl}/api/pay?ref=${shortRef}`;
     }
 
     return result;
