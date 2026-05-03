@@ -1,7 +1,7 @@
 import type { PromptMessage } from '../types';
 
 const DEFAULT_TERMS = (businessName: string) =>
-  `Tap *Continue* to confirm your order with *${businessName}* and proceed to payment.`;
+  `By tapping *Continue*, you agree to *${businessName}*'s and *Waaiio*'s terms and policies.`;
 
 export function getTermsPrompt(businessName: string, customTermsText?: string | null): PromptMessage[] {
   const body = customTermsText
