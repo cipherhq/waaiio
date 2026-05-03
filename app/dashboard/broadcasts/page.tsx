@@ -137,15 +137,15 @@ export default function BroadcastsPage() {
     load();
   }, [business.id, isFreeTier]);
 
-  // Derived usage state
+  // Derived usage state — don't block if usage hasn't loaded yet
   const broadcastsUsed = usage?.broadcast_count ?? 0;
   const recipientsUsed = usage?.recipient_count ?? 0;
-  const maxBroadcasts = usage?.limits.maxBroadcasts ?? 0;
-  const maxRecipients = usage?.limits.maxRecipients ?? 0;
-  const isUnlimited = maxBroadcasts === null || !isFinite(maxBroadcasts);
-  const broadcastLimitReached = !isUnlimited && broadcastsUsed >= maxBroadcasts;
-  const recipientLimitReached = !isUnlimited && recipientsUsed + contacts.length > maxRecipients;
-  const quotaExceeded = broadcastLimitReached || recipientLimitReached;
+  const maxBroadcasts = usage?.limits?.maxBroadcasts ?? null;
+  const maxRecipients = usage?.limits?.maxRecipients ?? null;
+  const isUnlimited = maxBroadcasts === null || maxBroadcasts === Infinity || (maxBroadcasts !== null && !isFinite(maxBroadcasts));
+  const broadcastLimitReached = !isUnlimited && maxBroadcasts !== null && maxBroadcasts > 0 && broadcastsUsed >= maxBroadcasts;
+  const recipientLimitReached = !isUnlimited && maxRecipients !== null && maxRecipients > 0 && recipientsUsed + contacts.length > maxRecipients;
+  const quotaExceeded = isFreeTier || broadcastLimitReached || recipientLimitReached;
 
   async function handleSend() {
     if (!message.trim() || contacts.length === 0) return;
@@ -251,30 +251,30 @@ export default function BroadcastsPage() {
             {/* Broadcasts used */}
             <div>
               <div className="flex items-center justify-between text-xs text-gray-500">
-                <span>{broadcastsUsed} of {maxBroadcasts} broadcasts</span>
-                <span>{maxBroadcasts > 0 ? Math.round((broadcastsUsed / maxBroadcasts) * 100) : 0}%</span>
+                <span>{broadcastsUsed} of {isUnlimited ? '∞' : (maxBroadcasts ?? 0)} broadcasts</span>
+                <span>{(maxBroadcasts ?? 0) > 0 ? Math.round((broadcastsUsed / (maxBroadcasts ?? 1)) * 100) : 0}%</span>
               </div>
               <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
                 <div
                   className={`h-2 rounded-full transition-all ${
-                    broadcastsUsed >= maxBroadcasts ? 'bg-red-500' : broadcastsUsed >= maxBroadcasts * 0.8 ? 'bg-amber-500' : 'bg-brand'
+                    !isUnlimited && broadcastsUsed >= (maxBroadcasts ?? Infinity) ? 'bg-red-500' : !isUnlimited && broadcastsUsed >= (maxBroadcasts ?? Infinity) * 0.8 ? 'bg-amber-500' : 'bg-brand'
                   }`}
-                  style={{ width: `${maxBroadcasts > 0 ? Math.min((broadcastsUsed / maxBroadcasts) * 100, 100) : 0}%` }}
+                  style={{ width: `${(maxBroadcasts ?? 0) > 0 ? Math.min((broadcastsUsed / (maxBroadcasts ?? 1)) * 100, 100) : (isUnlimited ? 5 : 0)}%` }}
                 />
               </div>
             </div>
             {/* Recipients used */}
             <div>
               <div className="flex items-center justify-between text-xs text-gray-500">
-                <span>{recipientsUsed} of {maxRecipients} recipients</span>
-                <span>{maxRecipients > 0 ? Math.round((recipientsUsed / maxRecipients) * 100) : 0}%</span>
+                <span>{recipientsUsed} of {isUnlimited ? '∞' : (maxRecipients ?? 0)} recipients</span>
+                <span>{(maxRecipients ?? 0) > 0 ? Math.round((recipientsUsed / (maxRecipients ?? 1)) * 100) : 0}%</span>
               </div>
               <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
                 <div
                   className={`h-2 rounded-full transition-all ${
-                    recipientsUsed >= maxRecipients ? 'bg-red-500' : recipientsUsed >= maxRecipients * 0.8 ? 'bg-amber-500' : 'bg-brand'
+                    !isUnlimited && recipientsUsed >= (maxRecipients ?? Infinity) ? 'bg-red-500' : !isUnlimited && recipientsUsed >= (maxRecipients ?? Infinity) * 0.8 ? 'bg-amber-500' : 'bg-brand'
                   }`}
-                  style={{ width: `${maxRecipients > 0 ? Math.min((recipientsUsed / maxRecipients) * 100, 100) : 0}%` }}
+                  style={{ width: `${(maxRecipients ?? 0) > 0 ? Math.min((recipientsUsed / (maxRecipients ?? 1)) * 100, 100) : (isUnlimited ? 5 : 0)}%` }}
                 />
               </div>
             </div>
