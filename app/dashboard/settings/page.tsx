@@ -2574,7 +2574,7 @@ export default function SettingsPage() {
 
                 <div className="mt-3 flex gap-2">
                   <Link
-                    href={`/get-started?step=whatsapp&business_id=${business.id}`}
+                    href="/dashboard/whatsapp/connect"
                     className="rounded-lg border border-gray-300 px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
                   >
                     Reconnect with new number
@@ -2603,7 +2603,7 @@ export default function SettingsPage() {
                   Using the shared platform number. Customers reach your business by texting your bot code.
                 </p>
                 <Link
-                  href={`/get-started?step=whatsapp&business_id=${business.id}`}
+                  href="/dashboard/whatsapp/connect"
                   className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
                 >
                   Connect your own WhatsApp number
