@@ -389,7 +389,7 @@ export const BROADCAST_LIMITS: Record<SubscriptionTier, {
 export const CONVERSATION_LIMITS: Record<SubscriptionTier, number> = {
   free: 200,
   growth: 1000,
-  business: 999999, // effectively unlimited
+  business: 5000,
 };
 
 // ── Tier Feature Sets (single source of truth) ──

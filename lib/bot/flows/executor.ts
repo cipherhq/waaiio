@@ -8,10 +8,13 @@ import type { FlowContext, PromptMessage } from './types';
 import type { FlowType, BusinessCategoryKey, CountryCode } from '@/lib/constants';
 import { getFlowDefinition, getFlowStep, getFlowStepAcrossFlows, getExtendedFlowDefinition } from './registry';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage } from '@/lib/bot/conversation-guard';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
 
 export class FlowExecutor {
+  private currentBusinessId: string | null = null;
+
   constructor(
     private readonly supabase: SupabaseClient,
     private readonly sender: MessageSender,
@@ -55,6 +58,18 @@ export class FlowExecutor {
       ? this.capabilityToFlowType(activeCap)
       : (business?.flow_type || 'scheduling');
     const stepId = session.current_step;
+
+    // Store business ID for outbound tracking
+    this.currentBusinessId = business?.id || session.business_id || null;
+
+    // Check conversation limit before processing
+    if (this.currentBusinessId) {
+      const limit = await checkConversationLimit(this.supabase, this.currentBusinessId);
+      if (!limit.allowed) {
+        await this.sendText(from, getConversationLimitMessage());
+        return;
+      }
+    }
 
     // Try the primary flow first, then search across all flows
     let step = getFlowStep(flowType as FlowType, stepId);
@@ -325,6 +340,10 @@ export class FlowExecutor {
       } catch (err) {
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
       }
+    }
+    // Track outbound message count (non-blocking, count batch as 1)
+    if (this.currentBusinessId) {
+      trackOutboundMessage(this.supabase, this.currentBusinessId).catch(() => {});
     }
   }
 

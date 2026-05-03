@@ -53,6 +53,16 @@ export async function POST(request: NextRequest) {
     const settings = await loadPlatformSettings({ useServiceClient: true });
     const limits = settings.broadcast_limits[tier];
 
+    // Check conversation limit
+    const { checkConversationLimit } = await import('@/lib/bot/conversation-guard');
+    const convLimit = await checkConversationLimit(service, business.id);
+    if (!convLimit.allowed) {
+      return NextResponse.json(
+        { message: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade your plan for more conversations.` },
+        { status: 403 },
+      );
+    }
+
     // Tier gate: free tier cannot broadcast
     if (tier === 'free') {
       return NextResponse.json(
