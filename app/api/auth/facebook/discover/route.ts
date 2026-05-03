@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { code } = await request.json();
+    const { code, redirect_uri } = await request.json();
 
     if (!code) {
       return NextResponse.json(
@@ -41,9 +41,11 @@ export async function POST(request: NextRequest) {
     }
 
     // 1. Exchange the authorization code for an access token
-    const tokenRes = await fetch(
-      `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`
-    );
+    let tokenUrl = `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
+    if (redirect_uri) {
+      tokenUrl += `&redirect_uri=${encodeURIComponent(redirect_uri)}`;
+    }
+    const tokenRes = await fetch(tokenUrl);
     if (!tokenRes.ok) {
       const errData = await tokenRes.json().catch(() => ({}));
       logger.error('Code exchange failed:', errData);
