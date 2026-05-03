@@ -1811,10 +1811,9 @@ export default function ProductsPage() {
       {orderStats && products.length > 0 && (() => {
         const productNameMap: Record<string, string> = {};
         for (const p of products) productNameMap[p.id] = p.name;
-        const bestSellers = orderStats.bestSellers.map(s => ({
-          ...s,
-          name: productNameMap[s.name] || 'Unknown Product',
-        }));
+        const bestSellers = orderStats.bestSellers
+          .map(s => ({ ...s, name: productNameMap[s.name] || '' }))
+          .filter(s => s.name); // Hide deleted products from best sellers
         const topProductName = bestSellers[0]?.name || '—';
         return (
           <div className="mt-5">
