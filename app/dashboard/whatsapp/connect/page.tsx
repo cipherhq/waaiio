@@ -74,7 +74,8 @@ export default function ConnectWhatsAppPage() {
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {
               if (!ok) {
-                setError((data.message || data.error || 'Failed to connect.') + (data.details ? ` (${data.details})` : ''));
+                const fbErrMsg = data.error?.error?.message || data.error?.message || '';
+                setError((data.message || 'Failed to connect.') + (fbErrMsg ? ` (${fbErrMsg})` : ''));
                 setConnecting(false);
                 return;
               }
