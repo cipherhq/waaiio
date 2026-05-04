@@ -64,9 +64,9 @@ export async function POST(request: NextRequest) {
       const tokenData = await tokenRes.json();
       accessToken = tokenData.access_token;
     }
-    const tokenExpiresAt = tokenData.expires_in
-      ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
-      : null;
+    const tokenExpiresAt = directToken
+      ? null // Direct tokens don't have expires_in in the response
+      : null; // Will be set if needed
 
     // 2. Use debug_token to discover which WABAs were shared
     const wabas: Array<{ id: string; name: string }> = [];
