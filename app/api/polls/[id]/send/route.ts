@@ -81,29 +81,39 @@ export async function POST(request: NextRequest, { params }: Params) {
         });
       }
 
-      // Send poll message
-      const body = `📊 *${poll.question}*\n\nTap your choice:`;
-      if (options.length <= 3) {
-        await resolved.sender.sendButtons({
-          to: phone,
-          body,
-          buttons: options.map((opt: string, i: number) => ({
-            id: `poll_vote_${i}`,
-            title: opt.slice(0, 20),
-          })),
-        });
-      } else {
-        await resolved.sender.sendList({
-          to: phone,
-          title: 'Poll',
-          body,
-          buttonLabel: 'Vote',
-          items: options.map((opt: string, i: number) => ({
-            title: opt.slice(0, 24),
-            postbackText: `poll_vote_${i}`,
-          })),
-        });
-      }
+      // Send poll — use template to open 24h window, then interactive message
+      const { sendWithTemplate } = await import('@/lib/channels/send-with-template');
+      const pollBody = `📊 *${poll.question}*\n\nTap your choice:`;
+
+      await sendWithTemplate({
+        sender: resolved.sender,
+        to: phone,
+        templateName: 'feedback_request',
+        templateParams: [biz.name, poll.question],
+        followUpFn: async (s, p) => {
+          if (options.length <= 3) {
+            await s.sendButtons({
+              to: p,
+              body: pollBody,
+              buttons: options.map((opt: string, i: number) => ({
+                id: `poll_vote_${i}`,
+                title: opt.slice(0, 20),
+              })),
+            });
+          } else {
+            await s.sendList({
+              to: p,
+              title: 'Poll',
+              body: pollBody,
+              buttonLabel: 'Vote',
+              items: options.map((opt: string, i: number) => ({
+                title: opt.slice(0, 24),
+                postbackText: `poll_vote_${i}`,
+              })),
+            });
+          }
+        },
+      });
       sent++;
     } catch (err) {
       logger.error(`[POLL-SEND] Failed for ${phone}:`, (err as Error).message);

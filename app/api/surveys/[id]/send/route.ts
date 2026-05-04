@@ -96,17 +96,25 @@ export async function POST(request: NextRequest, { params }: Params) {
         });
       }
 
-      // Send survey invitation message
+      // Send survey invitation — use template to open 24h window, then buttons
       const questions = survey.questions as Array<{ id: string }>;
-      const inviteText = `Hi! ${biz.name} would like your feedback.\n\n*${survey.title}*${survey.description ? '\n' + survey.description : ''}\n\n${questions.length} quick question${questions.length === 1 ? '' : 's'}. Ready?`;
+      const { sendWithTemplate } = await import('@/lib/channels/send-with-template');
 
-      await resolved.sender.sendButtons({
+      await sendWithTemplate({
+        sender: resolved.sender,
         to: phone,
-        body: inviteText,
-        buttons: [
-          { id: 'survey_start', title: 'Start' },
-          { id: 'survey_skip', title: 'Not now' },
-        ],
+        templateName: 'feedback_request',
+        templateParams: [biz.name, survey.title],
+        followUpFn: async (s, p) => {
+          await s.sendButtons({
+            to: p,
+            body: `*${survey.title}*${survey.description ? '\n' + survey.description : ''}\n\n${questions.length} quick question${questions.length === 1 ? '' : 's'}. Ready?`,
+            buttons: [
+              { id: 'survey_start', title: 'Start' },
+              { id: 'survey_skip', title: 'Not now' },
+            ],
+          });
+        },
       });
 
       sent++;

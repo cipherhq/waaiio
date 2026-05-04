@@ -21,6 +21,7 @@ async function sendWhatsAppMessage(
   countryCode: string,
   phone: string,
   message: string,
+  templateParams?: { businessName: string; invoiceNumber: string; amount: string },
 ): Promise<string | null> {
   const resolver = new ChannelResolver(service);
   const resolved =
@@ -28,30 +29,37 @@ async function sendWhatsAppMessage(
     (await resolver.getSharedChannelForCountry(countryCode || 'NG'));
 
   const cleanPhone = phone.replace(/\D/g, '');
-  let sent = false;
-  let messageId: string | null = null;
 
-  if (resolved) {
+  if (!resolved) {
+    console.warn(`[INVOICE] No WhatsApp channel for business ${businessId}`);
+    return null;
+  }
+
+  // Try template first (works outside 24h window)
+  if (resolved.sender.sendTemplate && templateParams) {
     try {
-      const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
-      sent = result.success !== false;
-      if (sent && result.messageId) messageId = result.messageId;
-    } catch (waErr) {
-      console.warn('Primary channel send failed, trying Gupshup fallback:', waErr);
+      const result = await resolved.sender.sendTemplate({
+        to: cleanPhone,
+        templateName: 'invoice_payment_request',
+        templateParams: [templateParams.businessName, templateParams.invoiceNumber, templateParams.amount],
+      });
+      if (result.success !== false && result.messageId) {
+        return result.messageId;
+      }
+    } catch (tmplErr) {
+      console.warn('[INVOICE] Template failed, trying text:', tmplErr);
     }
   }
 
-  if (!sent) {
-    const gupshup = new GupshupService();
-    if (gupshup.isConfigured) {
-      const result = await gupshup.sendText({ to: cleanPhone, text: message });
-      if (result.success && result.messageId) messageId = result.messageId;
-    } else {
-      console.warn(`[INVOICE] No WhatsApp channel configured for business ${businessId}. Gupshup not configured. Message NOT delivered to ${cleanPhone}.`);
-    }
+  // Fallback to plain text (within 24h window only)
+  try {
+    const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
+    if (result.success !== false && result.messageId) return result.messageId;
+  } catch (waErr) {
+    console.warn('[INVOICE] sendText failed:', waErr);
   }
 
-  return messageId;
+  return null;
 }
 
 function formatAmount(amount: number, currency: string): string {
@@ -145,7 +153,11 @@ export async function POST(request: NextRequest) {
         invoiceUrl,
       ].join('\n');
 
-      waMessageId = await sendWhatsAppMessage(service, invoice.business_id, biz.country_code, invoice.customer_phone, message);
+      waMessageId = await sendWhatsAppMessage(service, invoice.business_id, biz.country_code, invoice.customer_phone, message, {
+        businessName: biz.name,
+        invoiceNumber: invoice.reference_code,
+        amount: formattedAmount,
+      });
 
       if (waMessageId) {
         await service
