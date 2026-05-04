@@ -64,12 +64,12 @@ export default function ConnectWhatsAppPage() {
     window.FB.login(
       function (response: any) {
         if (response.authResponse) {
-          const code = response.authResponse.code;
+          const accessToken = response.authResponse.accessToken || response.authResponse.code;
 
           fetch('/api/auth/facebook/discover', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, redirect_uri: window.location.href.split('?')[0] }),
+            body: JSON.stringify({ code: accessToken, access_token: response.authResponse.accessToken }),
           })
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
             .then(({ ok, data }) => {
@@ -131,7 +131,7 @@ export default function ConnectWhatsAppPage() {
       },
       {
         config_id: configId,
-        response_type: 'code',
+        response_type: 'code token',
         override_default_response_type: true,
         extras: {
           setup: {},

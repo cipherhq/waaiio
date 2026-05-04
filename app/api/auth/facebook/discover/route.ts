@@ -20,11 +20,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { code, redirect_uri } = await request.json();
+    const { code, redirect_uri, access_token: directToken } = await request.json();
 
-    if (!code) {
+    if (!code && !directToken) {
       return NextResponse.json(
-        { message: 'Missing required field: code' },
+        { message: 'Missing required field: code or access_token' },
         { status: 400 }
       );
     }
@@ -40,22 +40,30 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Exchange the authorization code for an access token
-    let tokenUrl = `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
-    if (redirect_uri) {
-      tokenUrl += `&redirect_uri=${encodeURIComponent(redirect_uri)}`;
+    // 1. Get access token — either directly from JS SDK or via code exchange
+    let accessToken: string;
+
+    if (directToken) {
+      // Direct token from FB.login (no code exchange needed)
+      accessToken = directToken;
+    } else {
+      // Exchange authorization code for access token
+      let tokenUrl = `https://graph.facebook.com/v22.0/oauth/access_token?client_id=${appId}&client_secret=${appSecret}&code=${code}`;
+      if (redirect_uri) {
+        tokenUrl += `&redirect_uri=${encodeURIComponent(redirect_uri)}`;
+      }
+      const tokenRes = await fetch(tokenUrl);
+      if (!tokenRes.ok) {
+        const errData = await tokenRes.json().catch(() => ({}));
+        logger.error('Code exchange failed:', errData, 'redirect_uri:', redirect_uri || 'none');
+        return NextResponse.json(
+          { message: 'Failed to exchange Facebook authorization code', error: errData, debug_redirect_uri: redirect_uri || 'none' },
+          { status: 400 }
+        );
+      }
+      const tokenData = await tokenRes.json();
+      accessToken = tokenData.access_token;
     }
-    const tokenRes = await fetch(tokenUrl);
-    if (!tokenRes.ok) {
-      const errData = await tokenRes.json().catch(() => ({}));
-      logger.error('Code exchange failed:', errData, 'redirect_uri:', redirect_uri || 'none');
-      return NextResponse.json(
-        { message: 'Failed to exchange Facebook authorization code', error: errData, debug_redirect_uri: redirect_uri || 'none' },
-        { status: 400 }
-      );
-    }
-    const tokenData = await tokenRes.json();
-    const accessToken = tokenData.access_token;
     const tokenExpiresAt = tokenData.expires_in
       ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
       : null;
