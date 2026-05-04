@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey';
+export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -30,6 +30,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'staff', label: 'Staff', description: 'Staff management with service assignments and scheduling', icon: '👥' },
   { id: 'invoice', label: 'Invoices', description: 'Create and send invoices with online payment links', icon: '🧾' },
   { id: 'survey', label: 'Surveys', description: 'Create and send customer surveys via WhatsApp', icon: '📊' },
+  { id: 'poll', label: 'Polls', description: 'Quick polls and voting via WhatsApp', icon: '🗳️' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -61,6 +62,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   crowdfunding: 'business',
   invoice: 'business',
   survey: 'growth',
+  poll: 'growth',
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };

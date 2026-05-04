@@ -15,6 +15,7 @@ import { chatFlow } from './chat.flow';
 import { loyaltyFlow } from './loyalty.flow';
 import { invoiceFlow } from './invoice.flow';
 import { surveyFlow } from './survey.flow';
+import { pollFlow } from './poll.flow';
 
 const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   scheduling: schedulingFlow,
@@ -37,6 +38,7 @@ const EXTENDED_REGISTRY: Record<string, FlowDefinition> = {
   loyalty: loyaltyFlow,
   invoice: invoiceFlow,
   survey: surveyFlow,
+  poll: pollFlow,
 };
 
 export function getFlowDefinition(type: FlowType): FlowDefinition {

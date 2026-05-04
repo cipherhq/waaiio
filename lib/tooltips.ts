@@ -57,6 +57,7 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   notifications: 'View system notifications and alerts for your business.',
   locations: 'Manage multiple business locations.',
   surveys: 'Create custom surveys and send them to customers via WhatsApp. Track responses and analyze results.',
+  polls: 'Create quick polls and let customers vote via WhatsApp. See live results with visual charts.',
   'setup-assistant': 'Ace is your AI assistant. Describe your business or upload a menu photo — Ace creates your services, products, hours, and bot greeting automatically.',
   verification: 'Verify your business to unlock higher payout limits.',
 };
