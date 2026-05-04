@@ -161,37 +161,66 @@ export default function ConnectWhatsAppPage() {
     );
   }
 
+  const supportNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '12029226251';
+
   return (
-    <div className="max-w-lg mx-auto mt-8 space-y-6">
+    <div className="max-w-lg mx-auto mt-8 space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Connect Your WhatsApp Number</h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          Use your own WhatsApp Business number instead of the shared Waaiio number.
-          Your bot will run on your dedicated number.
+          Get your own dedicated WhatsApp number for your business bot.
         </p>
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-5 space-y-3">
+      {/* Benefits */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 space-y-2">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Why connect your own number?</h3>
-        <div className="space-y-2">
+        {[
+          { icon: '🔒', text: 'Customers message you directly — no bot code needed' },
+          { icon: '✅', text: 'Your verified business name shows in WhatsApp' },
+          { icon: '📊', text: 'Higher messaging limits (up to 100K/day)' },
+          { icon: '🎨', text: 'Custom profile picture and business description' },
+        ].map((item, i) => (
+          <div key={i} className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+            <span>{item.icon}</span>
+            <span>{item.text}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Warning */}
+      <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-4">
+        <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2">⚠️ Important — Read Before Connecting</h3>
+        <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1.5">
+          <li><strong>Use a separate number.</strong> Do NOT connect your personal WhatsApp number — it will be disconnected from your phone.</li>
+          <li><strong>Get a second SIM</strong> or virtual number for your business bot. Keep your personal WhatsApp on your main number.</li>
+          <li><strong>Already using WhatsApp Business app?</strong> That number will stop working on the app once connected here. All messages will go through Waaiio instead.</li>
+          <li><strong>Landline numbers work too.</strong> Facebook can verify via voice call, not just SMS.</li>
+        </ul>
+      </div>
+
+      {/* Steps */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">How it works</h3>
+        <div className="space-y-2.5">
           {[
-            { icon: '🔒', text: 'Dedicated number — customers message you directly' },
-            { icon: '✅', text: 'Verified business name shows in WhatsApp' },
-            { icon: '📊', text: 'Higher messaging limits (up to 100K/day)' },
-            { icon: '🎨', text: 'Custom profile picture and business description' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-              <span>{item.icon}</span>
-              <span>{item.text}</span>
+            { step: '1', text: 'Click "Connect with Facebook" below' },
+            { step: '2', text: 'Log into your Facebook account (or create one)' },
+            { step: '3', text: 'Create or select a Meta Business Portfolio' },
+            { step: '4', text: 'Create a WhatsApp Business Account (automatic)' },
+            { step: '5', text: 'Enter your business phone number and verify it via SMS or call' },
+            { step: '6', text: 'Grant Waaiio permission to manage your WhatsApp' },
+          ].map((item) => (
+            <div key={item.step} className="flex items-start gap-2.5">
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand/10 text-[10px] font-bold text-brand">{item.step}</span>
+              <span className="text-sm text-gray-600 dark:text-gray-400">{item.text}</span>
             </div>
           ))}
         </div>
       </div>
 
+      {/* Connect button */}
       <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-900/20 p-5 text-center">
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          You&apos;ll be redirected to Facebook to connect your WhatsApp Business Account.
-        </p>
 
         <button
           onClick={launchFacebookLogin}
@@ -220,6 +249,22 @@ export default function ConnectWhatsAppPage() {
           <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
         </div>
       )}
+
+      {/* Need help */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 text-center">
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Need help connecting your number?</p>
+        <a
+          href={`https://wa.me/${supportNumber}?text=Hi%2C%20I%20need%20help%20connecting%20my%20WhatsApp%20number%20to%20Waaiio`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-medium text-white hover:bg-[#1ebe5d] transition"
+        >
+          <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z" />
+          </svg>
+          Chat with Support on WhatsApp
+        </a>
+      </div>
 
       <button
         onClick={() => router.push('/dashboard/whatsapp')}
