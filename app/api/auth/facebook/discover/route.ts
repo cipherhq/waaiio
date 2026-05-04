@@ -48,9 +48,9 @@ export async function POST(request: NextRequest) {
     const tokenRes = await fetch(tokenUrl);
     if (!tokenRes.ok) {
       const errData = await tokenRes.json().catch(() => ({}));
-      logger.error('Code exchange failed:', errData);
+      logger.error('Code exchange failed:', errData, 'redirect_uri:', redirect_uri || 'none');
       return NextResponse.json(
-        { message: 'Failed to exchange Facebook authorization code', error: errData },
+        { message: 'Failed to exchange Facebook authorization code', error: errData, debug_redirect_uri: redirect_uri || 'none' },
         { status: 400 }
       );
     }

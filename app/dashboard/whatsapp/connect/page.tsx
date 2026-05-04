@@ -75,7 +75,8 @@ export default function ConnectWhatsAppPage() {
             .then(({ ok, data }) => {
               if (!ok) {
                 const fbErrMsg = data.error?.error?.message || data.error?.message || '';
-                setError((data.message || 'Failed to connect.') + (fbErrMsg ? ` (${fbErrMsg})` : ''));
+                const debugUri = data.debug_redirect_uri || '';
+                setError((data.message || 'Failed to connect.') + (fbErrMsg ? ` (${fbErrMsg})` : '') + (debugUri ? ` [redirect_uri: ${debugUri}]` : ''));
                 setConnecting(false);
                 return;
               }
