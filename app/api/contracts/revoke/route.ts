@@ -70,18 +70,20 @@ export async function POST(request: NextRequest) {
 
         let sent = false;
         if (resolved) {
-          try {
-            const result = await resolved.sender.sendText({ to: phone, text: message });
-            sent = result.success !== false;
-          } catch (chErr) {
-            console.warn('Channel send failed for revoke notification:', chErr);
+          // Try template first (revoke can be days after signing request)
+          if (resolved.sender.sendTemplate) {
+            try {
+              const r = await resolved.sender.sendTemplate({ to: phone, templateName: 'document_signature_request', templateParams: [biz.name || 'Business', contract.title || 'Document', 'This document has been voided.'] });
+              sent = r.success !== false;
+            } catch { /* template failed */ }
           }
-        }
-
-        if (!sent) {
-          const gupshup = new GupshupService();
-          if (gupshup.isConfigured) {
-            await gupshup.sendText({ to: phone, text: message });
+          if (!sent) {
+            try {
+              const result = await resolved.sender.sendText({ to: phone, text: message });
+              sent = result.success !== false;
+            } catch (chErr) {
+              console.warn('Channel send failed for revoke notification:', chErr);
+            }
           }
         }
       } catch (msgErr) {

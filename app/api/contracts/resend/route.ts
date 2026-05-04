@@ -32,17 +32,8 @@ async function sendWhatsAppMessage(
   let messageId: string | null = null;
 
   if (resolved) {
-    // Try sendText first (works within 24h conversation window)
-    try {
-      const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
-      sent = result.success !== false;
-      if (sent && result.messageId) messageId = result.messageId;
-    } catch (waErr) {
-      console.warn(`[CONTRACT-RESEND] sendText failed for ${cleanPhone}:`, waErr);
-    }
-
-    // If text failed, try template message (works for all numbers)
-    if (!sent && resolved.sender.sendTemplate && templateParams) {
+    // Try template FIRST (works outside 24h window)
+    if (resolved.sender.sendTemplate && templateParams) {
       try {
         const result = await resolved.sender.sendTemplate({
           to: cleanPhone,
@@ -51,9 +42,19 @@ async function sendWhatsAppMessage(
         });
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
-        if (sent) console.log(`[CONTRACT-RESEND] Template message sent to ${cleanPhone}`);
       } catch (tmplErr) {
-        console.warn(`[CONTRACT-RESEND] Template fallback also failed for ${cleanPhone}:`, tmplErr);
+        console.warn(`[CONTRACT-RESEND] Template failed for ${cleanPhone}:`, tmplErr);
+      }
+    }
+
+    // Fallback to text (within 24h only)
+    if (!sent) {
+      try {
+        const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
+        sent = result.success !== false;
+        if (sent && result.messageId) messageId = result.messageId;
+      } catch (waErr) {
+        console.warn(`[CONTRACT-RESEND] sendText also failed for ${cleanPhone}:`, waErr);
       }
     }
   } else {

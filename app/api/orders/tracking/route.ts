@@ -72,7 +72,15 @@ export async function POST(request: NextRequest) {
           message += `\nTracking: ${trackingNumber}`;
         }
 
-        await sender.sendText({ to: phone, text: message });
+        // Try template first (works outside 24h)
+        let sent = false;
+        if (sender.sendTemplate) {
+          try {
+            const tmplResult = await sender.sendTemplate({ to: phone, templateName: 'order_status_update', templateParams: [order.reference_code, 'shipped'] });
+            sent = tmplResult.success !== false;
+          } catch { /* template failed */ }
+        }
+        if (!sent) await sender.sendText({ to: phone, text: message });
       } catch (err) {
         logger.error('[TRACKING] WhatsApp notification error:', err);
       }

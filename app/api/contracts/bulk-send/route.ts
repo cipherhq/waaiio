@@ -121,16 +121,8 @@ export async function POST(request: NextRequest) {
 
       let sent = false;
       if (resolved) {
-        // Try sendText first (works within 24h conversation window)
-        try {
-          const result = await resolved.sender.sendText({ to: phone, text: message });
-          sent = result.success !== false;
-        } catch (err) {
-          console.warn(`[CONTRACT-BULK] sendText failed for ${phone}:`, err);
-        }
-
-        // If text failed, try template (works for all numbers)
-        if (!sent && resolved.sender.sendTemplate) {
+        // Try template FIRST (works outside 24h window)
+        if (resolved.sender.sendTemplate) {
           try {
             const result = await resolved.sender.sendTemplate({
               to: phone,
@@ -138,9 +130,18 @@ export async function POST(request: NextRequest) {
               templateParams: [biz.name, title, signUrl],
             });
             sent = result.success !== false;
-            if (sent) console.log(`[CONTRACT-BULK] Template message sent to ${phone}`);
           } catch (tmplErr) {
-            console.warn(`[CONTRACT-BULK] Template fallback failed for ${phone}:`, tmplErr);
+            console.warn(`[CONTRACT-BULK] Template failed for ${phone}:`, tmplErr);
+          }
+        }
+
+        // Fallback to text (within 24h only)
+        if (!sent) {
+          try {
+            const result = await resolved.sender.sendText({ to: phone, text: message });
+            sent = result.success !== false;
+          } catch (err) {
+            console.warn(`[CONTRACT-BULK] sendText failed for ${phone}:`, err);
           }
         }
       }

@@ -75,7 +75,15 @@ export async function POST(request: NextRequest) {
           : order.delivery_phone;
 
         const message = messageTemplate.replace('{ref}', order.reference_code);
-        await sender.sendText({ to: phone, text: message });
+        // Try template first (works outside 24h)
+        let sent = false;
+        if (sender.sendTemplate) {
+          try {
+            const tmplResult = await sender.sendTemplate({ to: phone, templateName: 'order_status_update', templateParams: [order.reference_code, status] });
+            sent = tmplResult.success !== false;
+          } catch { /* template failed, try text */ }
+        }
+        if (!sent) await sender.sendText({ to: phone, text: message });
         notified = true;
       } catch (err) {
         logger.error('[ORDER-STATUS] WhatsApp notification error:', err);

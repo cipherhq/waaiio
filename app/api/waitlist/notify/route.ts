@@ -76,10 +76,16 @@ export async function POST(request: NextRequest) {
           : entry.customer_phone;
 
         const name = entry.customer_name || 'there';
-        await resolved.sender.sendText({
-          to: phone,
-          text: `Hi ${name}! Great news — a spot has opened up at ${bizName}. Would you like to book? Reply *yes* to confirm or *no* to pass.`,
-        });
+        const msg = `Hi ${name}! Great news — a spot has opened up at ${bizName}. Would you like to book? Reply *yes* to confirm or *no* to pass.`;
+        // Try template first (waitlist notifications are often outside 24h)
+        let sent = false;
+        if (resolved.sender.sendTemplate) {
+          try {
+            const r = await resolved.sender.sendTemplate({ to: phone, templateName: 'booking_confirmation', templateParams: [bizName, 'Waitlist spot available'] });
+            sent = r.success !== false;
+          } catch { /* template failed */ }
+        }
+        if (!sent) await resolved.sender.sendText({ to: phone, text: msg });
 
         await supabase
           .from('waitlist_entries')
