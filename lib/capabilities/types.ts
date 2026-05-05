@@ -60,7 +60,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   waitlist: 'business',
   reports: 'business',
   staff: 'business',
-  crowdfunding: 'business',
+  crowdfunding: 'free',
   invoice: 'business',
   survey: 'growth',
   poll: 'growth',
