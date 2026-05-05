@@ -735,10 +735,12 @@ export class BotService {
         }
 
         // ── Welcome Buttons: send interactive menu after greeting ──
-        // Only show welcome buttons if single capability (no capability selection step)
-        // Multi-capability businesses get the capability selection menu instead
+        // Show welcome buttons when business goes directly to a flow (no capability selection)
         try {
-          if (waConfig.welcome_buttons.length > 0 && capabilities.length <= 1) {
+          const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
+          if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
+          const ufCount = capabilities.filter(c => !nonUF.has(c)).length;
+          if (waConfig.welcome_buttons.length > 0 && ufCount <= 1) {
             const buttons = waConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
               id: `wb_${i}`,
               title: btn.label.slice(0, 20),
