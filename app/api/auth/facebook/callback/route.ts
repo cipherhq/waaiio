@@ -278,26 +278,11 @@ export async function POST(request: NextRequest) {
       logger.error('[FB-CALLBACK] Webhook subscription warning:', err);
     }
 
-    // 3. Auto-provision message templates for enabled capabilities
+    // 3. Auto-provision all Waaiio message templates on the business's WABA
     try {
-      const { data: capRows } = await service
-        .from('business_capabilities')
-        .select('capability')
-        .eq('business_id', business_id)
-        .eq('is_enabled', true);
-
-      const capabilities = (capRows || []).map(r => r.capability);
-
-      for (const cap of capabilities) {
-        try {
-          await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/api/whatsapp/templates/provision`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ business_id, capability: cap }),
-          });
-        } catch {}
-      }
-      logger.debug('[FB-CALLBACK] Templates provisioned for', capabilities.length, 'capabilities');
+      const { provisionTemplates } = await import('@/lib/channels/provision-templates');
+      const templateResult = await provisionTemplates(waba_id, longLivedToken);
+      logger.debug('[FB-CALLBACK] Templates provisioned:', templateResult);
     } catch (err) {
       logger.error('[FB-CALLBACK] Template provisioning warning:', err);
     }
