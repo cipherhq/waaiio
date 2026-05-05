@@ -58,6 +58,7 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   locations: 'Manage multiple business locations.',
   surveys: 'Create custom surveys and send them to customers via WhatsApp. Track responses and analyze results.',
   polls: 'Create quick polls and let customers vote via WhatsApp. See live results with visual charts.',
+  'events/scan': 'Scan ticket QR codes with your phone camera to check in guests at events.',
   'setup-assistant': 'Ace is your AI assistant. Describe your business or upload a menu photo — Ace creates your services, products, hours, and bot greeting automatically.',
   verification: 'Verify your business to unlock higher payout limits.',
 };
