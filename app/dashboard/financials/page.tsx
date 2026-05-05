@@ -148,7 +148,7 @@ export default function FinancialsPage() {
         reference: b.reference_code,
       };
     });
-  }, [bookings, entityLabel]);
+  }, [bookings]);
 
   // Filtered transactions
   const filtered = useMemo(() => {
