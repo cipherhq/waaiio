@@ -81,23 +81,14 @@ export const schedulingFlow: FlowDefinition = {
           .select('id, name, price, duration_minutes, billing_type, recurring_interval')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
+          .is('deleted_at', null)
           .order('sort_order');
 
         if (!services || services.length === 0) {
-          // No services — skip to date
-          ctx.session.session_data.skip_service = true;
           return [];
         }
 
         if (services.length === 1) {
-          // Auto-select single service
-          ctx.session.session_data.service_id = services[0].id;
-          ctx.session.session_data.service_name = services[0].name;
-          ctx.session.session_data.service_price = services[0].price;
-          ctx.session.session_data.service_duration = services[0].duration_minutes;
-          ctx.session.session_data.service_billing_type = services[0].billing_type || 'one_time';
-          ctx.session.session_data.service_recurring_interval = services[0].recurring_interval || null;
-          ctx.session.session_data.skip_service = true;
           return [];
         }
 
@@ -127,30 +118,89 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Try exact ID match first (from list postback)
         const { data: service } = await ctx.supabase
           .from('services')
           .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
-          .single();
+          .maybeSingle();
 
-        if (!service) return { valid: false, errorMessage: 'Please select a valid service.' };
+        // Fallback: fuzzy match by name (user typed service name or partial match)
+        let matched = service;
+        if (!matched) {
+          const { data: allServices } = await ctx.supabase
+            .from('services')
+            .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+            .eq('business_id', ctx.business!.id)
+            .eq('is_active', true)
+            .is('deleted_at', null);
+
+          if (allServices && allServices.length > 0) {
+            const norm = input.toLowerCase().trim();
+            // Exact name match
+            matched = allServices.find(s => s.name.toLowerCase() === norm) || null;
+            // Partial match (input contains service name or vice versa)
+            if (!matched) {
+              matched = allServices.find(s =>
+                norm.includes(s.name.toLowerCase()) || s.name.toLowerCase().includes(norm)
+              ) || null;
+            }
+            // Numbered selection (user types "1", "2", etc.)
+            if (!matched && /^\d+$/.test(norm)) {
+              const idx = parseInt(norm, 10) - 1;
+              if (idx >= 0 && idx < allServices.length) matched = allServices[idx];
+            }
+          }
+        }
+
+        if (!matched) return { valid: false, errorMessage: 'Please select a valid service from the list.' };
 
         return {
           valid: true,
           data: {
-            service_id: service.id,
-            service_name: service.name,
-            service_price: service.price,
-            service_duration: service.duration_minutes,
-            service_deposit: service.deposit_amount,
-            service_billing_type: service.billing_type || 'one_time',
-            service_recurring_interval: service.recurring_interval || null,
+            service_id: matched.id,
+            service_name: matched.name,
+            service_price: matched.price,
+            service_duration: matched.duration_minutes,
+            service_deposit: matched.deposit_amount,
+            service_billing_type: matched.billing_type || 'one_time',
+            service_recurring_interval: matched.recurring_interval || null,
           },
         };
       },
       async next() { return 'select_staff'; },
-      async skipIf(ctx: FlowContext) { return !!ctx.session.session_data.skip_service; },
+      async skipIf(ctx: FlowContext) {
+        if (ctx.session.session_data.skip_service) return true;
+        if (!ctx.business) return true;
+
+        const { data: services } = await ctx.supabase
+          .from('services')
+          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true)
+          .is('deleted_at', null)
+          .order('sort_order');
+
+        if (!services || services.length === 0) {
+          ctx.session.session_data.skip_service = true;
+          return true;
+        }
+
+        if (services.length === 1) {
+          ctx.session.session_data.service_id = services[0].id;
+          ctx.session.session_data.service_name = services[0].name;
+          ctx.session.session_data.service_price = services[0].price;
+          ctx.session.session_data.service_duration = services[0].duration_minutes;
+          ctx.session.session_data.service_deposit = services[0].deposit_amount;
+          ctx.session.session_data.service_billing_type = services[0].billing_type || 'one_time';
+          ctx.session.session_data.service_recurring_interval = services[0].recurring_interval || null;
+          ctx.session.session_data.skip_service = true;
+          return true;
+        }
+
+        return false;
+      },
     },
 
     // ── Select Staff ──

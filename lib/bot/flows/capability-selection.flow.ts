@@ -109,7 +109,29 @@ const selectCapabilityStep: FlowStepConfig = {
       // Label match: "buy tickets", "give", etc.
       if (!capId) {
         const lower = input.toLowerCase();
+        // Exact label match
         capId = userFacing.find(c => getCapabilityLabel(c, category).toLowerCase() === lower) || null;
+        // Partial match: input contains label or label contains input
+        if (!capId) {
+          capId = userFacing.find(c => {
+            const label = getCapabilityLabel(c, category).toLowerCase();
+            return lower.includes(label) || label.includes(lower);
+          }) || null;
+        }
+        // Keyword-based intent matching
+        if (!capId) {
+          if (/\b(book|appoint|schedule|reserv)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'scheduling' || c === 'reservation') || null;
+          } else if (/\b(give|tith|offer|donat|sadaqah|zakat)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'giving' || c === 'payment') || null;
+          } else if (/\b(order|buy|shop|menu|food)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'ordering') || null;
+          } else if (/\b(ticket|event|show|concert)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'ticketing') || null;
+          } else if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'chat') || null;
+          }
+        }
       }
     }
 
