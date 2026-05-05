@@ -1088,14 +1088,19 @@ export const schedulingFlow: FlowDefinition = {
         if (ctx.session.business_id) {
           const templates = await ctx.standalone.getBotTemplates(ctx.session.business_id);
           const tierInfo = await ctx.standalone.checkTierLimits(ctx.session.business_id);
+          const customerName = d.book_for_other
+            ? (d.other_name as string)
+            : `${d.first_name || ''} ${d.last_name || ''}`.trim() || '';
           message = ctx.standalone.fillTemplate(templates.confirmation, {
             restaurant_name: ctx.business?.name || '',
             business_name: ctx.business?.name || '',
+            customer_name: customerName,
             date: dateLabel,
             time: (d.time as string) || '',
             party_size: partySize,
             quantity: partySize,
             reference_code: booking.reference_code,
+            service_name: (d.service_name as string) || '',
           });
           if (!tierInfo.isWhitelabel) {
             message += '\n\n_Powered by Waaiio_';

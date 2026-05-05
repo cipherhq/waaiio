@@ -156,9 +156,16 @@ export class StandaloneService {
     vars: Record<string, string | number>,
   ): string {
     let result = template;
+    // Fix double-escaped unicode sequences (e.g. \\u2705 → ✅)
+    result = result.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    // Fix escaped newlines (literal \n in DB → actual newline)
+    result = result.replace(/\\n/g, '\n');
+    // Strip unreplaced {customer_name} if empty — avoids showing literal placeholder
     for (const [key, value] of Object.entries(vars)) {
       result = result.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value));
     }
-    return result;
+    // Clean up any remaining empty placeholders (unreplaced vars with empty values)
+    result = result.replace(/^\s*\n/gm, (match) => match); // keep intentional blank lines
+    return result.trim();
   }
 }
