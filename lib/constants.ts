@@ -797,12 +797,13 @@ export function getCurrencyCode(countryCode: CountryCode = 'NG'): string {
 /** Format currency for a given country */
 export function formatCurrency(amount: number, countryCode: CountryCode = 'NG'): string {
   const c = _getCountryConfig(countryCode);
-  const fractionDigits = ['NGN', 'GHS'].includes(c.currencyCode) ? 0 : 2;
+  // Show whole numbers by default; only show decimals if amount has cents
+  const hasCents = amount % 1 !== 0;
   return new Intl.NumberFormat(c.currencyLocale, {
     style: 'currency',
     currency: c.currencyCode,
-    minimumFractionDigits: fractionDigits,
-    maximumFractionDigits: fractionDigits,
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: hasCents ? 2 : 0,
   }).format(amount);
 }
 
