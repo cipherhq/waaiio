@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { generateTicketsPdf } from '@/lib/pdf/ticket-generator';
+import QRCode from 'qrcode';
 import { logger } from '@/lib/logger';
 
 export interface SendTicketsOptions {
@@ -114,7 +115,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     return;
   }
 
-  // 6. Send via WhatsApp
+  // 6. Send PDF via WhatsApp
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
 
@@ -125,5 +126,38 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     caption: `Your ${quantity} ${ticketLabel} for ${eventName}`,
   });
 
-  logger.info('[TICKETS] PDF sent successfully to', phone, '| booking:', bookingId);
+  // 7. Send each ticket's QR code as a standalone image (easier to show at door)
+  for (const ticket of tickets) {
+    try {
+      const qrUrl = `${verifyBaseUrl}/${ticket.ticketCode}`;
+      const qrBuffer = await QRCode.toBuffer(qrUrl, {
+        width: 400,
+        margin: 2,
+        color: { dark: '#1a1a1a', light: '#ffffff' },
+        type: 'png',
+      });
+
+      // Upload QR image to storage
+      const qrPath = `tickets/${businessId}/${ticket.ticketCode}.png`;
+      await supabase.storage
+        .from('documents')
+        .upload(qrPath, qrBuffer, { contentType: 'image/png', upsert: true });
+
+      const { data: qrSignedUrl } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(qrPath, 86400);
+
+      if (qrSignedUrl?.signedUrl) {
+        await sender.sendImage({
+          to: phone,
+          imageUrl: qrSignedUrl.signedUrl,
+          caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — ${ticket.ticketCode}\nShow this QR code at the entrance`,
+        });
+      }
+    } catch (qrErr) {
+      logger.error('[TICKETS] QR image send failed for', ticket.ticketCode, ':', qrErr);
+    }
+  }
+
+  logger.info('[TICKETS] PDF + QR codes sent to', phone, '| booking:', bookingId);
 }
