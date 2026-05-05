@@ -175,7 +175,7 @@ export const schedulingFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_staff'; },
+      async next() { return 'select_date'; },
       async skipIf(ctx: FlowContext) {
         if (ctx.session.session_data.skip_service) return true;
         if (!ctx.business) return true;
@@ -317,7 +317,7 @@ export const schedulingFlow: FlowDefinition = {
         }
         return { valid: false, errorMessage: 'Please select a staff member or tap *Any available*.' };
       },
-      async next() { return 'select_date'; },
+      async next() { return 'select_time'; },
     },
 
     // ── Select Date ──
@@ -391,7 +391,7 @@ export const schedulingFlow: FlowDefinition = {
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { date: dateStr } };
       },
-      async next() { return 'select_time'; },
+      async next() { return 'select_staff'; },
     },
 
     // ── Select Time ──
