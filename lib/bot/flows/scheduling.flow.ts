@@ -113,7 +113,7 @@ export const schedulingFlow: FlowDefinition = {
             } else if (s.duration_minutes) {
               desc = `${s.duration_minutes}min`;
             }
-            return { title: s.name, description: desc, postbackText: s.id };
+            return { title: s.name.slice(0, 24), description: desc, postbackText: s.id };
           }),
         }];
       },
