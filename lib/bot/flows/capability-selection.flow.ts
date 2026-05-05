@@ -6,8 +6,9 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
   switch (cap) {
     case 'scheduling':
       return 'Book Appointment';
+    case 'giving':
+      return 'Give';
     case 'payment':
-      if (category === 'church' || category === 'mosque') return 'Give';
       return 'Make Payment';
     case 'ordering':
       return 'Place an Order';
@@ -38,6 +39,7 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
 function getFirstStepForCapability(cap: CapabilityId): string {
   switch (cap) {
     case 'scheduling': return 'select_service';
+    case 'giving': return 'select_category'; // giving uses the payment flow
     case 'payment': return 'select_category';
     case 'ordering': return 'browse_catalog';
     case 'ticketing': return 'select_event';

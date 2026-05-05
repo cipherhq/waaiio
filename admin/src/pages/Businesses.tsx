@@ -29,11 +29,13 @@ const ALL_CAPABILITIES = [
   { id: 'crowdfunding', label: 'Crowdfunding', icon: '❤️' },
   { id: 'invoice', label: 'Invoices', icon: '🧾' },
   { id: 'survey', label: 'Surveys', icon: '📊' },
+  { id: 'poll', label: 'Polls', icon: '🗳️' },
+  { id: 'giving', label: 'Giving', icon: '🙏' },
 ] as const;
 
 const TIER_REQUIREMENTS: Record<string, string> = {
   scheduling: 'free', payment: 'free', ordering: 'free', ticketing: 'free',
-  feedback: 'free', chat: 'free',
+  feedback: 'free', chat: 'free', giving: 'free',
   reservation: 'growth', reminders: 'growth', loyalty: 'growth', referral: 'growth', survey: 'growth',
   whatsapp_sign: 'business', queue: 'business', waitlist: 'business', reports: 'business',
   staff: 'business', crowdfunding: 'business', invoice: 'business',

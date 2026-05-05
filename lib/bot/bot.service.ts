@@ -1698,6 +1698,7 @@ export class BotService {
   private capabilityToFirstStep(cap: CapabilityId): string {
     switch (cap) {
       case 'scheduling': return 'select_service';
+      case 'giving': return 'select_category';
       case 'payment': return 'select_category';
       case 'ordering': return 'browse_catalog';
       case 'ticketing': return 'select_event';

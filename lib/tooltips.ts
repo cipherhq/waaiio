@@ -60,6 +60,7 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   polls: 'Create quick polls and let customers vote via WhatsApp. See live results with visual charts.',
   'events/scan': 'Scan ticket QR codes with your phone camera to check in guests at events.',
   team: 'Invite team members with specific roles — admin, manager, staff, finance, or support. Control who can access what.',
+  giving: 'Collect tithes, offerings, and donations via WhatsApp. Members choose their giving category and enter an amount.',
   'setup-assistant': 'Ace is your AI assistant. Describe your business or upload a menu photo — Ace creates your services, products, hours, and bot greeting automatically.',
   verification: 'Verify your business to unlock higher payout limits.',
 };

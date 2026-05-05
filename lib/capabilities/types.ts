@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll';
+export type CapabilityId = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -31,6 +31,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'invoice', label: 'Invoices', description: 'Create and send invoices with online payment links', icon: '🧾' },
   { id: 'survey', label: 'Surveys', description: 'Create and send customer surveys via WhatsApp', icon: '📊' },
   { id: 'poll', label: 'Polls', description: 'Quick polls and voting via WhatsApp', icon: '🗳️' },
+  { id: 'giving', label: 'Giving', description: 'Collect tithes, offerings, and donations via WhatsApp', icon: '🙏' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -63,6 +64,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   invoice: 'business',
   survey: 'growth',
   poll: 'growth',
+  giving: 'free',
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };
@@ -102,8 +104,8 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   gym: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral'],
   clinic: ['scheduling', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff', 'survey'],
   consultant: ['scheduling', 'feedback', 'chat', 'referral', 'survey'],
-  church: ['payment', 'ticketing', 'feedback', 'chat'],
-  mosque: ['payment', 'ticketing', 'feedback', 'chat'],
+  church: ['giving', 'scheduling', 'ticketing', 'feedback', 'chat'],
+  mosque: ['giving', 'scheduling', 'ticketing', 'feedback', 'chat'],
   school: ['payment', 'feedback', 'chat', 'survey'],
   ngo: ['payment', 'feedback', 'chat', 'referral', 'survey'],
   shop: ['ordering', 'feedback', 'loyalty', 'chat', 'referral'],
