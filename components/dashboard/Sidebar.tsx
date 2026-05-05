@@ -376,11 +376,16 @@ export function Sidebar() {
 
   // Filter nav items based on capabilities and category
   const visibleItems = navItems.filter(item => {
-    // Hide if this item is excluded for the business category
+    // If item has required capabilities, check if any are enabled
+    if (item.capabilities) {
+      const hasCapability = item.capabilities.some(cap => capabilities.includes(cap));
+      if (!hasCapability) return false;
+      // Capability is explicitly enabled — show it regardless of category
+      return true;
+    }
+    // No capability requirement — hide by category if specified
     if (item.hideForCategories?.includes(business.category)) return false;
-    if (!item.capabilities) return true;
-    // Show if ANY required capability is enabled
-    return item.capabilities.some(cap => capabilities.includes(cap));
+    return true;
   });
 
   // Group by section
