@@ -328,6 +328,25 @@ export const schedulingFlow: FlowDefinition = {
         return !!ctx.session.session_data.date;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const messages: PromptMessage[] = [];
+
+        // Send gallery images (max 3) if not already sent
+        if (!ctx.session.session_data._gallery_sent) {
+          const serviceId = ctx.session.session_data.service_id as string | undefined;
+          if (serviceId) {
+            const { data: svc } = await ctx.supabase
+              .from('services')
+              .select('gallery_urls')
+              .eq('id', serviceId)
+              .maybeSingle();
+            const urls = (svc?.gallery_urls as string[]) || [];
+            for (const url of urls.slice(0, 3)) {
+              messages.push({ type: 'image' as const, imageUrl: url, caption: undefined });
+            }
+            ctx.session.session_data._gallery_sent = true;
+          }
+        }
+
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const dateRange = (meta.date_range_days as number) || 7;
         const maxAdvanceDays = (meta.max_advance_days as number) || 30;
@@ -353,16 +372,17 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (dates.length === 0) {
-          return [{ type: 'text', text: 'Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit.' }];
+          return [...messages, { type: 'text', text: 'Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit.' }];
         }
 
-        return [{
+        messages.push({
           type: 'list',
           title: 'Select Date',
           body: 'When would you like to come?',
           buttonLabel: 'Choose Date',
           items: dates,
-        }];
+        });
+        return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         let dateStr = input;
@@ -453,6 +473,61 @@ export const schedulingFlow: FlowDefinition = {
         }
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { time: input } };
+      },
+      async next() { return 'select_addons'; },
+    },
+
+    // ── Select Add-ons ──
+    {
+      id: 'select_addons',
+      async skipIf(ctx: FlowContext) {
+        if (!ctx.business) return true;
+        const serviceId = ctx.session.session_data.service_id as string | undefined;
+        const { data: addons } = await ctx.supabase
+          .from('service_addons')
+          .select('id, name, price, is_required')
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true)
+          .or(serviceId ? `service_id.eq.${serviceId},service_id.is.null` : 'service_id.is.null')
+          .order('sort_order');
+        if (!addons || addons.length === 0) return true;
+        ctx.session.session_data._available_addons = addons;
+        // Auto-select required add-ons
+        const required = addons.filter(a => a.is_required);
+        if (required.length > 0) {
+          ctx.session.session_data._selected_addons = required.map(a => ({ id: a.id, name: a.name, price: a.price }));
+        }
+        // If all are required, skip the step
+        if (required.length === addons.length) return true;
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number; is_required: boolean }>;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const optional = addons.filter(a => !a.is_required);
+        const items = optional.map(a => ({
+          title: `${a.name} — ${formatCurrency(a.price, cc)}`,
+          postbackText: a.id,
+        }));
+        items.push({ title: 'No add-ons', postbackText: 'skip_addons' });
+        return [{
+          type: 'list',
+          title: 'Add-ons',
+          body: 'Would you like to add any extras?',
+          buttonLabel: 'View Add-ons',
+          items,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'skip_addons') return { valid: true };
+        const addons = ctx.session.session_data._available_addons as Array<{ id: string; name: string; price: number }>;
+        const found = addons?.find(a => a.id === input);
+        if (!found) return { valid: false, errorMessage: 'Please select an add-on or tap *No add-ons*.' };
+        const existing = (ctx.session.session_data._selected_addons as Array<{ id: string; name: string; price: number }>) || [];
+        if (!existing.find(a => a.id === found.id)) {
+          ctx.session.session_data._selected_addons = [...existing, { id: found.id, name: found.name, price: found.price }];
+        }
+        return { valid: true };
       },
       async next() { return 'select_quantity'; },
     },
@@ -575,6 +650,76 @@ export const schedulingFlow: FlowDefinition = {
 
         return { valid: true, data: { special_requests: request || '' } };
       },
+      async next() { return 'collect_venue'; },
+    },
+
+    // ── Collect Venue (per-service toggle) ──
+    {
+      id: 'collect_venue',
+      async skipIf(ctx: FlowContext) {
+        // Only show if service has collect_venue enabled in metadata
+        const serviceId = ctx.session.session_data.service_id as string | undefined;
+        if (!serviceId || !ctx.business) return true;
+        const { data: svc } = await ctx.supabase
+          .from('services')
+          .select('metadata')
+          .eq('id', serviceId)
+          .maybeSingle();
+        const meta = (svc?.metadata || {}) as Record<string, unknown>;
+        return !meta.collect_venue;
+      },
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '📍 Where is the event/appointment?\n\nPlease type the *venue name and address*:' }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        if (input.trim().length < 5) return { valid: false, errorMessage: 'Please enter a valid address (at least 5 characters).' };
+        return { valid: true, data: { venue_address: input.trim() } };
+      },
+      async next() { return 'select_end_date'; },
+    },
+
+    // ── Select End Date (multi-day bookings) ──
+    {
+      id: 'select_end_date',
+      async skipIf(ctx: FlowContext) {
+        const serviceId = ctx.session.session_data.service_id as string | undefined;
+        if (!serviceId || !ctx.business) return true;
+        const { data: svc } = await ctx.supabase
+          .from('services')
+          .select('metadata')
+          .eq('id', serviceId)
+          .maybeSingle();
+        const meta = (svc?.metadata || {}) as Record<string, unknown>;
+        return !meta.multi_day;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const startDate = ctx.session.session_data.date as string;
+        const locale = getLocale((ctx.business?.country_code || 'NG') as CountryCode);
+        const dates: Array<{ title: string; postbackText: string }> = [];
+        // Show up to 7 days after start date
+        for (let i = 1; i <= 7; i++) {
+          const d = new Date(startDate + 'T00:00');
+          d.setDate(d.getDate() + i);
+          const label = d.toLocaleDateString(locale, { weekday: 'short', day: 'numeric', month: 'short' });
+          dates.push({ title: label, postbackText: d.toISOString().split('T')[0] });
+        }
+        dates.push({ title: 'Single day only', postbackText: 'single_day' });
+        return [{
+          type: 'list',
+          title: 'End Date',
+          body: 'When does the booking end?',
+          buttonLabel: 'Choose End Date',
+          items: dates,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'single_day') return { valid: true };
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) return { valid: false, errorMessage: 'Please select an end date.' };
+        const startDate = new Date((ctx.session.session_data.date as string) + 'T00:00');
+        const endDate = new Date(input + 'T00:00');
+        if (endDate <= startDate) return { valid: false, errorMessage: 'End date must be after start date.' };
+        return { valid: true, data: { end_date: input } };
+      },
       async next() { return 'book_for_other'; },
     },
 
@@ -641,9 +786,22 @@ export const schedulingFlow: FlowDefinition = {
         ];
         if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
         if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
-        lines.push(`📅 ${dateLabel}`);
+        const endDateStr = d.end_date as string | undefined;
+        if (endDateStr) {
+          const endLabel = new Date(endDateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
+          lines.push(`📅 ${dateLabel} — ${endLabel}`);
+        } else {
+          lines.push(`📅 ${dateLabel}`);
+        }
         lines.push(`🕐 ${d.time as string}`);
         lines.push(`👥 ${d.party_size as number} ${labels.quantityLabel}`);
+        // Show add-ons
+        const selectedAddons = d._selected_addons as Array<{ name: string; price: number }> | undefined;
+        if (selectedAddons && selectedAddons.length > 0) {
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          lines.push(`➕ Add-ons: ${selectedAddons.map(a => `${a.name} (${formatCurrency(a.price, cc)})`).join(', ')}`);
+        }
+        if (d.venue_address) lines.push(`📍 ${d.venue_address as string}`);
         if (d.special_requests) lines.push(`📝 ${d.special_requests as string}`);
         if (d.book_for_other && d.other_name) lines.push(`👤 For: ${d.other_name as string}`);
 
@@ -954,6 +1112,9 @@ export const schedulingFlow: FlowDefinition = {
           deposit_status: totalDeposit > 0 ? 'pending' : 'none',
           status: totalDeposit > 0 ? 'pending' : 'confirmed',
           special_requests: (d.special_requests as string) || null,
+          venue_address: (d.venue_address as string) || null,
+          end_date: (d.end_date as string) || null,
+          addons_snapshot: d._selected_addons || null,
           guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
           guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           guest_email: (d.email as string) || null,

@@ -29,6 +29,26 @@ interface Service {
   requires_staff: boolean;
   staff_ids: string[];
   allow_staff_selection: boolean;
+  // Packages
+  is_package: boolean;
+  included_service_ids: string[];
+  // Gallery
+  gallery_urls: string[];
+  // Feature flags (stored in metadata)
+  quote_enabled: boolean;
+  metadata: Record<string, unknown>;
+}
+
+interface ServiceAddon {
+  id: string;
+  service_id: string | null;
+  name: string;
+  description: string | null;
+  price: number;
+  price_type: 'fixed' | 'per_unit' | 'per_hour';
+  is_required: boolean;
+  is_active: boolean;
+  sort_order: number;
 }
 
 interface StaffMember {
@@ -83,12 +103,20 @@ export default function ServicesPage() {
     requires_staff: false,
     staff_ids: [],
     allow_staff_selection: false,
+    is_package: false,
+    included_service_ids: [],
+    gallery_urls: [],
+    quote_enabled: false,
+    metadata: {},
   };
   const [form, setForm] = useState<Service>(emptyForm);
+  const [addons, setAddons] = useState<ServiceAddon[]>([]);
+  const [addonForm, setAddonForm] = useState<{ name: string; price: number; is_required: boolean }>({ name: '', price: 0, is_required: false });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showPrice, setShowPrice] = useState(labels.defaultHasPrice);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchServices() {
     const supabase = createClient();
@@ -112,6 +140,55 @@ export default function ServicesPage() {
     setStaffList((data as StaffMember[]) || []);
   }
 
+  async function fetchAddons(serviceId: string) {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('service_addons')
+      .select('*')
+      .eq('business_id', business.id)
+      .or(`service_id.eq.${serviceId},service_id.is.null`)
+      .eq('is_active', true)
+      .order('sort_order');
+    setAddons((data as ServiceAddon[]) || []);
+  }
+
+  async function saveAddon(serviceId: string) {
+    if (!addonForm.name.trim()) return;
+    const supabase = createClient();
+    await supabase.from('service_addons').insert({
+      business_id: business.id,
+      service_id: serviceId,
+      name: addonForm.name.trim(),
+      price: addonForm.price,
+      is_required: addonForm.is_required,
+      sort_order: addons.length,
+    });
+    setAddonForm({ name: '', price: 0, is_required: false });
+    fetchAddons(serviceId);
+  }
+
+  async function deleteAddon(addonId: string, serviceId: string) {
+    const supabase = createClient();
+    await supabase.from('service_addons').update({ is_active: false }).eq('id', addonId);
+    fetchAddons(serviceId);
+  }
+
+  async function handleGalleryUpload(file: File) {
+    if ((form.gallery_urls || []).length >= 3) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('business_id', business.id);
+      const res = await fetch('/api/services/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success && json.url) {
+        setForm(prev => ({ ...prev, gallery_urls: [...(prev.gallery_urls || []), json.url] }));
+      }
+    } catch { /* silent */ }
+    setUploading(false);
+  }
+
   useEffect(() => { fetchServices(); fetchStaff(); }, [business.id]);
 
   function openAdd() {
@@ -121,13 +198,18 @@ export default function ServicesPage() {
   }
 
   function openEdit(service: Service) {
+    const meta = (service.metadata || {}) as Record<string, unknown>;
     setForm({
       ...emptyForm,
       ...service,
       available_days: service.available_days || [],
       staff_ids: service.staff_ids || [],
+      included_service_ids: service.included_service_ids || [],
+      gallery_urls: service.gallery_urls || [],
+      metadata: meta,
     });
     setShowPrice(labels.defaultHasPrice || service.price > 0 || service.deposit_amount > 0);
+    if (service.id) fetchAddons(service.id);
     setView('edit');
   }
 
@@ -175,6 +257,15 @@ export default function ServicesPage() {
       requires_staff: form.requires_staff,
       staff_ids: form.requires_staff ? form.staff_ids : [],
       allow_staff_selection: form.requires_staff && form.staff_ids.length > 0 ? form.allow_staff_selection : false,
+      is_package: form.is_package,
+      included_service_ids: form.is_package ? form.included_service_ids : [],
+      gallery_urls: form.gallery_urls || [],
+      quote_enabled: form.quote_enabled,
+      metadata: {
+        ...(form.metadata || {}),
+        collect_venue: (form.metadata || {}).collect_venue || false,
+        multi_day: (form.metadata || {}).multi_day || false,
+      },
     };
 
     if (view === 'add') {
@@ -609,6 +700,143 @@ export default function ServicesPage() {
                 className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
               />
             </div>}
+
+            {/* ── Package Toggle ── */}
+            {isScheduling && services.length > 1 && (
+              <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">This is a package</p>
+                    <p className="text-xs text-gray-400">Bundle multiple services at a package price</p>
+                  </div>
+                  <button type="button" onClick={() => setForm({ ...form, is_package: !form.is_package, included_service_ids: [] })}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.is_package ? 'bg-brand' : 'bg-gray-200'}`}>
+                    <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.is_package ? '22px' : '2px' }} />
+                  </button>
+                </div>
+                {form.is_package && (
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Included Services</label>
+                    <div className="flex flex-wrap gap-2">
+                      {services.filter(s => s.id !== form.id && !s.is_package).map(s => {
+                        const active = form.included_service_ids.includes(s.id);
+                        return (
+                          <button key={s.id} type="button"
+                            onClick={() => setForm({ ...form, included_service_ids: active ? form.included_service_ids.filter(id => id !== s.id) : [...form.included_service_ids, s.id] })}
+                            className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${active ? 'bg-brand text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-brand'}`}>
+                            {s.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── Gallery (max 3 images) ── */}
+            {isScheduling && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700">Portfolio Gallery</label>
+                <p className="mb-2 text-xs text-gray-400">Up to 3 images shown to customers before booking</p>
+                <input ref={galleryInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGalleryUpload(f); }} />
+                <div className="flex gap-2">
+                  {(form.gallery_urls || []).map((url, i) => (
+                    <div key={i} className="relative">
+                      <img src={url} alt={`Gallery ${i + 1}`} className="h-20 w-20 rounded-lg border border-gray-200 object-cover" />
+                      <button type="button" onClick={() => setForm({ ...form, gallery_urls: form.gallery_urls.filter((_, j) => j !== i) })}
+                        className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow">&times;</button>
+                    </div>
+                  ))}
+                  {(form.gallery_urls || []).length < 3 && (
+                    <button type="button" onClick={() => galleryInputRef.current?.click()} disabled={uploading}
+                      className="flex h-20 w-20 items-center justify-center rounded-lg border-2 border-dashed border-gray-200 text-gray-400 hover:border-brand hover:text-brand">
+                      {uploading ? '...' : '+'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Add-ons (only on edit, after service exists) ── */}
+            {isScheduling && view === 'edit' && form.id && (
+              <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Add-ons</p>
+                <p className="text-xs text-gray-400">Optional extras customers can add when booking</p>
+                {addons.map(a => (
+                  <div key={a.id} className="flex items-center justify-between rounded-lg bg-white border border-gray-100 px-3 py-2">
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">{a.name}</span>
+                      <span className="ml-2 text-xs text-gray-500">{formatCurrency(a.price, country)}</span>
+                      {a.is_required && <span className="ml-2 text-xs text-amber-600">Required</span>}
+                    </div>
+                    <button onClick={() => deleteAddon(a.id, form.id)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+                  </div>
+                ))}
+                <div className="flex gap-2">
+                  <input value={addonForm.name} onChange={e => setAddonForm({ ...addonForm, name: e.target.value })} placeholder="Add-on name"
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <input type="number" value={addonForm.price || ''} onChange={e => setAddonForm({ ...addonForm, price: Number(e.target.value) })} placeholder="Price"
+                    className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <button onClick={() => saveAddon(form.id)} disabled={!addonForm.name.trim()}
+                    className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white disabled:opacity-50">Add</button>
+                </div>
+                <label className="flex items-center gap-2 text-xs text-gray-500">
+                  <input type="checkbox" checked={addonForm.is_required} onChange={e => setAddonForm({ ...addonForm, is_required: e.target.checked })} className="rounded" />
+                  Required (customer must select this)
+                </label>
+              </div>
+            )}
+
+            {/* ── Feature Toggles (venue, multi-day, quotes) ── */}
+            {isScheduling && (
+              <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Options</p>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Collect venue address</p>
+                    <p className="text-xs text-gray-400">Ask customers where the event/appointment is</p>
+                  </div>
+                  <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, collect_venue: !form.metadata?.collect_venue } })}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.collect_venue ? 'bg-brand' : 'bg-gray-200'}`}>
+                    <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.metadata?.collect_venue ? '22px' : '2px' }} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Multi-day booking</p>
+                    <p className="text-xs text-gray-400">Allow bookings that span multiple days</p>
+                  </div>
+                  <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, multi_day: !form.metadata?.multi_day } })}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.multi_day ? 'bg-brand' : 'bg-gray-200'}`}>
+                    <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.metadata?.multi_day ? '22px' : '2px' }} />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Quote-based pricing</p>
+                    <p className="text-xs text-gray-400">Customers request a quote instead of booking at fixed price</p>
+                  </div>
+                  <button type="button" onClick={() => setForm({ ...form, quote_enabled: !form.quote_enabled })}
+                    className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.quote_enabled ? 'bg-brand' : 'bg-gray-200'}`}>
+                    <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.quote_enabled ? '22px' : '2px' }} />
+                  </button>
+                </div>
+
+                {/* Max capacity */}
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Max bookings per time slot</label>
+                  <p className="mb-1 text-xs text-gray-400">0 = unlimited. Prevents overbooking.</p>
+                  <input type="number" min={0} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
+                    onChange={(e) => setForm({ ...form, ...{ max_capacity: Number(e.target.value) || null } } as Service)}
+                    placeholder="Unlimited" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right column: Settings */}
@@ -758,6 +986,9 @@ export default function ServicesPage() {
                       {service.requires_staff && service.staff_ids?.length > 0 && (
                         <span>{service.staff_ids.length} staff</span>
                       )}
+                      {service.is_package && <span className="text-brand font-medium">Package</span>}
+                      {service.quote_enabled && <span className="text-amber-600">Quote</span>}
+                      {(service.gallery_urls || []).length > 0 && <span>{service.gallery_urls.length} photos</span>}
                     </div>
                   </div>
                 </div>
