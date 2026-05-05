@@ -97,7 +97,7 @@ export const TIER_LABELS: Record<SubscriptionTier, string> = {
 
 /** Default capabilities for each business category */
 export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
-  restaurant: ['scheduling', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
+  restaurant: ['scheduling', 'reservation', 'ordering', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
   barber: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],
   spa: ['scheduling', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
   salon: ['scheduling', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],

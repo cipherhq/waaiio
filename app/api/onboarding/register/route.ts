@@ -348,8 +348,9 @@ function getDefaultGreeting(name: string, category: BusinessCategoryKey): string
     case 'salon':
       return `Welcome to ${name}! ✨ I can help you book a session. What would you like?`;
     case 'church':
+      return `Welcome to ${name}! 🙏 We're glad you're here. How can we serve you today?`;
     case 'mosque':
-      return `Welcome to ${name}! 🙏 I can help you make payments. What would you like to pay for?`;
+      return `Assalamu Alaikum! Welcome to ${name}. 🕌 How can we help you today?`;
     case 'school':
       return `Welcome to ${name}! 🎓 I can help you make payments. Select a category to proceed.`;
     case 'shop':
