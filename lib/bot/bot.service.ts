@@ -1053,7 +1053,16 @@ export class BotService {
             await this.sendText(from, btn.payload);
             return;
           }
-          // 'start_flow' — fall through to normal flow execution
+          if (btn.action === 'start_flow') {
+            // Re-execute current step with empty input to show the prompt
+            const { data: biz } = await this.supabase
+              .from('businesses')
+              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, is_whitelabel')
+              .eq('id', session.business_id)
+              .single();
+            await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
+            return;
+          }
         }
       } catch (err) {
         logger.error('[BOT] Welcome button handler error (non-fatal):', err);
