@@ -62,7 +62,10 @@ const selectCapabilityStep: FlowStepConfig = {
     const category = ctx.business?.category || 'other';
 
     // Filter out non-user-facing capabilities (background or dashboard-only)
-    const userFacing = capabilities.filter(c => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign'].includes(c));
+    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
+    // If scheduling is present, payment/invoice happen within the booking flow
+    if (capabilities.includes('scheduling')) { nonUserFacing.add('payment'); nonUserFacing.add('invoice'); }
+    const userFacing = capabilities.filter(c => !nonUserFacing.has(c));
 
     // WhatsApp buttons max 3 — use a list for more options
     if (userFacing.length <= 3) {
@@ -94,7 +97,9 @@ const selectCapabilityStep: FlowStepConfig = {
   async validate(input: string, ctx: FlowContext) {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const category = ctx.business?.category || 'other';
-    const userFacing = capabilities.filter(c => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign'].includes(c));
+    const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
+    if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
+    const userFacing = capabilities.filter(c => !nonUF.has(c));
 
     let capId: CapabilityId | null = null;
 

@@ -1687,11 +1687,20 @@ export class BotService {
       return this.getFirstStep(flowType);
     }
 
-    if (capabilities.length === 1) {
-      return this.capabilityToFirstStep(capabilities[0]);
+    // Filter to user-facing capabilities only (same filter as select_capability prompt)
+    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
+    // If scheduling is present, payment/invoice happen within the booking flow — don't show as separate options
+    if (capabilities.includes('scheduling')) {
+      nonUserFacing.add('payment');
+      nonUserFacing.add('invoice');
+    }
+    const userFacing = capabilities.filter(c => !nonUserFacing.has(c));
+
+    if (userFacing.length <= 1) {
+      return this.capabilityToFirstStep(userFacing[0] || capabilities[0]);
     }
 
-    // Multiple capabilities — route to capability selection
+    // Multiple user-facing capabilities — route to capability selection
     return 'select_capability';
   }
 
