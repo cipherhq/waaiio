@@ -123,7 +123,16 @@ export default function FinancialsPage() {
   const netEarnings = totalRevenue - effectiveFees - totalRefunds;
 
   // Build unified transactions from bookings
-  const entityLabel = labels.entityName.charAt(0).toUpperCase() + labels.entityName.slice(1);
+  const flowTypeLabel = (ft: string): string => {
+    switch (ft) {
+      case 'payment': return 'Payment';
+      case 'scheduling': return 'Booking';
+      case 'ordering': return 'Order';
+      case 'ticketing': return 'Ticket';
+      case 'reservation': return 'Reservation';
+      default: return 'Booking';
+    }
+  };
 
   const transactions = useMemo(() => {
     return bookings.map((b): Transaction => {
@@ -132,7 +141,7 @@ export default function FinancialsPage() {
         id: b.id,
         date: b.created_at,
         type: ft,
-        description: `${entityLabel} - ${b.reference_code}`,
+        description: `${flowTypeLabel(ft)} - ${b.reference_code}`,
         customer: b.guest_name || '\u2014',
         amount: Number(b.total_amount || b.deposit_amount || 0),
         status: b.status,
