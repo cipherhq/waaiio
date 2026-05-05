@@ -22,7 +22,30 @@ interface Service {
   is_featured: boolean;
   image_url: string | null;
   cancellation_policy: string | null;
+  // Scheduling availability
+  available_days: string[];
+  available_from: string | null;
+  available_to: string | null;
+  requires_staff: boolean;
+  staff_ids: string[];
+  allow_staff_selection: boolean;
 }
+
+interface StaffMember {
+  id: string;
+  name: string;
+  schedule: Record<string, { start?: string; end?: string }>;
+}
+
+const WEEKDAYS = [
+  { key: 'monday', short: 'Mon' },
+  { key: 'tuesday', short: 'Tue' },
+  { key: 'wednesday', short: 'Wed' },
+  { key: 'thursday', short: 'Thu' },
+  { key: 'friday', short: 'Fri' },
+  { key: 'saturday', short: 'Sat' },
+  { key: 'sunday', short: 'Sun' },
+];
 
 type ViewMode = 'list' | 'add' | 'edit';
 
@@ -36,7 +59,9 @@ export default function ServicesPage() {
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
-  const [form, setForm] = useState<Service>({
+  const [staffList, setStaffList] = useState<StaffMember[]>([]);
+
+  const emptyForm: Service = {
     id: '',
     name: '',
     description: null,
@@ -52,7 +77,14 @@ export default function ServicesPage() {
     is_featured: false,
     image_url: null,
     cancellation_policy: null,
-  });
+    available_days: [],
+    available_from: null,
+    available_to: null,
+    requires_staff: false,
+    staff_ids: [],
+    allow_staff_selection: false,
+  };
+  const [form, setForm] = useState<Service>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showPrice, setShowPrice] = useState(labels.defaultHasPrice);
@@ -70,32 +102,31 @@ export default function ServicesPage() {
     setLoading(false);
   }
 
-  useEffect(() => { fetchServices(); }, [business.id]);
+  async function fetchStaff() {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('business_staff')
+      .select('id, name, schedule')
+      .eq('business_id', business.id)
+      .eq('is_active', true);
+    setStaffList((data as StaffMember[]) || []);
+  }
+
+  useEffect(() => { fetchServices(); fetchStaff(); }, [business.id]);
 
   function openAdd() {
-    setForm({
-      id: '',
-      name: '',
-      description: null,
-      price: 0,
-      price_is_variable: false,
-      duration_minutes: isScheduling ? 30 : null,
-      deposit_amount: 0,
-      is_active: true,
-      sort_order: services.length,
-      status: 'active',
-      billing_type: 'one_time',
-      recurring_interval: null,
-      is_featured: false,
-      image_url: null,
-      cancellation_policy: null,
-    });
+    setForm({ ...emptyForm, sort_order: services.length, duration_minutes: isScheduling ? 30 : null });
     setShowPrice(labels.defaultHasPrice);
     setView('add');
   }
 
   function openEdit(service: Service) {
-    setForm({ ...service });
+    setForm({
+      ...emptyForm,
+      ...service,
+      available_days: service.available_days || [],
+      staff_ids: service.staff_ids || [],
+    });
     setShowPrice(labels.defaultHasPrice || service.price > 0 || service.deposit_amount > 0);
     setView('edit');
   }
@@ -138,6 +169,12 @@ export default function ServicesPage() {
       is_featured: form.is_featured,
       image_url: form.image_url,
       cancellation_policy: form.cancellation_policy?.trim() || null,
+      available_days: form.available_days,
+      available_from: form.available_from || null,
+      available_to: form.available_to || null,
+      requires_staff: form.requires_staff,
+      staff_ids: form.requires_staff ? form.staff_ids : [],
+      allow_staff_selection: form.requires_staff && form.staff_ids.length > 0 ? form.allow_staff_selection : false,
     };
 
     if (view === 'add') {
@@ -421,6 +458,146 @@ export default function ServicesPage() {
               </div>
             )}
 
+            {/* ── Scheduling Availability (only for scheduling businesses) ── */}
+            {isScheduling && (
+              <div className="space-y-4 rounded-lg border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Availability</p>
+
+                {/* Available Days */}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Available Days</label>
+                  <p className="mb-2 text-xs text-gray-400">Leave empty for every day the business is open</p>
+                  <div className="flex flex-wrap gap-2">
+                    {WEEKDAYS.map(day => {
+                      const active = form.available_days.includes(day.key);
+                      return (
+                        <button
+                          key={day.key}
+                          type="button"
+                          onClick={() => {
+                            const next = active
+                              ? form.available_days.filter(d => d !== day.key)
+                              : [...form.available_days, day.key];
+                            setForm({ ...form, available_days: next });
+                          }}
+                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                            active
+                              ? 'bg-brand text-white'
+                              : 'bg-white border border-gray-200 text-gray-600 hover:border-brand hover:text-brand'
+                          }`}
+                        >
+                          {day.short}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Service Hours */}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Service Hours</label>
+                  <p className="mb-2 text-xs text-gray-400">Override business hours for this service (optional)</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={form.available_from || ''}
+                      onChange={(e) => setForm({ ...form, available_from: e.target.value || null })}
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    <span className="text-sm text-gray-400">to</span>
+                    <input
+                      type="time"
+                      value={form.available_to || ''}
+                      onChange={(e) => setForm({ ...form, available_to: e.target.value || null })}
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    {(form.available_from || form.available_to) && (
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, available_from: null, available_to: null })}
+                        className="text-xs text-red-400 hover:text-red-600"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Requires Staff */}
+                {staffList.length > 0 && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Requires Staff</p>
+                        <p className="text-xs text-gray-400">This service needs a staff member</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setForm({ ...form, requires_staff: !form.requires_staff, staff_ids: !form.requires_staff ? form.staff_ids : [], allow_staff_selection: false })}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.requires_staff ? 'bg-brand' : 'bg-gray-200'}`}
+                      >
+                        <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.requires_staff ? '22px' : '2px' }} />
+                      </button>
+                    </div>
+
+                    {/* Assigned Staff */}
+                    {form.requires_staff && (
+                      <div>
+                        <label className="mb-1.5 block text-sm font-medium text-gray-700">Assigned Staff</label>
+                        <p className="mb-2 text-xs text-gray-400">Leave empty if any staff can do this</p>
+                        <div className="flex flex-wrap gap-2">
+                          {staffList.map(s => {
+                            const active = form.staff_ids.includes(s.id);
+                            const schedDays = Object.entries(s.schedule || {})
+                              .filter(([, v]) => v?.start)
+                              .map(([k]) => k.slice(0, 3))
+                              .join(', ');
+                            return (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => {
+                                  const next = active
+                                    ? form.staff_ids.filter(id => id !== s.id)
+                                    : [...form.staff_ids, s.id];
+                                  setForm({ ...form, staff_ids: next });
+                                }}
+                                className={`rounded-lg px-3 py-2 text-xs font-medium transition ${
+                                  active
+                                    ? 'bg-brand text-white'
+                                    : 'bg-white border border-gray-200 text-gray-600 hover:border-brand'
+                                }`}
+                              >
+                                <span>{s.name}</span>
+                                {schedDays && <span className="ml-1 opacity-60">({schedDays})</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Let customers choose staff */}
+                    {form.requires_staff && form.staff_ids.length > 0 && (
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Let customers choose staff</p>
+                          <p className="text-xs text-gray-400">Customers pick their preferred staff member</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, allow_staff_selection: !form.allow_staff_selection })}
+                          className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.allow_staff_selection ? 'bg-brand' : 'bg-gray-200'}`}
+                        >
+                          <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.allow_staff_selection ? '22px' : '2px' }} />
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Cancellation Policy — hidden for free-giving categories */}
             {labels.defaultHasPrice && <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Cancellation Policy</label>
@@ -574,6 +751,12 @@ export default function ServicesPage() {
                       )}
                       {service.deposit_amount > 0 && (
                         <span>Deposit: {formatCurrency(service.deposit_amount, country)}</span>
+                      )}
+                      {service.available_days?.length > 0 && (
+                        <span>{service.available_days.map(d => d.slice(0, 3)).join(', ')}</span>
+                      )}
+                      {service.requires_staff && service.staff_ids?.length > 0 && (
+                        <span>{service.staff_ids.length} staff</span>
                       )}
                     </div>
                   </div>

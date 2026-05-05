@@ -78,7 +78,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, billing_type, recurring_interval')
+          .select('id, name, price, duration_minutes, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .is('deleted_at', null)
@@ -121,7 +121,7 @@ export const schedulingFlow: FlowDefinition = {
         // Try exact ID match first (from list postback)
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .maybeSingle();
@@ -131,7 +131,7 @@ export const schedulingFlow: FlowDefinition = {
         if (!matched) {
           const { data: allServices } = await ctx.supabase
             .from('services')
-            .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+            .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
             .eq('business_id', ctx.business!.id)
             .eq('is_active', true)
             .is('deleted_at', null);
@@ -166,6 +166,12 @@ export const schedulingFlow: FlowDefinition = {
             service_deposit: matched.deposit_amount,
             service_billing_type: matched.billing_type || 'one_time',
             service_recurring_interval: matched.recurring_interval || null,
+            _service_available_days: (matched as Record<string, unknown>).available_days || [],
+            _service_available_from: (matched as Record<string, unknown>).available_from || null,
+            _service_available_to: (matched as Record<string, unknown>).available_to || null,
+            _service_requires_staff: (matched as Record<string, unknown>).requires_staff || false,
+            _service_staff_ids: (matched as Record<string, unknown>).staff_ids || [],
+            _service_allow_staff_selection: (matched as Record<string, unknown>).allow_staff_selection || false,
           },
         };
       },
@@ -176,7 +182,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval')
+          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .is('deleted_at', null)
@@ -188,13 +194,20 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (services.length === 1) {
-          ctx.session.session_data.service_id = services[0].id;
-          ctx.session.session_data.service_name = services[0].name;
-          ctx.session.session_data.service_price = services[0].price;
-          ctx.session.session_data.service_duration = services[0].duration_minutes;
-          ctx.session.session_data.service_deposit = services[0].deposit_amount;
-          ctx.session.session_data.service_billing_type = services[0].billing_type || 'one_time';
-          ctx.session.session_data.service_recurring_interval = services[0].recurring_interval || null;
+          const s = services[0];
+          ctx.session.session_data.service_id = s.id;
+          ctx.session.session_data.service_name = s.name;
+          ctx.session.session_data.service_price = s.price;
+          ctx.session.session_data.service_duration = s.duration_minutes;
+          ctx.session.session_data.service_deposit = s.deposit_amount;
+          ctx.session.session_data.service_billing_type = s.billing_type || 'one_time';
+          ctx.session.session_data.service_recurring_interval = s.recurring_interval || null;
+          ctx.session.session_data._service_available_days = s.available_days || [];
+          ctx.session.session_data._service_available_from = s.available_from || null;
+          ctx.session.session_data._service_available_to = s.available_to || null;
+          ctx.session.session_data._service_requires_staff = s.requires_staff || false;
+          ctx.session.session_data._service_staff_ids = s.staff_ids || [];
+          ctx.session.session_data._service_allow_staff_selection = s.allow_staff_selection || false;
           ctx.session.session_data.skip_service = true;
           return true;
         }
@@ -208,47 +221,71 @@ export const schedulingFlow: FlowDefinition = {
       id: 'select_staff',
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
-        // Skip if staff capability not enabled
+        const d = ctx.session.session_data;
+
+        // If service explicitly says no staff needed, skip
+        if (d._service_requires_staff === false) return true;
+
+        // Skip if staff capability not enabled and service doesn't require staff
         const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id);
-        if (!caps.includes('staff')) return true;
+        if (!caps.includes('staff') && !d._service_requires_staff) return true;
 
-        // Get active staff for this service
-        const serviceId = ctx.session.session_data.service_id as string | undefined;
-        let query = ctx.supabase
-          .from('business_staff')
-          .select('id, name')
-          .eq('business_id', ctx.business.id)
-          .eq('is_active', true);
+        // Get staff — prefer service-level staff_ids, fall back to all active staff
+        const serviceStaffIds = d._service_staff_ids as string[] | undefined;
+        let staff: Array<{ id: string; name: string; schedule: Record<string, unknown> }>;
 
-        const { data: staff } = await query;
-        if (!staff || staff.length === 0) return true;
-
-        // If service selected, filter to staff who handle that service
-        let filtered = staff;
-        if (serviceId) {
-          const { data: serviceData } = await ctx.supabase
-            .from('services')
-            .select('name')
-            .eq('id', serviceId)
-            .single();
-          if (serviceData) {
-            filtered = staff.filter(s => {
-              const services = (s as unknown as { services: string[] }).services;
-              return !services || services.length === 0 || services.includes(serviceData.name);
+        if (serviceStaffIds && serviceStaffIds.length > 0) {
+          const { data } = await ctx.supabase
+            .from('business_staff')
+            .select('id, name, schedule')
+            .in('id', serviceStaffIds)
+            .eq('is_active', true);
+          staff = data || [];
+        } else {
+          const { data } = await ctx.supabase
+            .from('business_staff')
+            .select('id, name, schedule, services')
+            .eq('business_id', ctx.business.id)
+            .eq('is_active', true);
+          // Filter by service name match (legacy behavior)
+          let all = data || [];
+          const serviceName = d.service_name as string | undefined;
+          if (serviceName && all.length > 0) {
+            const matched = all.filter(s => {
+              const svcs = (s as unknown as { services: string[] }).services;
+              return !svcs || svcs.length === 0 || svcs.includes(serviceName);
             });
+            if (matched.length > 0) all = matched;
           }
+          staff = all;
         }
 
-        // Skip if 0 or 1 staff
-        if (filtered.length <= 1) {
-          if (filtered.length === 1) {
-            ctx.session.session_data.staff_id = filtered[0].id;
-            ctx.session.session_data.staff_name = filtered[0].name;
-          }
+        if (staff.length === 0) return true;
+
+        // Filter by staff schedule — only show staff who work on the selected date
+        const selectedDate = d.date as string | undefined;
+        if (selectedDate) {
+          const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const dayOfWeek = dayNames[new Date(selectedDate + 'T00:00').getDay()];
+          staff = staff.filter(s => {
+            if (!s.schedule || Object.keys(s.schedule).length === 0) return true; // No schedule = always available
+            const daySchedule = s.schedule[dayOfWeek] as { start?: string; end?: string } | undefined;
+            return daySchedule && daySchedule.start; // Has a start time for this day
+          });
+        }
+
+        if (staff.length === 0) return true;
+
+        // Auto-assign if only 1 staff or customer selection disabled
+        const allowSelection = d._service_allow_staff_selection as boolean | undefined;
+        if (staff.length === 1 || allowSelection === false) {
+          // Pick the first (or least-busy) staff member
+          ctx.session.session_data.staff_id = staff[0].id;
+          ctx.session.session_data.staff_name = staff[0].name;
           return true;
         }
 
-        ctx.session.session_data._available_staff = filtered.map(s => ({ id: s.id, name: s.name }));
+        ctx.session.session_data._available_staff = staff.map(s => ({ id: s.id, name: s.name }));
         return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
@@ -293,15 +330,32 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const dateRange = (meta.date_range_days as number) || 7;
+        const maxAdvanceDays = (meta.max_advance_days as number) || 30;
+        const availableDays = (ctx.session.session_data._service_available_days as string[]) || [];
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
         const dates: Array<{ title: string; postbackText: string }> = [];
-        // WhatsApp list max 10 items
-        const daysToShow = Math.min(dateRange, 10);
-        for (let i = 1; i <= daysToShow; i++) {
+
+        // Scan up to maxAdvanceDays but collect max 10 matching dates
+        for (let i = 1; i <= maxAdvanceDays && dates.length < 10; i++) {
           const d = new Date();
           d.setDate(d.getDate() + i);
+          const dayOfWeek = dayNames[d.getDay()];
+
+          // Filter by service available days
+          if (availableDays.length > 0 && !availableDays.includes(dayOfWeek)) continue;
+
+          // Filter by business operating hours (skip closed days)
+          const opHours = (ctx.business?.operating_hours || {}) as Record<string, { closed?: boolean }>;
+          if (opHours[dayOfWeek]?.closed) continue;
+
           const label = d.toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
           dates.push({ title: label, postbackText: d.toISOString().split('T')[0] });
         }
+
+        if (dates.length === 0) {
+          return [{ type: 'text', text: 'Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit.' }];
+        }
+
         return [{
           type: 'list',
           title: 'Select Date',
@@ -351,13 +405,17 @@ export const schedulingFlow: FlowDefinition = {
         const dateStr = ctx.session.session_data.date as string;
         const dateLabel = new Date(dateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'short' });
 
-        // Read business operating hours for this day of week
+        // Read hours: service-level override > staff schedule > business operating hours
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
         const selectedDay = dayNames[new Date(dateStr + 'T00:00').getDay()];
         const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
         const dayHours = opHours[selectedDay];
-        const openTime = (dayHours && !dayHours.closed && dayHours.open) ? dayHours.open : '08:00';
-        const closeTime = (dayHours && !dayHours.closed && dayHours.close) ? dayHours.close : '22:00';
+
+        const serviceFrom = ctx.session.session_data._service_available_from as string | null;
+        const serviceTo = ctx.session.session_data._service_available_to as string | null;
+
+        const openTime = serviceFrom || (dayHours && !dayHours.closed && dayHours.open ? dayHours.open : '08:00');
+        const closeTime = serviceTo || (dayHours && !dayHours.closed && dayHours.close ? dayHours.close : '22:00');
 
         // Use service duration or business metadata for slot interval (default 60)
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -582,6 +640,7 @@ export const schedulingFlow: FlowDefinition = {
           `${labels.confirmationEmoji} ${ctx.business?.name || 'Business'}`,
         ];
         if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
+        if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
         lines.push(`📅 ${dateLabel}`);
         lines.push(`🕐 ${d.time as string}`);
         lines.push(`👥 ${d.party_size as number} ${labels.quantityLabel}`);
@@ -884,6 +943,8 @@ export const schedulingFlow: FlowDefinition = {
           business_id: ctx.business!.id,
           user_id: userId,
           service_id: (d.service_id as string) || null,
+          staff_id: (d.staff_id as string) || null,
+          staff_name: (d.staff_name as string) || null,
           date: d.date as string,
           time: d.time as string,
           party_size: partySize,
@@ -1039,6 +1100,7 @@ export const schedulingFlow: FlowDefinition = {
                   `📋 *${labels.receiptTitle}!*`,
                   '',
                   `${labels.confirmationEmoji} ${ctx.business?.name}`,
+                  d.staff_name ? `👤 With: ${d.staff_name as string}` : '',
                   `📅 ${dateLabel}`,
                   `🕐 ${d.time as string}`,
                   `👥 ${partySize} ${labels.quantityLabel}`,
@@ -1095,6 +1157,7 @@ export const schedulingFlow: FlowDefinition = {
             restaurant_name: ctx.business?.name || '',
             business_name: ctx.business?.name || '',
             customer_name: customerName,
+            staff_name: (d.staff_name as string) || '',
             date: dateLabel,
             time: (d.time as string) || '',
             party_size: partySize,
@@ -1102,6 +1165,10 @@ export const schedulingFlow: FlowDefinition = {
             reference_code: booking.reference_code,
             service_name: (d.service_name as string) || '',
           });
+          // Add staff info if not in template but staff was assigned
+          if (d.staff_name && !message.includes(d.staff_name as string)) {
+            message = message.replace(/(\n.*Ref:)/, `\n👤 With: ${d.staff_name as string}$1`);
+          }
           if (!tierInfo.isWhitelabel) {
             message += '\n\n_Powered by Waaiio_';
           }

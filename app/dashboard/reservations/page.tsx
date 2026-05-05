@@ -33,6 +33,7 @@ interface Booking {
   rescheduled_at: string | null;
   original_date: string | null;
   original_time: string | null;
+  staff_name: string | null;
 }
 
 const allStatuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
@@ -117,7 +118,7 @@ export default function BookingsPage() {
     const supabase = createClient();
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_name')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .order('date', { ascending: false })
@@ -210,6 +211,7 @@ export default function BookingsPage() {
           data={bookings.map(b => ({
             Reference: b.reference_code,
             Guest: b.guest_name,
+            Staff: b.staff_name || '',
             Phone: b.guest_phone,
             Date: b.date,
             Time: b.time,
@@ -241,6 +243,7 @@ export default function BookingsPage() {
               <tr className="border-b border-gray-50 bg-gray-50/50">
                 <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
@@ -257,6 +260,7 @@ export default function BookingsPage() {
                     <p className="font-medium text-gray-900">{r.guest_name || '\u2014'}</p>
                     <p className="text-xs text-gray-400">{r.guest_phone}</p>
                   </td>
+                  <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '\u2014'}</td>
                   <td className="px-4 py-3 text-gray-600">
                     {new Date(r.date + 'T00:00').toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' })}
                     {r.time && ` at ${r.time.slice(0, 5)}`}
