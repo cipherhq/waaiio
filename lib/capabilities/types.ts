@@ -111,6 +111,7 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   shop: ['ordering', 'feedback', 'loyalty', 'chat', 'referral'],
   food_delivery: ['ordering', 'feedback', 'loyalty', 'referral'],
   events: ['ticketing', 'feedback', 'waitlist', 'referral'],
+  event_services: ['scheduling', 'payment', 'invoice', 'chat', 'feedback', 'referral'],
   transport: ['ticketing', 'feedback'],
   cinema: ['ticketing', 'feedback', 'waitlist', 'loyalty'],
   car_park: ['payment', 'feedback'],

@@ -12,7 +12,7 @@ export type FlowType = 'scheduling' | 'payment' | 'ordering' | 'ticketing' | 're
 export type BusinessCategoryKey =
   | 'restaurant' | 'barber' | 'spa' | 'salon' | 'gym' | 'clinic'
   | 'consultant' | 'church' | 'mosque' | 'school' | 'ngo'
-  | 'shop' | 'food_delivery' | 'events' | 'transport' | 'cinema'
+  | 'shop' | 'food_delivery' | 'events' | 'event_services' | 'transport' | 'cinema'
   | 'car_park' | 'tattoo' | 'real_estate' | 'travel_agency'
   | 'logistics' | 'taxi' | 'government' | 'instagram_vendor'
   | 'crowdfunding_org' | 'laundry' | 'veterinary' | 'dental'
@@ -223,7 +223,8 @@ export const BUSINESS_CATEGORIES: Array<{
   { key: 'ngo', label: 'NGO / Charity', icon: '🤝', flow: 'payment' },
   { key: 'shop', label: 'Shop / Retail', icon: '🛍️', flow: 'ordering' },
   { key: 'food_delivery', label: 'Food Delivery', icon: '🛵', flow: 'ordering' },
-  { key: 'events', label: 'Events', icon: '🎪', flow: 'ticketing' },
+  { key: 'events', label: 'Events & Ticketing', icon: '🎪', flow: 'ticketing' },
+  { key: 'event_services', label: 'Event Services & Rentals', icon: '🎉', flow: 'scheduling' },
   { key: 'transport', label: 'Transport', icon: '🚌', flow: 'ticketing' },
   { key: 'cinema', label: 'Cinema', icon: '🎬', flow: 'ticketing' },
   // ── New Categories ──
@@ -288,6 +289,7 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   shop: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛍️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. T-Shirt, Gift Box', defaultHasPrice: true },
   food_delivery: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛵', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Menu Item', serviceNamePlural: 'Menu Items', namePlaceholder: 'e.g. Jollof Rice, Shawarma', defaultHasPrice: true },
   events: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🎪', receiptTitle: 'Tickets Confirmed', quantityLabel: 'tickets', personLabel: 'Attendee', personLabelPlural: 'Attendees', hiddenStatuses: ['no_show', 'in_progress'], serviceName: 'Event', serviceNamePlural: 'Events', namePlaceholder: 'e.g. Concert, Workshop', defaultHasPrice: true },
+  event_services: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🎉', receiptTitle: 'Booking Confirmed', quantityLabel: 'units', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Photo Booth, DJ, Decor, Catering', defaultHasPrice: true },
   transport: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🚌', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats', personLabel: 'Attendee', personLabelPlural: 'Attendees', hiddenStatuses: ['no_show', 'in_progress'], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Lagos–Abuja, Express Route', defaultHasPrice: true },
   cinema: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🎬', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats', personLabel: 'Attendee', personLabelPlural: 'Attendees', hiddenStatuses: ['no_show', 'in_progress'], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Regular, VIP, IMAX', defaultHasPrice: true },
   // ── New Categories ──
@@ -526,6 +528,10 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   shop: [],
   food_delivery: [],
   events: [],
+  event_services: [
+    { name: 'Standard Package', price: 50000, price_is_variable: false, duration_minutes: 180, deposit_amount: 15000 },
+    { name: 'Premium Package', price: 100000, price_is_variable: false, duration_minutes: 300, deposit_amount: 30000 },
+  ],
   transport: [],
   cinema: [],
   // ── New Categories ──
