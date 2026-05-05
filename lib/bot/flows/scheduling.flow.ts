@@ -15,6 +15,51 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { BusinessCategoryKey } from '@/lib/constants';
 
+/** Category-aware date prompt */
+function getDatePrompt(category: string): string {
+  switch (category) {
+    case 'event_services':
+    case 'photographer':
+    case 'catering':
+      return 'When is your event?';
+    case 'restaurant':
+      return 'When would you like to dine?';
+    case 'hotel':
+    case 'shortlet':
+      return 'When would you like to check in?';
+    case 'laundry':
+      return 'When should we pick up?';
+    case 'car_wash':
+    case 'car_park':
+      return 'When would you like to come in?';
+    case 'church':
+    case 'mosque':
+      return 'When would you like your appointment?';
+    default:
+      return 'When would you like to book?';
+  }
+}
+
+/** Category-aware staff prompt */
+function getStaffPrompt(category: string): string {
+  switch (category) {
+    case 'barber':
+    case 'salon':
+    case 'spa':
+    case 'tattoo':
+      return 'Who would you like to see?';
+    case 'clinic':
+    case 'dental':
+    case 'veterinary':
+      return 'Which doctor/specialist?';
+    case 'gym':
+    case 'tutor':
+      return 'Which instructor?';
+    default:
+      return 'Which staff member do you prefer?';
+  }
+}
+
 /** Category-specific quick-reply buttons for special requests */
 function getSpecialRequestButtons(category: string): Array<{ id: string; title: string }> {
   switch (category as BusinessCategoryKey) {
@@ -298,7 +343,7 @@ export const schedulingFlow: FlowDefinition = {
 
         return [{
           type: 'buttons',
-          body: 'Who would you like to see?',
+          body: getStaffPrompt(ctx.business?.category || 'other'),
           buttons,
         }];
       },
@@ -378,7 +423,7 @@ export const schedulingFlow: FlowDefinition = {
         messages.push({
           type: 'list',
           title: 'Select Date',
-          body: 'When would you like to come?',
+          body: getDatePrompt(ctx.business?.category || 'other'),
           buttonLabel: 'Choose Date',
           items: dates,
         });
