@@ -4,8 +4,21 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 /** Generic labels for capability selection buttons */
 export function getCapabilityLabel(cap: CapabilityId, category: string): string {
   switch (cap) {
-    case 'scheduling':
-      return 'Book Appointment';
+    case 'scheduling': {
+      const bookingLabels: Record<string, string> = {
+        restaurant: 'Book a Table',
+        hotel: 'Book a Stay',
+        shortlet: 'Book a Stay',
+        event_services: 'Book a Service',
+        photographer: 'Book a Session',
+        gym: 'Book a Session',
+        tutor: 'Book a Session',
+        coworking: 'Book a Space',
+        car_wash: 'Book a Wash',
+        laundry: 'Book Pickup',
+      };
+      return bookingLabels[category] || 'Book Appointment';
+    }
     case 'giving':
       return 'Give';
     case 'payment':
