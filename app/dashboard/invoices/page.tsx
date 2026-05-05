@@ -885,6 +885,10 @@ export default function InvoicesPage() {
               Send {sendModalInvoice.reference_code} to {sendModalInvoice.customer_name}
             </p>
 
+            <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-2.5">
+              <p className="text-xs text-amber-700">WhatsApp delivery requires the customer to have messaged your bot first. Use email for new contacts.</p>
+            </div>
+
             <div className="mt-4 space-y-2">
               <p className="text-sm font-medium text-gray-700">Send via:</p>
               {(['whatsapp', 'email', 'both'] as const).map(ch => (

@@ -1041,6 +1041,9 @@ export default function ContractsPage() {
 
               {step === 2 && (
                 <div className="space-y-4">
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <p className="text-xs text-amber-700">The recipient must have messaged your WhatsApp number before. New contacts need to text your bot first to receive documents.</p>
+                  </div>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-gray-700">Signer Phone *</label>
                     <PhoneInput
