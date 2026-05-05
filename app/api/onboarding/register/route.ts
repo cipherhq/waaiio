@@ -217,8 +217,8 @@ export async function POST(request: NextRequest) {
       const defaultCanned = [
         { title: 'Thanks for waiting', message_text: 'Thanks for your patience! How can I help you?', sort_order: 0 },
         { title: 'Operating hours', message_text: 'Our operating hours are Monday - Saturday, 9am - 6pm. We\'re closed on Sundays.', sort_order: 1 },
-        { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! Which service are you interested in?', sort_order: 2 },
-        { title: 'Booking help', message_text: 'I can help you book an appointment. Would you like to proceed?', sort_order: 3 },
+        { title: 'Price inquiry', message_text: 'I\'d be happy to help with pricing! What are you interested in?', sort_order: 2 },
+        { title: 'How to book', message_text: 'I can help you get started. Would you like to proceed?', sort_order: 3 },
         { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
       ];
       await service.from('canned_responses').insert(
@@ -341,23 +341,65 @@ function getDefaultWelcomeButtons(category: BusinessCategoryKey): Array<{ label:
 function getDefaultGreeting(name: string, category: BusinessCategoryKey): string {
   switch (category) {
     case 'restaurant':
-      return `Welcome to ${name}! I can help you book a table. When would you like to dine?`;
+    case 'catering':
+      return `Welcome to ${name}! 🍽️ I can help you book a table or place an order.`;
     case 'barber':
-      return `Welcome to ${name}! 💈 I can help you book an appointment. What service would you like?`;
+      return `Welcome to ${name}! 💈 Ready to book? What service would you like?`;
     case 'spa':
     case 'salon':
       return `Welcome to ${name}! ✨ I can help you book a session. What would you like?`;
+    case 'tattoo':
+      return `Welcome to ${name}! 🎨 Ready to book your session?`;
+    case 'gym':
+      return `Welcome to ${name}! 🏋️ Book a session or check your membership.`;
+    case 'clinic':
+    case 'dental':
+      return `Welcome to ${name}! 🏥 I can help you schedule an appointment.`;
+    case 'veterinary':
+      return `Welcome to ${name}! 🐾 I can help you book an appointment for your pet.`;
     case 'church':
       return `Welcome to ${name}! 🙏 We're glad you're here. How can we serve you today?`;
     case 'mosque':
       return `Assalamu Alaikum! Welcome to ${name}. 🕌 How can we help you today?`;
     case 'school':
       return `Welcome to ${name}! 🎓 I can help you make payments. Select a category to proceed.`;
+    case 'ngo':
+    case 'crowdfunding_org':
+      return `Welcome to ${name}! 🤝 Thank you for your support. How can we help?`;
     case 'shop':
-    case 'food_delivery':
+    case 'instagram_vendor':
+    case 'mall_vendor':
+    case 'pharmacy':
       return `Welcome to ${name}! 🛍️ Browse our products and place an order.`;
+    case 'food_delivery':
+      return `Welcome to ${name}! 🛵 Ready to order? Check out our menu!`;
     case 'events':
+    case 'cinema':
       return `Welcome to ${name}! 🎪 Check out our upcoming events and get your tickets!`;
+    case 'event_services':
+    case 'photographer':
+      return `Welcome to ${name}! ✨ Select your experience and let's make your event unforgettable!`;
+    case 'hotel':
+    case 'shortlet':
+      return `Welcome to ${name}! 🏨 I can help you book a stay. When are you visiting?`;
+    case 'coworking':
+      return `Welcome to ${name}! 🏢 I can help you book a space.`;
+    case 'consultant':
+    case 'tutor':
+      return `Welcome to ${name}! 💼 I can help you schedule a session.`;
+    case 'laundry':
+    case 'car_wash':
+      return `Welcome to ${name}! I can help you schedule a pickup or drop-off.`;
+    case 'logistics':
+      return `Welcome to ${name}! 🚚 I can help you ship a package.`;
+    case 'transport':
+      return `Welcome to ${name}! 🚌 I can help you book your trip.`;
+    case 'tailor':
+      return `Welcome to ${name}! ✂️ Browse our styles and place an order.`;
+    case 'real_estate':
+      return `Welcome to ${name}! 🏠 I can help you schedule a viewing.`;
+    case 'travel_agency':
+      return `Welcome to ${name}! ✈️ Ready to plan your trip?`;
     default:
       return `Welcome to ${name}! How can I help you today?`;
   }

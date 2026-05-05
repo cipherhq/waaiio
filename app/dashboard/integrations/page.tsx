@@ -4,15 +4,15 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 
 const EVENT_TYPES = [
-  { id: 'booking.created', label: 'Booking Created' },
+  { id: 'booking.created', label: 'New Booking' },
   { id: 'booking.confirmed', label: 'Booking Confirmed' },
   { id: 'booking.cancelled', label: 'Booking Cancelled' },
   { id: 'booking.completed', label: 'Booking Completed' },
   { id: 'payment.received', label: 'Payment Received' },
   { id: 'payment.failed', label: 'Payment Failed' },
-  { id: 'order.created', label: 'Order Created' },
+  { id: 'order.created', label: 'New Order' },
   { id: 'order.completed', label: 'Order Completed' },
-  { id: 'customer.checkin', label: 'Customer Check-in' },
+  { id: 'customer.checkin', label: 'Check-in' },
   { id: 'feedback.received', label: 'Feedback Received' },
   { id: 'chat.escalated', label: 'Chat Escalated' },
 ];

@@ -27,7 +27,7 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
     category: 'UTILITY',
     language: 'en_US',
     components: [
-      { type: 'BODY', text: 'Your booking with {{1}} has been confirmed.\n\n{{2}}\n\nThank you for choosing us!', example: { body_text: [['Runway Salon', 'Haircut on Monday, Jan 5 at 2:00 PM. Ref: WA-BK-1234']] } },
+      { type: 'BODY', text: 'Confirmed with {{1}}!\n\n{{2}}\n\nThank you for choosing us!', example: { body_text: [['Runway Salon', 'Haircut on Monday, Jan 5 at 2:00 PM. Ref: WA-BK-1234']] } },
     ],
   },
   {
@@ -35,7 +35,7 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
     category: 'UTILITY',
     language: 'en_US',
     components: [
-      { type: 'BODY', text: 'Reminder: You have an upcoming appointment with {{1}}.\n\n{{2}}\n\nSee you soon!', example: { body_text: [['Runway Salon', 'Haircut tomorrow at 2:00 PM']] } },
+      { type: 'BODY', text: 'Reminder: You have an upcoming visit with {{1}}.\n\n{{2}}\n\nSee you soon!', example: { body_text: [['Runway Salon', 'Haircut tomorrow at 2:00 PM']] } },
     ],
   },
   {

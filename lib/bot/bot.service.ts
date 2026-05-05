@@ -187,7 +187,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to make your first booking!");
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
         return;
       }
       // Remove old inactive sessions for this phone (null business) to avoid unique constraint violation
@@ -213,7 +213,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number. Send *Hi* to make your first booking!");
+        await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
         return;
       }
       await this.handleTransactionDocument(from, profile.id, isHistoryQuery ? 'history' : 'receipt');
@@ -686,7 +686,7 @@ export class BotService {
         if (!tierInfo.allowed) {
           await this.messageSender.sendButtons({
             to: from,
-            body: `Thank you for contacting ${business.name}! We're currently unable to accept new bookings via WhatsApp.`,
+            body: `Thank you for contacting ${business.name}! We're currently unavailable on WhatsApp. Please try again later.`,
             buttons: [
               { id: 'cap_chat', title: 'Chat with Us' },
             ],
@@ -1121,7 +1121,7 @@ export class BotService {
             .eq('customer_phone', from)
             .eq('status', 'open');
         } catch { /* non-critical */ }
-        await this.sendText(from, "Chat session ended. ✅\n\nSend *Hi* to continue with bookings, payments, and other services.");
+        await this.sendText(from, "Chat session ended. ✅\n\nSend *Hi* to continue.");
         return;
       }
       // Store message for human agent, update conversation
@@ -1750,7 +1750,7 @@ export class BotService {
         .limit(5);
 
       if (!upcoming || upcoming.length === 0) {
-        await this.sendText(from, "You don't have any upcoming bookings. Send *Hi* to make a new one!");
+        await this.sendText(from, "You don't have any upcoming bookings. Send *Hi* to get started!");
         await this.deactivateSession(session.id);
         return;
       }
@@ -1848,7 +1848,7 @@ export class BotService {
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
         .eq('id', bookingId);
 
-      await this.sendText(from, '✓ Booking cancelled.\n\nSend *Hi* to make a new booking or *my bookings* to manage others.');
+      await this.sendText(from, '✓ Cancelled.\n\nSend *Hi* to start fresh or *my bookings* to manage others.');
       await this.deactivateSession(session.id);
       return;
     }

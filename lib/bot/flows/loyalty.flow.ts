@@ -12,7 +12,7 @@ const loyaltyMenuStep: FlowStepConfig = {
     // Find loyalty record for this customer + business
     const businessId = ctx.session.business_id || ctx.session.session_data.loyalty_business_id as string;
     if (!businessId) {
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Make your first visit to start earning rewards! \u2B50" }];
+      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! \u2B50" }];
     }
 
     const { data: loyalty } = await ctx.supabase
@@ -23,7 +23,7 @@ const loyaltyMenuStep: FlowStepConfig = {
       .maybeSingle();
 
     if (!loyalty) {
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Make your first visit to start earning rewards! \u2B50" }];
+      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! \u2B50" }];
     }
 
     // Store loyalty ID for later steps

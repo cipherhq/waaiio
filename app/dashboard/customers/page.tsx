@@ -765,9 +765,9 @@ export default function CustomersPage() {
 
                   {/* Booking / Giving History */}
                   <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900">{isGiving ? 'Giving History' : 'Booking History'}</h3>
+                    <h3 className="text-sm font-semibold text-gray-900">History</h3>
                     {bookings.length === 0 ? (
-                      <p className="mt-2 text-xs text-gray-400">{isGiving ? 'No givings found.' : 'No bookings found.'}</p>
+                      <p className="mt-2 text-xs text-gray-400">No records found.</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {bookings.map((b) => (

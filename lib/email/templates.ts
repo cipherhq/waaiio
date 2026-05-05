@@ -232,10 +232,10 @@ export function bookingConfirmationEmail(details: {
   const { firstName, businessName, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji } = details;
   const amountDisplay = formattedAmount || (amount > 0 ? amount.toLocaleString() : '');
   return {
-    subject: `Booking confirmed at ${businessName} ${confirmationEmoji}`,
+    subject: `Confirmed at ${businessName} ${confirmationEmoji}`,
     html: wrap(`
-      ${h(`Booking Confirmed ${confirmationEmoji}`)}
-      ${p(`Hi ${esc(firstName)}, your booking at <strong>${esc(businessName)}</strong> is confirmed!`)}
+      ${h(`Confirmed ${confirmationEmoji}`)}
+      ${p(`Hi ${esc(firstName)}, you're all set with <strong>${esc(businessName)}</strong>!`)}
       ${table(
         kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`) +
         kv('Date', esc(date)) +
@@ -243,7 +243,7 @@ export function bookingConfirmationEmail(details: {
         kv(esc(quantityLabel), String(quantity)) +
         (amount > 0 ? kv('Amount', esc(amountDisplay)) : '')
       )}
-      ${p("We'll send you a reminder before your booking. See you soon!")}
+      ${p("We'll send you a reminder beforehand. See you soon!")}
     `),
   };
 }
@@ -257,10 +257,10 @@ export function bookingReminderEmail(
   referenceCode: string,
 ) {
   return {
-    subject: `Reminder: Your booking at ${businessName} is tomorrow`,
+    subject: `Reminder: ${businessName} is tomorrow`,
     html: wrap(`
-      ${h('Booking Reminder')}
-      ${p(`Hi ${esc(guestName)}, this is a friendly reminder that your appointment at <strong>${esc(businessName)}</strong> is tomorrow.`)}
+      ${h('Reminder')}
+      ${p(`Hi ${esc(guestName)}, this is a friendly reminder about <strong>${esc(businessName)}</strong> tomorrow.`)}
       ${table(
         kv('Service', esc(serviceName)) +
         kv('Date', esc(date)) +

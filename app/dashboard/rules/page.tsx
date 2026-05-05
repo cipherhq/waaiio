@@ -30,10 +30,10 @@ type ViewMode = 'list' | 'add' | 'edit';
 // ── Constants ──
 
 const TRIGGER_EVENTS = [
-  { value: 'booking_created', label: 'Booking Created' },
+  { value: 'booking_created', label: 'New Booking' },
   { value: 'booking_completed', label: 'Booking Completed' },
   { value: 'booking_cancelled', label: 'Booking Cancelled' },
-  { value: 'booking_no_show', label: 'Booking No-Show' },
+  { value: 'booking_no_show', label: 'No-Show' },
   { value: 'order_created', label: 'Order Created' },
   { value: 'order_delivered', label: 'Order Delivered' },
   { value: 'order_cancelled', label: 'Order Cancelled' },
