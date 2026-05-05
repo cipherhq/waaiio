@@ -45,6 +45,7 @@ export interface MessageSender {
     to: string;
     templateName: string;
     templateParams: string[];
+    buttonParams?: string[];
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendFlow?(msg: {
     to: string;
@@ -175,14 +176,29 @@ export class MetaCloudSender implements MessageSender {
     to: string;
     templateName: string;
     templateParams: string[];
+    buttonParams?: string[];
   }) {
+    const components: Array<{ type: 'body' | 'button'; parameters: Array<{ type: 'text'; text: string }>; sub_type?: string; index?: number }> = [{
+      type: 'body' as const,
+      parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })),
+    }];
+
+    // Add button parameters (for URL buttons with dynamic suffix)
+    if (msg.buttonParams?.length) {
+      msg.buttonParams.forEach((param, index) => {
+        components.push({
+          type: 'button' as const,
+          sub_type: 'url',
+          index,
+          parameters: [{ type: 'text' as const, text: param }],
+        });
+      });
+    }
+
     const result = await this.cloud.sendTemplate({
       to: msg.to,
       templateName: msg.templateName,
-      components: [{
-        type: 'body' as const,
-        parameters: msg.templateParams.map(p => ({ type: 'text' as const, text: p })),
-      }],
+      components,
     });
     return { success: true, messageId: result.messageId };
   }

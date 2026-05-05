@@ -20,7 +20,7 @@ async function sendWhatsAppMessage(
   countryCode: string,
   phone: string,
   message: string,
-  templateParams?: { businessName: string; title: string; signUrl: string },
+  templateParams?: { businessName: string; title: string; signUrl: string; signerName?: string; token?: string },
 ): Promise<{ messageId: string | null; delivered: boolean }> {
   const resolver = new ChannelResolver(service);
   const resolved =
@@ -35,10 +35,17 @@ async function sendWhatsAppMessage(
     // Try template message FIRST (works outside 24h window — business-initiated)
     if (resolved.sender.sendTemplate && templateParams) {
       try {
+        // Template body: {{1}}=signer name, {{2}}=business name, {{3}}=document title
+        // Template button URL: https://waaiio.com/sign/{{1}} — needs token
         const result = await resolved.sender.sendTemplate({
           to: cleanPhone,
           templateName: CONTRACT_TEMPLATE_NAME,
-          templateParams: [templateParams.businessName, templateParams.title, templateParams.signUrl],
+          templateParams: [
+            templateParams.signerName || 'there',
+            templateParams.businessName,
+            templateParams.title,
+          ],
+          buttonParams: templateParams.token ? [templateParams.token] : undefined,
         });
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
@@ -245,7 +252,7 @@ export async function POST(request: NextRequest) {
 
         const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(
           service, business_id, biz.country_code, signer.signer_phone, message,
-          { businessName: biz.name, title, signUrl },
+          { businessName: biz.name, title, signUrl, signerName: signer.signer_name || undefined, token: signer.token },
         );
         if (delivered && waMessageId) {
           await service
@@ -281,7 +288,7 @@ export async function POST(request: NextRequest) {
 
     const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(
       service, business_id, biz.country_code, signer_phone, message,
-      { businessName: biz.name, title, signUrl },
+      { businessName: biz.name, title, signUrl, signerName: signer_name || undefined, token: primaryToken },
     );
     if (delivered && waMessageId) {
       await service
