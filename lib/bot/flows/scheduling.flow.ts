@@ -126,6 +126,7 @@ export const schedulingFlow: FlowDefinition = {
           .select('id, name, price, duration_minutes, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
+          .neq('service_type', 'giving')
           .is('deleted_at', null)
           .order('sort_order');
 
@@ -179,6 +180,7 @@ export const schedulingFlow: FlowDefinition = {
             .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
             .eq('business_id', ctx.business!.id)
             .eq('is_active', true)
+            .neq('service_type', 'giving')
             .is('deleted_at', null);
 
           if (allServices && allServices.length > 0) {
@@ -230,6 +232,7 @@ export const schedulingFlow: FlowDefinition = {
           .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
+          .neq('service_type', 'giving')
           .is('deleted_at', null)
           .order('sort_order');
 

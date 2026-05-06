@@ -45,13 +45,10 @@ export default function GivingPage() {
       .from('services')
       .select('id, name, description, price, price_is_variable, is_active, sort_order, billing_type, recurring_interval')
       .eq('business_id', business.id)
+      .eq('service_type', 'giving')
       .is('deleted_at', null)
       .order('sort_order');
-    // Filter to giving-type: price_is_variable or name matches common giving terms
-    const givingItems = (data || []).filter(s =>
-      s.price_is_variable || ['tithe', 'offering', 'donation', 'seed', 'building fund', 'zakat', 'sadaqah'].some(t => s.name.toLowerCase().includes(t))
-    );
-    setCategories(givingItems);
+    setCategories(data || []);
     setLoading(false);
   }, [business.id]);
 
@@ -76,6 +73,7 @@ export default function GivingPage() {
       billing_type: isRecurring ? 'recurring' : 'one_time',
       recurring_interval: isRecurring ? interval : null,
       is_active: true,
+      service_type: 'giving',
     };
 
     if (formId) {

@@ -124,6 +124,7 @@ export default function ServicesPage() {
       .from('services')
       .select('*')
       .eq('business_id', business.id)
+      .neq('service_type', 'giving')
       .is('deleted_at', null)
       .order('sort_order', { ascending: true });
     setServices((data as Service[]) || []);
