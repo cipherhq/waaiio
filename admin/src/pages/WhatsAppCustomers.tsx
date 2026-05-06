@@ -59,50 +59,27 @@ export default function Customers() {
     setLoading(true);
 
     try {
-      // Fetch bookings and payments in parallel (use adminDb to bypass RLS)
-      const { adminDb } = await import('@/lib/supabase');
-      const [bookingsRes, paymentsRes] = await Promise.all([
-        adminDb
-          .from('bookings')
-          .select('user_id, business_id, guest_name, guest_phone, guest_email, status, total_amount, amount, created_at')
-          .order('created_at', { ascending: false }),
-        adminDb
-          .from('payments')
-          .select('user_id, business_id, amount, currency, status, created_at')
-          .order('created_at', { ascending: false }),
-      ]);
+      // Fetch all data via admin API (uses service key server-side, bypasses RLS)
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
 
-      const bookings = bookingsRes.data || [];
-      const payments = paymentsRes.data || [];
+      const res = await fetch(`${apiUrl}/api/admin/customers`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
 
-      // Collect all business IDs and user IDs
-      const allBizIds = new Set<string>();
-      const allUserIds = new Set<string>();
+      if (!res.ok) throw new Error('Failed to load customer data');
+      const apiData = await res.json();
 
-      for (const b of bookings) {
-        if (b.business_id) allBizIds.add(b.business_id);
-        if (b.user_id) allUserIds.add(b.user_id);
-      }
-      for (const p of payments) {
-        if (p.business_id) allBizIds.add(p.business_id);
-        if (p.user_id) allUserIds.add(p.user_id);
-      }
+      const bookings = apiData.bookings || [];
+      const payments = apiData.payments || [];
+      const bizData = apiData.businesses || [];
+      const profileData = apiData.profiles || [];
 
-      // Fetch business names
-      const bizIdArr = [...allBizIds];
-      const { data: bizData } = bizIdArr.length > 0
-        ? await adminDb.from('businesses').select('id, name').in('id', bizIdArr)
-        : { data: [] };
-      const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
+      const bizMap = new Map(bizData.map((b: { id: string; name: string }) => [b.id, b.name]));
       setAllBusinesses(
-        (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
+        bizData.map((b: { id: string; name: string }) => ({ id: b.id, name: b.name })).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))
       );
-
-      // Fetch profiles for user IDs
-      const userIdArr = [...allUserIds];
-      const { data: profileData } = userIdArr.length > 0
-        ? await adminDb.from('profiles').select('id, first_name, last_name, email, phone').in('id', userIdArr)
-        : { data: [] };
       const profileMap = new Map(
         (profileData || []).map(p => [p.id, {
           name: [p.first_name, p.last_name].filter(Boolean).join(' ') || '',
