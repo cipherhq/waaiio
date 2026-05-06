@@ -40,28 +40,28 @@ export default function Dashboard() {
         const now = new Date();
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
+        const { adminQuery } = await import('@/lib/adminQuery');
         const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes, overridesRes] = await Promise.all([
-          supabase.from('businesses').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-          supabase.from('platform_fees').select('fee_total').gte('created_at', monthStart).eq('waived', false),
-          supabase.from('business_payouts').select('net_amount, status').eq('status', 'pending'),
-          supabase.from('business_payouts').select('id', { count: 'exact', head: true }).eq('status', 'held'),
-          supabase.from('profiles').select('*', { count: 'exact', head: true }),
-          supabase.from('support_tickets').select('*', { count: 'exact', head: true }).in('status', ['open', 'in_progress', 'waiting']),
-          supabase.from('bot_sessions').select('*', { count: 'exact', head: true }).eq('status', 'active'),
-          supabase.from('bookings').select('*', { count: 'exact', head: true }).gte('created_at', monthStart),
-          // Alerts data
-          supabase.from('businesses').select('id', { count: 'exact', head: true }).eq('verification_level', 'unverified').eq('status', 'active'),
-          supabase.from('business_documents').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
-          supabase.from('business_payouts').select('id', { count: 'exact', head: true }).neq('flags', '[]'),
-          // Count distinct businesses with capability overrides
-          supabase.from('capability_overrides').select('business_id'),
+          adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'active' }], count: 'exact' }),
+          adminQuery('platform_fees', { select: 'fee_total, business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }, { column: 'waived', op: 'eq', value: false }] }),
+          adminQuery('business_payouts', { select: 'net_amount, status', filters: [{ column: 'status', op: 'eq', value: 'pending' }] }),
+          adminQuery('business_payouts', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'held' }], count: 'exact' }),
+          adminQuery('profiles', { select: 'id', count: 'exact' }),
+          adminQuery('support_tickets', { select: 'id', filters: [{ column: 'status', op: 'in', value: ['open', 'in_progress', 'waiting'] }], count: 'exact' }),
+          adminQuery('bot_sessions', { select: 'id', filters: [{ column: 'is_active', op: 'eq', value: true }], count: 'exact' }),
+          adminQuery('bookings', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
+          adminQuery('businesses', { select: 'id', filters: [{ column: 'verification_level', op: 'eq', value: 'unverified' }, { column: 'status', op: 'eq', value: 'active' }], count: 'exact' }),
+          adminQuery('business_documents', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'pending' }], count: 'exact' }),
+          adminQuery('business_payouts', { select: 'id', filters: [{ column: 'flags', op: 'neq', value: '[]' }], count: 'exact' }),
+          adminQuery('capability_overrides', { select: 'business_id' }),
         ]);
 
         // Group fees by currency via business country
         const feesBizIds = [...new Set((feesRes.data || []).map(f => f.business_id).filter(Boolean))];
-        const { data: feeBizData } = feesBizIds.length > 0
-          ? await supabase.from('businesses').select('id, country_code').in('id', feesBizIds)
+        const feeBizRes = feesBizIds.length > 0
+          ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: feesBizIds }] })
           : { data: [] };
+        const feeBizData = feeBizRes.data || [];
         const feeBizCountry = new Map((feeBizData || []).map(b => [b.id, b.country_code || 'NG']));
         const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
 
@@ -193,10 +193,10 @@ export default function Dashboard() {
 
         // System health queries
         const [paymentsSuccessRes, paymentsFailedRes, llmRes, recentAlertsRes] = await Promise.all([
-          supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'success').gte('created_at', monthStart),
-          supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'failed').gte('created_at', monthStart),
-          supabase.from('llm_classifications').select('confidence, llm_used').gte('created_at', monthStart).limit(500),
-          supabase.from('alerts').select('id, severity, title, business_id, created_at').order('created_at', { ascending: false }).limit(5),
+          adminQuery('payments', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'success' }, { column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
+          adminQuery('payments', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'failed' }, { column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
+          adminQuery('llm_classifications', { select: 'confidence, llm_used', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], limit: 500 }),
+          adminQuery('alerts', { select: 'id, severity, title, business_id, created_at', order: { column: 'created_at', ascending: false }, limit: 5 }),
         ]);
 
         setPaymentSuccessCount(paymentsSuccessRes.count || 0);
@@ -204,15 +204,16 @@ export default function Dashboard() {
 
         const llmData = llmRes.data || [];
         setLlmTotal(llmData.length);
-        setLlmUsedCount(llmData.filter(r => r.llm_used).length);
-        const confidences = llmData.filter(r => r.confidence > 0).map(r => r.confidence as number);
+        setLlmUsedCount(llmData.filter((r: Record<string, unknown>) => r.llm_used).length);
+        const confidences = llmData.filter((r: Record<string, unknown>) => (r.confidence as number) > 0).map((r: Record<string, unknown>) => r.confidence as number);
         setLlmAvgConfidence(confidences.length > 0 ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0);
 
         // Enrich alerts with business names
-        const alertBizIds = [...new Set((recentAlertsRes.data || []).map(a => a.business_id).filter(Boolean))];
-        const { data: alertBizzes } = alertBizIds.length > 0
-          ? await supabase.from('businesses').select('id, name').in('id', alertBizIds)
+        const alertBizIds = [...new Set((recentAlertsRes.data || []).map((a: Record<string, unknown>) => a.business_id as string).filter(Boolean))];
+        const alertBizRes = alertBizIds.length > 0
+          ? await adminQuery('businesses', { select: 'id, name', filters: [{ column: 'id', op: 'in', value: alertBizIds }] })
           : { data: [] };
+        const alertBizzes = alertBizRes.data || [];
         const alertBizMap = new Map((alertBizzes || []).map(b => [b.id, b.name]));
         setRecentAlerts((recentAlertsRes.data || []).map(a => ({
           ...a,

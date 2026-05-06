@@ -47,10 +47,11 @@ export default function UserManagement() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, email, first_name, last_name, phone, role, country_code, metadata, created_at')
-        .order('created_at', { ascending: false });
+      const { adminQuery } = await import('@/lib/adminQuery');
+      const { data } = await adminQuery<Profile>('profiles', {
+        select: 'id, email, first_name, last_name, phone, role, country_code, metadata, created_at',
+        order: { column: 'created_at', ascending: false },
+      });
 
       setProfiles(data || []);
     } catch (error) {
