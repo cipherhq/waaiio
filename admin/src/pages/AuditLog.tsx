@@ -23,7 +23,7 @@ export default function AuditLog() {
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('admin_audit_logs')
         .select('*')
         .order('created_at', { ascending: false })

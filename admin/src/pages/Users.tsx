@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -76,14 +76,14 @@ export default function UserManagement() {
     setSelectedRole(selected.role);
 
     // Booking count
-    supabase
+    adminDb
       .from('bookings')
       .select('*', { count: 'exact', head: true })
       .eq('customer_id', selected.id)
       .then(({ count }) => setBookingCount(count ?? 0));
 
     // Payment count
-    supabase
+    adminDb
       .from('payments')
       .select('*', { count: 'exact', head: true })
       .eq('customer_id', selected.id)
@@ -91,7 +91,7 @@ export default function UserManagement() {
 
     // Linked business (for business_owner)
     if (selected.role === 'business_owner') {
-      supabase
+      adminDb
         .from('businesses')
         .select('id, name')
         .eq('owner_id', selected.id)
@@ -119,7 +119,7 @@ export default function UserManagement() {
     setSaving(true);
     try {
       const currentMeta = (selected.metadata as Record<string, unknown>) || {};
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('profiles')
         .update({
           metadata: { ...currentMeta, status: newStatus },
@@ -157,7 +157,7 @@ export default function UserManagement() {
 
     setSaving(true);
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('profiles')
         .update({ role: selectedRole })
         .eq('id', selected.id);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -111,7 +111,7 @@ export default function Businesses() {
 
   useEffect(() => {
     async function load() {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('businesses')
         .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly')
         .order('created_at', { ascending: false });
@@ -135,7 +135,7 @@ export default function Businesses() {
     }
     setSelectedTier(selected.subscription_tier);
     setSelectedStatus(selected.status);
-    supabase
+    adminDb
       .from('payout_accounts')
       .select('id, gateway, bank_name, account_name, account_number, is_active')
       .eq('business_id', selected.id)
@@ -143,7 +143,7 @@ export default function Businesses() {
       .maybeSingle()
       .then(({ data }) => setSelectedPayout(data));
 
-    supabase
+    adminDb
       .from('services')
       .select('id, billing_type, is_featured')
       .eq('business_id', selected.id)
@@ -157,14 +157,14 @@ export default function Businesses() {
       });
 
     // Load capabilities + overrides
-    supabase
+    adminDb
       .from('business_capabilities')
       .select('capability')
       .eq('business_id', selected.id)
       .eq('is_enabled', true)
       .then(({ data }) => setSelectedCaps((data || []).map(r => r.capability)));
 
-    supabase
+    adminDb
       .from('capability_overrides')
       .select('capability')
       .eq('business_id', selected.id)
@@ -175,7 +175,7 @@ export default function Businesses() {
     if (!selected || selectedTier === selected.subscription_tier) return;
     setTierSaving(true);
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('businesses')
         .update({ subscription_tier: selectedTier })
         .eq('id', selected.id);
@@ -204,7 +204,7 @@ export default function Businesses() {
     if (!selected || selectedStatus === selected.status) return;
     setStatusSaving(true);
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('businesses')
         .update({ status: selectedStatus })
         .eq('id', selected.id);
@@ -237,7 +237,7 @@ export default function Businesses() {
       // Enabling
       if (!withinTier) {
         // Above tier — create override
-        await supabase
+        await adminDb
           .from('capability_overrides')
           .upsert(
             { business_id: bizId, capability: capId, granted_by: (await supabase.auth.getSession()).data.session?.user?.id, reason: 'Admin granted' },
@@ -245,7 +245,7 @@ export default function Businesses() {
           );
         setSelectedOverrides(prev => [...prev.filter(c => c !== capId), capId]);
       }
-      await supabase
+      await adminDb
         .from('business_capabilities')
         .upsert(
           { business_id: bizId, capability: capId, is_enabled: true },
@@ -256,14 +256,14 @@ export default function Businesses() {
     } else {
       // Disabling
       if (selectedOverrides.includes(capId)) {
-        await supabase
+        await adminDb
           .from('capability_overrides')
           .delete()
           .eq('business_id', bizId)
           .eq('capability', capId);
         setSelectedOverrides(prev => prev.filter(c => c !== capId));
       }
-      await supabase
+      await adminDb
         .from('business_capabilities')
         .update({ is_enabled: false })
         .eq('business_id', bizId)

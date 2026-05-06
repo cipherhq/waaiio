@@ -52,7 +52,7 @@ export default function RecurringPayments() {
     setLoading(true);
 
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('customer_subscriptions')
         .select('*')
         .order('created_at', { ascending: false });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X } from 'lucide-react';
@@ -92,7 +92,7 @@ export default function PlatformSettings() {
       const { data: sessionData } = await supabase.auth.getSession();
       setUserId(sessionData?.session?.user?.id ?? null);
 
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('platform_settings')
         .select('*')
         .order('key', { ascending: true });
@@ -141,7 +141,7 @@ export default function PlatformSettings() {
         parsedValue = editValue;
       }
 
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('platform_settings')
         .update({
           value: parsedValue,
@@ -189,7 +189,7 @@ export default function PlatformSettings() {
         parsedValue = newValue;
       }
 
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('platform_settings')
         .insert({
           key: newKey.trim(),
@@ -231,7 +231,7 @@ export default function PlatformSettings() {
 
     setDeleting(key);
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('platform_settings')
         .delete()
         .eq('key', key);

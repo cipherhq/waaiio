@@ -141,13 +141,13 @@ export default function Subscriptions() {
     setLoading(true);
 
     try {
-      const { data: subData, error } = await supabase
+      const { data: subData, error } = await adminDb
         .from('subscriptions')
         .select('*, businesses(name, category)')
         .order('created_at', { ascending: false });
 
       if (error || !subData) {
-        const { data: rawSubs } = await supabase
+        const { data: rawSubs } = await adminDb
           .from('subscriptions')
           .select('*')
           .order('created_at', { ascending: false });
@@ -191,7 +191,7 @@ export default function Subscriptions() {
     setAuditLoading(true);
     try {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('admin_audit_logs')
         .select('*')
         .in('action', ['change_subscription_tier', 'extend_trial', 'cancel_subscription'])
@@ -235,7 +235,7 @@ export default function Subscriptions() {
     setTrialDays(7);
     setCancelReason('');
     setShowCancelConfirm(false);
-    supabase
+    adminDb
       .from('capability_overrides')
       .select('id', { count: 'exact', head: true })
       .eq('business_id', selected.business_id)
@@ -248,13 +248,13 @@ export default function Subscriptions() {
     if (!selected || actionTier === selected.tier) return;
     setActionSaving(true);
     try {
-      const { error: subErr } = await supabase
+      const { error: subErr } = await adminDb
         .from('subscriptions')
         .update({ tier: actionTier })
         .eq('id', selected.id);
       if (subErr) throw subErr;
 
-      const { error: bizErr } = await supabase
+      const { error: bizErr } = await adminDb
         .from('businesses')
         .update({ subscription_tier: actionTier })
         .eq('id', selected.business_id);
@@ -289,7 +289,7 @@ export default function Subscriptions() {
       const baseDate = selected.trial_ends_at ? new Date(selected.trial_ends_at) : new Date();
       const newEnd = new Date(baseDate.getTime() + trialDays * 24 * 60 * 60 * 1000);
 
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('subscriptions')
         .update({ trial_ends_at: newEnd.toISOString(), status: 'trial' })
         .eq('id', selected.id);
@@ -324,7 +324,7 @@ export default function Subscriptions() {
     setActionSaving(true);
     try {
       const now = new Date().toISOString();
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('subscriptions')
         .update({
           status: 'cancelled',

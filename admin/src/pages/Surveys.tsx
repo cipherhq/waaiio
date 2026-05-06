@@ -48,7 +48,7 @@ export default function Surveys() {
 
   async function loadData() {
     setLoading(true);
-    const { data } = await supabase
+    const { data } = await adminDb
       .from('surveys')
       .select('*')
       .order('created_at', { ascending: false });
@@ -68,7 +68,7 @@ export default function Surveys() {
 
   async function loadResponses(surveyId: string) {
     setResponsesLoading(true);
-    const { data } = await supabase
+    const { data } = await adminDb
       .from('survey_responses')
       .select('*')
       .eq('survey_id', surveyId)

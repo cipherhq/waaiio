@@ -61,7 +61,7 @@ export default function Tickets() {
     async function load() {
       try {
         // 1. Load all tickets
-        const { data: ticketData } = await supabase
+        const { data: ticketData } = await adminDb
           .from('event_tickets')
           .select('*')
           .order('created_at', { ascending: false });
@@ -115,7 +115,7 @@ export default function Tickets() {
     if (!confirm('Cancel this ticket? This cannot be undone.')) return;
     setCancelling(true);
     try {
-      await supabase
+      await adminDb
         .from('event_tickets')
         .update({ status: 'cancelled' })
         .eq('id', ticket.id);

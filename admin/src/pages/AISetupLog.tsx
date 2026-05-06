@@ -42,7 +42,7 @@ export default function AISetupLog() {
     setLoading(true);
 
     // Get all businesses
-    const { data: businesses } = await supabase
+    const { data: businesses } = await adminDb
       .from('businesses')
       .select('id, name')
       .order('created_at', { ascending: false });

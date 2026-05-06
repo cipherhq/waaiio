@@ -37,7 +37,7 @@ export default function ConversationUsage() {
     async function load() {
       setLoading(true);
 
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('conversation_usage')
         .select('*')
         .eq('month_key', monthKey)

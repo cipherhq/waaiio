@@ -45,7 +45,7 @@ export default function Broadcasts() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('admin_broadcasts')
         .select('*')
         .order('created_at', { ascending: false });
@@ -63,14 +63,14 @@ export default function Broadcasts() {
   // Get recipient count based on audience
   async function getRecipientCount(): Promise<number> {
     if (audience === 'all_users') {
-      const { count } = await supabase
+      const { count } = await adminDb
         .from('profiles')
         .select('*', { count: 'exact', head: true });
       return count ?? 0;
     }
 
     if (audience === 'all_businesses') {
-      const { count } = await supabase
+      const { count } = await adminDb
         .from('businesses')
         .select('*', { count: 'exact', head: true });
       return count ?? 0;

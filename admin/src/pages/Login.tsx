@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useLocation } from 'react-router';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -26,7 +26,7 @@ export default function Login() {
       }
 
       // Verify admin role
-      const { data: profile } = await supabase
+      const { data: profile } = await adminDb
         .from('profiles')
         .select('role')
         .eq('id', data.user.id)

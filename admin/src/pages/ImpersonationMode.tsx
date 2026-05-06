@@ -78,7 +78,7 @@ export default function ImpersonationMode() {
         setAdminId(user?.id ?? null);
         setAdminEmail(user?.email ?? null);
 
-        const { data } = await supabase
+        const { data } = await adminDb
           .from('businesses')
           .select('id, name, category, country_code, status')
           .order('name', { ascending: true });
@@ -117,7 +117,7 @@ export default function ImpersonationMode() {
 
     try {
       // Load full business data
-      const { data: fullBiz } = await supabase
+      const { data: fullBiz } = await adminDb
         .from('businesses')
         .select('id, name, category, country_code, status, created_at, phone, email')
         .eq('id', business.id)
@@ -142,7 +142,7 @@ export default function ImpersonationMode() {
       });
 
       // Load payout account
-      const { data: payout } = await supabase
+      const { data: payout } = await adminDb
         .from('payout_accounts')
         .select('id, gateway, bank_name, account_name, account_number, is_active')
         .eq('business_id', business.id)
@@ -151,7 +151,7 @@ export default function ImpersonationMode() {
       setPayoutAccount(payout);
 
       // Load WhatsApp config
-      const { data: waConfig } = await supabase
+      const { data: waConfig } = await adminDb
         .from('whatsapp_config')
         .select('id, phone_number_id, waba_id, status')
         .eq('business_id', business.id)
@@ -159,7 +159,7 @@ export default function ImpersonationMode() {
       setWhatsappConfig(waConfig);
 
       // Load recent bookings
-      const { data: bookings } = await supabase
+      const { data: bookings } = await adminDb
         .from('bookings')
         .select('id, service_name, customer_name, status, total_amount, created_at')
         .eq('business_id', business.id)
@@ -263,7 +263,7 @@ export default function ImpersonationMode() {
         [editingField]: newValue,
       };
 
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('businesses')
         .update(updatePayload)
         .eq('id', selected.id);

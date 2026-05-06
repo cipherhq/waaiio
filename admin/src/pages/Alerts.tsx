@@ -45,7 +45,7 @@ export default function Alerts() {
     setLoading(true);
 
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('alerts')
         .select('*')
         .order('created_at', { ascending: false })

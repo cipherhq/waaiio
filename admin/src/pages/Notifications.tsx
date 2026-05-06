@@ -51,7 +51,7 @@ export default function Notifications() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data: notifData } = await supabase
+      const { data: notifData } = await adminDb
         .from('notifications')
         .select('*')
         .order('created_at', { ascending: false });
@@ -101,7 +101,7 @@ export default function Notifications() {
       setSearching(true);
       try {
         const q = sendUserSearch.toLowerCase();
-        const { data } = await supabase
+        const { data } = await adminDb
           .from('profiles')
           .select('id, first_name, last_name, email')
           .or(`email.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%`)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
@@ -31,14 +31,14 @@ export default function Reports() {
     setLoading(true);
 
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('customer_reports')
         .select('*')
         .order('created_at', { ascending: false });
 
       // Enrich with business names
       const bizIds = [...new Set((data || []).map(r => r.business_id))];
-      const { data: businesses } = await supabase
+      const { data: businesses } = await adminDb
         .from('businesses')
         .select('id, name')
         .in('id', bizIds);

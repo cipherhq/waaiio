@@ -53,7 +53,7 @@ export default function BotManagement() {
     setLoading(true);
 
     try {
-      const { data: sessionData } = await supabase
+      const { data: sessionData } = await adminDb
         .from('bot_sessions')
         .select('*')
         .order('created_at', { ascending: false });

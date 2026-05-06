@@ -51,7 +51,7 @@ export default function Bookings() {
   useEffect(() => {
     async function load() {
       // Load bookings
-      const { data: bookingData } = await supabase
+      const { data: bookingData } = await adminDb
         .from('bookings')
         .select('*')
         .order('created_at', { ascending: false });

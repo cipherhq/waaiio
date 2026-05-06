@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -146,7 +146,7 @@ export default function CategoryTemplates() {
     loadingRef.current = true;
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('category_templates')
         .select('*')
         .order('sort_order', { ascending: true });
@@ -256,7 +256,7 @@ export default function CategoryTemplates() {
       };
 
       if (editing) {
-        const { error } = await supabase
+        const { error } = await adminDb
           .from('category_templates')
           .update(payload)
           .eq('id', editing.id);
@@ -269,7 +269,7 @@ export default function CategoryTemplates() {
           details: { key: payload.key, label: payload.label },
         });
       } else {
-        const { data, error } = await supabase
+        const { data, error } = await adminDb
           .from('category_templates')
           .insert(payload)
           .select('id')
@@ -297,7 +297,7 @@ export default function CategoryTemplates() {
   // Toggle active
   async function handleToggle(t: CategoryTemplate) {
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('category_templates')
         .update({ is_active: !t.is_active, updated_at: new Date().toISOString() })
         .eq('id', t.id);
@@ -319,7 +319,7 @@ export default function CategoryTemplates() {
   async function handleDelete(t: CategoryTemplate) {
     if (!confirm(`Delete template "${t.label}"? This cannot be undone.`)) return;
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('category_templates')
         .delete()
         .eq('id', t.id);

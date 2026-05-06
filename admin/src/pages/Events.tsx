@@ -46,7 +46,7 @@ export default function Events() {
     async function load() {
       try {
         // Load events
-        const { data: eventData } = await supabase
+        const { data: eventData } = await adminDb
           .from('events')
           .select('*')
           .order('created_at', { ascending: false });

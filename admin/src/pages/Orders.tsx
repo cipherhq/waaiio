@@ -60,7 +60,7 @@ export default function Orders() {
   useEffect(() => {
     async function load() {
       // Load orders
-      const { data: orderData } = await supabase
+      const { data: orderData } = await adminDb
         .from('orders')
         .select('*')
         .order('created_at', { ascending: false });
@@ -121,7 +121,7 @@ export default function Orders() {
       return;
     }
     setItemsLoading(true);
-    supabase
+    adminDb
       .from('order_items')
       .select('id, order_id, product_name, quantity, unit_price, total_price, notes')
       .eq('order_id', selected.id)

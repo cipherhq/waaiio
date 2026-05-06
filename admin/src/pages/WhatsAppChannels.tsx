@@ -128,7 +128,7 @@ export default function WhatsAppChannels() {
 
     try {
       const newStatus = selectedConfig.status === 'active' ? 'inactive' : 'active';
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('whatsapp_config')
         .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', selectedConfig.id);
@@ -151,7 +151,7 @@ export default function WhatsAppChannels() {
     setSavingWebhook(true);
 
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('whatsapp_config')
         .update({ webhook_url: editWebhook || null, updated_at: new Date().toISOString() })
         .eq('id', selectedConfig.id);

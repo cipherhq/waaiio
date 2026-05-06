@@ -100,7 +100,7 @@ export default function Support() {
     setLoading(true);
 
     try {
-      const { data: ticketData } = await supabase
+      const { data: ticketData } = await adminDb
         .from('support_tickets')
         .select('*')
         .order('created_at', { ascending: false });
@@ -116,7 +116,7 @@ export default function Support() {
       ];
 
       const { data: profiles } = userIds.length
-        ? await supabase
+        ? await adminDb
             .from('profiles')
             .select('id, full_name')
             .in('id', userIds)
@@ -143,7 +143,7 @@ export default function Support() {
 
   async function loadAdmins() {
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('profiles')
         .select('id, full_name')
         .eq('role', 'admin');
@@ -157,7 +157,7 @@ export default function Support() {
   async function loadMessages(ticketId: string) {
     setMessagesLoading(true);
     try {
-      const { data: msgData } = await supabase
+      const { data: msgData } = await adminDb
         .from('support_ticket_messages')
         .select('*')
         .eq('ticket_id', ticketId)
@@ -168,7 +168,7 @@ export default function Support() {
       /* Enrich sender names */
       const senderIds = [...new Set(rows.map((m) => m.sender_id))];
       const { data: profiles } = senderIds.length
-        ? await supabase
+        ? await adminDb
             .from('profiles')
             .select('id, full_name')
             .in('id', senderIds)
@@ -256,7 +256,7 @@ export default function Support() {
         return;
       }
 
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('support_tickets')
         .update(updates)
         .eq('id', selected.id);
@@ -315,7 +315,7 @@ export default function Support() {
       if (error) throw error;
 
       /* Also update ticket updated_at */
-      await supabase
+      await adminDb
         .from('support_tickets')
         .update({ updated_at: new Date().toISOString() })
         .eq('id', selected.id);

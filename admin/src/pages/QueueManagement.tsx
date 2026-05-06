@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime, maskPhone } from '@/lib/formatters';
@@ -36,7 +36,7 @@ export default function QueueManagement() {
     setLoading(true);
 
     try {
-      let query = supabase
+      let query = adminDb
         .from('queue_entries')
         .select('*')
         .eq('queue_date', dateFilter)
@@ -50,7 +50,7 @@ export default function QueueManagement() {
 
       // Enrich with business names
       const bizIds = [...new Set((data || []).map(r => r.business_id))];
-      const { data: businesses } = await supabase
+      const { data: businesses } = await adminDb
         .from('businesses')
         .select('id, name')
         .in('id', bizIds.length > 0 ? bizIds : ['__none__']);

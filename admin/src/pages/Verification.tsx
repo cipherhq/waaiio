@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -67,21 +67,21 @@ export default function Verification() {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
     const [reqRes, docsRes, approvedRes, rejectedRes] = await Promise.all([
-      supabase
+      adminDb
         .from('verification_requests')
         .select('*, businesses(name, owner_id, country_code, verification_level, verification_status)')
         .order('created_at', { ascending: false }),
-      supabase
+      adminDb
         .from('business_documents')
         .select('*')
         .eq('status', 'pending')
         .order('uploaded_at', { ascending: false }),
-      supabase
+      adminDb
         .from('businesses')
         .select('id', { count: 'exact', head: true })
         .eq('verification_status', 'verified')
         .gte('verified_at', monthStart),
-      supabase
+      adminDb
         .from('verification_requests')
         .select('id', { count: 'exact', head: true })
         .eq('status', 'rejected'),
@@ -100,7 +100,7 @@ export default function Verification() {
   // Load documents for selected request
   useEffect(() => {
     if (!selected) { setDocs([]); return; }
-    supabase
+    adminDb
       .from('business_documents')
       .select('*')
       .eq('business_id', selected.business_id)
@@ -124,7 +124,7 @@ export default function Verification() {
     const limit = getPayoutLimit(cc, level);
 
     // Update business
-    const { error } = await supabase
+    const { error } = await adminDb
       .from('businesses')
       .update({
         verification_level: level,
@@ -142,13 +142,13 @@ export default function Verification() {
     }
 
     // Mark request completed
-    await supabase
+    await adminDb
       .from('verification_requests')
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('id', selected.id);
 
     // Approve all pending docs for this business
-    await supabase
+    await adminDb
       .from('business_documents')
       .update({ status: 'approved', reviewed_at: new Date().toISOString() })
       .eq('business_id', selected.business_id)
@@ -156,7 +156,7 @@ export default function Verification() {
 
     // Send KYC approved email via API
     if (selected.businesses?.owner_id) {
-      const { data: owner } = await supabase
+      const { data: owner } = await adminDb
         .from('profiles')
         .select('email')
         .eq('id', selected.businesses.owner_id)
@@ -193,7 +193,7 @@ export default function Verification() {
     if (!selected || !rejectionReason.trim()) return;
     setProcessing(true);
 
-    await supabase
+    await adminDb
       .from('businesses')
       .update({
         verification_status: 'rejected',
@@ -201,14 +201,14 @@ export default function Verification() {
       })
       .eq('id', selected.business_id);
 
-    await supabase
+    await adminDb
       .from('verification_requests')
       .update({ status: 'completed', completed_at: new Date().toISOString() })
       .eq('id', selected.id);
 
     // Send KYC rejected email
     if (selected.businesses?.owner_id) {
-      const { data: owner } = await supabase
+      const { data: owner } = await adminDb
         .from('profiles')
         .select('email')
         .eq('id', selected.businesses.owner_id)

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -51,7 +51,7 @@ export default function ContentManagement() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('site_pages')
         .select('*')
         .order('updated_at', { ascending: false });
@@ -102,7 +102,7 @@ export default function ContentManagement() {
 
       if (editor.id) {
         // Update existing
-        const { error } = await supabase
+        const { error } = await adminDb
           .from('site_pages')
           .update({
             title: editor.title.trim(),
@@ -127,7 +127,7 @@ export default function ContentManagement() {
         });
       } else {
         // Insert new
-        const { data, error } = await supabase
+        const { data, error } = await adminDb
           .from('site_pages')
           .insert({
             title: editor.title.trim(),
@@ -171,7 +171,7 @@ export default function ContentManagement() {
 
     setDeleting(true);
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('site_pages')
         .delete()
         .eq('id', editor.id);

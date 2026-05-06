@@ -32,7 +32,7 @@ export default function AIUsage() {
     async function load() {
       setLoading(true);
 
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('ai_usage')
         .select('*')
         .eq('month_key', monthKey)

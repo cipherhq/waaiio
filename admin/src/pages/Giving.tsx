@@ -77,7 +77,7 @@ export default function Giving() {
   useEffect(() => {
     async function load() {
       // 1. Load giving-category businesses
-      const { data: bizData } = await supabase
+      const { data: bizData } = await adminDb
         .from('businesses')
         .select('id, name, category')
         .in('category', GIVING_CATEGORIES);
@@ -99,14 +99,14 @@ export default function Giving() {
       }
 
       // 2. Load bookings from these businesses
-      const { data: bookingData } = await supabase
+      const { data: bookingData } = await adminDb
         .from('bookings')
         .select('id, business_id, customer_id, service_name, amount, currency, status, payment_status, payment_method, notes, created_at')
         .in('business_id', bizIds)
         .order('created_at', { ascending: false });
 
       // 3. Load payments from these businesses
-      const { data: paymentData } = await supabase
+      const { data: paymentData } = await adminDb
         .from('payments')
         .select('id, business_id, customer_id, amount, currency, status, payment_method, gateway, gateway_ref, created_at')
         .in('business_id', bizIds)

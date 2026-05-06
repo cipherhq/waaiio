@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -93,7 +93,7 @@ export default function BotKeywords() {
     loadingRef.current = true;
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('bot_keywords')
         .select('*')
         .order('scope', { ascending: true })
@@ -190,7 +190,7 @@ export default function BotKeywords() {
       };
 
       if (editing) {
-        const { error } = await supabase
+        const { error } = await adminDb
           .from('bot_keywords')
           .update(payload)
           .eq('id', editing.id);
@@ -203,7 +203,7 @@ export default function BotKeywords() {
           details: { keyword: payload.keyword, scope: payload.scope },
         });
       } else {
-        const { data, error } = await supabase
+        const { data, error } = await adminDb
           .from('bot_keywords')
           .insert(payload)
           .select('id')
@@ -230,7 +230,7 @@ export default function BotKeywords() {
 
   async function handleToggle(kw: BotKeywordRow) {
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('bot_keywords')
         .update({ is_active: !kw.is_active })
         .eq('id', kw.id);
@@ -251,7 +251,7 @@ export default function BotKeywords() {
   async function handleDelete(kw: BotKeywordRow) {
     if (!confirm(`Delete keyword "${kw.keyword}"? This cannot be undone.`)) return;
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('bot_keywords')
         .delete()
         .eq('id', kw.id);

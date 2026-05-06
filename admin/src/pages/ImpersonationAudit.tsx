@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -68,7 +68,7 @@ export default function ImpersonationAudit() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('impersonation_logs')
         .select('*')
         .order('created_at', { ascending: false });

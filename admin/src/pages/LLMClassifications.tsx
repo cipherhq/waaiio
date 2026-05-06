@@ -68,7 +68,7 @@ export default function LLMClassifications() {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await adminDb
         .from('llm_classifications')
         .select('*')
         .order('created_at', { ascending: false })

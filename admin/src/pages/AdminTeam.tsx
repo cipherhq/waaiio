@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -39,7 +39,7 @@ export default function AdminTeam() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('profiles')
         .select('id, email, first_name, last_name, created_at, last_sign_in_at')
         .eq('role', 'admin')
@@ -65,7 +65,7 @@ export default function AdminTeam() {
 
     try {
       // Check if user exists
-      const { data: existing, error: lookupError } = await supabase
+      const { data: existing, error: lookupError } = await adminDb
         .from('profiles')
         .select('id, email, role, first_name, last_name')
         .eq('email', inviteEmail.trim().toLowerCase())
@@ -80,7 +80,7 @@ export default function AdminTeam() {
           return;
         }
 
-        const { error: updateError } = await supabase
+        const { error: updateError } = await adminDb
           .from('profiles')
           .update({ role: 'admin' })
           .eq('id', existing.id);
@@ -101,7 +101,7 @@ export default function AdminTeam() {
       } else {
         // No existing user — create a placeholder profile entry
         // The user will need to sign up separately with this email
-        const { error: insertError } = await supabase
+        const { error: insertError } = await adminDb
           .from('profiles')
           .insert({
             email: inviteEmail.trim().toLowerCase(),
@@ -148,7 +148,7 @@ export default function AdminTeam() {
 
     setRemoving(true);
     try {
-      const { error } = await supabase
+      const { error } = await adminDb
         .from('profiles')
         .update({ role: 'customer' })
         .eq('id', selected.id);

@@ -43,7 +43,7 @@ export default function Campaigns() {
     async function load() {
       try {
         // Load campaigns
-        const { data: campaignData } = await supabase
+        const { data: campaignData } = await adminDb
           .from('campaigns')
           .select('*')
           .order('created_at', { ascending: false });

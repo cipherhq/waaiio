@@ -74,7 +74,7 @@ export default function Payouts() {
     setLoading(true);
 
     try {
-      const { data: payoutData } = await supabase
+      const { data: payoutData } = await adminDb
         .from('business_payouts')
         .select('*')
         .order('created_at', { ascending: false });
@@ -122,7 +122,7 @@ export default function Payouts() {
     }
     setLoadingAccount(true);
     try {
-      const { data } = await supabase
+      const { data } = await adminDb
         .from('payout_accounts')
         .select('bank_name, account_name, account_number, is_active, verified_at')
         .eq('id', payoutAccountId)
