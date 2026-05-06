@@ -57,9 +57,34 @@ export default function Dashboard() {
           supabase.from('capability_overrides').select('business_id'),
         ]);
 
-        const monthlyFees = (feesRes.data || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-        const pendingTotal = (payoutsRes.data || []).reduce((s, p) => s + Number(p.net_amount || 0), 0);
+        // Group fees by currency via business country
+        const feesBizIds = [...new Set((feesRes.data || []).map(f => f.business_id).filter(Boolean))];
+        const { data: feeBizData } = feesBizIds.length > 0
+          ? await supabase.from('businesses').select('id, country_code').in('id', feesBizIds)
+          : { data: [] };
+        const feeBizCountry = new Map((feeBizData || []).map(b => [b.id, b.country_code || 'NG']));
+        const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+
+        const revByCurrency: Record<string, number> = {};
+        for (const f of feesRes.data || []) {
+          const cc = feeBizCountry.get(f.business_id) || 'NG';
+          const cur = countryToCur[cc] || 'NGN';
+          revByCurrency[cur] = (revByCurrency[cur] || 0) + Number(f.fee_total || 0);
+        }
+        const revenueDisplay = Object.entries(revByCurrency)
+          .filter(([, a]) => a > 0)
+          .map(([cur, amt]) => formatMoney(amt, cur))
+          .join(' · ') || '—';
+
+        // Group payouts by currency
+        const payoutByCurrency: Record<string, number> = {};
+        for (const p of payoutsRes.data || []) {
+          payoutByCurrency['NGN'] = (payoutByCurrency['NGN'] || 0) + Number(p.net_amount || 0); // payouts don't have currency yet
+        }
         const pendingCount = payoutsRes.data?.length || 0;
+        const pendingDisplay = pendingCount > 0
+          ? `${pendingCount} (${Object.entries(payoutByCurrency).filter(([, a]) => a > 0).map(([cur, amt]) => formatMoney(amt, cur)).join(' · ')})`
+          : '0';
         const heldCount = heldRes.count || 0;
 
         setPendingPayouts(pendingCount);
@@ -74,13 +99,13 @@ export default function Dashboard() {
           },
           {
             label: 'Monthly Revenue',
-            value: formatMoney(monthlyFees),
+            value: revenueDisplay,
             icon: DollarSign,
             color: 'green',
           },
           {
             label: 'Pending Payouts',
-            value: `${pendingCount} (${formatMoney(pendingTotal)})`,
+            value: pendingDisplay,
             icon: Clock,
             color: 'yellow',
           },
