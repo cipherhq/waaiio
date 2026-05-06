@@ -400,6 +400,42 @@ function getDefaultGreeting(name: string, category: BusinessCategoryKey): string
       return `Welcome to ${name}! 🏠 I can help you schedule a viewing.`;
     case 'travel_agency':
       return `Welcome to ${name}! ✈️ Ready to plan your trip?`;
+    case 'nail_tech':
+      return `Welcome to ${name}! 💅 Ready to book your nails?`;
+    case 'mua':
+      return `Welcome to ${name}! 💄 Let's get you glammed up! What look are you going for?`;
+    case 'pet_grooming':
+      return `Welcome to ${name}! 🐕 I can help you book a grooming session for your pet.`;
+    case 'therapy':
+      return `Welcome to ${name}. 🧠 I can help you schedule a session.`;
+    case 'bakery':
+      return `Welcome to ${name}! 🧁 Browse our treats and place an order.`;
+    case 'mechanic':
+      return `Welcome to ${name}! 🔧 I can help you book a service for your vehicle.`;
+    case 'cleaning':
+      return `Welcome to ${name}! 🧹 I can help you schedule a cleaning.`;
+    case 'plumber':
+      return `Welcome to ${name}! 🔌 I can help you book a service call.`;
+    case 'pest_control':
+      return `Welcome to ${name}! 🐜 I can help you schedule a treatment.`;
+    case 'driving_school':
+      return `Welcome to ${name}! 🚗 Ready to start your driving lessons?`;
+    case 'music_studio':
+      return `Welcome to ${name}! 🎵 I can help you book a session.`;
+    case 'legal':
+      return `Welcome to ${name}! ⚖️ I can help you schedule a consultation.`;
+    case 'daycare':
+      return `Welcome to ${name}! 👶 I can help you with payments and registration.`;
+    case 'printing':
+      return `Welcome to ${name}! 🖨️ Browse our services and place an order.`;
+    case 'car_rental':
+      return `Welcome to ${name}! 🚙 I can help you book a vehicle.`;
+    case 'supermarket':
+      return `Welcome to ${name}! 🛒 Browse our products and place an order.`;
+    case 'security':
+      return `Welcome to ${name}! 🛡️ I can help you book our services.`;
+    case 'accounting':
+      return `Welcome to ${name}! 📊 I can help you schedule a consultation.`;
     default:
       return `Welcome to ${name}! How can I help you today?`;
   }

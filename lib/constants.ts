@@ -18,7 +18,12 @@ export type BusinessCategoryKey =
   | 'crowdfunding_org' | 'laundry' | 'veterinary' | 'dental'
   | 'coworking' | 'tutor' | 'photographer' | 'mall_vendor'
   | 'pharmacy' | 'hotel' | 'car_wash' | 'catering'
-  | 'funeral' | 'tailor' | 'shortlet' | 'other';
+  | 'funeral' | 'tailor' | 'shortlet'
+  | 'nail_tech' | 'mua' | 'pet_grooming' | 'therapy' | 'bakery'
+  | 'mechanic' | 'cleaning' | 'plumber' | 'pest_control' | 'driving_school'
+  | 'music_studio' | 'legal' | 'daycare' | 'printing' | 'car_rental'
+  | 'supermarket' | 'security' | 'accounting'
+  | 'other';
 export type SubscriptionTier = 'free' | 'growth' | 'business';
 
 /** Maps internal tier names to customer-facing marketing names */
@@ -250,6 +255,34 @@ export const BUSINESS_CATEGORIES: Array<{
   { key: 'crowdfunding_org', label: 'Crowdfunding', icon: '❤️', flow: 'payment', group: 'Faith & Community' },
   { key: 'taxi', label: 'Taxi & Ride-Hailing', icon: '🚕', flow: 'payment', group: 'Transport' },
   { key: 'transport', label: 'Transport', icon: '🚌', flow: 'ticketing', group: 'Transport' },
+  // Beauty & Wellness (new)
+  { key: 'nail_tech', label: 'Nail Tech', icon: '💅', flow: 'scheduling', group: 'Beauty & Wellness' },
+  { key: 'mua', label: 'Makeup Artist', icon: '💄', flow: 'scheduling', group: 'Beauty & Wellness' },
+  // Health & Medical (new)
+  { key: 'pet_grooming', label: 'Pet Grooming', icon: '🐕', flow: 'scheduling', group: 'Health & Medical' },
+  { key: 'therapy', label: 'Therapy & Counseling', icon: '🧠', flow: 'scheduling', group: 'Health & Medical' },
+  // Food & Drink (new)
+  { key: 'bakery', label: 'Bakery', icon: '🧁', flow: 'ordering', group: 'Food & Drink' },
+  // Home & Auto (new)
+  { key: 'mechanic', label: 'Auto Mechanic', icon: '🔧', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'cleaning', label: 'Cleaning Services', icon: '🧹', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'plumber', label: 'Plumber / Electrician', icon: '🔌', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'pest_control', label: 'Pest Control', icon: '🐜', flow: 'scheduling', group: 'Home & Auto Services' },
+  // Professional Services (new)
+  { key: 'driving_school', label: 'Driving School', icon: '🚗', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'legal', label: 'Legal / Notary', icon: '⚖️', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'accounting', label: 'Accounting & Tax', icon: '📊', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'security', label: 'Security Services', icon: '🛡️', flow: 'scheduling', group: 'Professional Services' },
+  // Events & Entertainment (new)
+  { key: 'music_studio', label: 'Music / Dance Studio', icon: '🎵', flow: 'scheduling', group: 'Events & Entertainment' },
+  // Faith & Community (new)
+  { key: 'daycare', label: 'Daycare / Creche', icon: '👶', flow: 'payment', group: 'Faith & Community' },
+  // Shops & Commerce (new)
+  { key: 'printing', label: 'Printing & Signage', icon: '🖨️', flow: 'ordering', group: 'Shops & Commerce' },
+  { key: 'supermarket', label: 'Supermarket / Grocery', icon: '🛒', flow: 'ordering', group: 'Shops & Commerce' },
+  // Hospitality (new)
+  { key: 'car_rental', label: 'Car Rental', icon: '🚙', flow: 'reservation', group: 'Hospitality' },
+  // Other
   { key: 'government', label: 'Government & Utilities', icon: '🏛️', flow: 'payment', group: 'Other' },
   { key: 'funeral', label: 'Funeral Services', icon: '🌺', flow: 'payment', group: 'Other' },
   { key: 'other', label: 'Other (Custom)', icon: '🔧', flow: 'scheduling', group: 'Other' },
@@ -317,6 +350,24 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   funeral: { entityName: 'service', entityNamePlural: 'services', actionVerb: 'Pay', confirmationEmoji: '🌺', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Family', personLabelPlural: 'Families', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Service Fee, Memorial Contribution', defaultHasPrice: false },
   tailor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '✂️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Custom Suit, Alteration', defaultHasPrice: true },
   shortlet: { entityName: 'stay', entityNamePlural: 'stays', actionVerb: 'Book a Stay', confirmationEmoji: '🏘️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Apartment', serviceNamePlural: 'Apartments', namePlaceholder: 'e.g. Studio Apartment, 2-Bed Flat', defaultHasPrice: true },
+  nail_tech: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💅', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Gel Nails, Pedicure, Nail Art', defaultHasPrice: true },
+  mua: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💄', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Bridal Makeup, Photoshoot, Glow Up', defaultHasPrice: true },
+  pet_grooming: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🐕', receiptTitle: 'Appointment Confirmed', quantityLabel: 'pets', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Full Groom, Bath & Brush, Nail Trim', defaultHasPrice: true },
+  therapy: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🧠', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: ['no_show'], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Individual Session, Couples Therapy', defaultHasPrice: true },
+  bakery: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🧁', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Custom Cake, Pastries, Bread', defaultHasPrice: true },
+  mechanic: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🔧', receiptTitle: 'Appointment Confirmed', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Oil Change, Brake Service, Diagnostics', defaultHasPrice: true },
+  cleaning: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🧹', receiptTitle: 'Booking Confirmed', quantityLabel: 'rooms', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Home Deep Clean, Office Cleaning', defaultHasPrice: true },
+  plumber: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🔌', receiptTitle: 'Booking Confirmed', quantityLabel: 'jobs', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Pipe Repair, Electrical Wiring, Installation', defaultHasPrice: true },
+  pest_control: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🐜', receiptTitle: 'Booking Confirmed', quantityLabel: 'properties', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Fumigation, Termite Treatment', defaultHasPrice: true },
+  driving_school: { entityName: 'lesson', entityNamePlural: 'lessons', actionVerb: 'Book', confirmationEmoji: '🚗', receiptTitle: 'Lesson Confirmed', quantityLabel: 'students', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Beginner Lesson, Highway Practice, Test Prep', defaultHasPrice: true },
+  music_studio: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🎵', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Guitar Lesson, Studio Rehearsal, Dance Class', defaultHasPrice: true },
+  legal: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '⚖️', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Legal Consultation, Notarization, Contract Review', defaultHasPrice: true },
+  daycare: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '👶', receiptTitle: 'Payment Received', quantityLabel: 'children', personLabel: 'Parent', personLabelPlural: 'Parents', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Fee Category', serviceNamePlural: 'Fee Categories', namePlaceholder: 'e.g. Monthly Fee, After-School, Holiday Camp', defaultHasPrice: false },
+  printing: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🖨️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Business Cards, Banner, T-Shirt Print', defaultHasPrice: true },
+  car_rental: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🚙', receiptTitle: 'Booking Confirmed', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Vehicle', serviceNamePlural: 'Vehicles', namePlaceholder: 'e.g. Sedan, SUV, Van', defaultHasPrice: true },
+  supermarket: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛒', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Groceries, Household Items', defaultHasPrice: true },
+  security: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🛡️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guards', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Event Security, CCTV Installation', defaultHasPrice: true },
+  accounting: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '📊', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Tax Filing, Bookkeeping, Advisory', defaultHasPrice: true },
   other: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '✅', receiptTitle: 'Booking Confirmed', quantityLabel: 'slots', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. General Booking', defaultHasPrice: true },
 };
 
@@ -612,6 +663,74 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Studio Apartment', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
     { name: '1-Bedroom Apartment', price: 45000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
     { name: '2-Bedroom Apartment', price: 75000, price_is_variable: false, duration_minutes: null, deposit_amount: 25000 },
+  ],
+  nail_tech: [
+    { name: 'Gel Nails', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Pedicure', price: 3000, price_is_variable: false, duration_minutes: 45, deposit_amount: 0 },
+  ],
+  mua: [
+    { name: 'Bridal Makeup', price: 50000, price_is_variable: false, duration_minutes: 120, deposit_amount: 15000 },
+    { name: 'Glam Makeup', price: 20000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+  ],
+  pet_grooming: [
+    { name: 'Full Groom', price: 10000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
+    { name: 'Bath & Brush', price: 5000, price_is_variable: false, duration_minutes: 45, deposit_amount: 0 },
+  ],
+  therapy: [
+    { name: 'Individual Session', price: 25000, price_is_variable: false, duration_minutes: 50, deposit_amount: 0 },
+    { name: 'Couples Session', price: 40000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
+  ],
+  bakery: [
+    { name: 'Custom Cake', price: 15000, price_is_variable: true, duration_minutes: null, deposit_amount: 5000 },
+    { name: 'Pastries Box', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  mechanic: [
+    { name: 'General Service', price: 15000, price_is_variable: false, duration_minutes: 120, deposit_amount: 0 },
+    { name: 'Diagnostics', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+  ],
+  cleaning: [
+    { name: 'Home Deep Clean', price: 20000, price_is_variable: false, duration_minutes: 180, deposit_amount: 5000 },
+    { name: 'Office Cleaning', price: 30000, price_is_variable: false, duration_minutes: 240, deposit_amount: 10000 },
+  ],
+  plumber: [
+    { name: 'Repair / Fix', price: 0, price_is_variable: true, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Installation', price: 0, price_is_variable: true, duration_minutes: 120, deposit_amount: 0 },
+  ],
+  pest_control: [
+    { name: 'Fumigation', price: 25000, price_is_variable: false, duration_minutes: 120, deposit_amount: 10000 },
+  ],
+  driving_school: [
+    { name: 'Beginner Lesson', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Test Preparation', price: 8000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
+  ],
+  music_studio: [
+    { name: 'Private Lesson', price: 10000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Studio Rehearsal', price: 5000, price_is_variable: false, duration_minutes: 120, deposit_amount: 0 },
+  ],
+  legal: [
+    { name: 'Legal Consultation', price: 25000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Notarization', price: 10000, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
+  ],
+  daycare: [
+    { name: 'Monthly Fee', price: 50000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'After-School Care', price: 20000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  printing: [
+    { name: 'Business Cards', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Banner / Signage', price: 15000, price_is_variable: true, duration_minutes: null, deposit_amount: 5000 },
+  ],
+  car_rental: [
+    { name: 'Sedan (per day)', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
+    { name: 'SUV (per day)', price: 40000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
+  ],
+  supermarket: [],
+  security: [
+    { name: 'Event Security', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'CCTV Installation', price: 0, price_is_variable: true, duration_minutes: 180, deposit_amount: 0 },
+  ],
+  accounting: [
+    { name: 'Tax Consultation', price: 15000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+    { name: 'Bookkeeping (monthly)', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
   ],
   other: [
     { name: 'General Booking', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },

@@ -1,0 +1,19 @@
+-- Add 18 new business category enum values
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'nail_tech';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'mua';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'pet_grooming';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'therapy';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'bakery';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'mechanic';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'cleaning';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'plumber';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'pest_control';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'driving_school';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'music_studio';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'legal';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'daycare';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'printing';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'car_rental';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'supermarket';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'security';
+ALTER TYPE business_category ADD VALUE IF NOT EXISTS 'accounting';
