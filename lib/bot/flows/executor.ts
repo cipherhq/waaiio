@@ -430,6 +430,7 @@ export class FlowExecutor {
       case 'ticketing': return 'ticketing';
       case 'reservation': return 'reservation';
       case 'whatsapp_sign': return 'scheduling'; // no bot flow — dashboard only
+      case 'giving': return 'payment'; // giving uses payment infrastructure
       case 'crowdfunding': return 'payment'; // crowdfunding uses payment infrastructure
       case 'reports': return 'scheduling'; // reports don't have their own flow
       case 'queue': return 'queue';

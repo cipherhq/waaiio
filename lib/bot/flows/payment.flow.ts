@@ -110,16 +110,17 @@ export const paymentFlow: FlowDefinition = {
       id: 'confirm_amount',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const labels = getCategoryLabels(ctx.business?.category || 'church');
+        const isGiving = d.active_capability === 'giving';
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const summaryTitle = isGiving ? 'Giving Summary' : 'Payment Summary';
 
         return [
           {
             type: 'text',
             text: [
-              `\ud83d\udccb *${labels.receiptTitle} Summary*`,
+              `\ud83d\udccb *${summaryTitle}*`,
               '',
-              `${labels.confirmationEmoji} ${ctx.business?.name}`,
+              `${isGiving ? '🙏' : '🏢'} ${ctx.business?.name}`,
               `\ud83d\udccc ${d.service_name as string}`,
               `\ud83d\udcb0 ${formatCurrency(d.amount as number, cc)}`,
             ].join('\n'),
