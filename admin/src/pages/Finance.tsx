@@ -242,13 +242,30 @@ export default function Finance() {
       <p className="mt-1 text-sm text-gray-500">Comprehensive financial dashboard</p>
 
       {/* Metric Cards */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="Gross Transaction Volume" value={formatMultiCurrency(metrics.grossVolume)} color="blue" />
-        <MetricCard label="Total Refunds" value={formatMultiCurrency(metrics.totalRefunds)} color="red" />
-        <MetricCard label="Platform Fees Earned" value={formatMoney(metrics.platformFees)} color="green" />
-        <MetricCard label="Payouts Owed" value={formatMoney(metrics.payoutsOwed)} color="yellow" />
-        <MetricCard label="Paid Out" value={formatMoney(metrics.paidOut)} color="green" />
-        <MetricCard label="Outstanding Liability" value={formatMoney(metrics.outstanding)} color="red" />
+      {/* Per-currency transaction volume */}
+      {Object.keys(metrics.grossVolume).length > 0 && (
+        <div className="mt-6">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-3">Transaction Volume by Currency</h3>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Object.entries(metrics.grossVolume).filter(([, a]) => a > 0).map(([cur, amt]) => (
+              <MetricCard key={`vol-${cur}`} label={`Volume (${cur})`} value={formatMoney(amt, cur)} color="blue" />
+            ))}
+            {Object.entries(metrics.totalRefunds).filter(([, a]) => a > 0).map(([cur, amt]) => (
+              <MetricCard key={`ref-${cur}`} label={`Refunds (${cur})`} value={formatMoney(amt, cur)} color="red" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Platform metrics (single currency — platform fees are in NGN) */}
+      <div className="mt-6">
+        <h3 className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-3">Platform</h3>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricCard label="Platform Fees Earned" value={formatMoney(metrics.platformFees)} color="green" />
+          <MetricCard label="Payouts Owed" value={formatMoney(metrics.payoutsOwed)} color="yellow" />
+          <MetricCard label="Paid Out" value={formatMoney(metrics.paidOut)} color="green" />
+          <MetricCard label="Outstanding Liability" value={formatMoney(metrics.outstanding)} color="red" />
+        </div>
       </div>
 
       {/* Payment Status Breakdown */}
