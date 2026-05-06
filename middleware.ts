@@ -97,6 +97,13 @@ export async function middleware(request: NextRequest) {
     supabaseResponse.headers.set('Cache-Control', 'no-store');
   }
 
+  // Add CORS headers for admin API routes (cross-origin from admin.waaiio.com)
+  if (request.nextUrl.pathname.startsWith('/api/admin/')) {
+    supabaseResponse.headers.set('Access-Control-Allow-Origin', '*');
+    supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  }
+
   return applySecurityHeaders(supabaseResponse);
 }
 
