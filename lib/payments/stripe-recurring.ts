@@ -57,7 +57,7 @@ export async function createRecurringCheckout(opts: {
     'line_items[0][price_data][recurring][interval]': opts.interval,
     'line_items[0][quantity]': '1',
     mode: 'subscription',
-    success_url: `${callbackUrl}/api/payments/stripe-success?session_id={CHECKOUT_SESSION_ID}`,
+    success_url: `${callbackUrl}/payment-success?type=recurring`,
     cancel_url: opts.cancelUrl || callbackUrl,
   };
 

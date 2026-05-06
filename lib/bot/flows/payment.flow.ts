@@ -657,10 +657,26 @@ export const paymentFlow: FlowDefinition = {
 
           subscriptionCode = checkout.sessionId;
 
-          // For Stripe, send the checkout link and save subscription as pending
+          // For Stripe, send shortened checkout link
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const shortRef = checkout.sessionId.slice(-12);
+          const shortUrl = `${appUrl}/api/pay?ref=${shortRef}`;
+
+          // Save session ID in payments table so /api/pay can resolve it
+          await ctx.supabase.from('payments').insert({
+            business_id: ctx.business.id,
+            booking_id: (d.booking_id as string) || null,
+            amount,
+            currency: getCurrencyCode(cc),
+            gateway: 'stripe',
+            gateway_reference: checkout.sessionId,
+            status: 'pending',
+            metadata: { stripe_session_id: checkout.sessionId, type: 'recurring_setup' },
+          });
+
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `Complete your recurring payment setup here:\n${checkout.url}\n\n⚠️ After completing setup, *return to WhatsApp*.`,
+            text: `Complete your recurring payment setup here:\n${shortUrl}\n\n⚠️ After completing setup, *return to WhatsApp*.`,
           });
         }
 
@@ -672,7 +688,9 @@ export const paymentFlow: FlowDefinition = {
           nextCharge.setMonth(nextCharge.getMonth() + 1);
         }
 
-        // Save customer subscription
+        // Save customer subscription — pending for Stripe (needs checkout completion), active for Paystack
+        const subStatus = isPaystack ? 'active' : 'pending';
+
         await ctx.supabase.from('customer_subscriptions').insert({
           business_id: ctx.business.id,
           user_id: userId,
@@ -680,7 +698,7 @@ export const paymentFlow: FlowDefinition = {
           amount,
           currency: getCurrencyCode(cc),
           frequency,
-          status: 'active',
+          status: subStatus,
           gateway: gatewayName,
           gateway_subscription_code: subscriptionCode,
           gateway_plan_code: planCode || null,
@@ -699,6 +717,19 @@ export const paymentFlow: FlowDefinition = {
         });
 
         const label = frequency === 'weekly' ? 'weekly' : 'monthly';
+        if (!isPaystack) {
+          // Stripe: subscription is pending until checkout is completed
+          return [{
+            type: 'text',
+            text: [
+              `Your ${label} payment of *${formatCurrency(amount, cc)}* for *${serviceName}* will be active once you complete the setup above.`,
+              '',
+              `To manage your recurring payments, type *subscriptions* anytime.`,
+              '',
+              `_Powered by *Waaiio*_`,
+            ].join('\n'),
+          }];
+        }
         return [{
           type: 'text',
           text: [
