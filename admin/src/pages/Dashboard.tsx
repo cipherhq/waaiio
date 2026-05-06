@@ -90,6 +90,16 @@ export default function Dashboard() {
         setPendingPayouts(pendingCount);
         setHeldPayouts(heldCount);
 
+        // Per-currency revenue cards
+        const currencyCards: StatCard[] = Object.entries(revByCurrency)
+          .filter(([, a]) => a > 0)
+          .map(([cur, amt]) => ({
+            label: `Revenue (${cur})`,
+            value: formatMoney(amt, cur),
+            icon: DollarSign,
+            color: 'green',
+          }));
+
         setStats([
           {
             label: 'Total Businesses',
@@ -97,12 +107,7 @@ export default function Dashboard() {
             icon: Building2,
             color: 'blue',
           },
-          {
-            label: 'Monthly Revenue',
-            value: revenueDisplay,
-            icon: DollarSign,
-            color: 'green',
-          },
+          ...currencyCards,
           {
             label: 'Pending Payouts',
             value: pendingDisplay,
