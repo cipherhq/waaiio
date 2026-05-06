@@ -484,6 +484,16 @@ function formatMonth(m: string) {
   return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
-function formatMoney(amount: number): string {
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount);
+function formatMoney(amount: number, currency = 'NGN'): string {
+  const locales: Record<string, string> = { NGN: 'en-NG', USD: 'en-US', GBP: 'en-GB', CAD: 'en-CA', GHS: 'en-GH' };
+  const hasCents = amount % 1 !== 0;
+  try {
+    return new Intl.NumberFormat(locales[currency] || 'en-US', {
+      style: 'currency', currency,
+      minimumFractionDigits: hasCents ? 2 : 0,
+      maximumFractionDigits: hasCents ? 2 : 0,
+    }).format(amount);
+  } catch {
+    return `${currency} ${amount.toLocaleString()}`;
+  }
 }
