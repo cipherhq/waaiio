@@ -59,13 +59,14 @@ export default function Customers() {
     setLoading(true);
 
     try {
-      // Fetch bookings and payments in parallel
+      // Fetch bookings and payments in parallel (use adminDb to bypass RLS)
+      const { adminDb } = await import('@/lib/supabase');
       const [bookingsRes, paymentsRes] = await Promise.all([
-        supabase
+        adminDb
           .from('bookings')
           .select('user_id, business_id, guest_name, guest_phone, guest_email, status, total_amount, amount, created_at')
           .order('created_at', { ascending: false }),
-        supabase
+        adminDb
           .from('payments')
           .select('user_id, business_id, amount, currency, status, created_at')
           .order('created_at', { ascending: false }),
@@ -90,7 +91,7 @@ export default function Customers() {
       // Fetch business names
       const bizIdArr = [...allBizIds];
       const { data: bizData } = bizIdArr.length > 0
-        ? await supabase.from('businesses').select('id, name').in('id', bizIdArr)
+        ? await adminDb.from('businesses').select('id, name').in('id', bizIdArr)
         : { data: [] };
       const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
       setAllBusinesses(
@@ -100,7 +101,7 @@ export default function Customers() {
       // Fetch profiles for user IDs
       const userIdArr = [...allUserIds];
       const { data: profileData } = userIdArr.length > 0
-        ? await supabase.from('profiles').select('id, first_name, last_name, email, phone').in('id', userIdArr)
+        ? await adminDb.from('profiles').select('id, first_name, last_name, email, phone').in('id', userIdArr)
         : { data: [] };
       const profileMap = new Map(
         (profileData || []).map(p => [p.id, {
@@ -230,22 +231,23 @@ export default function Customers() {
       const txs: Transaction[] = [];
 
       if (selected!.user_id) {
+        const { adminDb } = await import('@/lib/supabase');
         // Fetch bookings
-        const { data: bookings } = await supabase
+        const { data: bookings } = await adminDb
           .from('bookings')
           .select('id, business_id, service_name, status, total_amount, amount, reference_code, booking_date, created_at')
           .eq('user_id', selected!.user_id)
           .order('created_at', { ascending: false });
 
         // Fetch payments
-        const { data: payments } = await supabase
+        const { data: payments } = await adminDb
           .from('payments')
           .select('id, business_id, amount, currency, status, gateway_reference, created_at')
           .eq('user_id', selected!.user_id)
           .order('created_at', { ascending: false });
 
         // Fetch orders
-        const { data: orders } = await supabase
+        const { data: orders } = await adminDb
           .from('orders')
           .select('id, business_id, status, total_amount, reference_code, created_at')
           .eq('user_id', selected!.user_id)
@@ -259,7 +261,7 @@ export default function Customers() {
 
         const bizIdArr = [...allBizIds];
         const { data: bizData } = bizIdArr.length > 0
-          ? await supabase.from('businesses').select('id, name').in('id', bizIdArr)
+          ? await adminDb.from('businesses').select('id, name').in('id', bizIdArr)
           : { data: [] };
         const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
 
