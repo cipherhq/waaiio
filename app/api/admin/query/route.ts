@@ -59,16 +59,19 @@ export async function POST(request: NextRequest) {
 
     // Whitelist allowed tables
     const ALLOWED_TABLES = [
-      'profiles', 'businesses', 'bookings', 'payments', 'orders', 'services',
-      'products', 'business_payouts', 'platform_fees', 'support_tickets',
+      'profiles', 'businesses', 'bookings', 'payments', 'orders', 'order_items', 'services',
+      'products', 'business_payouts', 'platform_fees', 'support_tickets', 'support_ticket_messages',
       'bot_sessions', 'business_capabilities', 'capability_overrides',
-      'business_documents', 'customer_subscriptions', 'events', 'tickets',
+      'business_documents', 'customer_subscriptions', 'events', 'event_tickets', 'tickets',
       'impersonation_logs', 'whatsapp_config', 'business_staff',
       'category_templates', 'canned_responses', 'feedback', 'loyalty_points',
       'referrals', 'invoices', 'quote_requests', 'campaigns',
-      'refunds', 'delivery_zones', 'audit_logs', 'alerts',
+      'refunds', 'delivery_zones', 'audit_logs', 'admin_audit_logs', 'alerts',
       'service_addons', 'whatsapp_channels', 'llm_classifications',
-      'notification_logs', 'bot_keywords', 'payout_accounts',
+      'notification_logs', 'notifications', 'bot_keywords', 'payout_accounts',
+      'surveys', 'survey_responses', 'subscriptions', 'admin_broadcasts',
+      'ai_usage', 'conversation_usage', 'countries', 'customer_reports',
+      'platform_settings', 'queue_entries', 'site_pages', 'verification_requests',
     ];
 
     if (!ALLOWED_TABLES.includes(table)) {

@@ -128,12 +128,21 @@ export default function Payments() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
 
-  // Summary stats
-  const totalAmount = filtered.reduce((s, p) => s + Number(p.amount || 0), 0);
+  // Summary stats — per currency
+  const totalByCurrency: Record<string, number> = {};
+  const refundByCurrency: Record<string, number> = {};
+  for (const p of filtered) {
+    const cur = p.currency || 'NGN';
+    totalByCurrency[cur] = (totalByCurrency[cur] || 0) + Number(p.amount || 0);
+    if (Number(p.refund_amount || 0) > 0) {
+      refundByCurrency[cur] = (refundByCurrency[cur] || 0) + Number(p.refund_amount || 0);
+    }
+  }
+  const totalDisplay = Object.entries(totalByCurrency).filter(([, a]) => a > 0).map(([c, a]) => fmtCurrency(a, c)).join(' · ') || '—';
+  const refundDisplay = Object.entries(refundByCurrency).filter(([, a]) => a > 0).map(([c, a]) => fmtCurrency(a, c)).join(' · ') || '—';
   const successCount = filtered.filter(p => p.status === 'success').length;
   const failedCount = filtered.filter(p => p.status === 'failed').length;
   const refundedCount = filtered.filter(p => Number(p.refund_amount || 0) > 0).length;
-  const refundedTotal = filtered.reduce((s, p) => s + Number(p.refund_amount || 0), 0);
 
   async function handleAdminRefund() {
     if (!selected) return;
@@ -213,7 +222,7 @@ export default function Payments() {
       <div className="mt-6 grid gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
           <p className="text-xs font-medium text-gray-500">Total ({filtered.length})</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(totalAmount)}</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{totalDisplay}</p>
         </div>
         <div className="rounded-xl border border-green-100 bg-green-50 p-4">
           <p className="text-xs font-medium text-gray-500">Successful</p>
@@ -225,7 +234,7 @@ export default function Payments() {
         </div>
         <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
           <p className="text-xs font-medium text-gray-500">Refunded ({refundedCount})</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(refundedTotal)}</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{refundDisplay}</p>
         </div>
       </div>
 
