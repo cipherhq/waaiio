@@ -586,6 +586,27 @@ export const paymentFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong setting up recurring payments. Send *Hi* to try again.' }];
         }
 
+        // Check for existing active subscription for same service + user
+        const serviceId = (d.service_id as string) || null;
+        if (serviceId) {
+          const { data: existingSub } = await ctx.supabase
+            .from('customer_subscriptions')
+            .select('id')
+            .eq('business_id', ctx.business.id)
+            .eq('user_id', userId)
+            .eq('service_id', serviceId)
+            .in('status', ['active', 'pending'])
+            .limit(1)
+            .maybeSingle();
+
+          if (existingSub) {
+            return [{
+              type: 'text',
+              text: `You already have an active recurring payment for *${serviceName}*. To manage it, type *subscriptions*.`,
+            }];
+          }
+        }
+
         // Determine gateway based on country
         const isPaystack = ['NG', 'GH'].includes(cc);
 
