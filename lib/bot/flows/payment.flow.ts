@@ -19,23 +19,31 @@ export const paymentFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
-        const { data: services } = await ctx.supabase
+        // Filter by service_type: giving capability → giving services, payment → all non-giving
+        const isGiving = ctx.session.session_data.active_capability === 'giving';
+        let query = ctx.supabase
           .from('services')
           .select('id, name, billing_type, recurring_interval, price')
           .eq('business_id', ctx.business.id)
-          .eq('is_active', true)
-          .order('sort_order');
+          .eq('is_active', true);
+        if (isGiving) {
+          query = query.eq('service_type', 'giving');
+        } else {
+          query = query.neq('service_type', 'giving');
+        }
+        const { data: services } = await query.order('sort_order');
 
         if (!services || services.length === 0) {
-          return [{ type: 'text', text: 'No payment categories are set up yet. Please contact the administrator.' }];
+          return [{ type: 'text', text: isGiving ? 'No giving categories are set up yet. Please contact the administrator.' : 'No payment categories are set up yet. Please contact the administrator.' }];
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
-        const labels = getCategoryLabels(ctx.business.category);
+        const title = isGiving ? 'Select Giving Category' : 'Select Payment Type';
+        const body = isGiving ? 'What would you like to give towards?' : 'What would you like to pay for?';
         return [{
           type: 'list',
-          title: `Select ${labels.entityName} Type`,
-          body: `What would you like to ${labels.actionVerb.toLowerCase()}?`,
+          title,
+          body,
           buttonLabel: 'Choose',
           items: services.map(s => {
             let title = s.name;
