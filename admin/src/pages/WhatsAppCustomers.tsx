@@ -341,9 +341,10 @@ export default function Customers() {
       revenueByCurrency[cur] = (revenueByCurrency[cur] || 0) + amt;
     }
   }
-  const revenueDisplay = Object.entries(revenueByCurrency)
-    .map(([cur, amt]) => fmtCurrency(amt, cur))
-    .join(' + ') || '—';
+  const revenueParts = Object.entries(revenueByCurrency).filter(([, a]) => a > 0);
+  const revenueDisplay = revenueParts.length > 0
+    ? revenueParts.map(([cur, amt]) => fmtCurrency(amt, cur)).join(' · ')
+    : '—';
   const uniqueBiz = new Set(customers.flatMap(c => c.businesses.map(b => b.id))).size;
 
   const hasFilters = search || businessFilter !== 'all';
@@ -439,9 +440,18 @@ export default function Customers() {
                   <td className="px-4 py-3 text-right text-gray-600">{c.booking_count}</td>
                   <td className="px-4 py-3 text-right text-gray-600">{c.payment_count}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {Object.keys(c.spending || {}).length > 0
-                      ? Object.entries(c.spending).map(([cur, amt]) => fmtCurrency(amt, cur)).join(' + ')
-                      : '—'}
+                    {(() => {
+                      const entries = Object.entries(c.spending || {}).filter(([, a]) => a > 0);
+                      if (entries.length === 0) return '—';
+                      if (entries.length === 1) return fmtCurrency(entries[0][1], entries[0][0]);
+                      return (
+                        <span title={entries.map(([cur, amt]) => fmtCurrency(amt, cur)).join('\n')}>
+                          {entries.map(([cur, amt]) => (
+                            <span key={cur} className="block text-xs leading-tight">{fmtCurrency(amt, cur)}</span>
+                          ))}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtRelative(c.last_active)}</td>
                 </tr>
@@ -469,7 +479,7 @@ export default function Customers() {
             <DetailRow label="Payments" value={selected.payment_count} />
             <DetailRow label="Total Spent" value={
               Object.keys(selected.spending || {}).length > 0
-                ? Object.entries(selected.spending).map(([cur, amt]) => fmtCurrency(amt, cur)).join(' + ')
+                ? Object.entries(selected.spending).filter(([, a]) => a > 0).map(([cur, amt]) => fmtCurrency(amt, cur)).join(' · ')
                 : '—'
             } />
             <DetailRow label="First Seen" value={fmtDateTime(selected.first_seen)} />

@@ -1,10 +1,30 @@
+const CURRENCY_LOCALES: Record<string, string> = {
+  NGN: 'en-NG',
+  GHS: 'en-GH',
+  USD: 'en-US',
+  GBP: 'en-GB',
+  CAD: 'en-CA',
+  EUR: 'en-IE',
+  INR: 'en-IN',
+  ZAR: 'en-ZA',
+  KES: 'en-KE',
+  AED: 'ar-AE',
+};
+
 export function fmtCurrency(amount: number, currency = 'NGN'): string {
-  const locale = currency === 'NGN' ? 'en-NG' : currency === 'GHS' ? 'en-GH' : 'en-US';
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: 0,
-  }).format(amount);
+  const locale = CURRENCY_LOCALES[currency] || 'en-US';
+  const hasCents = amount % 1 !== 0;
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: hasCents ? 2 : 0,
+      maximumFractionDigits: hasCents ? 2 : 0,
+    }).format(amount);
+  } catch {
+    // Fallback for unknown currency codes
+    return `${currency} ${amount.toLocaleString()}`;
+  }
 }
 
 export function fmtDate(date: string | Date): string {
