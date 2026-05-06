@@ -391,21 +391,24 @@ export default function PlatformSettings() {
                         </div>
                       </div>
                     ) : (
-                      /* Display mode */
+                      /* Display mode — smart rendering based on value type */
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-sm font-medium text-gray-900">{setting.key}</span>
-                            {setting.description && (
-                              <span className="text-xs text-gray-400">-- {setting.description}</span>
-                            )}
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-sm font-semibold text-gray-900">
+                              {setting.key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                            </span>
+                            <span className="font-mono text-xs text-gray-400">{setting.key}</span>
                           </div>
-                          <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-lg bg-gray-50 px-3 py-2 font-mono text-sm text-gray-700">
-                            {formatValue(setting.value)}
-                          </pre>
+                          {setting.description && (
+                            <p className="mt-0.5 text-xs text-gray-500">{setting.description}</p>
+                          )}
+                          <div className="mt-2">
+                            <SettingValueDisplay value={setting.value} />
+                          </div>
                           {setting.updated_at && (
-                            <p className="mt-1 text-xs text-gray-400">
-                              Last updated {fmtDateTime(setting.updated_at)}
+                            <p className="mt-1.5 text-xs text-gray-400">
+                              Updated {fmtDateTime(setting.updated_at)}
                             </p>
                           )}
                         </div>
@@ -443,4 +446,110 @@ export default function PlatformSettings() {
       </div>
     </div>
   );
+}
+
+/** Smart value display — renders based on type */
+function SettingValueDisplay({ value }: { value: unknown }) {
+  if (value === null || value === undefined) {
+    return <span className="text-sm italic text-gray-400">null</span>;
+  }
+
+  if (typeof value === 'boolean') {
+    return (
+      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${value ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+        {value ? 'Enabled' : 'Disabled'}
+      </span>
+    );
+  }
+
+  if (typeof value === 'number') {
+    return <span className="text-sm font-semibold text-gray-900">{value.toLocaleString()}</span>;
+  }
+
+  if (typeof value === 'string') {
+    if (value.includes('@') || value.startsWith('http')) {
+      return <span className="text-sm text-brand">{value}</span>;
+    }
+    return <span className="text-sm text-gray-700">{value}</span>;
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-xs italic text-gray-400">Empty list</span>;
+    // Simple array of strings/numbers
+    if (value.every(v => typeof v === 'string' || typeof v === 'number')) {
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {value.map((v, i) => (
+            <span key={i} className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">{String(v)}</span>
+          ))}
+        </div>
+      );
+    }
+    // Array of objects — show as mini table
+    return (
+      <div className="space-y-1">
+        {value.map((item, i) => (
+          <div key={i} className="rounded-lg bg-gray-50 px-3 py-1.5 text-xs">
+            {typeof item === 'object' && item !== null
+              ? Object.entries(item as Record<string, unknown>).map(([k, v]) => (
+                  <span key={k} className="mr-3">
+                    <span className="text-gray-500">{k}:</span>{' '}
+                    <span className="font-medium text-gray-800">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                  </span>
+                ))
+              : String(item)
+            }
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (entries.length === 0) return <span className="text-xs italic text-gray-400">Empty object</span>;
+
+    // Check if values are simple (flat key-value)
+    const isFlat = entries.every(([, v]) => typeof v !== 'object' || v === null);
+    if (isFlat) {
+      return (
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+          {entries.map(([k, v]) => (
+            <div key={k} className="contents">
+              <span className="text-xs font-medium text-gray-500">{k}</span>
+              <span className="text-xs text-gray-800">{v === null ? '—' : String(v)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Nested object — show each key as a sub-section
+    return (
+      <div className="space-y-2">
+        {entries.map(([k, v]) => (
+          <div key={k} className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
+            <span className="text-xs font-semibold text-gray-600">{k}</span>
+            <div className="mt-1">
+              {typeof v === 'object' && v !== null ? (
+                <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+                  {Object.entries(v as Record<string, unknown>).map(([sk, sv]) => (
+                    <div key={sk} className="contents">
+                      <span className="text-xs text-gray-400">{sk}</span>
+                      <span className="text-xs text-gray-700">{sv === null ? '—' : typeof sv === 'object' ? JSON.stringify(sv) : String(sv)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-xs text-gray-700">{String(v)}</span>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Fallback
+  return <pre className="whitespace-pre-wrap text-xs text-gray-600">{JSON.stringify(value, null, 2)}</pre>;
 }
