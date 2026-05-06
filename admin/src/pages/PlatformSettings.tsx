@@ -71,10 +71,9 @@ export default function PlatformSettings() {
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
 
-  // Edit state
-  const [editingKey, setEditingKey] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
-  const [saving, setSaving] = useState(false);
+  // Edit state — track all changes inline
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   // Add state
   const [showAdd, setShowAdd] = useState(false);
@@ -117,28 +116,28 @@ export default function PlatformSettings() {
     grouped[label].push(s);
   }
 
-  // Start editing
-  function handleEdit(setting: PlatformSetting) {
-    setEditingKey(setting.key);
-    setEditValue(formatValue(setting.value));
+  // Get current value for a setting (edited or original)
+  function getCurrentValue(setting: PlatformSetting): string {
+    if (edits[setting.key] !== undefined) return edits[setting.key];
+    return formatValue(setting.value);
   }
 
-  // Cancel editing
-  function handleCancelEdit() {
-    setEditingKey(null);
-    setEditValue('');
+  function hasChanges(key: string): boolean {
+    return edits[key] !== undefined;
   }
 
-  // Save edit
+  // Save a single setting
   async function handleSave(key: string) {
-    setSaving(true);
+    setSavingKey(key);
     try {
-      // Parse the value — try JSON first, fall back to string
+      const raw = edits[key];
+      if (raw === undefined) return;
+
       let parsedValue: unknown;
       try {
-        parsedValue = JSON.parse(editValue);
+        parsedValue = JSON.parse(raw);
       } catch {
-        parsedValue = editValue;
+        parsedValue = raw;
       }
 
       const { error } = await adminDb
@@ -156,20 +155,17 @@ export default function PlatformSettings() {
         action: 'update_platform_setting',
         entity_type: 'platform_setting',
         entity_id: key,
-        details: {
-          key,
-          new_value: parsedValue,
-        },
+        details: { key, new_value: parsedValue },
       });
 
-      setEditingKey(null);
-      setEditValue('');
+      // Clear edit and reload
+      setEdits(prev => { const next = { ...prev }; delete next[key]; return next; });
       await loadData();
     } catch (error) {
       console.error('Save setting error:', error);
       alert('Failed to save setting');
     } finally {
-      setSaving(false);
+      setSavingKey(null);
     }
   }
 
@@ -349,90 +345,74 @@ export default function PlatformSettings() {
               </div>
 
               <div className="divide-y divide-gray-50">
-                {items.map(setting => (
-                  <div key={setting.key} className="px-5 py-4">
-                    {editingKey === setting.key ? (
-                      /* Editing mode */
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <span className="font-mono text-sm font-medium text-gray-900">{setting.key}</span>
-                            {setting.description && (
-                              <p className="mt-0.5 text-xs text-gray-500">{setting.description}</p>
-                            )}
-                          </div>
+                {items.map(setting => {
+                  const val = getCurrentValue(setting);
+                  const changed = hasChanges(setting.key);
+                  const isSaving = savingKey === setting.key;
+                  const lines = val.split('\n').length;
+                  const isSimple = typeof setting.value !== 'object' || setting.value === null;
+
+                  return (
+                    <div key={setting.key} className="px-5 py-4">
+                      <div className="flex items-baseline justify-between gap-3 mb-1.5">
+                        <div>
+                          <span className="text-sm font-semibold text-gray-900">
+                            {setting.key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                          </span>
+                          <span className="ml-2 font-mono text-xs text-gray-400">{setting.key}</span>
                         </div>
-                        <textarea
-                          value={editValue}
-                          onChange={e => setEditValue(e.target.value)}
-                          rows={Math.max(2, editValue.split('\n').length)}
-                          className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm text-gray-700 focus:border-brand focus:outline-none"
-                        />
-                        <div className="mt-2 flex gap-2">
-                          <button
-                            onClick={() => handleSave(setting.key)}
-                            disabled={saving}
-                            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <Save className="h-3.5 w-3.5" />
-                              {saving ? 'Saving...' : 'Save'}
-                            </span>
-                          </button>
-                          <button
-                            onClick={handleCancelEdit}
-                            className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <X className="h-3.5 w-3.5" />
-                              Cancel
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      /* Display mode — smart rendering based on value type */
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-baseline gap-2">
-                            <span className="text-sm font-semibold text-gray-900">
-                              {setting.key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                            </span>
-                            <span className="font-mono text-xs text-gray-400">{setting.key}</span>
-                          </div>
-                          {setting.description && (
-                            <p className="mt-0.5 text-xs text-gray-500">{setting.description}</p>
+                        <div className="flex items-center gap-1.5">
+                          {changed && (
+                            <>
+                              <button
+                                onClick={() => handleSave(setting.key)}
+                                disabled={isSaving}
+                                className="rounded-lg bg-brand px-3 py-1 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                              >
+                                {isSaving ? 'Saving...' : 'Save'}
+                              </button>
+                              <button
+                                onClick={() => setEdits(prev => { const next = { ...prev }; delete next[setting.key]; return next; })}
+                                className="rounded-lg border border-gray-200 px-2 py-1 text-xs text-gray-500 hover:bg-gray-50"
+                              >
+                                Undo
+                              </button>
+                            </>
                           )}
-                          <div className="mt-2">
-                            <SettingValueDisplay value={setting.value} />
-                          </div>
-                          {setting.updated_at && (
-                            <p className="mt-1.5 text-xs text-gray-400">
-                              Updated {fmtDateTime(setting.updated_at)}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
-                          <button
-                            onClick={() => handleEdit(setting)}
-                            className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
-                            title="Edit"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
                           <button
                             onClick={() => handleDelete(setting.key)}
                             disabled={deleting === setting.key}
-                            className="rounded-lg p-2 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+                            className="rounded-lg p-1.5 text-gray-300 transition hover:bg-red-50 hover:text-red-500"
                             title="Delete"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </button>
                         </div>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {setting.description && (
+                        <p className="mb-2 text-xs text-gray-500">{setting.description}</p>
+                      )}
+                      {isSimple ? (
+                        <input
+                          type="text"
+                          value={val}
+                          onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm outline-none transition ${changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50'} focus:border-brand`}
+                        />
+                      ) : (
+                        <textarea
+                          value={val}
+                          onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
+                          rows={Math.min(Math.max(3, lines), 12)}
+                          className={`w-full rounded-lg border px-3 py-2 font-mono text-xs outline-none transition ${changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50'} focus:border-brand`}
+                        />
+                      )}
+                      {setting.updated_at && (
+                        <p className="mt-1 text-xs text-gray-400">Updated {fmtDateTime(setting.updated_at)}</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           );
