@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { SummaryCard } from '@/components/SummaryCard';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -57,8 +57,8 @@ export default function AISetupLog() {
 
     for (const biz of businesses) {
       const [{ data: services }, { data: products }] = await Promise.all([
-        supabase.from('services').select('name, price, created_at').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(50),
-        supabase.from('products').select('name, price, created_at').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(50),
+        adminDb.from('services').select('name, price, created_at').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(50),
+        adminDb.from('products').select('name, price, created_at').eq('business_id', biz.id).order('created_at', { ascending: false }).limit(50),
       ]);
 
       // Detect bulk creation: items created within 60 seconds of each other

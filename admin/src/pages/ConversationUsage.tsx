@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
 import { MessageCircle, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
@@ -47,7 +47,7 @@ export default function ConversationUsage() {
 
       const bizIds = [...new Set(usageRows.map(r => r.business_id).filter(Boolean))];
       const { data: bizData } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name, subscription_tier').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name, subscription_tier').in('id', bizIds)
         : { data: [] };
 
       const bizMap = new Map((bizData || []).map(b => [b.id, b]));

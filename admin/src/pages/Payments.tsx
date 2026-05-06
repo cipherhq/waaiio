@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -56,7 +56,7 @@ export default function Payments() {
     setLoading(true);
 
     try {
-      const { data: paymentData } = await supabase
+      const { data: paymentData } = await adminDb
         .from('payments')
         .select('*')
         .order('created_at', { ascending: false });
@@ -64,7 +64,7 @@ export default function Payments() {
       // Resolve business IDs: directly from payment or via booking
       const bookingIds = [...new Set((paymentData || []).map(p => p.booking_id).filter(Boolean))];
       const { data: bookings } = bookingIds.length > 0
-        ? await supabase.from('bookings').select('id, business_id, reference_code').in('id', bookingIds)
+        ? await adminDb.from('bookings').select('id, business_id, reference_code').in('id', bookingIds)
         : { data: [] };
       const bookingMap = new Map((bookings || []).map(b => [b.id, b]));
 
@@ -79,7 +79,7 @@ export default function Payments() {
       }
 
       const { data: businesses } = allBizIds.size > 0
-        ? await supabase.from('businesses').select('id, name, category').in('id', [...allBizIds])
+        ? await adminDb.from('businesses').select('id, name, category').in('id', [...allBizIds])
         : { data: [] };
 
       const givingBizIds = new Set(

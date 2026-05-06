@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 
 interface Payment {
   id: string;
@@ -57,12 +57,12 @@ export default function Finance() {
   useEffect(() => {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
-        supabase.from('payments').select('id, amount, status, business_id, created_at'),
-        supabase.from('platform_fees').select('fee_total, waived, created_at'),
-        supabase.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
-        supabase.from('refunds').select('amount, status, created_at').eq('status', 'success'),
-        supabase.from('businesses').select('id, category, country_code, subscription_tier'),
-        supabase.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
+        adminDb.from('payments').select('id, amount, status, business_id, created_at'),
+        adminDb.from('platform_fees').select('fee_total, waived, created_at'),
+        adminDb.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
+        adminDb.from('refunds').select('amount, status, created_at').eq('status', 'success'),
+        adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
+        adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
       ]);
 
       setPayments(paymentsRes.data || []);

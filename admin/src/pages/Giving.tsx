@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -121,7 +121,7 @@ export default function Giving() {
       ];
 
       const { data: profileData } = giverIds.length > 0
-        ? await supabase.from('profiles').select('id, first_name, last_name, email').in('id', giverIds)
+        ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', giverIds)
         : { data: [] };
 
       const profileMap = new Map(

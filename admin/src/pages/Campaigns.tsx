@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -53,7 +53,7 @@ export default function Campaigns() {
         // Load business names
         const bizIds = [...new Set(rows.map(c => c.business_id).filter(Boolean))];
         const { data: bizData } = bizIds.length > 0
-          ? await supabase.from('businesses').select('id, name').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
           : { data: [] };
 
         const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -84,7 +84,7 @@ export default function LLMClassifications() {
       // Enrich with business names
       const bizIds = [...new Set(data.map(r => r.business_id).filter(Boolean))];
       const { data: businesses } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
         : { data: [] };
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
 

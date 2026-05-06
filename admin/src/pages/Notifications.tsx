@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -61,7 +61,7 @@ export default function Notifications() {
       // Enrich user names from profiles
       const userIds = [...new Set(rows.map(n => n.user_id).filter(Boolean))];
       const { data: profileData } = userIds.length > 0
-        ? await supabase.from('profiles').select('id, first_name, last_name, email').in('id', userIds)
+        ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', userIds)
         : { data: [] };
 
       const profileMap = new Map(
@@ -124,7 +124,7 @@ export default function Notifications() {
     setSending(true);
 
     try {
-      const { error } = await supabase.from('notifications').insert({
+      const { error } = await adminDb.from('notifications').insert({
         user_id: selectedUser.id,
         title: sendTitle,
         message: sendMessage,

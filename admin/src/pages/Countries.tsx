@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { loadCountries, invalidateCache, type CountryRow } from '@/lib/countries';
 import { logAudit } from '@/lib/auditLog';
 import { SummaryCard } from '@/components/SummaryCard';
@@ -156,11 +156,11 @@ export default function Countries() {
       };
 
       if (editMode) {
-        const { error } = await supabase.from('countries').update(payload).eq('code', form.code);
+        const { error } = await adminDb.from('countries').update(payload).eq('code', form.code);
         if (error) throw error;
         await logAudit({ action: 'country.update', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
       } else {
-        const { error } = await supabase.from('countries').insert(payload);
+        const { error } = await adminDb.from('countries').insert(payload);
         if (error) throw error;
         await logAudit({ action: 'country.create', entity_type: 'country', entity_id: form.code, details: { name: form.name } });
       }
@@ -179,7 +179,7 @@ export default function Countries() {
     if (!confirm(`Delete country ${code}? This cannot be undone.`)) return;
     setDeleting(code);
     try {
-      const { error } = await supabase.from('countries').delete().eq('code', code);
+      const { error } = await adminDb.from('countries').delete().eq('code', code);
       if (error) throw error;
       await logAudit({ action: 'country.delete', entity_type: 'country', entity_id: code });
       invalidateCache();

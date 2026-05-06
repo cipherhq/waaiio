@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 
 interface PayoutRecord {
@@ -82,7 +82,7 @@ export default function Payouts() {
       // Get business names
       const bizIds = [...new Set((payoutData || []).map(p => p.business_id))];
       const { data: businesses } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name, country_code').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name, country_code').in('id', bizIds)
         : { data: [] };
 
       const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, country_code: b.country_code }]));

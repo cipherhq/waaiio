@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -154,7 +154,7 @@ export default function Subscriptions() {
 
         const bizIds = [...new Set((rawSubs || []).map(s => s.business_id).filter(Boolean))];
         const { data: businesses } = bizIds.length > 0
-          ? await supabase.from('businesses').select('id, name, category').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name, category').in('id', bizIds)
           : { data: [] };
 
         const bizMap = new Map((businesses || []).map(b => [b.id, { name: b.name, category: b.category }]));
@@ -202,7 +202,7 @@ export default function Subscriptions() {
       if (data?.length) {
         const actorIds = [...new Set(data.map(e => e.actor_id).filter(Boolean))];
         const { data: profiles } = actorIds.length > 0
-          ? await supabase.from('profiles').select('id, email').in('id', actorIds)
+          ? await adminDb.from('profiles').select('id, email').in('id', actorIds)
           : { data: [] };
         const profileMap = new Map((profiles || []).map((p: any) => [p.id, p.email]));
         setAuditLogs(data.map(e => ({

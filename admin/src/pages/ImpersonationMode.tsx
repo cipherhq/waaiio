@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { Search, LogOut, Pencil, Check, X, Building2, ExternalLink } from 'lucide-react';
@@ -130,7 +130,7 @@ export default function ImpersonationMode() {
       setSessionId(sid);
 
       // Log session start
-      await supabase.from('impersonation_logs').insert({
+      await adminDb.from('impersonation_logs').insert({
         session_id: sid,
         admin_id: adminId,
         admin_email: adminEmail,
@@ -216,7 +216,7 @@ export default function ImpersonationMode() {
     if (!selected || !sessionId) return;
 
     try {
-      await supabase.from('impersonation_logs').insert({
+      await adminDb.from('impersonation_logs').insert({
         session_id: sessionId,
         admin_id: adminId,
         admin_email: adminEmail,
@@ -271,7 +271,7 @@ export default function ImpersonationMode() {
       if (error) throw error;
 
       // Log the change
-      await supabase.from('impersonation_logs').insert({
+      await adminDb.from('impersonation_logs').insert({
         session_id: sessionId,
         admin_id: adminId,
         admin_email: adminEmail,

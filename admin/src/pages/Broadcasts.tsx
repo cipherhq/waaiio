@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
@@ -107,7 +107,7 @@ export default function Broadcasts() {
 
       const recipientCount = await getRecipientCount();
 
-      const { error } = await supabase.from('admin_broadcasts').insert({
+      const { error } = await adminDb.from('admin_broadcasts').insert({
         sender_id: senderId,
         channel,
         audience,

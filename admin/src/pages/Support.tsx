@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -305,7 +305,7 @@ export default function Support() {
       const senderId = session?.user?.id;
       if (!senderId) throw new Error('Not authenticated');
 
-      const { error } = await supabase.from('support_ticket_messages').insert({
+      const { error } = await adminDb.from('support_ticket_messages').insert({
         ticket_id: selected.id,
         sender_id: senderId,
         body: newMessage.trim(),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 
 interface AuditEntry {
@@ -33,7 +33,7 @@ export default function AuditLog() {
         // Fetch actor emails
         const actorIds = [...new Set(data.map(e => e.actor_id).filter(Boolean))];
         const { data: profiles } = actorIds.length > 0
-          ? await supabase.from('profiles').select('id, email').in('id', actorIds)
+          ? await adminDb.from('profiles').select('id, email').in('id', actorIds)
           : { data: [] };
 
         const profileMap = new Map((profiles || []).map(p => [p.id, p.email]));

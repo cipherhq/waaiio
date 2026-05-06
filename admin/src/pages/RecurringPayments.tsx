@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -62,11 +62,11 @@ export default function RecurringPayments() {
       const svcIds = [...new Set((data || []).map(r => r.service_id).filter(Boolean))];
 
       const { data: businesses } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
         : { data: [] };
 
       const { data: services } = svcIds.length > 0
-        ? await supabase.from('services').select('id, name, billing_type').in('id', svcIds)
+        ? await adminDb.from('services').select('id, name, billing_type').in('id', svcIds)
         : { data: [] };
 
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));

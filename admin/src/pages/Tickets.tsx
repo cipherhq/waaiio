@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -71,7 +71,7 @@ export default function Tickets() {
         // 2. Enrich with business names
         const bizIds = [...new Set(rows.map(t => t.business_id).filter(Boolean))];
         const { data: bizData } = bizIds.length > 0
-          ? await supabase.from('businesses').select('id, name').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
           : { data: [] };
 
         const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
@@ -82,7 +82,7 @@ export default function Tickets() {
         // 3. Enrich with event names
         const eventIds = [...new Set(rows.map(t => t.event_id).filter(Boolean))];
         const { data: eventData } = eventIds.length > 0
-          ? await supabase.from('events').select('id, name, date, venue').in('id', eventIds)
+          ? await adminDb.from('events').select('id, name, date, venue').in('id', eventIds)
           : { data: [] };
 
         const eventMap = new Map((eventData || []).map(e => [e.id, e]));

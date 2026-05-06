@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -70,7 +70,7 @@ export default function Orders() {
       // Load business names
       const bizIds = [...new Set(rows.map(o => o.business_id).filter(Boolean))];
       const { data: bizData } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
         : { data: [] };
 
       const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
@@ -81,7 +81,7 @@ export default function Orders() {
       // Load customer profiles
       const customerIds = [...new Set(rows.map(o => o.customer_id).filter(Boolean))];
       const { data: profileData } = customerIds.length > 0
-        ? await supabase.from('profiles').select('id, first_name, last_name, email').in('id', customerIds)
+        ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', customerIds)
         : { data: [] };
 
       const profileMap = new Map(
@@ -91,7 +91,7 @@ export default function Orders() {
       // Count items per order
       const orderIds = rows.map(o => o.id);
       const { data: itemCounts } = orderIds.length > 0
-        ? await supabase.from('order_items').select('order_id')
+        ? await adminDb.from('order_items').select('order_id')
             .in('order_id', orderIds)
         : { data: [] };
 

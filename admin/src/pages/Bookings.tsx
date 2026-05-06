@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -61,7 +61,7 @@ export default function Bookings() {
       // Load business names + categories to filter out giving orgs
       const bizIds = [...new Set(rows.map(b => b.business_id).filter(Boolean))];
       const { data: bizData } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name, category').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name, category').in('id', bizIds)
         : { data: [] };
 
       // Exclude giving-category businesses
@@ -80,7 +80,7 @@ export default function Bookings() {
       // Load customer profiles
       const customerIds = [...new Set(rows.map(b => b.customer_id).filter(Boolean))];
       const { data: profileData } = customerIds.length > 0
-        ? await supabase.from('profiles').select('id, first_name, last_name, email').in('id', customerIds)
+        ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', customerIds)
         : { data: [] };
 
       const profileMap = new Map(
