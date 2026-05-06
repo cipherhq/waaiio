@@ -143,10 +143,10 @@ export function getCategoryGroups(): Array<{ group: string; categories: Array<{ 
     let group = 'Other';
     if (cache) {
       const cached = cache.find(c => c.key === cat.key);
-      if (cached) group = (cached as Record<string, unknown>).category_group as string || 'Other';
+      if (cached) group = ((cached as unknown) as Record<string, unknown>).category_group as string || 'Other';
     } else {
-      const bc = BUSINESS_CATEGORIES.find(c => c.key === cat.key) as Record<string, unknown> | undefined;
-      group = (bc?.group as string) || 'Other';
+      const bc = BUSINESS_CATEGORIES.find(c => c.key === cat.key);
+      group = bc?.group || 'Other';
     }
 
     if (!groupMap.has(group)) groupMap.set(group, []);
