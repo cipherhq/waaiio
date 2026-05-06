@@ -1903,8 +1903,8 @@ export default function ProductsPage() {
             >
               {/* Image */}
               {product.image_url ? (
-                <div className="h-36 w-full bg-gray-100">
-                  <img src={product.image_url} alt={product.name} className="h-full w-full object-cover" />
+                <div className="h-44 w-full bg-gray-50 p-2">
+                  <img src={product.image_url} alt={product.name} className="h-full w-full object-contain" />
                 </div>
               ) : (
                 <div className="flex h-20 w-full items-center justify-center bg-gray-50">
