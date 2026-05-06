@@ -70,15 +70,65 @@ function getFirstStepForCapability(cap: CapabilityId): string {
 const selectCapabilityStep: FlowStepConfig = {
   id: 'select_capability',
 
-  async prompt(ctx: FlowContext) {
+  async skipIf(ctx: FlowContext) {
+    if (!ctx.business) return false;
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
-    const category = ctx.business?.category || 'other';
+    const businessId = ctx.business.id;
 
-    // Filter out non-user-facing capabilities (background or dashboard-only)
+    // Filter out non-user-facing capabilities
     const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
-    // If scheduling is present, payment/invoice happen within the booking flow
     if (capabilities.includes('scheduling')) { nonUserFacing.add('payment'); nonUserFacing.add('invoice'); }
-    const userFacing = capabilities.filter(c => !nonUserFacing.has(c));
+    let userFacing = capabilities.filter(c => !nonUserFacing.has(c));
+
+    // Only keep capabilities that have backing data
+    const checks = await Promise.all(userFacing.map(async (cap): Promise<[CapabilityId, boolean]> => {
+      switch (cap) {
+        case 'ordering': {
+          const { count } = await ctx.supabase.from('products').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true).is('deleted_at', null);
+          return [cap, (count || 0) > 0];
+        }
+        case 'giving': {
+          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true).eq('service_type', 'giving').is('deleted_at', null);
+          return [cap, (count || 0) > 0];
+        }
+        case 'scheduling': {
+          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
+          return [cap, (count || 0) > 0];
+        }
+        case 'ticketing': {
+          const { count } = await ctx.supabase.from('events').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
+          return [cap, (count || 0) > 0];
+        }
+        case 'crowdfunding': {
+          const { count } = await ctx.supabase.from('campaigns').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
+          return [cap, (count || 0) > 0];
+        }
+        default:
+          return [cap, true]; // chat, waitlist, queue — always available
+      }
+    }));
+    userFacing = checks.filter(([, hasData]) => hasData).map(([cap]) => cap);
+
+    // Store filtered list for prompt to use
+    ctx.session.session_data._filtered_capabilities = userFacing;
+
+    // If 0 or 1 capability with data, auto-select and skip the menu
+    if (userFacing.length <= 1) {
+      const cap = userFacing[0] || capabilities[0] || 'scheduling';
+      ctx.session.session_data.active_capability = cap;
+      return true;
+    }
+    return false;
+  },
+
+  async prompt(ctx: FlowContext) {
+    const userFacing = (ctx.session.session_data._filtered_capabilities as CapabilityId[]) || [];
+    const category = ctx.business?.category || 'other';
 
     // WhatsApp buttons max 3 — use a list for more options
     if (userFacing.length <= 3) {
