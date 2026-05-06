@@ -133,6 +133,36 @@ export function getCategoryDefaultCapabilities(key: string): string[] | null {
   return cat?.default_capabilities ?? null;
 }
 
+/** Get categories grouped by category_group — for onboarding picker */
+export function getCategoryGroups(): Array<{ group: string; categories: Array<{ key: string; label: string; icon: string; flow: FlowType }> }> {
+  const list = getCategoryList();
+  const groupMap = new Map<string, Array<{ key: string; label: string; icon: string; flow: FlowType }>>();
+
+  for (const cat of list) {
+    // Get group from cache or hardcoded fallback
+    let group = 'Other';
+    if (cache) {
+      const cached = cache.find(c => c.key === cat.key);
+      if (cached) group = (cached as Record<string, unknown>).category_group as string || 'Other';
+    } else {
+      const bc = BUSINESS_CATEGORIES.find(c => c.key === cat.key) as Record<string, unknown> | undefined;
+      group = (bc?.group as string) || 'Other';
+    }
+
+    if (!groupMap.has(group)) groupMap.set(group, []);
+    groupMap.get(group)!.push(cat);
+  }
+
+  // Sort groups alphabetically, but "Other" always last
+  return [...groupMap.entries()]
+    .sort(([a], [b]) => {
+      if (a === 'Other') return 1;
+      if (b === 'Other') return -1;
+      return a.localeCompare(b);
+    })
+    .map(([group, categories]) => ({ group, categories }));
+}
+
 // ── Hardcoded fallback (converts constants.ts data to CategoryTemplate shape) ──
 
 function hardcodedFallback(key: string): CategoryTemplate | null {

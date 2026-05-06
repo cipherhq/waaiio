@@ -114,6 +114,7 @@ export default function CategoryTemplates() {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [flowFilter, setFlowFilter] = useState('all');
+  const [groupFilter, setGroupFilter] = useState('all');
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const perPage = 20;
 
@@ -133,6 +134,10 @@ export default function CategoryTemplates() {
   const [formLabels, setFormLabels] = useState<typeof EMPTY_LABELS>({ ...EMPTY_LABELS });
   const [formServices, setFormServices] = useState<DefaultService[]>([]);
   const [formCapabilities, setFormCapabilities] = useState<string[]>([]);
+  const [formGroup, setFormGroup] = useState('Other');
+
+  // Derive unique groups from templates
+  const allGroups = [...new Set(templates.map(t => (t as Record<string, unknown>).category_group as string || 'Other'))].sort();
 
   const loadingRef = useRef(false);
 
@@ -163,6 +168,7 @@ export default function CategoryTemplates() {
       if (!t.label.toLowerCase().includes(q) && !t.key.toLowerCase().includes(q)) return false;
     }
     if (flowFilter !== 'all' && t.flow_type !== flowFilter) return false;
+    if (groupFilter !== 'all' && ((t as Record<string, unknown>).category_group || 'Other') !== groupFilter) return false;
     if (activeFilter === 'active' && !t.is_active) return false;
     if (activeFilter === 'inactive' && t.is_active) return false;
     return true;
@@ -190,6 +196,7 @@ export default function CategoryTemplates() {
     setFormLabels({ ...EMPTY_LABELS });
     setFormServices([]);
     setFormCapabilities(['scheduling', 'feedback', 'chat']);
+    setFormGroup('Other');
     setModalOpen(true);
   }
 
@@ -203,6 +210,7 @@ export default function CategoryTemplates() {
     setFormActive(t.is_active);
     setFormSortOrder(t.sort_order);
     setFormGreeting(t.default_greeting);
+    setFormGroup((t as Record<string, unknown>).category_group as string || 'Other');
     const labels = t.labels as typeof EMPTY_LABELS;
     setFormLabels({
       entityName: labels.entityName || '',
@@ -242,6 +250,7 @@ export default function CategoryTemplates() {
         default_greeting: formGreeting,
         labels: formLabels,
         default_services: formServices.filter(s => s.name.trim()),
+        category_group: formGroup,
         metadata: { default_capabilities: formCapabilities },
         updated_at: new Date().toISOString(),
       };
@@ -406,6 +415,17 @@ export default function CategoryTemplates() {
         </select>
 
         <select
+          value={groupFilter}
+          onChange={e => { setGroupFilter(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+        >
+          <option value="all">All Groups</option>
+          {allGroups.map(g => (
+            <option key={g} value={g}>{g}</option>
+          ))}
+        </select>
+
+        <select
           value={activeFilter}
           onChange={e => { setActiveFilter(e.target.value as 'all' | 'active' | 'inactive'); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
@@ -415,9 +435,9 @@ export default function CategoryTemplates() {
           <option value="inactive">Inactive</option>
         </select>
 
-        {(search || flowFilter !== 'all' || activeFilter !== 'all') && (
+        {(search || flowFilter !== 'all' || groupFilter !== 'all' || activeFilter !== 'all') && (
           <button
-            onClick={() => { setSearch(''); setFlowFilter('all'); setActiveFilter('all'); setPage(1); }}
+            onClick={() => { setSearch(''); setFlowFilter('all'); setGroupFilter('all'); setActiveFilter('all'); setPage(1); }}
             className="text-sm text-brand hover:underline"
           >
             Clear filters
@@ -436,6 +456,7 @@ export default function CategoryTemplates() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Icon</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Label</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Key</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Group</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Flow Type</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Services</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
@@ -449,6 +470,7 @@ export default function CategoryTemplates() {
                   <td className="px-4 py-3 text-lg">{t.icon}</td>
                   <td className="px-4 py-3 font-medium text-gray-900">{t.label}</td>
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">{t.key}</td>
+                  <td className="px-4 py-3 text-xs text-gray-500">{(t as Record<string, unknown>).category_group as string || 'Other'}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${FLOW_BADGE_COLORS[t.flow_type] || 'bg-gray-100 text-gray-600'}`}>
                       {t.flow_type}
@@ -548,6 +570,20 @@ export default function CategoryTemplates() {
                     <option key={f} value={f}>{f.charAt(0).toUpperCase() + f.slice(1)}</option>
                   ))}
                 </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Group</label>
+                <input
+                  list="group-options"
+                  value={formGroup}
+                  onChange={e => setFormGroup(e.target.value)}
+                  placeholder="e.g. Beauty & Wellness"
+                  className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                />
+                <datalist id="group-options">
+                  {allGroups.map(g => <option key={g} value={g} />)}
+                </datalist>
+                <p className="mt-0.5 text-xs text-gray-400">Type a new group name or select existing</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Sort Order</label>
