@@ -186,7 +186,8 @@ export default function ImpersonationMode() {
         return;
       }
 
-      const res = await fetch('/api/admin/impersonate', {
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/impersonate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

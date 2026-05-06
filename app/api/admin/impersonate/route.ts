@@ -1,13 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { randomBytes } from 'crypto';
 import { logger } from '@/lib/logger';
 
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+}
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders() });
+}
+
 export async function POST(request: NextRequest) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  // Auth from header (admin app sends Bearer token)
+  const authHeader = request.headers.get('Authorization');
+  const token = authHeader?.replace('Bearer ', '');
+
+  const supabase = createServiceClient();
+
+  // Verify the token by getting the user from Supabase auth
+  let user: { id: string; email?: string } | null = null;
+  if (token) {
+    const { data } = await supabase.auth.getUser(token);
+    user = data?.user || null;
+  }
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Fallback: try cookie-based auth
+    const { createClient } = await import('@/lib/supabase/server');
+    const cookieSupabase = await createClient();
+    const { data: { user: cookieUser } } = await cookieSupabase.auth.getUser();
+    user = cookieUser;
+  }
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
   }
 
   // Verify admin or support role
@@ -18,14 +47,14 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!profile || !['admin', 'support'].includes(profile.role)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
   }
 
   const body = await request.json();
   const { business_id } = body;
 
   if (!business_id) {
-    return NextResponse.json({ error: 'Missing business_id' }, { status: 400 });
+    return NextResponse.json({ error: 'Missing business_id' }, { status: 400, headers: corsHeaders() });
   }
 
   // Verify the business exists
@@ -36,7 +65,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!business) {
-    return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    return NextResponse.json({ error: 'Business not found' }, { status: 404, headers: corsHeaders() });
   }
 
   try {
@@ -57,7 +86,7 @@ export async function POST(request: NextRequest) {
 
     if (insertError) {
       logger.error('Failed to create impersonation token:', insertError.message);
-      return NextResponse.json({ error: 'Failed to create token' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to create token' }, { status: 500, headers: corsHeaders() });
     }
 
     // Log to impersonation_logs
@@ -73,9 +102,9 @@ export async function POST(request: NextRequest) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || '';
     const url = `${appUrl}/dashboard/impersonate?token=${token}`;
 
-    return NextResponse.json({ url });
+    return NextResponse.json({ url }, { headers: corsHeaders() });
   } catch (error) {
     logger.error('Impersonate token error:', (error as Error).message);
-    return NextResponse.json({ error: 'Failed to generate impersonation token' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to generate impersonation token' }, { status: 500, headers: corsHeaders() });
   }
 }
