@@ -19,6 +19,7 @@ interface Customer {
   payment_count: number;
   total_spent: number;
   currency: string;
+  spending: Record<string, number>; // currency → amount
   first_seen: string;
   last_active: string;
 }
@@ -88,6 +89,10 @@ export default function Customers() {
         }])
       );
 
+      // Build business → country map for currency resolution
+      const bizCountryMap = new Map(bizData.map((b: { id: string; country_code?: string }) => [b.id, b.country_code || 'NG']));
+      const countryToCurrency: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS', IN: 'INR' };
+
       // Group by customer (user_id or guest_phone)
       const customerMap = new Map<string, {
         user_id: string | null;
@@ -99,6 +104,7 @@ export default function Customers() {
         payment_count: number;
         total_spent: number;
         currency: string;
+        spending: Record<string, number>;
         first_seen: string;
         last_active: string;
       }>();
@@ -114,7 +120,8 @@ export default function Customers() {
             booking_count: 0,
             payment_count: 0,
             total_spent: 0,
-            currency: 'NGN',
+            currency: 'USD',
+            spending: {},
             first_seen: new Date().toISOString(),
             last_active: new Date(0).toISOString(),
           });
@@ -139,8 +146,14 @@ export default function Customers() {
 
         const entry = getOrCreate(key, userId, name, email, phone);
         entry.booking_count++;
-        const amt = b.total_amount || b.amount || 0;
-        if (typeof amt === 'number') entry.total_spent += amt;
+        const amt = b.total_amount || b.deposit_amount || 0;
+        const cc = bizCountryMap.get(b.business_id) || 'NG';
+        const cur = countryToCurrency[cc] || 'NGN';
+        if (typeof amt === 'number' && amt > 0) {
+          entry.spending[cur] = (entry.spending[cur] || 0) + amt;
+          entry.total_spent += amt;
+          entry.currency = cur;
+        }
         if (b.business_id) entry.businesses.set(b.business_id, bizMap.get(b.business_id) || 'Unknown');
         if (b.created_at < entry.first_seen) entry.first_seen = b.created_at;
         if (b.created_at > entry.last_active) entry.last_active = b.created_at;
@@ -158,8 +171,12 @@ export default function Customers() {
 
         const entry = getOrCreate(key, userId, name, email, phone);
         entry.payment_count++;
-        if (p.currency) entry.currency = p.currency;
-        if (p.amount && typeof p.amount === 'number') entry.total_spent += p.amount;
+        const cur = p.currency || 'USD';
+        if (p.amount && typeof p.amount === 'number') {
+          entry.spending[cur] = (entry.spending[cur] || 0) + p.amount;
+          entry.total_spent += p.amount;
+          entry.currency = cur;
+        }
         if (p.business_id) entry.businesses.set(p.business_id, bizMap.get(p.business_id) || 'Unknown');
         if (p.created_at < entry.first_seen) entry.first_seen = p.created_at;
         if (p.created_at > entry.last_active) entry.last_active = p.created_at;
@@ -179,6 +196,7 @@ export default function Customers() {
           payment_count: entry.payment_count,
           total_spent: entry.total_spent,
           currency: entry.currency,
+          spending: entry.spending,
           first_seen: entry.first_seen,
           last_active: entry.last_active,
         });
@@ -316,7 +334,16 @@ export default function Customers() {
   // Stats
   const totalCustomers = customers.length;
   const withBookings = customers.filter(c => c.booking_count > 0).length;
-  const totalRevenue = customers.reduce((sum, c) => sum + c.total_spent, 0);
+  // Aggregate revenue by currency
+  const revenueByCurrency: Record<string, number> = {};
+  for (const c of customers) {
+    for (const [cur, amt] of Object.entries(c.spending || {})) {
+      revenueByCurrency[cur] = (revenueByCurrency[cur] || 0) + amt;
+    }
+  }
+  const revenueDisplay = Object.entries(revenueByCurrency)
+    .map(([cur, amt]) => fmtCurrency(amt, cur))
+    .join(' + ') || '—';
   const uniqueBiz = new Set(customers.flatMap(c => c.businesses.map(b => b.id))).size;
 
   const hasFilters = search || businessFilter !== 'all';
@@ -338,7 +365,7 @@ export default function Customers() {
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard label="Total Customers" value={totalCustomers} icon={Users} color="blue" />
         <SummaryCard label="With Bookings" value={withBookings} icon={UserCheck} color="green" />
-        <SummaryCard label="Total Revenue" value={fmtCurrency(totalRevenue)} icon={CreditCard} color="purple" />
+        <SummaryCard label="Total Revenue" value={revenueDisplay} icon={CreditCard} color="purple" />
         <SummaryCard label="Businesses" value={uniqueBiz} icon={Building2} color="yellow" />
       </div>
 
@@ -412,7 +439,9 @@ export default function Customers() {
                   <td className="px-4 py-3 text-right text-gray-600">{c.booking_count}</td>
                   <td className="px-4 py-3 text-right text-gray-600">{c.payment_count}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {c.total_spent > 0 ? fmtCurrency(c.total_spent, c.currency) : '—'}
+                    {Object.keys(c.spending || {}).length > 0
+                      ? Object.entries(c.spending).map(([cur, amt]) => fmtCurrency(amt, cur)).join(' + ')
+                      : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtRelative(c.last_active)}</td>
                 </tr>
@@ -438,7 +467,11 @@ export default function Customers() {
             <DetailRow label="Phone" value={maskPhone(selected.phone)} />
             <DetailRow label="Bookings" value={selected.booking_count} />
             <DetailRow label="Payments" value={selected.payment_count} />
-            <DetailRow label="Total Spent" value={selected.total_spent > 0 ? fmtCurrency(selected.total_spent, selected.currency) : '—'} />
+            <DetailRow label="Total Spent" value={
+              Object.keys(selected.spending || {}).length > 0
+                ? Object.entries(selected.spending).map(([cur, amt]) => fmtCurrency(amt, cur)).join(' + ')
+                : '—'
+            } />
             <DetailRow label="First Seen" value={fmtDateTime(selected.first_seen)} />
             <DetailRow label="Last Active" value={fmtDateTime(selected.last_active)} />
 

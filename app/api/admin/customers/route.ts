@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
   for (const p of payments) if (p.business_id) allBizIds.add(p.business_id);
 
   const { data: businesses } = allBizIds.size > 0
-    ? await supabase.from('businesses').select('id, name').in('id', [...allBizIds])
+    ? await supabase.from('businesses').select('id, name, country_code').in('id', [...allBizIds])
     : { data: [] };
 
   // Collect all user IDs
