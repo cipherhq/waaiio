@@ -61,10 +61,25 @@ export default function Payments() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      // Batch-load business names + categories to filter out giving orgs
-      const bizIds = [...new Set((paymentData || []).map(p => p.business_id).filter(Boolean))];
-      const { data: businesses } = bizIds.length > 0
-        ? await supabase.from('businesses').select('id, name, category').in('id', bizIds)
+      // Resolve business IDs: directly from payment or via booking
+      const bookingIds = [...new Set((paymentData || []).map(p => p.booking_id).filter(Boolean))];
+      const { data: bookings } = bookingIds.length > 0
+        ? await supabase.from('bookings').select('id, business_id, reference_code').in('id', bookingIds)
+        : { data: [] };
+      const bookingMap = new Map((bookings || []).map(b => [b.id, b]));
+
+      // Collect all business IDs (from payments + bookings)
+      const allBizIds = new Set<string>();
+      for (const p of paymentData || []) {
+        if (p.business_id) allBizIds.add(p.business_id);
+        else if (p.booking_id) {
+          const bk = bookingMap.get(p.booking_id);
+          if (bk?.business_id) allBizIds.add(bk.business_id);
+        }
+      }
+
+      const { data: businesses } = allBizIds.size > 0
+        ? await supabase.from('businesses').select('id, name, category').in('id', [...allBizIds])
         : { data: [] };
 
       const givingBizIds = new Set(
@@ -72,13 +87,19 @@ export default function Payments() {
       );
       const bizMap = new Map((businesses || []).map(b => [b.id, b.name]));
 
-      // Filter out giving-category payments, then enrich
+      // Enrich payments with business name + booking reference
       const enriched: PaymentRecord[] = (paymentData || [])
-        .filter(p => !givingBizIds.has(p.business_id))
-        .map(p => ({
-          ...p,
-          business_name: bizMap.get(p.business_id) || 'Unknown',
-        }));
+        .map(p => {
+          const booking = p.booking_id ? bookingMap.get(p.booking_id) : null;
+          const resolvedBizId = p.business_id || booking?.business_id || null;
+          return {
+            ...p,
+            business_id: resolvedBizId,
+            business_name: resolvedBizId ? bizMap.get(resolvedBizId) || 'Unknown' : 'Unknown',
+            gateway_ref: booking?.reference_code || p.gateway_reference?.slice(-12) || p.id.slice(0, 8),
+          };
+        })
+        .filter(p => !givingBizIds.has(p.business_id));
 
       setPayments(enriched);
     } catch (error) {
@@ -288,7 +309,7 @@ export default function Payments() {
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 font-mono text-xs text-gray-600">
-                    {p.id.slice(0, 8)}...
+                    {p.gateway_ref || p.id.slice(0, 8)}
                   </td>
                   <td className="px-4 py-3 font-medium text-gray-900">{p.business_name}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
