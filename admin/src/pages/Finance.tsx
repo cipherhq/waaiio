@@ -4,6 +4,7 @@ import { supabase, adminDb } from '@/lib/supabase';
 interface Payment {
   id: string;
   amount: number;
+  currency: string | null;
   status: string;
   business_id: string;
   created_at: string;
@@ -57,7 +58,7 @@ export default function Finance() {
   useEffect(() => {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
-        adminDb.from('payments').select('id, amount, status, business_id, created_at'),
+        adminDb.from('payments').select('id, amount, currency, status, business_id, created_at'),
         adminDb.from('platform_fees').select('fee_total, waived, created_at'),
         adminDb.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
         adminDb.from('refunds').select('amount, status, created_at').eq('status', 'success'),
@@ -76,17 +77,43 @@ export default function Finance() {
     load();
   }, []);
 
-  // Compute metrics
+  // Resolve business → currency
+  const bizCurrencyMap = useMemo(() => {
+    const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+    const map = new Map<string, string>();
+    for (const b of businesses) {
+      map.set(b.id, countryToCur[b.country_code] || 'NGN');
+    }
+    return map;
+  }, [businesses]);
+
+  function getPaymentCurrency(p: Payment): string {
+    return p.currency || bizCurrencyMap.get(p.business_id) || 'NGN';
+  }
+
+  /** Format a per-currency record as "₦5,000 · $500" */
+  function formatMultiCurrency(amounts: Record<string, number>): string {
+    const entries = Object.entries(amounts).filter(([, a]) => a > 0);
+    if (entries.length === 0) return formatMoney(0);
+    return entries.map(([cur, amt]) => formatMoney(amt, cur)).join(' · ');
+  }
+
+  // Compute metrics (per-currency)
   const metrics = useMemo(() => {
     const successPayments = payments.filter(p => p.status === 'success');
-    const grossVolume = successPayments.reduce((s, p) => s + Number(p.amount || 0), 0);
 
-    const totalRefunds = refunds.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const grossVolume: Record<string, number> = {};
+    for (const p of successPayments) {
+      const cur = getPaymentCurrency(p);
+      grossVolume[cur] = (grossVolume[cur] || 0) + Number(p.amount || 0);
+    }
+
+    const totalRefunds: Record<string, number> = {};
+    for (const r of refunds) {
+      totalRefunds['NGN'] = (totalRefunds['NGN'] || 0) + Number(r.amount || 0); // refunds don't have currency yet
+    }
 
     const platformFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-    const gatewayFeeEstimate = grossVolume * 0.015; // ~1.5% estimate
-
-    const netPlatformRevenue = platformFees;
 
     const payoutsOwed = payouts
       .filter(p => ['pending', 'approved'].includes(p.status))
@@ -101,7 +128,6 @@ export default function Finance() {
       .reduce((s, p) => s + Number(p.net_amount || 0), 0);
 
     const outstanding = payoutsOwed + processingPayouts;
-    const cashPosition = grossVolume - paidOut - processingPayouts;
 
     // Payment status breakdown
     const paymentBuckets: Record<string, { count: number; amount: number }> = {};
@@ -119,23 +145,17 @@ export default function Finance() {
       payoutBuckets[p.status].amount += Number(p.net_amount || 0);
     }
 
-    const netVolume = grossVolume - totalRefunds;
-
     return {
       grossVolume,
       totalRefunds,
-      netVolume,
       platformFees,
-      gatewayFeeEstimate,
-      netPlatformRevenue,
       payoutsOwed,
       paidOut,
       outstanding,
-      cashPosition,
       paymentBuckets,
       payoutBuckets,
     };
-  }, [payments, fees, payouts, refunds]);
+  }, [payments, fees, payouts, refunds, bizCurrencyMap]);
 
   // Monthly rollup (last 12 months)
   const monthly = useMemo(() => {
@@ -223,16 +243,12 @@ export default function Finance() {
 
       {/* Metric Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard label="Gross Transaction Volume" value={formatMoney(metrics.grossVolume)} color="blue" />
-        <MetricCard label="Total Refunds" value={formatMoney(metrics.totalRefunds)} color="red" />
-        <MetricCard label="Net Volume" value={formatMoney(metrics.netVolume)} color="blue" />
+        <MetricCard label="Gross Transaction Volume" value={formatMultiCurrency(metrics.grossVolume)} color="blue" />
+        <MetricCard label="Total Refunds" value={formatMultiCurrency(metrics.totalRefunds)} color="red" />
         <MetricCard label="Platform Fees Earned" value={formatMoney(metrics.platformFees)} color="green" />
-        <MetricCard label="Gateway Fees (est.)" value={formatMoney(metrics.gatewayFeeEstimate)} color="gray" />
-        <MetricCard label="Net Platform Revenue" value={formatMoney(metrics.netPlatformRevenue)} color="indigo" />
         <MetricCard label="Payouts Owed" value={formatMoney(metrics.payoutsOwed)} color="yellow" />
         <MetricCard label="Paid Out" value={formatMoney(metrics.paidOut)} color="green" />
         <MetricCard label="Outstanding Liability" value={formatMoney(metrics.outstanding)} color="red" />
-        <MetricCard label="Cash Position (est.)" value={formatMoney(metrics.cashPosition)} color="blue" />
       </div>
 
       {/* Payment Status Breakdown */}
