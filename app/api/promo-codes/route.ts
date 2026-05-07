@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false });
 
     if (error) return NextResponse.json({ error: 'Failed to fetch promo codes' }, { status: 500 });
-    return NextResponse.json({ promoCodes: data });
+    return NextResponse.json({ codes: data });
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
@@ -53,6 +53,13 @@ export async function POST(request: NextRequest) {
 
     if (!businessId || !code || !discountType || discountValue === undefined) {
       return NextResponse.json({ error: 'businessId, code, discountType, discountValue required' }, { status: 400 });
+    }
+
+    if (discountValue <= 0) {
+      return NextResponse.json({ error: 'Discount value must be greater than 0' }, { status: 400 });
+    }
+    if (discountType === 'percentage' && discountValue > 100) {
+      return NextResponse.json({ error: 'Percentage discount cannot exceed 100%' }, { status: 400 });
     }
 
     const auth = await authenticateAndVerifyOwnership(businessId);
@@ -123,9 +130,19 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    // Support both query params and JSON body
+    let id: string | null = null;
+    let businessId: string | null = null;
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id');
-    const businessId = searchParams.get('businessId');
+    id = searchParams.get('id');
+    businessId = searchParams.get('businessId');
+    if (!id || !businessId) {
+      try {
+        const body = await request.json();
+        id = body.id || id;
+        businessId = body.businessId || businessId;
+      } catch { /* no body */ }
+    }
     if (!id || !businessId) return NextResponse.json({ error: 'id and businessId required' }, { status: 400 });
 
     const auth = await authenticateAndVerifyOwnership(businessId);

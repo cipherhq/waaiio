@@ -577,7 +577,110 @@ export const schedulingFlow: FlowDefinition = {
         }
         return { valid: true };
       },
+      async next() { return 'apply_promo'; },
+    },
+
+    // ── Apply Promo Code ──
+    {
+      id: 'apply_promo',
+      async skipIf(ctx: FlowContext) {
+        if (!ctx.business) return true;
+        // Skip if no active promo codes exist for this business
+        const { count } = await ctx.supabase
+          .from('promo_codes')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true);
+        return (count || 0) === 0;
+      },
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: 'Do you have a promo code?',
+          buttons: [
+            { id: 'promo_yes', title: 'Yes, enter code' },
+            { id: 'promo_no', title: 'No' },
+          ],
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'promo_no' || input.toLowerCase() === 'no' || input.toLowerCase() === 'skip') {
+          return { valid: true };
+        }
+        if (input === 'promo_yes') {
+          return { valid: true, data: { _promo_entering: true } };
+        }
+        // User typed a code directly
+        const code = input.toUpperCase().trim();
+        if (code.length < 3) return { valid: false, errorMessage: 'Please enter a valid promo code (min 3 characters).' };
+
+        const { data: promo } = await ctx.supabase
+          .from('promo_codes')
+          .select('*')
+          .eq('business_id', ctx.business!.id)
+          .eq('code', code)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (!promo) return { valid: false, errorMessage: 'Invalid promo code.' };
+        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
+        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
+
+        const servicePrice = (ctx.session.session_data.service_price as number) || 0;
+        if (promo.min_order_amount && servicePrice < promo.min_order_amount) {
+          return { valid: false, errorMessage: `Minimum amount for this code is ${formatCurrency(promo.min_order_amount, (ctx.business?.country_code || 'NG') as CountryCode)}.` };
+        }
+
+        const discount = promo.discount_type === 'percentage'
+          ? Math.round(servicePrice * promo.discount_value / 100)
+          : Math.min(promo.discount_value, servicePrice);
+
+        return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._promo_entering) return 'enter_promo_code';
+        return 'select_quantity';
+      },
+    },
+
+    // ── Enter Promo Code (text input) ──
+    {
+      id: 'enter_promo_code',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: 'Please type your promo code:' }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const code = input.toUpperCase().trim();
+        if (code.length < 3) return { valid: false, errorMessage: 'Please enter a valid promo code.' };
+
+        const { data: promo } = await ctx.supabase
+          .from('promo_codes')
+          .select('*')
+          .eq('business_id', ctx.business!.id)
+          .eq('code', code)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or type *skip*.' };
+        if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
+        if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
+
+        const servicePrice = (ctx.session.session_data.service_price as number) || 0;
+        if (promo.min_order_amount && servicePrice < promo.min_order_amount) {
+          return { valid: false, errorMessage: `Minimum amount for this code is ${formatCurrency(promo.min_order_amount, (ctx.business?.country_code || 'NG') as CountryCode)}.` };
+        }
+
+        const discount = promo.discount_type === 'percentage'
+          ? Math.round(servicePrice * promo.discount_value / 100)
+          : Math.min(promo.discount_value, servicePrice);
+
+        return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
+      },
       async next() { return 'select_quantity'; },
+      async skipIf(ctx: FlowContext) {
+        // Skip if user already entered a code in the previous step
+        return !!ctx.session.session_data._promo_code;
+      },
     },
 
     // ── Select Quantity ──
@@ -848,6 +951,10 @@ export const schedulingFlow: FlowDefinition = {
         if (selectedAddons && selectedAddons.length > 0) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           lines.push(`➕ Add-ons: ${selectedAddons.map(a => `${a.name} (${formatCurrency(a.price, cc)})`).join(', ')}`);
+        }
+        if (d._promo_discount && d._promo_code) {
+          const cc2 = (ctx.business?.country_code || 'NG') as CountryCode;
+          lines.push(`🎟️ Promo (${d._promo_code}): -${formatCurrency(d._promo_discount as number, cc2)}`);
         }
         if (d.venue_address) lines.push(`📍 ${d.venue_address as string}`);
         if (d.special_requests) lines.push(`📝 ${d.special_requests as string}`);

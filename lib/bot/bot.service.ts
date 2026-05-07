@@ -445,7 +445,7 @@ export class BotService {
     // Check for restart keywords (skip on free-text steps)
     const currentStep = session?.current_step || '';
     const isChatStep = currentStep === 'chat_handoff' || currentStep === 'chat_start';
-    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue'].includes(currentStep);
+    const isFreeTextStep = isChatStep || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(currentStep);
 
     // Detect greetings and booking intent for restart detection (without detectIntent)
     const normalizedForRestart = text.toLowerCase().trim();
@@ -956,7 +956,7 @@ export class BotService {
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
-    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue'].includes(step);
+    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
       // Use cached category from session_data (saved during session creation)
