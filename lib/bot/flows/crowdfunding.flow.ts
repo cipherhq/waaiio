@@ -47,13 +47,13 @@ const selectCampaignStep: FlowStepConfig = {
     }
 
     const campaignId = input.replace('campaign_', '');
-    const { data: campaign } = await ctx.supabase
+    const { data: campaign, error } = await ctx.supabase
       .from('campaigns')
-      .select('id, title, goal_amount, raised_amount, donor_count, min_donation, max_donation')
+      .select('*')
       .eq('id', campaignId)
       .single();
 
-    if (!campaign) {
+    if (error || !campaign) {
       return { valid: false, errorMessage: 'Campaign not found. Please try again.' };
     }
 
@@ -65,8 +65,8 @@ const selectCampaignStep: FlowStepConfig = {
         campaign_goal: campaign.goal_amount,
         campaign_raised: campaign.raised_amount,
         campaign_donors: campaign.donor_count,
-        campaign_min_donation: campaign.min_donation,
-        campaign_max_donation: campaign.max_donation,
+        campaign_min_donation: campaign.min_donation ?? null,
+        campaign_max_donation: campaign.max_donation ?? null,
       },
     };
   },
