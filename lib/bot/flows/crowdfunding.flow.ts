@@ -179,7 +179,7 @@ const confirmDonationStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `Donate ${formatCurrency(sd.donation_amount as number, country)} to *${sd.campaign_title}*?\n\nYou'll receive a payment link.`,
+      body: `Donate ${formatCurrency(sd.donation_amount as number, country)} to *${sd.campaign_title}*?`,
       buttons: [
         { id: 'confirm_yes', title: 'Confirm' },
         { id: 'confirm_cancel', title: 'Cancel' },
