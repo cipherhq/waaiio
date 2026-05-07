@@ -16,6 +16,8 @@ interface Campaign {
   end_date: string | null;
   status: string;
   donor_count: number;
+  min_donation: number | null;
+  max_donation: number | null;
   created_at: string;
 }
 
@@ -40,6 +42,8 @@ export default function CampaignsPage() {
     status: 'active',
     raised_amount: 0,
     donor_count: 0,
+    min_donation: null as number | null,
+    max_donation: null as number | null,
   });
 
   useEffect(() => {
@@ -68,6 +72,8 @@ export default function CampaignsPage() {
       status: 'active',
       raised_amount: 0,
       donor_count: 0,
+      min_donation: null,
+      max_donation: null,
     });
     setView('add');
   }
@@ -83,6 +89,8 @@ export default function CampaignsPage() {
       status: campaign.status,
       raised_amount: campaign.raised_amount,
       donor_count: campaign.donor_count,
+      min_donation: campaign.min_donation,
+      max_donation: campaign.max_donation,
     });
     setView('edit');
   }
@@ -92,15 +100,21 @@ export default function CampaignsPage() {
     setSaving(true);
     const supabase = createClient();
 
+    // Resolve currency from business country
+    const { getCountry } = await import('@/lib/countries');
+    const bizCurrency = getCountry(country)?.currency_code ?? 'NGN';
+
     const payload = {
       business_id: business.id,
       title: form.title.trim(),
       description: form.description.trim() || null,
       goal_amount: form.goal_amount,
-      currency: 'NGN',
+      currency: bizCurrency,
       start_date: form.start_date || null,
       end_date: form.end_date || null,
       status: form.status,
+      min_donation: form.min_donation && form.min_donation > 0 ? form.min_donation : null,
+      max_donation: form.max_donation && form.max_donation > 0 ? form.max_donation : null,
     };
 
     if (view === 'add') {
@@ -189,6 +203,33 @@ export default function CampaignsPage() {
                 placeholder="0"
                 className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Minimum Donation</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.min_donation ?? ''}
+                  onChange={(e) => setForm({ ...form, min_donation: e.target.value ? Number(e.target.value) : null })}
+                  placeholder="No minimum"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-0.5 text-xs text-gray-400">Leave empty for no minimum</p>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Maximum Donation</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.max_donation ?? ''}
+                  onChange={(e) => setForm({ ...form, max_donation: e.target.value ? Number(e.target.value) : null })}
+                  placeholder="No maximum"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-0.5 text-xs text-gray-400">Leave empty for no maximum</p>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

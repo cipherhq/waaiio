@@ -21,13 +21,18 @@ export async function GET(
 
       const { data: invoice } = await supabase
         .from('invoices')
-        .select('id, token')
+        .select('id, token, token_expires_at')
         .eq('id', id)
         .eq('token', tokenParam)
         .single();
 
       if (!invoice) {
         return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      }
+
+      // Check token expiry
+      if (invoice.token_expires_at && new Date(invoice.token_expires_at) < new Date()) {
+        return NextResponse.json({ error: 'This link has expired' }, { status: 410 });
       }
     } else {
       // Auth required

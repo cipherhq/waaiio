@@ -1,7 +1,7 @@
 import type { ShortestConfig } from "@antiwork/shortest";
 
 export default {
-  headless: false,
+  headless: true,
   baseUrl: "https://waaiio.com",
   testPattern: "**/__shortest__/**/*.test.ts",
   ai: {

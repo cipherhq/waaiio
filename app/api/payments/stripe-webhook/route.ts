@@ -133,24 +133,28 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Handle invoice payments
+          // Handle invoice payments (with partial payment accumulation)
           if (payment.invoice_id) {
-            await supabase
-              .from('invoices')
-              .update({
-                status: 'paid',
-                amount_paid: payment.amount,
-                paid_at: new Date().toISOString(),
-              })
-              .eq('id', payment.invoice_id);
-
-            // Record platform fee for invoice
             const { data: invoice } = await supabase
               .from('invoices')
-              .select('business_id, total_amount')
+              .select('business_id, total_amount, amount_paid')
               .eq('id', payment.invoice_id)
               .single();
 
+            const newAmountPaid = (Number(invoice?.amount_paid) || 0) + payment.amount;
+            const totalAmount = Number(invoice?.total_amount) || 0;
+            const isFullyPaid = newAmountPaid >= totalAmount;
+
+            await supabase
+              .from('invoices')
+              .update({
+                status: isFullyPaid ? 'paid' : 'sent',
+                amount_paid: newAmountPaid,
+                paid_at: isFullyPaid ? new Date().toISOString() : null,
+              })
+              .eq('id', payment.invoice_id);
+
+            // Record platform fee for invoice using centralized calculator
             if (invoice?.business_id) {
               const { data: invBusiness } = await supabase
                 .from('businesses')
@@ -160,19 +164,17 @@ export async function POST(request: NextRequest) {
 
               if (invBusiness) {
                 const invIsInTrial = new Date(invBusiness.trial_ends_at) > new Date();
-                const invTier = invBusiness.subscription_tier || 'free';
-                const invFeePercentage = invIsInTrial ? 0 : (invTier === 'business' ? 1.0 : invTier === 'growth' ? 1.5 : 2.5);
-                const invFeeFlat = invIsInTrial ? 0 : (invTier === 'business' ? 0.25 : invTier === 'growth' ? 0.25 : 0.50);
+                const invTier = (invBusiness.subscription_tier || 'free') as SubscriptionTier;
                 const invAmount = invoice.total_amount || payment.amount;
-                const invFeeTotal = invIsInTrial ? 0 : Math.round((invAmount * invFeePercentage / 100 + invFeeFlat) * 100) / 100;
+                const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(invAmount, invTier, invIsInTrial);
 
                 await supabase.from('platform_fees').insert({
                   business_id: invoice.business_id,
                   invoice_id: payment.invoice_id,
                   transaction_amount: invAmount,
-                  fee_percentage: invFeePercentage,
-                  fee_flat: invFeeFlat,
-                  fee_total: invFeeTotal,
+                  fee_percentage: feePercentage,
+                  fee_flat: feeFlat,
+                  fee_total: feeTotal,
                   tier: invTier,
                 });
               }
@@ -326,6 +328,31 @@ export async function POST(request: NextRequest) {
             charged_at: now,
           });
 
+          // Record platform fee for recurring payment
+          if (booking?.id) {
+            const { data: recBusiness } = await supabase
+              .from('businesses')
+              .select('subscription_tier, trial_ends_at')
+              .eq('id', sub.business_id)
+              .single();
+
+            if (recBusiness) {
+              const recIsInTrial = new Date(recBusiness.trial_ends_at) > new Date();
+              const recTier = (recBusiness.subscription_tier || 'free') as SubscriptionTier;
+              const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(amountPaid, recTier, recIsInTrial);
+
+              await supabase.from('platform_fees').insert({
+                business_id: sub.business_id,
+                booking_id: booking.id,
+                transaction_amount: amountPaid,
+                fee_percentage: feePercentage,
+                fee_flat: feeFlat,
+                fee_total: feeTotal,
+                tier: recTier,
+              });
+            }
+          }
+
           // Update subscription totals
           const nextCharge = new Date();
           if (sub.frequency === 'weekly') {
@@ -373,7 +400,7 @@ export async function POST(request: NextRequest) {
             business_id: sub.business_id,
             user_id: sub.user_id,
             amount: 0,
-            currency: 'USD',
+            currency: ((data.currency as string)?.toUpperCase()) || 'USD',
             status: 'failed',
             gateway: 'stripe',
             failure_reason: 'Payment failed',

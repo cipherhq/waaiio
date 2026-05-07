@@ -3,6 +3,7 @@ import { type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 
 /**
  * GET /api/cron/auto-payout
@@ -72,16 +73,7 @@ export async function GET(request: NextRequest) {
 
       if (existing) continue;
 
-      // Sum successful payments in the period
-      const { data: payments } = await supabase
-        .from('payments')
-        .select('amount, created_at')
-        .eq('status', 'success')
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString());
-
-      // Filter payments by business (through bookings/orders)
-      // For simplicity, get platform fees which are already per-business
+      // Get platform fees for this business in the period
       const { data: fees } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total')
@@ -133,7 +125,7 @@ export async function GET(request: NextRequest) {
         gross_amount: gross,
         fee_amount: totalFees,
         net_amount: net,
-        currency: isNG ? (biz.country_code === 'GH' ? 'GHS' : 'NGN') : 'USD',
+        currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,
         payout_account_id: payoutAccount?.id || null,
         flags: holdReasons.length > 0 ? holdReasons : null,
@@ -160,7 +152,7 @@ export async function GET(request: NextRequest) {
                 name: payoutAccount.account_name,
                 account_number: payoutAccount.account_number,
                 bank_code: payoutAccount.bank_code,
-                currency: biz.country_code === 'GH' ? 'GHS' : 'NGN',
+                currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
               }),
             });
             const recipientData = await recipientRes.json();

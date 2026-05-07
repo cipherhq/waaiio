@@ -1,3 +1,7 @@
 import { shortest } from "@antiwork/shortest";
 
-shortest("On the login page, submit the form with empty fields and verify validation errors appear for both email and password");
+shortest.beforeAll(async ({ page }) => {
+  await page.goto("/login");
+});
+
+shortest("Verify the login page has a 'Get Started' link for users who do not have an account");

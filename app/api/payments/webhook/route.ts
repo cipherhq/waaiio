@@ -250,7 +250,7 @@ export async function POST(request: NextRequest) {
             business_id: sub.business_id || '',
             user_id: sub.user_id || '',
             amount: 0,
-            currency: 'NGN',
+            currency: (data.currency as string) || 'NGN',
             status: 'failed',
             gateway: 'paystack',
             failure_reason: (data.gateway_response as string) || 'Payment failed',

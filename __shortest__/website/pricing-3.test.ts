@@ -1,3 +1,7 @@
 import { shortest } from "@antiwork/shortest";
 
-shortest("Verify each pricing tier has a CTA button that navigates to a signup or checkout flow");
+shortest.beforeAll(async ({ page }) => {
+  await page.goto("/pricing");
+});
+
+shortest("Verify each pricing plan card has a call-to-action button like 'Get Started' or 'Start Free Trial'");

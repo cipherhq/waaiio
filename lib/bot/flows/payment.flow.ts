@@ -83,10 +83,11 @@ export const paymentFlow: FlowDefinition = {
       id: 'enter_amount',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const symbol = getCurrencySymbol(cc);
+        const isGiving = ctx.session.session_data.active_capability === 'giving';
+        const verb = isGiving ? 'give towards' : 'pay for';
         return [{
           type: 'text',
-          text: `How much would you like to pay for *${ctx.session.session_data.service_name}*?\n\nType the amount (e.g. 5000):`,
+          text: `How much would you like to ${verb} *${ctx.session.session_data.service_name}*?\n\nType the amount (e.g. 5000):`,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {

@@ -47,6 +47,7 @@ export default function GivingPage() {
       .eq('business_id', business.id)
       .eq('service_type', 'giving')
       .is('deleted_at', null)
+      .order('is_active', { ascending: false })
       .order('sort_order');
     setCategories(data || []);
     setLoading(false);
@@ -98,6 +99,12 @@ export default function GivingPage() {
     setIsRecurring(cat.billing_type === 'recurring');
     setInterval((cat.recurring_interval as 'weekly' | 'monthly') || 'monthly');
     setView('edit');
+  };
+
+  const handleToggleActive = async (id: string, currentActive: boolean) => {
+    const supabase = createClient();
+    await supabase.from('services').update({ is_active: !currentActive }).eq('id', id);
+    fetchCategories();
   };
 
   const handleDelete = async (id: string) => {
@@ -187,16 +194,26 @@ export default function GivingPage() {
       ) : (
         <div className="space-y-3">
           {categories.map(cat => (
-            <div key={cat.id} className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 flex items-center justify-between">
+            <div key={cat.id} className={`rounded-lg border bg-white dark:bg-gray-800 p-4 flex items-center justify-between ${cat.is_active ? 'border-gray-200 dark:border-gray-700' : 'border-gray-200 dark:border-gray-700 opacity-60'}`}>
               <div>
-                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{cat.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{cat.name}</h3>
+                  {!cat.is_active && <span className="text-[10px] uppercase tracking-wide font-medium text-gray-400 bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">Inactive</span>}
+                </div>
                 <p className="text-xs text-gray-500 mt-0.5">
                   {cat.price_is_variable ? 'Members choose amount' : formatCurrency(cat.price, cc)}
                   {cat.billing_type === 'recurring' && ` · Recurring ${cat.recurring_interval}`}
                 </p>
                 {cat.description && <p className="text-xs text-gray-400 mt-0.5">{cat.description}</p>}
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleToggleActive(cat.id, cat.is_active)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors ${cat.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
+                  title={cat.is_active ? 'Active — tap to disable' : 'Inactive — tap to enable'}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform mt-0.5 ${cat.is_active ? 'translate-x-4 ml-0.5' : 'translate-x-0.5'}`} />
+                </button>
                 <button onClick={() => handleEdit(cat)} className="text-xs text-blue-600 hover:text-blue-800 font-medium">Edit</button>
                 <button onClick={() => handleDelete(cat.id)} className="text-xs text-red-500 hover:text-red-700">Delete</button>
               </div>

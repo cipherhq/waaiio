@@ -22,6 +22,8 @@ export async function initializePayment(
     businessId?: string;
     /** Campaign ID for donation tracking */
     campaignId?: string;
+    /** Donor name for campaign donations */
+    donorName?: string;
   },
 ): Promise<{ url: string; reference: string } | null> {
   try {
@@ -184,7 +186,9 @@ export async function initializePayment(
         campaign_id: opts.campaignId,
         business_id: opts.businessId || '',
         donor_phone: opts.phone.startsWith('+') ? opts.phone : `+${opts.phone}`,
+        donor_name: opts.donorName || null,
         amount: opts.amount,
+        currency: currencyCode,
         reference_code: opts.referenceCode,
         status: 'pending',
       });

@@ -87,6 +87,7 @@ export async function GET(request: NextRequest) {
               quantity: item.quantity,
               unit_price: item.unit_price,
               amount: item.amount,
+              sort_order: item.sort_order || 0,
             }))
           );
         }

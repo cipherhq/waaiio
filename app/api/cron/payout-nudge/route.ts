@@ -25,7 +25,6 @@ export async function GET(request: NextRequest) {
   if (authError) return authError;
 
   const supabase = createServiceClient();
-  let nudgesSent = 0;
 
   try {
     // Find businesses with no active payout account

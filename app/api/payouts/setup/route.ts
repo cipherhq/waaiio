@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   // Verify the user owns this business
   const { data: biz } = await supabase
     .from('businesses')
-    .select('id, name, payout_mode')
+    .select('id, name, payout_mode, country_code')
     .eq('id', business_id)
     .eq('owner_id', user.id)
     .single();
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
             account_number,
             business_name: biz.name,
             business_email: `${business_id}@waaiio.com`,
-            country: 'NG',
+            country: biz.country_code || 'NG',
             split_type: 'percentage',
             split_value: 2.5,
           }),

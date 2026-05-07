@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 
 export async function GET(request: NextRequest) {
   try {
@@ -74,6 +75,17 @@ export async function POST(request: NextRequest) {
 
     const totalAmount = Math.round((subtotal + taxAmount - discountAmount) * 100) / 100;
 
+    // Resolve default currency from business country if not provided
+    let resolvedCurrency = currency;
+    if (!resolvedCurrency) {
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('country_code')
+        .eq('id', business_id)
+        .single();
+      resolvedCurrency = getCurrencyCode((biz?.country_code || 'NG') as CountryCode);
+    }
+
     const { data: invoice, error } = await supabase
       .from('invoices')
       .insert({
@@ -90,7 +102,7 @@ export async function POST(request: NextRequest) {
         discount_value: discount_value || 0,
         discount_amount: discountAmount,
         total_amount: totalAmount,
-        currency: currency || 'NGN',
+        currency: resolvedCurrency,
         issue_date: issue_date || new Date().toISOString().split('T')[0],
         due_date: due_date || null,
         notes: notes || null,

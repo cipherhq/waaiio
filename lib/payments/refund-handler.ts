@@ -25,7 +25,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   // 1. Load payment record
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
-    .select('id, amount, refund_amount, status, gateway, gateway_reference, booking_id, metadata')
+    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, metadata')
     .eq('id', paymentId)
     .single();
 
@@ -101,7 +101,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     const result = await gateway.refundPayment({
       gatewayReference: payment.gateway_reference,
       amount: refundType === 'full' && existingRefund === 0 ? undefined : amount,
-      currency: 'NGN', // Will be the payment's currency
+      currency: (payment.currency as string) || 'NGN',
       reason,
       connectAccountId: (metadata?.connect_account_id as string) || undefined,
       byoSecretKey: (metadata?.byo_secret_key as string) || undefined,

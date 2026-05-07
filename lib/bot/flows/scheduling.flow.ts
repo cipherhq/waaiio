@@ -1,5 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
-import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/lib/constants';
+import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
@@ -1711,7 +1711,7 @@ export const schedulingFlow: FlowDefinition = {
           const result = await chargeSavedCard(ctx.supabase, {
             savedMethod,
             amount,
-            currency: ctx.business?.country_code === 'NG' ? 'NGN' : ctx.business?.country_code === 'GH' ? 'GHS' : 'USD',
+            currency: getCurrencyCode((ctx.business?.country_code || 'NG') as CountryCode),
             email,
             reference: `${refCode}-saved`,
             businessId: ctx.business!.id,

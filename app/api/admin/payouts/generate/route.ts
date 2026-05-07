@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 
 const COOLING_PERIOD_DAYS = 7;
 const VELOCITY_THRESHOLD = 50; // max transactions per day before flagging
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     // Get all active platform-managed businesses with verification info
     const { data: businesses } = await supabase
       .from('businesses')
-      .select('id, created_at, verification_level, payout_limit_monthly')
+      .select('id, created_at, verification_level, payout_limit_monthly, country_code')
       .eq('payout_mode', 'platform_managed')
       .eq('status', 'active');
 
@@ -186,6 +187,7 @@ export async function POST(request: NextRequest) {
         platform_fee: totalFees,
         gateway_fee: 0,
         net_amount: net,
+        currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,
         flags,
       });

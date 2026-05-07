@@ -30,6 +30,14 @@ export async function GET(
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
     }
 
+    // Check token expiry
+    if ((invoice as Record<string, unknown>).token_expires_at) {
+      const expiresAt = new Date((invoice as Record<string, unknown>).token_expires_at as string);
+      if (expiresAt < new Date()) {
+        return NextResponse.json({ error: 'This invoice link has expired' }, { status: 410 });
+      }
+    }
+
     // Fetch business name + tier (no sensitive data)
     const { data: biz } = await supabase
       .from('businesses')

@@ -49,7 +49,16 @@ export async function GET(request: NextRequest) {
     const bookingGross = (bookingPayments || []).reduce((sum, b) => sum + Number(b.deposit_amount || b.total_amount || 0), 0);
     const orderGross = (orderPayments || []).reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
     const invoiceGross = (invoicePayments || []).reduce((sum, i) => sum + Number(i.total_amount || 0), 0);
-    const gross = bookingGross + orderGross + invoiceGross;
+
+    // Subtract successful refunds
+    const { data: refunds } = await supabase
+      .from('refunds')
+      .select('amount')
+      .eq('business_id', businessId)
+      .eq('status', 'success');
+
+    const totalRefunds = (refunds || []).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+    const gross = bookingGross + orderGross + invoiceGross - totalRefunds;
 
     // Get platform fees
     let totalFees = 0;

@@ -110,12 +110,23 @@ export async function processPaystackChargeSuccess(
   }
 
   if (existingPayment.invoice_id) {
+    // Get current amount_paid for partial payment accumulation
+    const { data: invoice } = await supabase
+      .from('invoices')
+      .select('amount_paid, total_amount')
+      .eq('id', existingPayment.invoice_id)
+      .single();
+
+    const newAmountPaid = (Number(invoice?.amount_paid) || 0) + existingPayment.amount;
+    const totalAmount = Number(invoice?.total_amount) || 0;
+    const isFullyPaid = newAmountPaid >= totalAmount;
+
     await supabase
       .from('invoices')
       .update({
-        status: 'paid',
-        amount_paid: existingPayment.amount,
-        paid_at: new Date().toISOString(),
+        status: isFullyPaid ? 'paid' : 'sent', // Stay 'sent' if partial
+        amount_paid: newAmountPaid,
+        paid_at: isFullyPaid ? new Date().toISOString() : null,
       })
       .eq('id', existingPayment.invoice_id);
 
