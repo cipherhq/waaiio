@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 interface TicketRow {
   id: string;
@@ -231,7 +232,7 @@ export default function TicketsPage() {
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap">
                     {ticket.scanned_at
-                      ? new Date(ticket.scanned_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+                      ? new Date(ticket.scanned_at).toLocaleString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
                       : '—'}
                   </td>
                 </tr>
@@ -288,7 +289,7 @@ export default function TicketsPage() {
               <span className="text-gray-500">Scanned At</span>
               <span className="font-medium text-gray-900">
                 {selected.scanned_at
-                  ? new Date(selected.scanned_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+                  ? new Date(selected.scanned_at).toLocaleString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
                   : '—'}
               </span>
             </div>

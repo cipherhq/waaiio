@@ -314,6 +314,8 @@ export const ticketingFlow: FlowDefinition = {
             referenceCode: booking.reference_code,
             businessName: ctx.business?.name || 'Events',
             phone: ctx.from,
+            countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+            businessId: ctx.business?.id,
           });
 
           if (paymentResult) {
@@ -326,7 +328,7 @@ export const ticketingFlow: FlowDefinition = {
             return [
               {
                 type: 'text',
-                text: `🎫 *Tickets Reserved!*\n\n🎪 ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ₦${total.toLocaleString()}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+                text: `🎫 *Tickets Reserved!*\n\n🎪 ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, (ctx.business?.country_code || 'NG') as CountryCode)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
               },
               {
                 type: 'buttons',
@@ -340,14 +342,9 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
-        // Free event
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
-          .eq('id', ctx.session.id);
-
-        // Send ticket PDF (non-blocking)
-        sendTicketsAfterPurchase({
+        // Free event — send tickets before marking complete
+        try {
+          await sendTicketsAfterPurchase({
           supabase: ctx.supabase,
           sender: ctx.sender,
           businessId: ctx.business!.id,
@@ -361,7 +358,15 @@ export const ticketingFlow: FlowDefinition = {
           guestPhone: ctx.from,
           referenceCode: booking.reference_code,
           quantity: qty,
-        }).catch(err => console.error('[TICKETING] Ticket PDF send error:', err));
+        });
+        } catch (err) {
+          console.error('[TICKETING] Ticket PDF send error:', err);
+        }
+
+        await ctx.supabase
+          .from('bot_sessions')
+          .update({ current_step: 'complete', is_active: false })
+          .eq('id', ctx.session.id);
 
         return [{
           type: 'text',
