@@ -329,37 +329,10 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       if (verified) {
         const sd = ctx.session.session_data;
         const amount = sd.donation_amount as number;
-        const campaignId = sd.campaign_id as string;
         const refCode = sd.donation_ref_code as string;
 
-        // Update donation record status
-        if (refCode) {
-          await ctx.supabase
-            .from('campaign_donations')
-            .update({ status: 'confirmed' })
-            .eq('reference_code', refCode);
-        }
-
-        // Update campaign raised_amount and donor_count
-        if (campaignId) {
-          const { data: campaign } = await ctx.supabase
-            .from('campaigns')
-            .select('raised_amount, donor_count')
-            .eq('id', campaignId)
-            .single();
-
-          if (campaign) {
-            await ctx.supabase
-              .from('campaigns')
-              .update({
-                raised_amount: (campaign.raised_amount || 0) + amount,
-                donor_count: (campaign.donor_count || 0) + 1,
-              })
-              .eq('id', campaignId);
-          }
-        }
-
-        // Send confirmation
+        // Webhook already updates campaign_donations status and campaign stats
+        // Just send the confirmation message here
         await ctx.sender.sendText({
           to: ctx.from,
           text: [
