@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 interface FeedbackEntry {
   id: string;
@@ -13,6 +14,8 @@ interface FeedbackEntry {
   rating: number;
   comment: string | null;
   service_type: string | null;
+  business_response: string | null;
+  responded_at: string | null;
   created_at: string;
 }
 
@@ -152,19 +155,20 @@ export default function FeedbackPage() {
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Rating</th>
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Comment</th>
               <th className="px-4 py-3 text-xs font-semibold text-gray-500">Service Type</th>
+              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Response</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center">
+                <td colSpan={6} className="px-4 py-12 text-center">
                   <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-brand" />
                   <p className="mt-2 text-sm text-gray-400">Loading feedback...</p>
                 </td>
               </tr>
             ) : reviews.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center">
+                <td colSpan={6} className="px-4 py-12 text-center">
                   <p className="text-sm text-gray-400">No feedback yet.</p>
                   <p className="mt-1 text-xs text-gray-300">
                     {labels.personLabel} feedback will appear here once submitted.
@@ -175,7 +179,7 @@ export default function FeedbackPage() {
               reviews.map((r) => (
                 <tr key={r.id} className="hover:bg-gray-50/50">
                   <td className="whitespace-nowrap px-4 py-3 text-gray-500">
-                    {new Date(r.created_at).toLocaleDateString('en-US', {
+                    {new Date(r.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                       month: 'short',
                       day: 'numeric',
                       year: 'numeric',
@@ -192,6 +196,27 @@ export default function FeedbackPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-gray-500">
                     {r.service_type || <span className="text-gray-300">--</span>}
+                  </td>
+                  <td className="px-4 py-3">
+                    {r.business_response ? (
+                      <span className="text-xs text-green-600">{r.business_response}</span>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          const reply = prompt('Your response to this feedback:');
+                          if (!reply?.trim()) return;
+                          const supabase = createClient();
+                          await supabase.from('customer_feedback').update({
+                            business_response: reply.trim(),
+                            responded_at: new Date().toISOString(),
+                          }).eq('id', r.id);
+                          fetchReviews();
+                        }}
+                        className="text-xs text-brand hover:underline"
+                      >
+                        Reply
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))

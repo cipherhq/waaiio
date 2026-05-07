@@ -185,9 +185,17 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     }
   }
 
-  // 2. Feedback — don't auto-prompt after payment
-  // Customer can leave feedback anytime by typing "feedback" or "rate"
-  // Business can trigger feedback via broadcast or automation rules
+  // 2. Feedback — mark booking for feedback request (sent 24h later by reminder cron)
+  // Customer can also type "feedback" or "rate" anytime
+  if (referenceId && capabilities.includes('feedback')) {
+    try {
+      const table = serviceType === 'order' ? 'orders' : 'bookings';
+      await supabase
+        .from(table)
+        .update({ metadata: { feedback_requested: false, completed_at: new Date().toISOString() } })
+        .eq('id', referenceId);
+    } catch { /* non-critical */ }
+  }
 
   // 2.5. Sequences & Rules — trigger automation after completion
   try {
