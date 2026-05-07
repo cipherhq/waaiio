@@ -1108,7 +1108,7 @@ export class BotService {
 
     // Chat handoff: bot is paused, route messages to human agent
     if (session.business_id && step === 'chat_handoff') {
-      const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
+      const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat|hi|hello|menu)$/i.test(text);
       if (restartMatch) {
         await this.deactivateSession(session.id);
         // Also resolve the conversation so the dashboard shows it as resolved
@@ -1121,9 +1121,16 @@ export class BotService {
             .eq('customer_phone', from)
             .eq('status', 'open');
         } catch { /* non-critical */ }
-        await this.sendText(from, "Chat session ended. ✅\n\nSend *Hi* to continue.");
-        return;
+        // Re-enter the bot from scratch so they get the menu
+        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
       }
+
+      // Allow bot capability selections (button payloads) during live chat
+      if (text.startsWith('cap_')) {
+        await this.deactivateSession(session.id);
+        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
+      }
+
       // Store message for human agent, update conversation
       const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
       const chatPhoneN = from.startsWith('+') ? from.slice(1) : from;
@@ -1174,7 +1181,7 @@ export class BotService {
     // store as inbound chat message
     if (session.business_id && step === 'chat_start') {
       // Allow user to exit chat_start mode
-      const chatExitMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
+      const chatExitMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat|hi|hello|menu)$/i.test(text);
       if (chatExitMatch) {
         await this.deactivateSession(session.id);
         try {
@@ -1186,12 +1193,20 @@ export class BotService {
             .eq('customer_phone', from)
             .eq('status', 'open');
         } catch { /* non-critical */ }
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
+      }
+
+      // Allow bot capability selections during chat
+      if (text.startsWith('cap_')) {
+        await this.deactivateSession(session.id);
+        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
       }
 
       // This is a chat session — store message and acknowledge
+      // Skip if the chat flow validate() already handled this message
+      const alreadyHandled = session.session_data?.first_message_handled;
       const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(this.supabase, session.business_id);
-      if (caps.includes('chat')) {
+      if (caps.includes('chat') && !alreadyHandled) {
         // Get customer name
         const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
         const chatPhoneN = from.startsWith('+') ? from.slice(1) : from;
@@ -1226,12 +1241,12 @@ export class BotService {
           last_message_at: new Date().toISOString(),
         }, { onConflict: 'business_id,customer_phone' });
 
-        const chatConvId = existingConv?.id || (await this.supabase
+        const { data: chatConv } = await this.supabase
           .from('chat_conversations')
           .select('id')
           .eq('business_id', session.business_id)
           .eq('customer_phone', from)
-          .maybeSingle()).data?.id;
+          .single();
 
         await this.supabase.from('chat_messages').insert({
           business_id: session.business_id,
@@ -1240,7 +1255,7 @@ export class BotService {
           direction: 'inbound',
           message_text: text,
           is_read: false,
-          conversation_id: chatConvId || null,
+          conversation_id: chatConv?.id ?? null,
           media_url: mediaUrl || null,
           media_type: mediaUrl ? (messageType || 'image') : null,
         });
@@ -1276,16 +1291,16 @@ export class BotService {
 
         // Forward message to business owner's phone
         await this.forwardToBusinessOwner(session.business_id, from, customerName, text);
-
-        // Only send acknowledgment on the first message in this chat session
-        if (!session.session_data.chat_ack_sent) {
-          await this.sendText(from, "Thanks for your message! A team member will respond shortly.\n\nType *end chat* anytime to return to the menu.");
-          await this.supabase.from('bot_sessions').update({
-            session_data: { ...session.session_data, chat_ack_sent: true },
-          }).eq('id', session.id);
-        }
-        return;
       }
+
+      // Send acknowledgment on the first message in this chat session
+      if (!session.session_data.chat_ack_sent) {
+        await this.sendText(from, "Thanks for your message! A team member will respond shortly.\n\nType *end chat* anytime to return to the menu.");
+        await this.supabase.from('bot_sessions').update({
+          session_data: { ...session.session_data, chat_ack_sent: true },
+        }).eq('id', session.id);
+      }
+      return;
     }
 
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType);

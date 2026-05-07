@@ -38,7 +38,7 @@ export const chatFlow: FlowDefinition = {
             customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
           }
 
-          // Upsert conversation
+          // Upsert conversation and get its ID in one step
           await ctx.supabase.from('chat_conversations').upsert({
             business_id: businessId,
             customer_phone: phone,
@@ -47,15 +47,14 @@ export const chatFlow: FlowDefinition = {
             last_message_at: new Date().toISOString(),
           }, { onConflict: 'business_id,customer_phone' });
 
-          // Get conversation id
           const { data: conv } = await ctx.supabase
             .from('chat_conversations')
             .select('id')
             .eq('business_id', businessId)
             .eq('customer_phone', phone)
-            .maybeSingle();
+            .single();
 
-          // Store the message
+          // Store the first message
           await ctx.supabase.from('chat_messages').insert({
             business_id: businessId,
             customer_phone: phone,
@@ -63,8 +62,37 @@ export const chatFlow: FlowDefinition = {
             direction: 'inbound',
             message_text: input.trim(),
             is_read: false,
-            conversation_id: conv?.id || null,
+            conversation_id: conv?.id ?? null,
           });
+
+          // Forward to business owner immediately
+          if (ctx.sender) {
+            const { data: biz } = await ctx.supabase
+              .from('businesses')
+              .select('owner_id')
+              .eq('id', businessId)
+              .single();
+            if (biz?.owner_id) {
+              const { data: ownerProfile } = await ctx.supabase
+                .from('profiles')
+                .select('phone')
+                .eq('id', biz.owner_id)
+                .single();
+              if (ownerProfile?.phone) {
+                const ownerPhone = ownerProfile.phone.startsWith('+')
+                  ? ownerProfile.phone.slice(1)
+                  : ownerProfile.phone;
+                const displayName = customerName || phone;
+                await ctx.sender.sendText({
+                  to: ownerPhone,
+                  text: `💬 *${displayName}*:\n${input.trim()}\n\n_Reply from your dashboard → Chat_`,
+                });
+              }
+            }
+          }
+
+          // Mark that we already stored+forwarded this message
+          ctx.session.session_data.first_message_handled = true;
         }
 
         return { valid: true };
