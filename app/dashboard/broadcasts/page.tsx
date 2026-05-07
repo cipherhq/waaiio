@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
@@ -515,7 +516,7 @@ export default function BroadcastsPage() {
                           {broadcast.recipient_count} recipients
                         </span>
                         <span>
-                          {new Date(broadcast.created_at).toLocaleDateString('en-NG', {
+                          {new Date(broadcast.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             day: 'numeric',
                             month: 'short',
                             hour: '2-digit',

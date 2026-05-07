@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
@@ -135,7 +136,7 @@ export default function LoyaltyPage() {
   }
 
   function formatDate(iso: string) {
-    return new Date(iso).toLocaleDateString('en-NG', {
+    return new Date(iso).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
       day: 'numeric',
       month: 'short',
       year: 'numeric',

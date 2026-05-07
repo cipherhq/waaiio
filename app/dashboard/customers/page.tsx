@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { exportToCsv } from '@/lib/utils/csv-export';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -667,7 +668,7 @@ export default function CustomersPage() {
                       <p className="text-xs text-gray-500">First Seen</p>
                       <p className="mt-1 text-sm font-medium text-gray-900">
                         {selected.first_seen_at
-                          ? new Date(selected.first_seen_at).toLocaleDateString('en-NG', {
+                          ? new Date(selected.first_seen_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                               day: 'numeric',
                               month: 'short',
                               year: 'numeric',
@@ -679,7 +680,7 @@ export default function CustomersPage() {
                       <p className="text-xs text-gray-500">Last Seen</p>
                       <p className="mt-1 text-sm font-medium text-gray-900">
                         {selected.last_seen_at
-                          ? new Date(selected.last_seen_at).toLocaleDateString('en-NG', {
+                          ? new Date(selected.last_seen_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                               day: 'numeric',
                               month: 'short',
                               year: 'numeric',
@@ -822,7 +823,7 @@ export default function CustomersPage() {
                                 Order
                               </p>
                               <p className="text-xs text-gray-400">
-                                {new Date(o.created_at).toLocaleDateString('en-NG', {
+                                {new Date(o.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                                   day: 'numeric',
                                   month: 'short',
                                   year: 'numeric',
@@ -868,7 +869,7 @@ export default function CustomersPage() {
                             <div className="flex items-center justify-between">
                               <StarRating rating={f.rating} />
                               <span className="text-xs text-gray-400">
-                                {new Date(f.created_at).toLocaleDateString('en-NG', {
+                                {new Date(f.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                                   day: 'numeric',
                                   month: 'short',
                                 })}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -120,7 +121,7 @@ export default function GuestsPage() {
   }
 
   function formatDate(d: string) {
-    return new Date(d + 'T00:00').toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' });
+    return new Date(d + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
   return (
@@ -162,7 +163,7 @@ export default function GuestsPage() {
         <div className="rounded-xl border border-gray-100 bg-white p-5">
           <p className="text-xs font-medium text-gray-500">Total Revenue</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">
-            {new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(totalSpent)}
+            {new Intl.NumberFormat(getLocale((business.country_code || 'NG') as CountryCode), { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(totalSpent)}
           </p>
         </div>
       </div>
@@ -240,7 +241,7 @@ export default function GuestsPage() {
                   </td>
                   <td className="px-4 py-3 text-gray-600">
                     {g.total_spent > 0
-                      ? new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(g.total_spent)
+                      ? new Intl.NumberFormat(getLocale((business.country_code || 'NG') as CountryCode), { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(g.total_spent)
                       : '\u2014'}
                   </td>
                   <td className="px-4 py-3 text-gray-600">{formatDate(g.first_visit)}</td>
@@ -288,7 +289,7 @@ export default function GuestsPage() {
                   <p className="text-xs text-gray-500">Total Spent</p>
                   <p className="mt-1 text-xl font-bold text-gray-900">
                     {selectedGuest.total_spent > 0
-                      ? new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(selectedGuest.total_spent)
+                      ? new Intl.NumberFormat(getLocale((business.country_code || 'NG') as CountryCode), { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(selectedGuest.total_spent)
                       : '\u2014'}
                   </p>
                 </div>

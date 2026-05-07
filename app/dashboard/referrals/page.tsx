@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
@@ -276,7 +277,7 @@ export default function ReferralsPage() {
                   {referrals.map((r) => (
                     <tr key={r.id} className="hover:bg-gray-50/50">
                       <td className="px-4 py-3 text-gray-600">
-                        {new Date(r.created_at).toLocaleDateString('en-NG', {
+                        {new Date(r.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                           day: 'numeric',
                           month: 'short',
                           year: 'numeric',

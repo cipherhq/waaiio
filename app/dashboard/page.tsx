@@ -7,6 +7,7 @@ import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardPr
 import { createClient } from '@/lib/supabase/client';
 import {
   formatCurrency,
+  getLocale,
   type CountryCode,
 } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -575,7 +576,7 @@ export default function DashboardOverview() {
                   <tr key={o.id} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3 font-mono text-xs text-gray-900">{o.reference_code}</td>
                     <td className="px-4 py-3 text-gray-600">
-                      {new Date(o.created_at).toLocaleDateString('en-NG', {
+                      {new Date(o.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         day: 'numeric',
                         month: 'short',
                         year: 'numeric',
@@ -698,7 +699,7 @@ export default function DashboardOverview() {
                       <p className="text-xs text-gray-400">{r.guest_phone}</p>
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {new Date(r.date + 'T00:00').toLocaleDateString('en-NG', {
+                      {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         weekday: 'short',
                         day: 'numeric',
                         month: 'short',

@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create order' }, { status: 500 });
     }
 
-    // Create order items
+    // Create order items + decrement stock
     for (const item of cart) {
       await supabase.from('order_items').insert({
         order_id: order.id,
@@ -159,6 +159,31 @@ export async function POST(request: NextRequest) {
         variant_label: item.variant_label || null,
         addons: item.addons || [],
       });
+
+      // Decrement stock
+      if (item.variant_id) {
+        const { data: variant } = await supabase
+          .from('product_variants')
+          .select('stock_quantity')
+          .eq('id', item.variant_id)
+          .single();
+        if (variant && variant.stock_quantity != null) {
+          await supabase.from('product_variants')
+            .update({ stock_quantity: Math.max(0, variant.stock_quantity - item.quantity) })
+            .eq('id', item.variant_id);
+        }
+      } else if (item.product_id) {
+        const { data: product } = await supabase
+          .from('products')
+          .select('stock_quantity, track_inventory')
+          .eq('id', item.product_id)
+          .single();
+        if (product?.track_inventory && product.stock_quantity != null) {
+          await supabase.from('products')
+            .update({ stock_quantity: Math.max(0, product.stock_quantity - item.quantity) })
+            .eq('id', item.product_id);
+        }
+      }
     }
 
     // Update quote

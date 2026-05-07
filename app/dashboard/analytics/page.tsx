@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
@@ -261,7 +261,7 @@ export default function AnalyticsPage() {
                 <div className="pointer-events-none absolute -top-8 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 group-hover:opacity-100">
                   {d.count} &middot; {formatCurrency(d.revenue, country)}
                   <br />
-                  {new Date(d.date + 'T00:00').toLocaleDateString('en-NG', { day: 'numeric', month: 'short' })}
+                  {new Date(d.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' })}
                 </div>
               </div>
             ))}

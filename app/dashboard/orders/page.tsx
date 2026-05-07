@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
@@ -250,7 +250,7 @@ export default function OrdersPage() {
               Order {selectedOrder.reference_code}
             </h1>
             <p className="mt-0.5 text-sm text-gray-500">
-              {new Date(selectedOrder.created_at).toLocaleDateString('en-NG', {
+              {new Date(selectedOrder.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                 day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
               })}
             </p>
@@ -477,7 +477,7 @@ export default function OrdersPage() {
                   <div className="flex justify-between">
                     <span className="text-gray-500">Shipped</span>
                     <span className="font-medium text-gray-900">
-                      {new Date(selectedOrder.shipped_at).toLocaleDateString('en-NG', {
+                      {new Date(selectedOrder.shipped_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         day: 'numeric', month: 'short', year: 'numeric',
                       })}
                     </span>
@@ -682,7 +682,7 @@ export default function OrdersPage() {
                   <p className="mt-0.5 text-xs text-gray-500">
                     {order.items.length} item{order.items.length !== 1 ? 's' : ''}
                     {' \u2022 '}
-                    {new Date(order.created_at).toLocaleDateString('en-NG', {
+                    {new Date(order.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                       day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
                     })}
                   </p>
