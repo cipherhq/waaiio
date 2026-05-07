@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       'surveys', 'survey_responses', 'subscriptions', 'admin_broadcasts',
       'ai_usage', 'conversation_usage', 'countries', 'customer_reports',
       'platform_settings', 'queue_entries', 'site_pages', 'verification_requests',
-      'refund_requests',
+      'refund_requests', 'campaign_donations',
     ];
 
     if (!ALLOWED_TABLES.includes(table)) {

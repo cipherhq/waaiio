@@ -13,7 +13,7 @@ interface Campaign {
   description: string | null;
   goal_amount: number | null;
   raised_amount: number | null;
-  backers_count: number | null;
+  donor_count: number | null;
   status: string;
   currency: string | null;
   start_date: string | null;
@@ -170,7 +170,7 @@ export default function Campaigns() {
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
                     {c.raised_amount != null ? fmtCurrency(c.raised_amount, c.currency || 'NGN') : '—'}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-600">{c.backers_count ?? 0}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{c.donor_count ?? 0}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={c.status} />
                   </td>
@@ -244,7 +244,7 @@ export default function Campaigns() {
                   label="Raised"
                   value={selected.raised_amount != null ? fmtCurrency(selected.raised_amount, selected.currency || 'NGN') : '—'}
                 />
-                <DetailRow label="Backers" value={selected.backers_count ?? 0} />
+                <DetailRow label="Backers" value={selected.donor_count ?? 0} />
                 <DetailRow label="Funded" value={`${getProgress(selected)}%`} />
               </div>
 
@@ -265,12 +265,12 @@ export default function Campaigns() {
               )}
 
               {/* Average per backer */}
-              {selected.backers_count != null && selected.backers_count > 0 && selected.raised_amount != null && (
+              {selected.donor_count != null && selected.donor_count > 0 && selected.raised_amount != null && (
                 <div className="mt-3 pt-3 border-t border-gray-200">
                   <DetailRow
                     label="Average per Backer"
                     value={fmtCurrency(
-                      Math.round(selected.raised_amount / selected.backers_count),
+                      Math.round(selected.raised_amount / selected.donor_count),
                       selected.currency || 'NGN'
                     )}
                   />

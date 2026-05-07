@@ -17,7 +17,7 @@ export async function processPaystackChargeSuccess(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status, amount, booking_id, invoice_id, gateway')
+    .select('id, status, amount, booking_id, invoice_id, campaign_id, gateway')
     .eq('gateway_reference', reference)
     .single();
 
@@ -120,6 +120,33 @@ export async function processPaystackChargeSuccess(
       .eq('id', existingPayment.invoice_id);
 
     await recordPlatformFeeForInvoice(supabase, existingPayment.invoice_id, existingPayment.amount);
+  }
+
+  // Update campaign donation on successful payment
+  if (existingPayment.campaign_id) {
+    // Mark donation as success
+    await supabase
+      .from('campaign_donations')
+      .update({ status: 'success', payment_id: existingPayment.id })
+      .eq('reference_code', reference)
+      .eq('status', 'pending');
+
+    // Increment campaign raised_amount and donor_count atomically
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('raised_amount, donor_count')
+      .eq('id', existingPayment.campaign_id)
+      .single();
+
+    if (campaign) {
+      await supabase
+        .from('campaigns')
+        .update({
+          raised_amount: Number(campaign.raised_amount || 0) + existingPayment.amount,
+          donor_count: (campaign.donor_count || 0) + 1,
+        })
+        .eq('id', existingPayment.campaign_id);
+    }
   }
 }
 

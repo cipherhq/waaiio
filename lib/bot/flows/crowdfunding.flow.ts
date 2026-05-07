@@ -196,6 +196,7 @@ const donationPaymentStep: FlowStepConfig = {
       phone: ctx.from,
       countryCode: country,
       businessId: ctx.business?.id,
+      campaignId: sd.campaign_id as string,
     });
 
     if (!result) {

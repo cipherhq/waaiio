@@ -20,6 +20,8 @@ export async function initializePayment(
     gatewayOverride?: string | null;
     /** Business ID for split payment lookup */
     businessId?: string;
+    /** Campaign ID for donation tracking */
+    campaignId?: string;
   },
 ): Promise<{ url: string; reference: string } | null> {
   try {
@@ -169,6 +171,24 @@ export async function initializePayment(
       byoBusinessId,
       connectAccountId,
     });
+
+    // Link payment to campaign if this is a donation
+    if (result?.reference && opts.campaignId) {
+      await supabase
+        .from('payments')
+        .update({ campaign_id: opts.campaignId })
+        .eq('gateway_reference', result.reference);
+
+      // Create donation record
+      await supabase.from('campaign_donations').insert({
+        campaign_id: opts.campaignId,
+        business_id: opts.businessId || '',
+        donor_phone: opts.phone.startsWith('+') ? opts.phone : `+${opts.phone}`,
+        amount: opts.amount,
+        reference_code: opts.referenceCode,
+        status: 'pending',
+      });
+    }
 
     // Shorten the payment URL for WhatsApp
     if (result?.url && result.reference) {
