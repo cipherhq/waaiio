@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Handle subscription payments
+        // Handle subscription payments (business tier upgrades)
         if (metadata?.type === 'whatsapp_subscription' && metadata.business_id) {
           await supabase
             .from('businesses')
@@ -189,6 +189,31 @@ export async function POST(request: NextRequest) {
               status: 'active',
             })
             .eq('id', metadata.business_id);
+        }
+
+        // Handle customer recurring subscription activation
+        if (metadata?.type === 'customer_recurring') {
+          const stripeSubId = data.subscription as string;
+          if (stripeSubId && sessionId) {
+            // Activate the pending subscription
+            await supabase
+              .from('customer_subscriptions')
+              .update({
+                status: 'active',
+                gateway_subscription_code: stripeSubId,
+              })
+              .eq('gateway_subscription_code', sessionId)
+              .eq('status', 'pending');
+
+            // Also update the payment record
+            await supabase
+              .from('payments')
+              .update({ status: 'success', payment_method: 'card', paid_at: new Date().toISOString() })
+              .eq('gateway_reference', sessionId)
+              .neq('status', 'success');
+
+            console.log(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
+          }
         }
       }
     }
@@ -235,7 +260,7 @@ export async function POST(request: NextRequest) {
           .from('customer_subscriptions')
           .select('*')
           .eq('gateway_subscription_code', subscriptionId)
-          .eq('status', 'active');
+          .in('status', ['active', 'pending']);
 
         const sub = subs?.[0];
         if (sub) {
