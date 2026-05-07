@@ -33,6 +33,25 @@ export async function POST(request: NextRequest) {
       if (!validStatuses.includes(status)) {
         return NextResponse.json({ error: 'Invalid status' }, { status: 400 });
       }
+
+      // Validate status transitions
+      const { data: current } = await supabase
+        .from('queue_entries')
+        .select('status')
+        .eq('id', entryId)
+        .single();
+
+      const validTransitions: Record<string, string[]> = {
+        waiting: ['serving', 'no_show'],
+        serving: ['completed', 'no_show'],
+        completed: [],
+        no_show: [],
+      };
+
+      if (current && !validTransitions[current.status]?.includes(status)) {
+        return NextResponse.json({ error: `Cannot change from ${current.status} to ${status}` }, { status: 400 });
+      }
+
       updateData.status = status;
       if (status === 'serving') updateData.called_at = new Date().toISOString();
       if (status === 'completed') updateData.completed_at = new Date().toISOString();
@@ -55,6 +74,51 @@ export async function POST(request: NextRequest) {
     if (error) {
       logger.error('[QUEUE] Update error:', error);
       return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
+    }
+
+    // Recalculate estimated wait for remaining waiting customers
+    if (status === 'serving' || status === 'completed' || status === 'no_show') {
+      try {
+        // Get average service time from today's completed entries
+        const { data: completed } = await supabase
+          .from('queue_entries')
+          .select('called_at, completed_at')
+          .eq('business_id', businessId)
+          .eq('queue_date', new Date().toISOString().split('T')[0])
+          .eq('status', 'completed')
+          .not('called_at', 'is', null)
+          .not('completed_at', 'is', null);
+
+        let avgMinutes = 10; // default
+        if (completed && completed.length > 0) {
+          const totalMin = completed.reduce((s, e) => {
+            const diff = (new Date(e.completed_at!).getTime() - new Date(e.called_at!).getTime()) / 60000;
+            return s + Math.max(1, diff);
+          }, 0);
+          avgMinutes = Math.round(totalMin / completed.length);
+        }
+
+        // Update each waiting entry's estimated_wait
+        const { data: waiting } = await supabase
+          .from('queue_entries')
+          .select('id, queue_number')
+          .eq('business_id', businessId)
+          .eq('queue_date', new Date().toISOString().split('T')[0])
+          .eq('status', 'waiting')
+          .order('queue_number');
+
+        if (waiting) {
+          for (let i = 0; i < waiting.length; i++) {
+            await supabase
+              .from('queue_entries')
+              .update({ estimated_wait_minutes: (i + 1) * avgMinutes })
+              .eq('id', waiting[i].id);
+          }
+        }
+      } catch (waitErr) {
+        // Non-critical — don't fail the request
+        logger.warn('[QUEUE] Wait time recalc error:', waitErr);
+      }
     }
 
     // If marking as completed, trigger post-completion hook

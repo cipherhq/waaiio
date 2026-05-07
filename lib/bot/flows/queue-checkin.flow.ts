@@ -129,7 +129,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       .from('queue_entries')
       .insert({
         business_id: ctx.business.id,
-        customer_phone: ctx.from,
+        customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
         customer_name: customerName,
         queue_number: queueNumber,
         estimated_wait_minutes: estimatedWait,
