@@ -168,10 +168,12 @@ export async function POST(request: NextRequest) {
               ? entry.customer_phone.slice(1)
               : entry.customer_phone;
 
+            const { data: biz } = await supabase.from('businesses').select('name').eq('id', businessId).single();
+            const bizName = biz?.name || 'the business';
             const name = entry.customer_name || 'there';
             await resolved.sender.sendText({
               to: phone,
-              text: `Hi ${name}, it's your turn! Please proceed to the counter.`,
+              text: `Hi ${name}, it's your turn at *${bizName}*! Please proceed to the counter.`,
             });
           }
         }

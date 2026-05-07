@@ -355,7 +355,7 @@ export const paymentFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: 'Payment cancelled. Send *Hi* to start again.' });
+          await ctx.sender.sendText({ to: ctx.from, text: `Payment to *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start again.` });
           return { valid: true, data: { _action: 'cancel' } };
         }
 

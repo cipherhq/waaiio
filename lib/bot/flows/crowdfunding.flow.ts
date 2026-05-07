@@ -349,7 +349,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           .update({ status: 'cancelled' })
           .eq('reference_code', refCode);
       }
-      await ctx.sender.sendText({ to: ctx.from, text: 'Donation cancelled. Send *Hi* to start again.' });
+      await ctx.sender.sendText({ to: ctx.from, text: `Donation to *${ctx.business?.name || 'organization'}* cancelled. Send *Hi* to start again.` });
       return { valid: true, data: { _action: 'cancel' } };
     }
 

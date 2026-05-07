@@ -53,6 +53,14 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', orderId);
 
+    // Fetch business name
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('name')
+      .eq('id', businessId)
+      .single();
+    const bizName = biz?.name || 'your store';
+
     // Send WhatsApp notification to customer
     if (order.delivery_phone) {
       try {
@@ -64,7 +72,7 @@ export async function POST(request: NextRequest) {
           ? order.delivery_phone.slice(1)
           : order.delivery_phone;
 
-        let message = `Your order *${order.reference_code}* has been shipped!`;
+        let message = `Your order *${order.reference_code}* from *${bizName}* has been shipped!`;
         if (shippingCarrier) {
           message += `\n\nCarrier: ${shippingCarrier}`;
         }

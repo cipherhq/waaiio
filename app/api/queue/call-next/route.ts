@@ -121,10 +121,13 @@ export async function POST(request: NextRequest) {
           ? nextEntry.customer_phone.slice(1)
           : nextEntry.customer_phone;
 
+        // Fetch business name
+        const { data: biz } = await supabase.from('businesses').select('name').eq('id', businessId).single();
+        const bizName = biz?.name || 'the business';
         const name = nextEntry.customer_name || 'there';
         await resolved.sender.sendText({
           to: phone,
-          text: `Hi ${name}, it's your turn! Please proceed to the counter.`,
+          text: `Hi ${name}, it's your turn at *${bizName}*! Please proceed to the counter.`,
         });
       }
     } catch (err) {

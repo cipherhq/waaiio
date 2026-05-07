@@ -2556,7 +2556,7 @@ export const orderingFlow: FlowDefinition = {
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start again.' });
+          await ctx.sender.sendText({ to: ctx.from, text: `Order from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start again.` });
           return { valid: true, data: { _action: 'cancel' } };
         }
 

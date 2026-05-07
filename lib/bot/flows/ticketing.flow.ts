@@ -421,7 +421,7 @@ export const ticketingFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: 'Ticket purchase cancelled. Send *Hi* to start again.' });
+          await ctx.sender.sendText({ to: ctx.from, text: `Ticket purchase from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start again.` });
           return { valid: true, data: { _action: 'cancel' } };
         }
 

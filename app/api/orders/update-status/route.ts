@@ -8,11 +8,11 @@ import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 const STATUS_MESSAGES: Record<string, string> = {
-  processing: 'Your order *{ref}* is now being prepared.',
-  shipped: 'Your order *{ref}* has been shipped! It\'s on its way.',
-  ready: 'Your order *{ref}* is ready for pickup!',
-  delivered: 'Your order *{ref}* has been delivered. Thank you for your purchase!',
-  cancelled: 'Your order *{ref}* has been cancelled. If you have questions, please reach out.',
+  processing: 'Your order *{ref}* from *{biz}* is now being prepared.',
+  shipped: 'Your order *{ref}* from *{biz}* has been shipped! It\'s on its way.',
+  ready: 'Your order *{ref}* from *{biz}* is ready for pickup!',
+  delivered: 'Your order *{ref}* from *{biz}* has been delivered. Thank you for your purchase!',
+  cancelled: 'Your order *{ref}* from *{biz}* has been cancelled. If you have questions, please reach out.',
 };
 
 let defaultGupshup: GupshupService;
@@ -61,6 +61,14 @@ export async function POST(request: NextRequest) {
       .update({ status })
       .eq('id', orderId);
 
+    // Fetch business name for notification
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('name')
+      .eq('id', businessId)
+      .single();
+    const bizName = biz?.name || 'your store';
+
     // Send WhatsApp notification to customer
     let notified = false;
     const messageTemplate = STATUS_MESSAGES[status];
@@ -74,7 +82,7 @@ export async function POST(request: NextRequest) {
           ? order.delivery_phone.slice(1)
           : order.delivery_phone;
 
-        const message = messageTemplate.replace('{ref}', order.reference_code);
+        const message = messageTemplate.replace('{ref}', order.reference_code).replace('{biz}', bizName);
         // Try template first (works outside 24h)
         let sent = false;
         if (sender.sendTemplate) {
