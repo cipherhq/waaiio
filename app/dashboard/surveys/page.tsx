@@ -93,7 +93,7 @@ export default function SurveysPage() {
     setView('results');
     setResponsesLoading(true);
     try {
-      const res = await fetch(`/api/surveys/${survey.id}/responses?limit=100`);
+      const res = await fetch(`/api/surveys/${survey.id}/responses?limit=500`);
       if (res.ok) {
         const data = await res.json();
         setResponses(data.responses || []);
@@ -365,7 +365,7 @@ export default function SurveysPage() {
                   <div className="space-y-2 max-h-60 overflow-y-auto">
                     {completedResponses.filter(r => r.answers[q.id]).map(r => (
                       <div key={r.id} className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700/50 rounded px-3 py-2">
-                        <span className="font-medium">{r.customer_name || r.customer_phone}:</span> {String(r.answers[q.id])}
+                        <span className="font-medium">{r.customer_name || r.customer_phone}:</span> {String(r.answers[q.id] || '—')}
                       </div>
                     ))}
                     {completedResponses.filter(r => r.answers[q.id]).length === 0 && (

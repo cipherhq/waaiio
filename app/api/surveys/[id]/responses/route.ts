@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, { params }: Params) {
   if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
 
   const page = parseInt(request.nextUrl.searchParams.get('page') || '1', 10);
-  const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') || '50', 10), 100);
+  const limit = Math.min(parseInt(request.nextUrl.searchParams.get('limit') || '50', 10), 500);
   const offset = (page - 1) * limit;
 
   const { data: responses, count } = await supabase

@@ -254,26 +254,15 @@ const surveyCompleteStep: FlowStepConfig = {
         completed_at: new Date().toISOString(),
       }, { onConflict: 'survey_id,customer_phone' });
 
-      // Increment total_responses
-      const { error: rpcError } = await ctx.supabase.rpc('increment_field', {
-        p_table: 'surveys',
-        p_id: surveyId,
-        p_field: 'total_responses',
-        p_amount: 1,
-      });
-
-      if (rpcError) {
-        // Fallback: manual increment if RPC doesn't exist
-        const { data } = await ctx.supabase.from('surveys')
-          .select('total_responses')
-          .eq('id', surveyId)
-          .single();
-        if (data) {
-          await ctx.supabase.from('surveys')
-            .update({ total_responses: (data.total_responses || 0) + 1 })
-            .eq('id', surveyId);
-        }
-      }
+      // Update total_responses from actual count
+      const { count } = await ctx.supabase
+        .from('survey_responses')
+        .select('id', { count: 'exact', head: true })
+        .eq('survey_id', surveyId)
+        .eq('completed', true);
+      await ctx.supabase.from('surveys')
+        .update({ total_responses: count || 0 })
+        .eq('id', surveyId);
     }
 
     const messages: PromptMessage[] = [
