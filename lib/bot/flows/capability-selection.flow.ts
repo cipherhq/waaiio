@@ -100,12 +100,12 @@ const selectCapabilityStep: FlowStepConfig = {
         }
         case 'ticketing': {
           const { count } = await ctx.supabase.from('events').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true);
+            .eq('business_id', businessId).eq('status', 'published');
           return [cap, (count || 0) > 0];
         }
         case 'crowdfunding': {
           const { count } = await ctx.supabase.from('campaigns').select('id', { count: 'exact', head: true })
-            .eq('business_id', businessId).eq('is_active', true);
+            .eq('business_id', businessId).eq('status', 'active');
           return [cap, (count || 0) > 0];
         }
         default:

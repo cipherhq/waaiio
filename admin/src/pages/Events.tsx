@@ -9,12 +9,12 @@ import { logAudit } from '@/lib/auditLog';
 interface Event {
   id: string;
   business_id: string;
-  title: string;
+  name: string;
   description: string | null;
-  start_date: string | null;
+  date: string | null;
   end_date: string | null;
-  location: string | null;
-  capacity: number | null;
+  venue: string | null;
+  total_tickets: number | null;
   tickets_sold: number | null;
   status: string;
   price: number | null;
@@ -83,11 +83,11 @@ export default function Events() {
     if (statusFilter !== 'all' && e.status !== statusFilter) return false;
     if (businessFilter !== 'all' && e.business_id !== businessFilter) return false;
     if (dateStart) {
-      const eventDate = e.start_date || e.created_at;
+      const eventDate = e.date || e.created_at;
       if (eventDate < dateStart) return false;
     }
     if (dateEnd) {
-      const eventDate = e.start_date || e.created_at;
+      const eventDate = e.date || e.created_at;
       if (eventDate > dateEnd + 'T23:59:59') return false;
     }
     return true;
@@ -180,13 +180,13 @@ export default function Events() {
                   onClick={() => setSelected(ev)}
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
-                  <td className="px-4 py-3 font-medium text-gray-900">{ev.title}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{ev.name}</td>
                   <td className="px-4 py-3 text-gray-600">{ev.business_name}</td>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {ev.start_date ? fmtDate(ev.start_date) : '—'}
+                    {ev.date ? fmtDate(ev.date) : '—'}
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{ev.location || '—'}</td>
-                  <td className="px-4 py-3 text-right text-gray-600">{ev.capacity ?? '—'}</td>
+                  <td className="px-4 py-3 text-gray-600">{ev.venue || '—'}</td>
+                  <td className="px-4 py-3 text-right text-gray-600">{ev.total_tickets ?? '—'}</td>
                   <td className="px-4 py-3 text-right text-gray-600">{ev.tickets_sold ?? 0}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={ev.status} />
@@ -204,13 +204,13 @@ export default function Events() {
       <DetailModal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected?.title || ''}
+        title={selected?.name || ''}
         wide
       >
         {selected && (
           <div className="space-y-3 text-sm">
             <DetailRow label="Event ID" value={selected.id} />
-            <DetailRow label="Title" value={selected.title} />
+            <DetailRow label="Name" value={selected.name} />
             <DetailRow label="Status" value={selected.status} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
             {selected.updated_at && (
@@ -230,9 +230,9 @@ export default function Events() {
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Event Details</p>
               <div className="space-y-2">
-                <DetailRow label="Start Date" value={selected.start_date ? fmtDateTime(selected.start_date) : '—'} />
+                <DetailRow label="Date" value={selected.date ? fmtDateTime(selected.date) : '—'} />
                 <DetailRow label="End Date" value={selected.end_date ? fmtDateTime(selected.end_date) : '—'} />
-                <DetailRow label="Location" value={selected.location} />
+                <DetailRow label="Venue" value={selected.venue} />
                 <DetailRow
                   label="Price"
                   value={selected.price != null ? fmtCurrency(selected.price, selected.currency || 'NGN') : 'Free'}
@@ -244,37 +244,37 @@ export default function Events() {
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Ticket Sales</p>
               <div className="space-y-2">
-                <DetailRow label="Capacity" value={selected.capacity ?? '—'} />
+                <DetailRow label="Total Tickets" value={selected.total_tickets ?? '—'} />
                 <DetailRow label="Tickets Sold" value={selected.tickets_sold ?? 0} />
                 <DetailRow
                   label="Remaining"
                   value={
-                    selected.capacity != null
-                      ? Math.max(0, selected.capacity - (selected.tickets_sold || 0))
+                    selected.total_tickets != null
+                      ? Math.max(0, selected.total_tickets - (selected.tickets_sold || 0))
                       : 'Unlimited'
                   }
                 />
                 <DetailRow
                   label="Sell-through"
                   value={
-                    selected.capacity != null && selected.capacity > 0
-                      ? `${Math.round(((selected.tickets_sold || 0) / selected.capacity) * 100)}%`
+                    selected.total_tickets != null && selected.total_tickets > 0
+                      ? `${Math.round(((selected.tickets_sold || 0) / selected.total_tickets) * 100)}%`
                       : '—'
                   }
                 />
               </div>
 
               {/* Sell-through progress bar */}
-              {selected.capacity != null && selected.capacity > 0 && (
+              {selected.total_tickets != null && selected.total_tickets > 0 && (
                 <div className="mt-3">
                   <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-brand rounded-full"
-                      style={{ width: Math.min(100, Math.round(((selected.tickets_sold || 0) / selected.capacity) * 100)) + '%' }}
+                      style={{ width: Math.min(100, Math.round(((selected.tickets_sold || 0) / selected.total_tickets) * 100)) + '%' }}
                     />
                   </div>
                   <p className="mt-1 text-xs text-gray-500">
-                    {selected.tickets_sold || 0} / {selected.capacity} tickets sold
+                    {selected.tickets_sold || 0} / {selected.total_tickets} tickets sold
                   </p>
                 </div>
               )}

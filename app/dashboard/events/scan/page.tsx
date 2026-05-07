@@ -85,31 +85,32 @@ export default function ScanPage() {
         return;
       }
 
-      setTicket(data);
+      const ticketData = data.ticket || data;
+      setTicket(ticketData);
 
-      if (data.status === 'used' || data.scanned_at) {
+      if (ticketData.status === 'used' || ticketData.scanned_at) {
         setState('already_used');
         return;
       }
 
-      // Auto check-in: PATCH to mark as scanned
-      const patchRes = await fetch(`/api/tickets/verify/${code.trim()}`, {
-        method: 'PATCH',
+      // Auto check-in: POST to mark as scanned
+      const checkInRes = await fetch(`/api/tickets/verify/${code.trim()}`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ scanned_by: business.name }),
       });
 
-      if (patchRes.ok) {
+      if (checkInRes.ok) {
         setState('valid');
         setScanCount(c => c + 1);
       } else {
-        const patchData = await patchRes.json();
-        if (patchData.scanned_at) {
+        const checkInData = await checkInRes.json();
+        if (checkInData.scanned_at) {
           setState('already_used');
-          setTicket(prev => prev ? { ...prev, scanned_at: patchData.scanned_at } : prev);
+          setTicket(prev => prev ? { ...prev, scanned_at: checkInData.scanned_at } : prev);
         } else {
           setState('error');
-          setError(patchData.error || 'Check-in failed');
+          setError(checkInData.error || 'Check-in failed');
         }
       }
     } catch {
