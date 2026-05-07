@@ -12,10 +12,19 @@ interface Booking {
   time: string;
   party_size: number;
   status: string;
+  flow_type: string;
   guest_name: string;
   guest_phone: string;
+  guest_email: string | null;
   special_requests: string | null;
+  staff_id: string | null;
   staff_name: string | null;
+  deposit_amount: number;
+  deposit_status: string;
+  total_amount: number;
+  channel: string | null;
+  notes: string | null;
+  payment_id: string | null;
 }
 
 type ViewMode = 'month' | 'week' | 'day';
@@ -127,7 +136,7 @@ export default function CalendarPage() {
 
     const { data } = await supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, special_requests, staff_name')
+      .select('id, reference_code, date, time, party_size, status, flow_type, guest_name, guest_phone, guest_email, special_requests, staff_id, staff_name, deposit_amount, deposit_status, total_amount, channel, notes, payment_id')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .gte('date', startStr)
@@ -170,9 +179,40 @@ export default function CalendarPage() {
     if (newStatus === 'confirmed') extra.confirmed_at = new Date().toISOString();
     if (newStatus === 'in_progress') extra.seated_at = new Date().toISOString();
     if (newStatus === 'completed') extra.completed_at = new Date().toISOString();
-    if (newStatus === 'cancelled') extra.cancelled_at = new Date().toISOString();
+    if (newStatus === 'cancelled') {
+      extra.cancelled_at = new Date().toISOString();
+      extra.cancelled_by = 'business';
+    }
 
     await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
+
+    // Release slot + notify customer on cancel/no_show (same as reservations page)
+    if (newStatus === 'cancelled' || newStatus === 'no_show') {
+      const booking = bookings.find(b => b.id === id);
+      if (booking) {
+        try {
+          await supabase.rpc('release_booking_slot', {
+            p_business_id: business.id,
+            p_date: booking.date,
+            p_start_time: booking.time,
+            p_staff_id: booking.staff_id || null,
+          });
+        } catch { /* Non-critical */ }
+
+        if (newStatus === 'cancelled' && booking.guest_phone) {
+          fetch('/api/notifications/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              business_id: business.id,
+              phone: booking.guest_phone,
+              message: `Your booking at ${business.name} on ${booking.date} has been cancelled. Contact us if you have questions.`,
+            }),
+          }).catch(() => {});
+        }
+      }
+    }
+
     setSelectedBooking(null);
     fetchBookings();
   }
@@ -203,9 +243,9 @@ export default function CalendarPage() {
       const we = new Date(ws);
       we.setDate(we.getDate() + 6);
       const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-      return `${ws.toLocaleDateString('en-US', opts)} - ${we.toLocaleDateString('en-US', opts)}, ${we.getFullYear()}`;
+      return `${ws.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), opts)} - ${we.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), opts)}, ${we.getFullYear()}`;
     }
-    return currentDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+    return currentDate.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   }, [view, currentDate]);
 
   // Build month grid
@@ -343,7 +383,7 @@ export default function CalendarPage() {
                             }`}
                           >
                             <span className="font-medium">{b.time?.slice(0, 5)}</span>{' '}
-                            {b.guest_name || '\u2014'}
+                            {b.guest_name || '\u2014'}{b.staff_name ? ` · ${b.staff_name}` : ''}
                           </button>
                         ))}
                         {extra > 0 && (
@@ -408,7 +448,7 @@ export default function CalendarPage() {
                               }`}
                             >
                               <span className="font-medium">{b.time?.slice(0, 5)}</span>{' '}
-                              {b.guest_name || '\u2014'}
+                              {b.guest_name || '\u2014'}{b.staff_name ? ` · ${b.staff_name}` : ''}
                             </button>
                           ))}
                         </div>
