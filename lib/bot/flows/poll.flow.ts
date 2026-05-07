@@ -33,6 +33,12 @@ const pollQuestionStep: FlowStepConfig = {
     const options = (d.poll_options as string[]) || [];
     const showResults = d.poll_show_results as string;
 
+    // Check if poll has expired
+    const closesAt = d.poll_closes_at as string | undefined;
+    if (closesAt && new Date(closesAt) < new Date()) {
+      return [{ type: 'text', text: 'This poll has closed. Thank you for your interest!' }];
+    }
+
     // Check if already voted
     if (d._poll_already_voted && !d.poll_allow_change) {
       const optionIndex = d._poll_voted_index as number;
@@ -110,6 +116,12 @@ const pollQuestionStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'Please select one of the options.' };
     }
 
+    // Check expiration
+    const closesAt = d.poll_closes_at as string | undefined;
+    if (closesAt && new Date(closesAt) < new Date()) {
+      return { valid: true, data: { _poll_expired: true } };
+    }
+
     // Check if already voted
     const { data: existing } = await ctx.supabase
       .from('poll_votes')
@@ -150,18 +162,15 @@ const pollQuestionStep: FlowStepConfig = {
         option_index: resolvedIndex,
       });
 
-      // Increment total_votes
-      const { data: poll } = await ctx.supabase
+      // Update total_votes from actual count (prevents drift)
+      const { count } = await ctx.supabase
+        .from('poll_votes')
+        .select('id', { count: 'exact', head: true })
+        .eq('poll_id', pollId);
+      await ctx.supabase
         .from('polls')
-        .select('total_votes')
-        .eq('id', pollId)
-        .single();
-      if (poll) {
-        await ctx.supabase
-          .from('polls')
-          .update({ total_votes: (poll.total_votes || 0) + 1 })
-          .eq('id', pollId);
-      }
+        .update({ total_votes: count || 0 })
+        .eq('id', pollId);
     }
 
     return {
