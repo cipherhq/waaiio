@@ -21,6 +21,17 @@ interface Campaign {
   created_at: string;
 }
 
+interface Donation {
+  id: string;
+  donor_name: string | null;
+  donor_phone: string;
+  amount: number;
+  currency: string;
+  status: string;
+  reference_code: string;
+  created_at: string;
+}
+
 type ViewMode = 'list' | 'add' | 'edit';
 
 export default function CampaignsPage() {
@@ -30,6 +41,8 @@ export default function CampaignsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
+  const [donations, setDonations] = useState<Donation[]>([]);
+  const [donationsLoading, setDonationsLoading] = useState(false);
 
   // Form state
   const [form, setForm] = useState({
@@ -78,6 +91,19 @@ export default function CampaignsPage() {
     setView('add');
   }
 
+  async function loadDonations(campaignId: string) {
+    setDonationsLoading(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('campaign_donations')
+      .select('id, donor_name, donor_phone, amount, currency, status, reference_code, created_at')
+      .eq('campaign_id', campaignId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    setDonations((data || []) as Donation[]);
+    setDonationsLoading(false);
+  }
+
   function openEdit(campaign: Campaign) {
     setForm({
       id: campaign.id,
@@ -93,6 +119,7 @@ export default function CampaignsPage() {
       max_donation: campaign.max_donation,
     });
     setView('edit');
+    loadDonations(campaign.id);
   }
 
   async function handleSave() {
@@ -253,22 +280,77 @@ export default function CampaignsPage() {
               </div>
             </div>
 
-            {/* Edit mode: show raised amount and donor count */}
+            {/* Edit mode: show raised amount, donor count, and donations list */}
             {view === 'edit' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Raised</p>
-                  <p className="mt-1 text-lg font-bold text-gray-900">
-                    {formatCurrency(form.raised_amount, country)}
-                  </p>
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Raised</p>
+                    <p className="mt-1 text-lg font-bold text-gray-900">
+                      {formatCurrency(form.raised_amount, country)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Donors</p>
+                    <p className="mt-1 text-lg font-bold text-gray-900">
+                      {form.donor_count}
+                    </p>
+                  </div>
                 </div>
-                <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Donors</p>
-                  <p className="mt-1 text-lg font-bold text-gray-900">
-                    {form.donor_count}
-                  </p>
+
+                {/* Donations list */}
+                <div>
+                  <p className="mb-2 text-sm font-semibold text-gray-700">Recent Donations</p>
+                  {donationsLoading ? (
+                    <div className="flex justify-center py-6">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                    </div>
+                  ) : donations.length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-gray-200 py-6 text-center text-xs text-gray-400">
+                      No donations yet
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                      <table className="w-full text-sm">
+                        <thead className="border-b border-gray-100 bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Donor</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Amount</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-50">
+                          {donations.map(d => (
+                            <tr key={d.id}>
+                              <td className="px-3 py-2">
+                                <p className="font-medium text-gray-900">{d.donor_name || 'Anonymous'}</p>
+                                <p className="text-xs text-gray-400">{d.donor_phone}</p>
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium text-gray-900">
+                                {formatCurrency(d.amount, country)}
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  d.status === 'success' ? 'bg-green-100 text-green-700' :
+                                  d.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                                  d.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {d.status}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
+                                {new Date(d.created_at).toLocaleDateString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
+              </>
             )}
           </div>
 
