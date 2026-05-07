@@ -14,12 +14,21 @@ export async function POST(request: NextRequest) {
     const auth = await authenticateRequest(request, { body });
     if (auth instanceof NextResponse) return auth;
 
-    const { reportIds } = body;
+    const { reportIds, businessId } = body;
     if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
       return NextResponse.json({ error: 'reportIds required' }, { status: 400 });
     }
 
     const supabase = createServiceClient();
+
+    // Verify business ownership
+    if (businessId) {
+      const { data: { user } } = await supabase.auth.getUser(request.headers.get('Authorization')?.replace('Bearer ', '') || '');
+      if (user) {
+        const { data: biz } = await supabase.from('businesses').select('id').eq('id', businessId).eq('owner_id', user.id).maybeSingle();
+        if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
+      }
+    }
     const resolver = new ChannelResolver(supabase);
     const results: { id: string; status: string }[] = [];
 
@@ -34,6 +43,12 @@ export async function POST(request: NextRequest) {
 
         if (!report) {
           results.push({ id: reportId, status: 'not_found' });
+          continue;
+        }
+
+        // Verify report belongs to the specified business
+        if (businessId && report.business_id !== businessId) {
+          results.push({ id: reportId, status: 'not_authorized' });
           continue;
         }
 

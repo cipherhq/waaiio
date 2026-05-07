@@ -19,6 +19,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      return NextResponse.json({ error: 'File too large. Maximum size is 10MB.' }, { status: 413 });
+    }
+
     // Verify business ownership
     const { data: biz } = await supabase
       .from('businesses')
