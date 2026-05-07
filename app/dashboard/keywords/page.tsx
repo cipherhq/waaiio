@@ -100,12 +100,18 @@ export default function KeywordsPage() {
       return;
     }
     const lower = keyword.toLowerCase().trim();
-    const match = systemKeywords.find(sk =>
-      sk.keyword.toLowerCase() === lower ||
-      lower.includes(sk.keyword.toLowerCase())
-    );
+    // Use the same match_type logic as the actual bot keyword matching engine
+    const match = systemKeywords.find(sk => {
+      const skLower = sk.keyword.toLowerCase();
+      switch (sk.match_type) {
+        case 'exact': return lower === skLower;
+        case 'starts_with': return lower.startsWith(skLower) || skLower.startsWith(lower);
+        case 'contains': return lower.includes(skLower) || skLower.includes(lower);
+        default: return lower === skLower;
+      }
+    });
     if (match) {
-      setConflictWarning(`This keyword overrides the system default: "${match.keyword}" (${match.description || match.action_type})`);
+      setConflictWarning(`This may override the system keyword: "${match.keyword}" (${match.match_type} match — ${match.description || match.action_type})`);
     } else {
       setConflictWarning(null);
     }

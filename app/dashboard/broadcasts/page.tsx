@@ -113,12 +113,12 @@ export default function BroadcastsPage() {
         .eq('type', 'system')
         .eq('channel', 'whatsapp')
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(500);
 
-      // Group by message for display
+      // Group by message body + hour (not minute) for accurate recipient counts
       const grouped = new Map<string, BroadcastHistory>();
       for (const n of broadcasts || []) {
-        const key = `${n.body}-${n.created_at.slice(0, 16)}`;
+        const key = `${(n.body || '').slice(0, 100)}-${n.created_at.slice(0, 13)}`;
         if (grouped.has(key)) {
           grouped.get(key)!.recipient_count++;
         } else {
@@ -131,7 +131,7 @@ export default function BroadcastsPage() {
           });
         }
       }
-      setHistory(Array.from(grouped.values()));
+      setHistory(Array.from(grouped.values()).slice(0, 20));
 
       setLoading(false);
     }
