@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -217,7 +218,7 @@ export default function IntegrationsPage() {
   function formatTime(dateStr: string | null) {
     if (!dateStr) return 'Never';
     const d = new Date(dateStr);
-    return d.toLocaleString('en-US', {
+    return d.toLocaleString(getLocale((business.country_code || 'NG') as CountryCode), {
       month: 'short',
       day: 'numeric',
       hour: 'numeric',

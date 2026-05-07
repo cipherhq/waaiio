@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -257,7 +258,7 @@ export default function QueuePage() {
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Queue Management</h1>
-          <p className="mt-1 text-sm text-gray-500">Live queue for today, {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}.</p>
+          <p className="mt-1 text-sm text-gray-500">Live queue for today, {new Date().toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'long', month: 'long', day: 'numeric' })}.</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -393,7 +394,7 @@ export default function QueuePage() {
                 </td>
                 <td className="px-4 py-3 text-gray-500">{e.channel}</td>
                 <td className="px-4 py-3 text-gray-500">
-                  {new Date(e.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  {new Date(e.checked_in_at).toLocaleTimeString(getLocale((business.country_code || 'NG') as CountryCode), { hour: 'numeric', minute: '2-digit' })}
                 </td>
                 <td className="px-4 py-3 text-gray-500">{getWaitTime(e)}</td>
                 <td className="px-4 py-3">

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 
@@ -184,7 +184,7 @@ export default function FinancialsPage() {
     for (let i = 5; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const label = d.toLocaleDateString('en-US', { month: 'short' });
+      const label = d.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'short' });
       const amount = bookings
         .filter(b => b.status !== 'cancelled' && b.status !== 'no_show' && b.created_at.startsWith(key))
         .reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0);

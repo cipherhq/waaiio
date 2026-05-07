@@ -1,6 +1,6 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { initializePayment } from './shared/payment';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 // ── Invoice List ──
@@ -42,7 +42,7 @@ const invoiceListStep: FlowStepConfig = {
       const num = i + 1;
       const emoji = num <= 9 ? `${num}\uFE0F\u20E3` : `${num}.`;
       const dueDateStr = inv.due_date
-        ? new Date(inv.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        ? new Date(inv.due_date).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' })
         : 'No due date';
       const statusTag = inv.status === 'overdue' ? ' \u26A0\uFE0F OVERDUE' : '';
       return `${emoji} ${inv.invoice_number} \u2022 ${formatCurrency(inv.total_amount, cc)} \u2022 Due ${dueDateStr}${statusTag}`;
@@ -96,11 +96,11 @@ const invoiceDetailStep: FlowStepConfig = {
     const biz = invoice.businesses as unknown as { name: string; country_code: string };
     const cc = (biz?.country_code || ctx.business?.country_code || 'NG') as CountryCode;
 
-    const createdDate = new Date(invoice.created_at).toLocaleDateString('en-US', {
+    const createdDate = new Date(invoice.created_at).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
       month: 'short', day: 'numeric', year: 'numeric',
     });
     const dueDate = invoice.due_date
-      ? new Date(invoice.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      ? new Date(invoice.due_date).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric', year: 'numeric' })
       : 'N/A';
     const statusTag = invoice.status === 'overdue' ? ' \u26A0\uFE0F OVERDUE' : '';
 

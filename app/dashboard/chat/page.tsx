@@ -52,7 +52,7 @@ function formatMessageTime(dateStr: string) {
   const isToday = date.toDateString() === now.toDateString();
 
   if (isToday) {
-    return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
   }
 
   const yesterday = new Date(now);
@@ -63,15 +63,15 @@ function formatMessageTime(dateStr: string) {
 
   const diffHrs = Math.floor(diffMins / 60);
   if (diffHrs < 168) {
-    return date.toLocaleDateString('en-US', { weekday: 'short' });
+    return date.toLocaleDateString(undefined, { weekday: 'short' });
   }
 
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 function formatBubbleTime(dateStr: string) {
   const date = new Date(dateStr);
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
 export default function ChatPage() {
@@ -726,7 +726,7 @@ export default function ChatPage() {
     yesterday.setDate(yesterday.getDate() - 1);
     if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
 
-    return date.toLocaleDateString('en-US', {
+    return date.toLocaleDateString(undefined, {
       weekday: 'long',
       month: 'long',
       day: 'numeric',

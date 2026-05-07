@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -329,7 +330,7 @@ export default function WhatsAppUsagePage() {
                 <div className="pointer-events-none absolute -top-10 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 group-hover:opacity-100">
                   {d.inbound} in / {d.outbound} out
                   <br />
-                  {new Date(d.date + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                  {new Date(d.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' })}
                 </div>
               </div>
             );
@@ -394,7 +395,7 @@ export default function WhatsAppUsagePage() {
         {/* Broadcast Usage */}
         <div className="rounded-xl border border-gray-100 bg-white p-6">
           <h2 className="text-sm font-semibold text-gray-900">Broadcasts This Month</h2>
-          <p className="mt-0.5 text-xs text-gray-400">{new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</p>
+          <p className="mt-0.5 text-xs text-gray-400">{new Date().toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'long', year: 'numeric' })}</p>
           <div className="mt-4 grid grid-cols-2 gap-4">
             <div className="rounded-lg bg-gray-50 p-4 text-center">
               <p className="text-2xl font-bold text-gray-900">{broadcastCount}</p>

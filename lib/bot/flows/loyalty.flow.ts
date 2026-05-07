@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
+import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 // ── Loyalty Menu ──
@@ -83,10 +84,12 @@ const loyaltyHistoryStep: FlowStepConfig = {
       return [{ type: 'text', text: 'No loyalty record found. Send *Hi* to start over.' }];
     }
 
+    const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
     const { data: transactions } = await ctx.supabase
       .from('loyalty_transactions')
       .select('points_change, reason, created_at')
-      .eq('loyalty_id', loyaltyId)
+      .eq('business_id', ctx.business!.id)
+      .eq('customer_phone', phone)
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -103,7 +106,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
 
     const lines = transactions.map(t => {
       const sign = t.points_change >= 0 ? '+' : '';
-      const dateStr = new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dateStr = new Date(t.created_at).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' });
       const reason = (t.reason as string) || 'Activity';
       const reasonLabel = reason.charAt(0).toUpperCase() + reason.slice(1);
       return `${sign}${t.points_change} \u2022 ${reasonLabel} (${dateStr})`;
@@ -186,11 +189,14 @@ const loyaltyRedeemStep: FlowStepConfig = {
 
     try {
       // Insert redemption transaction
+      const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
       await ctx.supabase.from('loyalty_transactions').insert({
-        loyalty_id: loyaltyId,
         business_id: businessId,
+        customer_phone: phone,
         points_change: -threshold,
         reason: 'redemption',
+        reference_id: loyaltyId,
+        reference_type: 'loyalty_points',
       });
 
       // Update balance and total_redeemed

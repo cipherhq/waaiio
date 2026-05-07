@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -369,7 +370,7 @@ export default function SupportPage() {
               </div>
               <p className="mt-3 text-sm text-gray-600">{selectedTicket.description}</p>
               <p className="mt-2 text-xs text-gray-400">
-                Created {new Date(selectedTicket.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                Created {new Date(selectedTicket.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </p>
             </div>
 

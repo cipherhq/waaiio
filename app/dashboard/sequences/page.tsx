@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -612,7 +613,7 @@ export default function SequencesPage() {
                             </td>
                             <td className="px-6 py-3 text-gray-600">
                               {e.next_send_at
-                                ? new Date(e.next_send_at).toLocaleString('en-US', {
+                                ? new Date(e.next_send_at).toLocaleString(getLocale((business.country_code || 'NG') as CountryCode), {
                                     month: 'short',
                                     day: 'numeric',
                                     hour: '2-digit',
@@ -787,7 +788,7 @@ export default function SequencesPage() {
                     </span>
                     <span>
                       Created{' '}
-                      {new Date(seq.created_at).toLocaleDateString('en-US', {
+                      {new Date(seq.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         month: 'short',
                         day: 'numeric',
                         year: 'numeric',

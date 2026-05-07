@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
 
 type QuoteStatus = 'pending' | 'quoted' | 'accepted' | 'rejected' | 'expired' | 'cancelled';
 
@@ -152,7 +152,7 @@ export default function QuotesPage() {
                     {quote.customer_name || quote.customer_phone || 'Customer'}
                   </p>
                   <p className="mt-0.5 text-xs text-gray-500">
-                    {new Date(quote.created_at).toLocaleDateString('en-US', {
+                    {new Date(quote.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                       day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
                     })}
                   </p>

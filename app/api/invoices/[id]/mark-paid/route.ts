@@ -16,12 +16,23 @@ export async function POST(
 
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('id, status, total_amount')
+      .select('id, status, total_amount, business_id')
       .eq('id', id)
       .single();
 
     if (!invoice) {
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 });
+    }
+
+    // Verify ownership
+    const { data: biz } = await supabase
+      .from('businesses')
+      .select('id')
+      .eq('id', invoice.business_id)
+      .eq('owner_id', user.id)
+      .maybeSingle();
+    if (!biz) {
+      return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     }
 
     if (invoice.status === 'paid') {

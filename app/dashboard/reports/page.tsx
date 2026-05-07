@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -257,10 +258,10 @@ export default function ReportsPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-500">
-                  {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  {new Date(r.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' })}
                 </td>
                 <td className="px-4 py-3 text-gray-500">
-                  {r.sent_at ? new Date(r.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '-'}
+                  {r.sent_at ? new Date(r.sent_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' }) : '-'}
                 </td>
                 <td className="px-4 py-3">
                   {r.status === 'pending' && (

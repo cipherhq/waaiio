@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -54,7 +55,8 @@ type StatusFilter = 'all' | 'draft' | 'sent' | 'viewed' | 'paid' | 'overdue' | '
 
 function formatAmount(amount: number, currency: string): string {
   try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount);
+    const hasCents = amount % 1 !== 0;
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: hasCents ? 2 : 0, maximumFractionDigits: hasCents ? 2 : 0 }).format(amount);
   } catch {
     return `${currency} ${amount.toLocaleString()}`;
   }

@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -173,7 +174,7 @@ export default function PagesPage() {
                   </span>
                 </td>
                 <td className="px-4 py-3 text-gray-500">
-                  {new Date(page.updated_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  {new Date(page.updated_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}
                 </td>
                 <td className="px-4 py-3">
                   <button

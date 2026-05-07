@@ -1,4 +1,5 @@
 'use client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -177,7 +178,7 @@ export default function WaitlistPage() {
                   <td className="px-4 py-3 text-gray-600">{entry.customer_phone}</td>
                   <td className="px-4 py-3 text-gray-600">
                     {entry.preferred_date
-                      ? new Date(entry.preferred_date + 'T00:00').toLocaleDateString('en-US', {
+                      ? new Date(entry.preferred_date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                           weekday: 'short',
                           day: 'numeric',
                           month: 'short',
@@ -194,7 +195,7 @@ export default function WaitlistPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500">
-                    {new Date(entry.created_at).toLocaleDateString('en-US', {
+                    {new Date(entry.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                       day: 'numeric',
                       month: 'short',
                       hour: 'numeric',
