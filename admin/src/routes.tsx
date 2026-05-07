@@ -40,6 +40,7 @@ import AIUsage from './pages/AIUsage';
 import ConversationUsage from './pages/ConversationUsage';
 import Surveys from './pages/Surveys';
 import AISetupLog from './pages/AISetupLog';
+import SystemHealth from './pages/SystemHealth';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -94,6 +95,7 @@ export const router = createBrowserRouter([
       { path: 'conversation-usage', Component: ConversationUsage },
       { path: 'platform-settings', Component: PlatformSettings },
       { path: 'audit-log', Component: AuditLog },
+      { path: 'system-health', Component: SystemHealth },
     ],
   },
   { path: '*', element: <Navigate to="/dashboard" replace /> },

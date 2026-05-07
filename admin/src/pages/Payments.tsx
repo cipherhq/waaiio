@@ -34,6 +34,7 @@ interface PaymentRecord {
 
 export default function Payments() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; customer_name: string; customer_phone: string; amount: number; reason: string; status: string; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -102,6 +103,10 @@ export default function Payments() {
         .filter(p => !givingBizIds.has(p.business_id));
 
       setPayments(enriched);
+
+      // Load refund requests
+      const { data: reqData } = await adminDb.from('refund_requests').select('*').order('created_at', { ascending: false });
+      setRefundRequests(reqData || []);
     } catch (error) {
       console.warn('Failed to load payments:', error);
     } finally {
@@ -217,6 +222,48 @@ export default function Payments() {
         <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
         <p className="mt-1 text-sm text-gray-500">View and inspect all payment transactions</p>
       </div>
+
+      {/* Pending Refund Requests */}
+      {refundRequests.filter(r => r.status === 'pending').length > 0 && (
+        <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 p-4">
+          <h3 className="text-sm font-semibold text-orange-800">
+            Pending Refund Requests ({refundRequests.filter(r => r.status === 'pending').length})
+          </h3>
+          <div className="mt-3 space-y-2">
+            {refundRequests.filter(r => r.status === 'pending').slice(0, 5).map(req => (
+              <div key={req.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
+                <div>
+                  <span className="font-medium text-gray-900">{req.customer_name || req.customer_phone}</span>
+                  <span className="ml-2 text-gray-500">{fmtCurrency(req.amount)}</span>
+                  {req.reason && <span className="ml-2 text-xs text-gray-400">— {req.reason}</span>}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Approve this refund request?')) return;
+                      await adminDb.from('refund_requests').update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', req.id);
+                      await loadData();
+                    }}
+                    className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200"
+                  >
+                    Approve
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Reject this refund request?')) return;
+                      await adminDb.from('refund_requests').update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', req.id);
+                      await loadData();
+                    }}
+                    className="rounded px-2 py-1 text-xs font-medium text-red-700 bg-red-100 hover:bg-red-200"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-4">

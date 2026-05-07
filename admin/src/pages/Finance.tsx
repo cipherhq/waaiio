@@ -5,6 +5,7 @@ interface Payment {
   id: string;
   amount: number;
   currency: string | null;
+  gateway: string | null;
   status: string;
   business_id: string;
   created_at: string;
@@ -62,7 +63,7 @@ export default function Finance() {
   useEffect(() => {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
-        adminDb.from('payments').select('id, amount, currency, status, business_id, created_at'),
+        adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
         adminDb.from('platform_fees').select('fee_total, waived, created_at'),
         adminDb.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
         adminDb.from('refunds').select('amount, status, created_at').eq('status', 'success'),
@@ -160,6 +161,15 @@ export default function Finance() {
       payoutBuckets[p.status].amount += Number(p.net_amount || 0);
     }
 
+    // Gateway breakdown
+    const gatewayBuckets: Record<string, { count: number; amount: number }> = {};
+    for (const p of filteredPayments.filter(p => p.status === 'success')) {
+      const gw = p.gateway || 'unknown';
+      if (!gatewayBuckets[gw]) gatewayBuckets[gw] = { count: 0, amount: 0 };
+      gatewayBuckets[gw].count++;
+      gatewayBuckets[gw].amount += Number(p.amount || 0);
+    }
+
     return {
       grossVolume,
       totalRefunds,
@@ -169,6 +179,7 @@ export default function Finance() {
       outstanding,
       paymentBuckets,
       payoutBuckets,
+      gatewayBuckets,
     };
   }, [filteredPayments, filteredFees, filteredPayouts, filteredRefunds, bizCurrencyMap]);
 
@@ -344,6 +355,62 @@ export default function Finance() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Gateway Breakdown + ARR */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Payment Gateway Breakdown</h3>
+          <div className="mt-4 space-y-3">
+            {Object.entries(metrics.gatewayBuckets).map(([gw, data]) => (
+              <div key={gw} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-block h-3 w-3 rounded-full ${
+                    gw === 'stripe' ? 'bg-purple-400' :
+                    gw === 'paystack' ? 'bg-blue-400' :
+                    'bg-gray-400'
+                  }`} />
+                  <span className="text-gray-600 capitalize">{gw}</span>
+                </div>
+                <div className="text-right">
+                  <span className="font-medium text-gray-900">{data.count} txns</span>
+                  <span className="ml-2 text-gray-500">({formatMoney(data.amount)})</span>
+                </div>
+              </div>
+            ))}
+            {Object.keys(metrics.gatewayBuckets).length === 0 && (
+              <p className="text-xs text-gray-400">No payment data</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Recurring Revenue</h3>
+          <div className="mt-4 space-y-4">
+            {(() => {
+              const mrrByCurrency: Record<string, number> = {};
+              for (const sub of subscriptions) {
+                const cur = sub.currency || 'NGN';
+                const monthly = sub.amount || 0;
+                mrrByCurrency[cur] = (mrrByCurrency[cur] || 0) + monthly;
+              }
+              const entries = Object.entries(mrrByCurrency).filter(([, a]) => a > 0);
+              if (entries.length === 0) return <p className="text-xs text-gray-400">No active subscriptions</p>;
+              return entries.map(([cur, mrr]) => (
+                <div key={cur} className="space-y-1">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">MRR ({cur})</span>
+                    <span className="font-semibold text-gray-900">{formatMoney(mrr, cur)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">ARR ({cur})</span>
+                    <span className="font-semibold text-gray-900">{formatMoney(mrr * 12, cur)}</span>
+                  </div>
+                </div>
+              ));
+            })()}
           </div>
         </div>
       </div>

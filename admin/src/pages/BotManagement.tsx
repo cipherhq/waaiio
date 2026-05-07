@@ -41,6 +41,7 @@ export default function BotManagement() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [flowFilter, setFlowFilter] = useState('all');
   const [businessFilter, setBusinessFilter] = useState('all');
+  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<BotSession | null>(null);
   const [stats, setStats] = useState<Stats>({ activeSessions: 0, sessionsToday: 0, sessionsThisMonth: 0, avgMessages: 0 });
   const perPage = 20;
@@ -108,6 +109,13 @@ export default function BotManagement() {
     const flowType = getFlowType(s);
     if (flowFilter !== 'all' && flowType !== flowFilter) return false;
     if (businessFilter !== 'all' && s.business_id !== businessFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const phoneMatch = s.whatsapp_number?.includes(q);
+      const bizMatch = s.business_name?.toLowerCase().includes(q);
+      const msgMatch = s.conversation_log?.some(m => m.content?.toLowerCase().includes(q));
+      if (!phoneMatch && !bizMatch && !msgMatch) return false;
+    }
     return true;
   });
 
@@ -150,6 +158,13 @@ export default function BotManagement() {
 
       {/* Filters */}
       <div className="mt-6 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1); }}
+          placeholder="Search phone, business, or message..."
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none w-64"
+        />
         <select
           value={statusFilter}
           onChange={e => { setStatusFilter(e.target.value); setPage(1); }}

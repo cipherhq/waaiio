@@ -107,6 +107,10 @@ export default function Businesses() {
   const [tierSaving, setTierSaving] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
+  // Inline editing
+  const [editField, setEditField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
   const perPage = 20;
 
   useEffect(() => {
@@ -225,6 +229,34 @@ export default function Businesses() {
       alert('Failed to change status');
     } finally {
       setStatusSaving(false);
+    }
+  }
+
+  async function handleEditSave() {
+    if (!selected || !editField) return;
+    setEditSaving(true);
+    try {
+      const { error } = await adminDb
+        .from('businesses')
+        .update({ [editField]: editValue.trim() })
+        .eq('id', selected.id);
+      if (error) throw error;
+      await logAudit({
+        action: 'edit_business_field',
+        entity_type: 'business',
+        entity_id: selected.id,
+        details: { field: editField, new_value: editValue.trim(), business_name: selected.name },
+      });
+      // Update local state
+      setSelected({ ...selected, [editField]: editValue.trim() } as Business);
+      setEditField(null);
+      setEditValue('');
+      await loadData();
+    } catch (err) {
+      console.error('Edit error:', err);
+      alert('Failed to update');
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -468,11 +500,32 @@ export default function Businesses() {
             <DetailRow label="Bot Code" value={selected.bot_code} />
             <DetailRow label="Slug" value={selected.slug} />
             <DetailRow label="Type" value={isDemo(selected) ? 'Demo' : 'Registered'} />
-            <DetailRow label="Category" value={(selected.category || '').replace(/_/g, ' ')} />
+
+            {/* Editable fields */}
+            {(['name', 'category', 'city'] as const).map(field => (
+              <div key={field} className="flex items-center justify-between py-1">
+                <span className="text-gray-500 capitalize">{field}</span>
+                {editField === field ? (
+                  <div className="flex items-center gap-1.5">
+                    <input value={editValue} onChange={e => setEditValue(e.target.value)}
+                      className="rounded border border-brand px-2 py-0.5 text-sm w-40 focus:outline-none" autoFocus />
+                    <button onClick={handleEditSave} disabled={editSaving}
+                      className="text-xs text-brand font-semibold">{editSaving ? '...' : 'Save'}</button>
+                    <button onClick={() => setEditField(null)}
+                      className="text-xs text-gray-400">Cancel</button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-900">{field === 'category' ? (selected[field] || '').replace(/_/g, ' ') : (selected as Record<string, unknown>)[field] as string || '—'}</span>
+                    <button onClick={() => { setEditField(field); setEditValue((selected as Record<string, unknown>)[field] as string || ''); }}
+                      className="text-xs text-brand hover:underline">Edit</button>
+                  </div>
+                )}
+              </div>
+            ))}
+
             <DetailRow label="Flow Type" value={selected.flow_type} />
             <DetailRow label="Country" value={selected.country_code} />
-            <DetailRow label="City" value={selected.city} />
-            <DetailRow label="Neighborhood" value={selected.neighborhood} />
             <DetailRow label="Phone" value={selected.phone} />
             <DetailRow label="Payout Mode" value={selected.payout_mode === 'direct_split' ? 'Direct Split' : 'Platform Managed'} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
