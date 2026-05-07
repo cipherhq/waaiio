@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { getLocale, type CountryCode } from '@/lib/constants';
 
 interface Booking {
   id: string;
@@ -44,6 +45,7 @@ const nextActions: Record<string, { label: string; next: string; color: string }
   ],
   confirmed: [
     { label: 'Start', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
+    { label: 'No Show', next: 'no_show', color: 'text-orange-600 hover:bg-orange-50' },
     { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
   ],
   in_progress: [
@@ -554,7 +556,7 @@ export default function CalendarPage() {
                   <div>
                     <span className="text-gray-400">Date</span>
                     <p className="font-medium text-gray-900">
-                      {new Date(selectedBooking.date + 'T00:00').toLocaleDateString('en-NG', {
+                      {new Date(selectedBooking.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         weekday: 'short',
                         day: 'numeric',
                         month: 'short',

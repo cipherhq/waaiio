@@ -8,24 +8,27 @@ import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 interface Booking {
   id: string;
   business_id: string;
-  customer_id: string;
-  service_name: string | null;
-  booking_date: string | null;
-  start_time: string | null;
-  end_time: string | null;
+  user_id: string | null;
+  service_id: string | null;
+  date: string;
+  time: string;
+  party_size: number;
   status: string;
-  amount: number | null;
-  currency: string | null;
+  flow_type: string;
+  total_amount: number;
+  deposit_amount: number;
+  deposit_status: string;
+  guest_name: string | null;
+  guest_phone: string | null;
+  staff_name: string | null;
+  reference_code: string;
+  channel: string | null;
   notes: string | null;
-  payment_status: string | null;
-  payment_method: string | null;
-  cancellation_reason: string | null;
+  special_requests: string | null;
   created_at: string;
   updated_at: string | null;
   // enriched
   business_name?: string;
-  customer_name?: string;
-  customer_email?: string;
 }
 
 // Categories handled by the Giving page — excluded here
@@ -78,7 +81,7 @@ export default function Bookings() {
       );
 
       // Load customer profiles
-      const customerIds = [...new Set(rows.map(b => b.customer_id).filter(Boolean))];
+      const customerIds = [...new Set(rows.map(b => b.user_id).filter(Boolean))];
       const { data: profileData } = customerIds.length > 0
         ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', customerIds)
         : { data: [] };
@@ -93,8 +96,7 @@ export default function Bookings() {
         .map(b => ({
           ...b,
           business_name: bizMap.get(b.business_id) || 'Unknown',
-          customer_name: profileMap.get(b.customer_id)?.name || 'Unknown',
-          customer_email: profileMap.get(b.customer_id)?.email || '—',
+          guest_name: b.guest_name || profileMap.get(b.user_id)?.name || '—',
         }));
 
       setBookings(enriched);
@@ -107,11 +109,11 @@ export default function Bookings() {
     if (statusFilter !== 'all' && b.status !== statusFilter) return false;
     if (businessFilter !== 'all' && b.business_id !== businessFilter) return false;
     if (dateStart) {
-      const bookDate = b.booking_date || b.created_at;
+      const bookDate = b.date || b.created_at;
       if (bookDate < dateStart) return false;
     }
     if (dateEnd) {
-      const bookDate = b.booking_date || b.created_at;
+      const bookDate = b.date || b.created_at;
       if (bookDate > dateEnd + 'T23:59:59') return false;
     }
     return true;
@@ -204,16 +206,16 @@ export default function Bookings() {
                 >
                   <td className="px-4 py-3 text-gray-600 font-mono text-xs">{b.id.slice(0, 8)}...</td>
                   <td className="px-4 py-3 font-medium text-gray-900">{b.business_name}</td>
-                  <td className="px-4 py-3 text-gray-600">{b.customer_name}</td>
+                  <td className="px-4 py-3 text-gray-600">{b.guest_name}</td>
                   <td className="px-4 py-3 text-gray-600">{b.service_name || '—'}</td>
                   <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
-                    {b.booking_date ? fmtDate(b.booking_date) : fmtDate(b.created_at)}
+                    {b.date ? fmtDate(b.date) : fmtDate(b.created_at)}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={b.status} />
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {b.amount != null ? fmtCurrency(b.amount, b.currency || 'NGN') : '—'}
+                    {b.total_amount != null ? fmtCurrency(b.total_amount, 'NGN') : '—'}
                   </td>
                 </tr>
               ))}
@@ -250,9 +252,9 @@ export default function Bookings() {
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Customer</p>
               <div className="space-y-2">
-                <DetailRow label="Name" value={selected.customer_name || '—'} />
-                <DetailRow label="Email" value={selected.customer_email || '—'} />
-                <DetailRow label="Customer ID" value={selected.customer_id} />
+                <DetailRow label="Guest" value={selected.guest_name || '—'} />
+                <DetailRow label="Phone" value={selected.guest_phone || '—'} />
+                <DetailRow label="Customer ID" value={selected.user_id} />
               </div>
             </div>
 
@@ -260,9 +262,9 @@ export default function Bookings() {
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Service Details</p>
               <div className="space-y-2">
                 <DetailRow label="Service" value={selected.service_name || '—'} />
-                <DetailRow label="Booking Date" value={selected.booking_date ? fmtDate(selected.booking_date) : '—'} />
-                <DetailRow label="Start Time" value={selected.start_time || '—'} />
-                <DetailRow label="End Time" value={selected.end_time || '—'} />
+                <DetailRow label="Date" value={selected.date ? fmtDate(selected.date) : '—'} />
+                <DetailRow label="Time" value={selected.time || '—'} />
+                <DetailRow label="Staff" value={selected.staff_name || '—'} />
                 {selected.notes && <DetailRow label="Notes" value={selected.notes} />}
               </div>
             </div>
@@ -272,18 +274,18 @@ export default function Bookings() {
               <div className="space-y-2">
                 <DetailRow
                   label="Amount"
-                  value={selected.amount != null ? fmtCurrency(selected.amount, selected.currency || 'NGN') : '—'}
+                  value={selected.total_amount != null && selected.total_amount > 0 ? fmtCurrency(selected.total_amount) : '—'}
                 />
-                <DetailRow label="Currency" value={selected.currency || '—'} />
-                <DetailRow label="Payment Status" value={selected.payment_status || '—'} />
-                <DetailRow label="Payment Method" value={selected.payment_method || '—'} />
+                <DetailRow label="Deposit Status" value={selected.deposit_status || '—'} />
+                <DetailRow label="Channel" value={selected.channel || '—'} />
+                <DetailRow label="Reference" value={selected.reference_code || '—'} />
               </div>
             </div>
 
-            {selected.status === 'cancelled' && selected.cancellation_reason && (
-              <div className="mt-4 rounded-lg bg-red-50 p-4">
-                <p className="text-xs font-semibold uppercase text-red-500 mb-2">Cancellation</p>
-                <p className="text-sm text-red-700">{selected.cancellation_reason}</p>
+            {selected.special_requests && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Special Requests</p>
+                <p className="text-sm text-gray-700">{selected.special_requests}</p>
               </div>
             )}
           </div>

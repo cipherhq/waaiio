@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
@@ -33,7 +33,10 @@ interface Booking {
   rescheduled_at: string | null;
   original_date: string | null;
   original_time: string | null;
+  staff_id: string | null;
   staff_name: string | null;
+  service_id: string | null;
+  refund_amount: number | null;
 }
 
 const allStatuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
@@ -118,7 +121,7 @@ export default function BookingsPage() {
     const supabase = createClient();
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_name')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, refund_amount')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .order('date', { ascending: false })
@@ -168,9 +171,41 @@ export default function BookingsPage() {
     if (newStatus === 'confirmed') extra.confirmed_at = new Date().toISOString();
     if (newStatus === 'in_progress') extra.seated_at = new Date().toISOString();
     if (newStatus === 'completed') extra.completed_at = new Date().toISOString();
-    if (newStatus === 'cancelled') extra.cancelled_at = new Date().toISOString();
+    if (newStatus === 'cancelled') {
+      extra.cancelled_at = new Date().toISOString();
+      extra.cancelled_by = 'business';
+    }
 
     await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
+
+    // Release booking slot on cancel/no_show so the time becomes available again
+    if (newStatus === 'cancelled' || newStatus === 'no_show') {
+      const booking = bookings.find(b => b.id === id);
+      if (booking) {
+        try {
+          await supabase.rpc('release_booking_slot', {
+            p_business_id: business.id,
+            p_date: booking.date,
+            p_start_time: booking.time,
+            p_staff_id: booking.staff_id || null,
+          });
+        } catch { /* Non-critical if slot doesn't exist */ }
+
+        // Notify customer via API (non-blocking)
+        if (newStatus === 'cancelled' && booking.guest_phone) {
+          fetch('/api/notifications/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              business_id: business.id,
+              phone: booking.guest_phone,
+              message: `Your booking at ${business.name} on ${booking.date} has been cancelled. Contact us if you have questions.`,
+            }),
+          }).catch(() => {});
+        }
+      }
+    }
+
     fetchBookings();
   }
 
@@ -217,6 +252,11 @@ export default function BookingsPage() {
             Time: b.time,
             Status: b.status,
             'Party Size': b.party_size,
+            Amount: b.total_amount || b.deposit_amount || 0,
+            'Deposit Status': b.deposit_status || '',
+            'Special Requests': b.special_requests || '',
+            Notes: b.notes || '',
+            Created: b.created_at?.slice(0, 10) || '',
           }))}
           filename={`reservations-${new Date().toISOString().slice(0, 10)}`}
         />
@@ -262,7 +302,7 @@ export default function BookingsPage() {
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '\u2014'}</td>
                   <td className="px-4 py-3 text-gray-600">
-                    {new Date(r.date + 'T00:00').toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
                     {r.time && ` at ${r.time.slice(0, 5)}`}
                   </td>
                   <td className="px-4 py-3 text-gray-600">
@@ -313,8 +353,11 @@ export default function BookingsPage() {
           <button
             disabled={bulkUpdating}
             onClick={async () => {
+              const pending = bookings.filter(b => selectedIds.has(b.id) && b.status === 'pending');
+              if (pending.length === 0) { alert('No pending bookings selected'); return; }
+              if (!confirm(`Confirm ${pending.length} pending booking${pending.length > 1 ? 's' : ''}?`)) return;
               setBulkUpdating(true);
-              for (const id of selectedIds) await updateStatus(id, 'confirmed');
+              for (const b of pending) await updateStatus(b.id, 'confirmed');
               setBulkUpdating(false);
               setSelectedIds(new Set());
             }}
@@ -325,8 +368,11 @@ export default function BookingsPage() {
           <button
             disabled={bulkUpdating}
             onClick={async () => {
+              const cancellable = bookings.filter(b => selectedIds.has(b.id) && ['pending', 'confirmed'].includes(b.status));
+              if (cancellable.length === 0) { alert('No cancellable bookings selected'); return; }
+              if (!confirm(`Cancel ${cancellable.length} booking${cancellable.length > 1 ? 's' : ''}? Customers will be notified.`)) return;
               setBulkUpdating(true);
-              for (const id of selectedIds) await updateStatus(id, 'cancelled');
+              for (const b of cancellable) await updateStatus(b.id, 'cancelled');
               setBulkUpdating(false);
               setSelectedIds(new Set());
             }}
@@ -404,7 +450,7 @@ export default function BookingsPage() {
                   <div>
                     <span className="text-gray-400">Date</span>
                     <p className="font-medium text-gray-900">
-                      {new Date(selected.date + 'T00:00').toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                      {new Date(selected.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
                     </p>
                   </div>
                   <div>
@@ -436,11 +482,11 @@ export default function BookingsPage() {
                   <p className="text-xs font-medium text-blue-800">Rescheduled</p>
                   <p className="mt-1 text-xs text-blue-600">
                     Originally: {selected.original_date
-                      ? new Date(selected.original_date + 'T00:00').toLocaleDateString('en-NG', { weekday: 'short', day: 'numeric', month: 'short' })
+                      ? new Date(selected.original_date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })
                       : '—'}{selected.original_time ? ` at ${selected.original_time.slice(0, 5)}` : ''}
                   </p>
                   <p className="mt-0.5 text-xs text-blue-500">
-                    Changed on {new Date(selected.rescheduled_at).toLocaleDateString('en-NG', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    Changed on {new Date(selected.rescheduled_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short', year: 'numeric' })}
                   </p>
                 </div>
               )}
@@ -460,7 +506,7 @@ export default function BookingsPage() {
                   </div>
                 </div>
               )}
-              {selected.payment_id && selected.deposit_status === 'paid' && (
+              {selected.payment_id && selected.deposit_status === 'paid' && !selected.refund_amount && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-500">Refund</h3>
                   <button
@@ -469,6 +515,12 @@ export default function BookingsPage() {
                   >
                     Issue Refund
                   </button>
+                </div>
+              )}
+              {selected.refund_amount && selected.refund_amount > 0 && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500">Refund</h3>
+                  <p className="mt-1 text-sm text-green-600">Refunded: {formatCurrency(selected.refund_amount, (business.country_code || 'NG') as CountryCode)}</p>
                 </div>
               )}
             </div>
