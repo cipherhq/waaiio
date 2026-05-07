@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { logAudit } from '@/lib/auditLog';
+import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -43,6 +45,7 @@ export default function RecurringPayments() {
   const [gatewayFilter, setGatewayFilter] = useState('all');
   const [frequencyFilter, setFrequencyFilter] = useState('all');
   const [selected, setSelected] = useState<RecurringRecord | null>(null);
+  const [actionSaving, setActionSaving] = useState(false);
   const perPage = 20;
   const loadingRef = useRef(false);
 
@@ -105,8 +108,18 @@ export default function RecurringPayments() {
 
   // Summary stats
   const active = records.filter(r => r.status === 'active');
-  const mrr = active.filter(r => r.frequency === 'monthly').reduce((s, r) => s + Number(r.amount), 0);
-  const wrr = active.filter(r => r.frequency === 'weekly').reduce((s, r) => s + Number(r.amount), 0);
+  const mrrByCurrency: Record<string, number> = {};
+  const wrrByCurrency: Record<string, number> = {};
+  for (const r of active) {
+    const cur = r.currency || 'NGN';
+    if (r.frequency === 'monthly') mrrByCurrency[cur] = (mrrByCurrency[cur] || 0) + Number(r.amount);
+    if (r.frequency === 'weekly') wrrByCurrency[cur] = (wrrByCurrency[cur] || 0) + Number(r.amount);
+  }
+  const formatMulti = (amounts: Record<string, number>) => {
+    const entries = Object.entries(amounts).filter(([, a]) => a > 0);
+    if (entries.length === 0) return fmtCurrency(0);
+    return entries.map(([cur, amt]) => fmtCurrency(amt, cur)).join(' · ');
+  };
   const pastDue = records.filter(r => r.status === 'past_due').length;
   const cancelledThisMonth = records.filter(r => {
     if (r.status !== 'cancelled') return false;
@@ -114,6 +127,52 @@ export default function RecurringPayments() {
     const start = new Date(d.getFullYear(), d.getMonth(), 1);
     return r.cancelled_at ? new Date(r.cancelled_at) >= start : false;
   }).length;
+
+  async function handlePause() {
+    if (!selected) return;
+    setActionSaving(true);
+    try {
+      const now = new Date().toISOString();
+      await adminDb.from('customer_subscriptions').update({ status: 'paused', paused_at: now }).eq('id', selected.id);
+      await logAudit({ action: 'pause_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name } });
+      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'paused', paused_at: now } : r));
+      setSelected(null);
+    } catch { alert('Failed to pause'); } finally { setActionSaving(false); }
+  }
+
+  async function handleResume() {
+    if (!selected) return;
+    setActionSaving(true);
+    try {
+      await adminDb.from('customer_subscriptions').update({ status: 'active', paused_at: null }).eq('id', selected.id);
+      await logAudit({ action: 'resume_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name } });
+      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'active', paused_at: null } : r));
+      setSelected(null);
+    } catch { alert('Failed to resume'); } finally { setActionSaving(false); }
+  }
+
+  async function handleCancel() {
+    if (!selected || !confirm('Cancel this recurring subscription? This cannot be undone.')) return;
+    setActionSaving(true);
+    try {
+      const now = new Date().toISOString();
+      await adminDb.from('customer_subscriptions').update({ status: 'cancelled', cancelled_at: now }).eq('id', selected.id);
+      await logAudit({ action: 'cancel_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name } });
+      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'cancelled', cancelled_at: now } : r));
+      setSelected(null);
+    } catch { alert('Failed to cancel'); } finally { setActionSaving(false); }
+  }
+
+  async function handleRetry() {
+    if (!selected) return;
+    setActionSaving(true);
+    try {
+      await adminDb.from('customer_subscriptions').update({ status: 'active', failure_count: 0 }).eq('id', selected.id);
+      await logAudit({ action: 'retry_recurring', entity_type: 'customer_subscription', entity_id: selected.id, details: { business: selected.business_name, customer: selected.customer_name, previous_failures: selected.failure_count } });
+      setRecords(prev => prev.map(r => r.id === selected.id ? { ...r, status: 'active', failure_count: 0 } : r));
+      setSelected(null);
+    } catch { alert('Failed to retry'); } finally { setActionSaving(false); }
+  }
 
   if (loading) {
     return (
@@ -125,9 +184,34 @@ export default function RecurringPayments() {
 
   return (
     <div>
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Recurring Payments</h1>
-        <p className="mt-1 text-sm text-gray-500">All recurring customer subscriptions across businesses</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Recurring Payments</h1>
+          <p className="mt-1 text-sm text-gray-500">All recurring customer subscriptions across businesses</p>
+        </div>
+        <button
+          onClick={() => downloadCSV(
+            filtered.map(r => ({
+              business: r.business_name,
+              customer: r.customer_name || '',
+              phone: r.customer_phone || '',
+              service: r.service_name || '',
+              amount: r.amount,
+              currency: r.currency || 'NGN',
+              frequency: r.frequency,
+              gateway: r.gateway || '',
+              status: r.status,
+              charge_count: r.charge_count,
+              total_charged: r.total_charged,
+              next_charge: r.next_charge_at || '',
+              created_at: r.created_at,
+            })),
+            `recurring-payments-${new Date().toISOString().slice(0, 10)}.csv`,
+          )}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+        >
+          Export CSV
+        </button>
       </div>
 
       {/* Summary Cards */}
@@ -138,11 +222,11 @@ export default function RecurringPayments() {
         </div>
         <div className="rounded-xl border border-green-100 bg-green-50 p-4">
           <p className="text-xs font-medium text-gray-500">MRR</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(mrr)}</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{formatMulti(mrrByCurrency)}</p>
         </div>
         <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
           <p className="text-xs font-medium text-gray-500">WRR</p>
-          <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(wrr)}</p>
+          <p className="mt-1 text-xl font-bold text-gray-900">{formatMulti(wrrByCurrency)}</p>
         </div>
         <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
           <p className="text-xs font-medium text-gray-500">Past Due</p>
@@ -296,6 +380,50 @@ export default function RecurringPayments() {
             <DetailRow label="Next Charge" value={selected.next_charge_at ? fmtDateTime(selected.next_charge_at) : null} />
             <DetailRow label="Paused At" value={selected.paused_at ? fmtDateTime(selected.paused_at) : null} />
             <DetailRow label="Cancelled At" value={selected.cancelled_at ? fmtDateTime(selected.cancelled_at) : null} />
+
+            {/* Admin Actions */}
+            {selected.status !== 'cancelled' && (
+              <>
+                <div className="my-4 border-t-2 border-gray-200" />
+                <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Admin Actions</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {selected.status === 'active' && (
+                    <button
+                      onClick={handlePause}
+                      disabled={actionSaving}
+                      className="rounded-lg bg-yellow-100 px-4 py-2 text-sm font-medium text-yellow-700 hover:bg-yellow-200 disabled:opacity-50"
+                    >
+                      {actionSaving ? 'Saving...' : 'Pause'}
+                    </button>
+                  )}
+                  {selected.status === 'paused' && (
+                    <button
+                      onClick={handleResume}
+                      disabled={actionSaving}
+                      className="rounded-lg bg-green-100 px-4 py-2 text-sm font-medium text-green-700 hover:bg-green-200 disabled:opacity-50"
+                    >
+                      {actionSaving ? 'Saving...' : 'Resume'}
+                    </button>
+                  )}
+                  {selected.status === 'past_due' && (
+                    <button
+                      onClick={handleRetry}
+                      disabled={actionSaving}
+                      className="rounded-lg bg-blue-100 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-200 disabled:opacity-50"
+                    >
+                      {actionSaving ? 'Saving...' : 'Retry (Reset Failures)'}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleCancel}
+                    disabled={actionSaving}
+                    className="rounded-lg bg-red-100 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-200 disabled:opacity-50"
+                  >
+                    {actionSaving ? 'Saving...' : 'Cancel Subscription'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </DetailModal>

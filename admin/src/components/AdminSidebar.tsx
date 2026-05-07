@@ -87,7 +87,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
-    label: 'Operations',
+    label: 'Reports & Queues',
     items: [
       { icon: FileText, label: 'Reports', path: '/reports' },
       { icon: ListOrdered, label: 'Queue Mgmt', path: '/queue-management' },

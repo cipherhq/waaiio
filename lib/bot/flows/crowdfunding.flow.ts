@@ -1,4 +1,4 @@
-import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage } from './types';
+import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 const selectCampaignStep: FlowStepConfig = {
@@ -7,11 +7,13 @@ const selectCampaignStep: FlowStepConfig = {
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
+    const today = new Date().toISOString().split('T')[0];
     const { data: campaigns } = await ctx.supabase
       .from('campaigns')
-      .select('id, title, description, goal_amount, raised_amount, donor_count')
+      .select('id, title, description, goal_amount, raised_amount, donor_count, end_date')
       .eq('business_id', ctx.business.id)
       .eq('status', 'active')
+      .or(`end_date.is.null,end_date.gte.${today}`)
       .order('created_at', { ascending: false })
       .limit(10);
 
@@ -47,7 +49,7 @@ const selectCampaignStep: FlowStepConfig = {
     const campaignId = input.replace('campaign_', '');
     const { data: campaign } = await ctx.supabase
       .from('campaigns')
-      .select('id, title, goal_amount, raised_amount, donor_count')
+      .select('id, title, goal_amount, raised_amount, donor_count, min_donation, max_donation')
       .eq('id', campaignId)
       .single();
 
@@ -63,6 +65,8 @@ const selectCampaignStep: FlowStepConfig = {
         campaign_goal: campaign.goal_amount,
         campaign_raised: campaign.raised_amount,
         campaign_donors: campaign.donor_count,
+        campaign_min_donation: campaign.min_donation,
+        campaign_max_donation: campaign.max_donation,
       },
     };
   },
@@ -127,14 +131,36 @@ const campaignViewStep: FlowStepConfig = {
 const enterDonationAmountStep: FlowStepConfig = {
   id: 'enter_donation_amount',
 
-  async prompt(): Promise<PromptMessage[]> {
-    return [{ type: 'text', text: 'How much would you like to donate? Enter the amount:' }];
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+    const sd = ctx.session.session_data;
+    const minDonation = (sd.campaign_min_donation as number) || null;
+    const maxDonation = (sd.campaign_max_donation as number) || null;
+
+    let hint = 'Enter the amount:';
+    if (minDonation && maxDonation) {
+      hint = `Enter an amount between ${formatCurrency(minDonation, cc)} and ${formatCurrency(maxDonation, cc)}:`;
+    } else if (minDonation) {
+      hint = `Enter the amount (minimum ${formatCurrency(minDonation, cc)}):`;
+    } else if (maxDonation) {
+      hint = `Enter the amount (maximum ${formatCurrency(maxDonation, cc)}):`;
+    }
+
+    return [{ type: 'text', text: `How much would you like to donate? ${hint}` }];
   },
 
-  async validate(input: string) {
-    const amount = Math.round(parseFloat(input.replace(/[^0-9.]/g, '')));
-    if (!amount || isNaN(amount) || amount < 100) {
-      return { valid: false, errorMessage: 'Please enter a valid amount (minimum 100).' };
+  async validate(input: string, ctx: FlowContext) {
+    const amount = Math.round(parseFloat(input.replace(/[^0-9.]/g, '')) * 100) / 100;
+    const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+    const sd = ctx.session.session_data;
+    const minDonation = (sd.campaign_min_donation as number) || 1;
+    const maxDonation = (sd.campaign_max_donation as number) || null;
+
+    if (!amount || isNaN(amount) || amount < minDonation) {
+      return { valid: false, errorMessage: `Please enter a valid amount (minimum ${formatCurrency(minDonation, cc)}).` };
+    }
+    if (maxDonation && amount > maxDonation) {
+      return { valid: false, errorMessage: `Maximum donation for this campaign is ${formatCurrency(maxDonation, cc)}.` };
     }
     return { valid: true, data: { donation_amount: amount } };
   },
@@ -186,6 +212,19 @@ const donationPaymentStep: FlowStepConfig = {
     // Generate reference
     const refCode = `DON-${Date.now().toString(36).toUpperCase()}`;
 
+    // Resolve donor name from profile if available
+    let donorName = '';
+    if (ctx.session.user_id) {
+      const { data: profile } = await ctx.supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', ctx.session.user_id)
+        .maybeSingle();
+      if (profile?.first_name) {
+        donorName = `${profile.first_name} ${profile.last_name || ''}`.trim();
+      }
+    }
+
     // Initialize payment
     const { initializePayment } = await import('./shared/payment');
     const result = await initializePayment(ctx.supabase, {
@@ -197,36 +236,154 @@ const donationPaymentStep: FlowStepConfig = {
       countryCode: country,
       businessId: ctx.business?.id,
       campaignId: sd.campaign_id as string,
+      donorName,
     });
 
     if (!result) {
       return [{ type: 'text', text: 'Sorry, we could not create a payment link. Please try again later.' }];
     }
 
-    return [{
-      type: 'text',
-      text: [
-        `Thank you for your generosity! 🙏`,
-        '',
-        `*Campaign:* ${sd.campaign_title}`,
-        `*Amount:* ${formatCurrency(amount, country)}`,
-        `*Ref:* ${refCode}`,
-        '',
-        `Pay here: ${result.url}`,
-        '',
-        `⚠️ After paying, *return to WhatsApp*.`,
-        '',
-        `Your donation will be reflected once payment is confirmed.`,
-      ].join('\n'),
-    }];
+    // Store reference for verification
+    sd.payment_reference = result.reference;
+    sd.donation_ref_code = refCode;
+    sd.donor_name = donorName;
+    await ctx.supabase
+      .from('bot_sessions')
+      .update({ session_data: sd, current_step: 'await_donation_payment' })
+      .eq('id', ctx.session.id);
+
+    return [
+      {
+        type: 'text',
+        text: [
+          `Thank you for your generosity! \ud83d\ude4f`,
+          '',
+          `*Campaign:* ${sd.campaign_title}`,
+          `*Amount:* ${formatCurrency(amount, country)}`,
+          `*Ref:* ${refCode}`,
+          '',
+          `Pay here \ud83d\udc47`,
+          result.url,
+          '',
+          `\u26a0\ufe0f After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+        ].join('\n'),
+      },
+      {
+        type: 'buttons',
+        body: "After paying, return here and tap *I've Paid* to confirm:",
+        buttons: [
+          { id: 'i_paid', title: "I've Paid" },
+          { id: 'cancel', title: 'Cancel' },
+        ],
+      },
+    ];
   },
 
   async validate() {
-    return { valid: true, data: {} };
+    return { valid: true };
   },
 
   async next() {
-    return null; // Flow complete
+    return 'await_donation_payment';
+  },
+};
+
+const awaitDonationPaymentStep: FlowStepConfig = {
+  id: 'await_donation_payment',
+
+  async prompt(): Promise<PromptMessage[]> {
+    return [{
+      type: 'buttons',
+      body: "Complete your donation using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
+      buttons: [
+        { id: 'i_paid', title: "I've Paid" },
+        { id: 'cancel', title: 'Cancel' },
+      ],
+    }];
+  },
+
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    const text = input.toLowerCase();
+
+    if (text === 'cancel') {
+      // Mark donation as cancelled
+      const refCode = ctx.session.session_data.donation_ref_code as string;
+      if (refCode) {
+        await ctx.supabase
+          .from('campaign_donations')
+          .update({ status: 'cancelled' })
+          .eq('reference_code', refCode);
+      }
+      await ctx.sender.sendText({ to: ctx.from, text: 'Donation cancelled. Send *Hi* to start again.' });
+      return { valid: true, data: { _action: 'cancel' } };
+    }
+
+    if (text === 'i_paid' || text === 'paid' || text === 'done' || text === 'check') {
+      const ref = ctx.session.session_data.payment_reference as string;
+      if (!ref) return { valid: true, data: { _action: 'cancel' } };
+
+      const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+      const { verifyPayment } = await import('./shared/payment');
+      const verified = await verifyPayment(ctx.supabase, ref, cc);
+
+      if (verified) {
+        const sd = ctx.session.session_data;
+        const amount = sd.donation_amount as number;
+        const campaignId = sd.campaign_id as string;
+        const refCode = sd.donation_ref_code as string;
+
+        // Update donation record status
+        if (refCode) {
+          await ctx.supabase
+            .from('campaign_donations')
+            .update({ status: 'confirmed' })
+            .eq('reference_code', refCode);
+        }
+
+        // Update campaign raised_amount and donor_count
+        if (campaignId) {
+          const { data: campaign } = await ctx.supabase
+            .from('campaigns')
+            .select('raised_amount, donor_count')
+            .eq('id', campaignId)
+            .single();
+
+          if (campaign) {
+            await ctx.supabase
+              .from('campaigns')
+              .update({
+                raised_amount: (campaign.raised_amount || 0) + amount,
+                donor_count: (campaign.donor_count || 0) + 1,
+              })
+              .eq('id', campaignId);
+          }
+        }
+
+        // Send confirmation
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: [
+            `\u2705 *Donation Confirmed!*`,
+            '',
+            `\ud83d\ude4f Thank you for supporting *${sd.campaign_title}*`,
+            `\ud83d\udcb0 Amount: ${formatCurrency(amount, cc)}`,
+            `\ud83d\udd11 Ref: *${refCode}*`,
+            '',
+            `Your generosity makes a difference! \u2764\ufe0f`,
+          ].join('\n'),
+        });
+
+        return { valid: true, data: { _action: 'payment_confirmed' } };
+      }
+
+      return { valid: false, errorMessage: "Payment not yet received. Please complete payment using the link." };
+    }
+
+    return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
+  },
+
+  async next() {
+    return null; // Flow complete after confirmation or cancel
   },
 };
 
@@ -238,5 +395,6 @@ export const crowdfundingFlow: FlowDefinition = {
     enterDonationAmountStep,
     confirmDonationStep,
     donationPaymentStep,
+    awaitDonationPaymentStep,
   ],
 };

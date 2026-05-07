@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 
 interface PayoutRecord {
@@ -41,6 +42,9 @@ export default function Payouts() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [generating, setGenerating] = useState(false);
   const perPage = 20;
 
@@ -104,10 +108,18 @@ export default function Payouts() {
 
   useEffect(() => { loadData(); }, []);
 
-  // Filter payouts by tab
+  // Filter payouts by tab, search, and date range
   const displayPayouts = payouts.filter(p => {
-    if (tab === 'pending') return ['pending', 'approved'].includes(p.status);
-    if (statusFilter !== 'all') return p.status === statusFilter;
+    if (tab === 'pending' && !['pending', 'approved'].includes(p.status)) return false;
+    if (tab === 'history') {
+      if (statusFilter !== 'all' && p.status !== statusFilter) return false;
+    }
+    if (search) {
+      const q = search.toLowerCase();
+      if (!(p.business_name || '').toLowerCase().includes(q) && !p.id.toLowerCase().includes(q)) return false;
+    }
+    if (dateFrom && p.created_at < dateFrom) return false;
+    if (dateTo && p.created_at > dateTo + 'T23:59:59') return false;
     return true;
   });
 
@@ -290,13 +302,37 @@ export default function Payouts() {
           <h1 className="text-2xl font-bold text-gray-900">Payouts</h1>
           <p className="mt-1 text-sm text-gray-500">Manage business payout approvals and history</p>
         </div>
-        <button
-          onClick={handleGenerate}
-          disabled={generating}
-          className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-        >
-          {generating ? 'Generating...' : 'Generate Weekly Payouts'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => downloadCSV(
+              displayPayouts.map(p => ({
+                business: p.business_name,
+                period_start: p.period_start,
+                period_end: p.period_end,
+                gross: p.gross_amount,
+                platform_fee: p.platform_fee,
+                gateway_fee: p.gateway_fee,
+                net: p.net_amount,
+                status: p.status,
+                transfer_method: p.transfer_method || '',
+                transfer_ref: p.transfer_reference || '',
+                paid_at: p.paid_at || '',
+                created_at: p.created_at,
+              })),
+              `payouts-${new Date().toISOString().slice(0, 10)}.csv`,
+            )}
+            className="rounded-xl border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+          >
+            Export CSV
+          </button>
+          <button
+            onClick={handleGenerate}
+            disabled={generating}
+            className="rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+          >
+            {generating ? 'Generating...' : 'Generate Weekly Payouts'}
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -319,9 +355,16 @@ export default function Payouts() {
         </button>
       </div>
 
-      {/* History tab filter */}
-      {tab === 'history' && (
-        <div className="mt-4">
+      {/* Filters */}
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1); }}
+          placeholder="Search business..."
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none sm:w-56"
+        />
+        {tab === 'history' && (
           <select
             value={statusFilter}
             onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
@@ -333,8 +376,21 @@ export default function Payouts() {
             <option value="failed">Failed</option>
             <option value="rejected">Rejected</option>
           </select>
-        </div>
-      )}
+        )}
+        <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+        <span className="text-sm text-gray-400">to</span>
+        <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+        {(search || dateFrom || dateTo || statusFilter !== 'all') && (
+          <button
+            onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setStatusFilter('all'); setPage(1); }}
+            className="text-sm text-brand hover:underline"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
 
       {/* Table */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
@@ -449,6 +505,7 @@ export default function Payouts() {
                   <option value="manual_cash">Manual Cash</option>
                   <option value="paystack_transfer">Paystack Transfer (API)</option>
                   <option value="stripe_transfer">Stripe Transfer (API)</option>
+                  <option value="flutterwave_transfer">Flutterwave Transfer (API)</option>
                 </select>
               </div>
 
@@ -547,10 +604,12 @@ const CURRENCY_MAP: Record<string, { code: string; locale: string }> = {
   GB: { code: 'GBP', locale: 'en-GB' },
   CA: { code: 'CAD', locale: 'en-CA' },
   GH: { code: 'GHS', locale: 'en-GH' },
+  KE: { code: 'KES', locale: 'en-KE' },
+  ZA: { code: 'ZAR', locale: 'en-ZA' },
 };
 
 function formatMoney(amount: number, countryCode?: string): string {
   const cc = CURRENCY_MAP[countryCode || 'NG'] || CURRENCY_MAP.NG;
-  const fractionDigits = ['NGN', 'GHS'].includes(cc.code) ? 0 : 2;
+  const fractionDigits = ['NGN', 'GHS', 'KES'].includes(cc.code) ? 0 : 2;
   return new Intl.NumberFormat(cc.locale, { style: 'currency', currency: cc.code, minimumFractionDigits: fractionDigits }).format(amount);
 }

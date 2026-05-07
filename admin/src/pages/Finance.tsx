@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { downloadCSV } from '@/lib/csv';
 
 interface Payment {
   id: string;
@@ -14,18 +15,21 @@ interface Payment {
 interface PlatformFee {
   fee_total: number;
   waived: boolean;
+  business_id: string;
   created_at: string;
 }
 
 interface BusinessPayout {
   net_amount: number;
   platform_fee: number;
+  currency: string | null;
   status: string;
   created_at: string;
 }
 
 interface Refund {
   amount: number;
+  business_id: string;
   status: string;
   created_at: string;
 }
@@ -64,9 +68,9 @@ export default function Finance() {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
         adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
-        adminDb.from('platform_fees').select('fee_total, waived, created_at'),
-        adminDb.from('business_payouts').select('net_amount, platform_fee, status, created_at'),
-        adminDb.from('refunds').select('amount, status, created_at').eq('status', 'success'),
+        adminDb.from('platform_fees').select('fee_total, waived, business_id, created_at'),
+        adminDb.from('business_payouts').select('net_amount, platform_fee, currency, status, created_at'),
+        adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
         adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
         adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
       ]);
@@ -126,24 +130,33 @@ export default function Finance() {
 
     const totalRefunds: Record<string, number> = {};
     for (const r of filteredRefunds) {
-      totalRefunds['NGN'] = (totalRefunds['NGN'] || 0) + Number(r.amount || 0);
+      const refCur = bizCurrencyMap.get(r.business_id) || 'NGN';
+      totalRefunds[refCur] = (totalRefunds[refCur] || 0) + Number(r.amount || 0);
     }
 
-    const platformFees = filteredFees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+    const platformFeesByCurrency: Record<string, number> = {};
+    for (const f of filteredFees.filter(f => !f.waived)) {
+      const feeCur = bizCurrencyMap.get(f.business_id) || 'NGN';
+      platformFeesByCurrency[feeCur] = (platformFeesByCurrency[feeCur] || 0) + Number(f.fee_total || 0);
+    }
 
-    const payoutsOwed = filteredPayouts
-      .filter(p => ['pending', 'approved'].includes(p.status))
-      .reduce((s, p) => s + Number(p.net_amount || 0), 0);
+    const payoutsOwedByCurrency: Record<string, number> = {};
+    for (const p of filteredPayouts.filter(p => ['pending', 'approved'].includes(p.status))) {
+      const cur = p.currency || 'NGN';
+      payoutsOwedByCurrency[cur] = (payoutsOwedByCurrency[cur] || 0) + Number(p.net_amount || 0);
+    }
 
-    const paidOut = filteredPayouts
-      .filter(p => p.status === 'paid')
-      .reduce((s, p) => s + Number(p.net_amount || 0), 0);
+    const paidOutByCurrency: Record<string, number> = {};
+    for (const p of filteredPayouts.filter(p => p.status === 'paid')) {
+      const cur = p.currency || 'NGN';
+      paidOutByCurrency[cur] = (paidOutByCurrency[cur] || 0) + Number(p.net_amount || 0);
+    }
 
-    const processingPayouts = filteredPayouts
-      .filter(p => p.status === 'processing')
-      .reduce((s, p) => s + Number(p.net_amount || 0), 0);
-
-    const outstanding = payoutsOwed + processingPayouts;
+    const outstandingByCurrency: Record<string, number> = {};
+    for (const p of filteredPayouts.filter(p => ['pending', 'approved', 'processing'].includes(p.status))) {
+      const cur = p.currency || 'NGN';
+      outstandingByCurrency[cur] = (outstandingByCurrency[cur] || 0) + Number(p.net_amount || 0);
+    }
 
     // Payment status breakdown
     const paymentBuckets: Record<string, { count: number; amount: number }> = {};
@@ -173,20 +186,21 @@ export default function Finance() {
     return {
       grossVolume,
       totalRefunds,
-      platformFees,
-      payoutsOwed,
-      paidOut,
-      outstanding,
+      platformFeesByCurrency,
+      payoutsOwedByCurrency,
+      paidOutByCurrency,
+      outstandingByCurrency,
       paymentBuckets,
       payoutBuckets,
       gatewayBuckets,
     };
   }, [filteredPayments, filteredFees, filteredPayouts, filteredRefunds, bizCurrencyMap]);
 
-  // Monthly rollup (last 12 months)
+  // Monthly rollup (last 12 months, per currency)
   const monthly = useMemo(() => {
-    const byMonth = new Map<string, {
+    const byMonthCur = new Map<string, {
       month: string;
+      currency: string;
       transactions: number;
       gross: number;
       refunded: number;
@@ -195,64 +209,83 @@ export default function Finance() {
       net: number;
     }>();
 
-    const getKey = (dateStr: string) => dateStr.slice(0, 7); // YYYY-MM
+    const getMonth = (dateStr: string) => dateStr.slice(0, 7); // YYYY-MM
+    const getRow = (key: string, month: string, currency: string) =>
+      byMonthCur.get(key) || { month, currency, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
 
     for (const p of payments) {
       if (p.status !== 'success') continue;
-      const key = getKey(p.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
+      const month = getMonth(p.created_at);
+      const cur = getPaymentCurrency(p);
+      const key = `${month}|${cur}`;
+      const row = getRow(key, month, cur);
       row.transactions++;
       row.gross += Number(p.amount || 0);
-      byMonth.set(key, row);
+      byMonthCur.set(key, row);
     }
 
     for (const r of refunds) {
-      const key = getKey(r.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
+      const month = getMonth(r.created_at);
+      const cur = bizCurrencyMap.get(r.business_id) || 'NGN';
+      const key = `${month}|${cur}`;
+      const row = getRow(key, month, cur);
       row.refunded += Number(r.amount || 0);
-      byMonth.set(key, row);
+      byMonthCur.set(key, row);
     }
 
     for (const f of fees) {
       if (f.waived) continue;
-      const key = getKey(f.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
+      const month = getMonth(f.created_at);
+      const cur = bizCurrencyMap.get(f.business_id) || 'NGN';
+      const key = `${month}|${cur}`;
+      const row = getRow(key, month, cur);
       row.fees += Number(f.fee_total || 0);
-      byMonth.set(key, row);
+      byMonthCur.set(key, row);
     }
 
     for (const p of payouts) {
       if (p.status !== 'paid') continue;
-      const key = getKey(p.created_at);
-      const row = byMonth.get(key) || { month: key, transactions: 0, gross: 0, refunded: 0, fees: 0, payouts: 0, net: 0 };
+      const month = getMonth(p.created_at);
+      const cur = p.currency || 'NGN';
+      const key = `${month}|${cur}`;
+      const row = getRow(key, month, cur);
       row.payouts += Number(p.net_amount || 0);
-      byMonth.set(key, row);
+      byMonthCur.set(key, row);
     }
 
-    return Array.from(byMonth.values())
-      .sort((a, b) => b.month.localeCompare(a.month))
-      .slice(0, 12)
+    return Array.from(byMonthCur.values())
+      .sort((a, b) => b.month.localeCompare(a.month) || a.currency.localeCompare(b.currency))
+      .slice(0, 24)
       .map(row => ({ ...row, net: row.fees - row.payouts }));
-  }, [payments, fees, payouts, refunds]);
+  }, [payments, fees, payouts, refunds, bizCurrencyMap]);
 
-  // Category revenue breakdown
+  // Category revenue breakdown (per currency)
   const categoryRevenue = useMemo(() => {
-    const bizMap = new Map(businesses.map(b => [b.id, b.category]));
-    const byCat = new Map<string, number>();
+    const bizMap = new Map(businesses.map(b => [b.id, b]));
+    const byCat = new Map<string, Record<string, number>>();
 
     for (const p of payments) {
       if (p.status !== 'success' || !p.business_id) continue;
-      const cat = bizMap.get(p.business_id) || 'other';
-      byCat.set(cat, (byCat.get(cat) || 0) + Number(p.amount || 0));
+      const biz = bizMap.get(p.business_id);
+      const cat = biz?.category || 'other';
+      const cur = getPaymentCurrency(p);
+      if (!byCat.has(cat)) byCat.set(cat, {});
+      const catAmounts = byCat.get(cat)!;
+      catAmounts[cur] = (catAmounts[cur] || 0) + Number(p.amount || 0);
     }
 
+    // Sort by total amount across all currencies (approximate for ranking)
     return Array.from(byCat.entries())
-      .map(([category, amount]) => ({ category, amount }))
-      .sort((a, b) => b.amount - a.amount)
+      .map(([category, amounts]) => ({
+        category,
+        amounts,
+        total: Object.values(amounts).reduce((s, a) => s + a, 0),
+      }))
+      .sort((a, b) => b.total - a.total)
       .slice(0, 10);
-  }, [payments, businesses]);
+  }, [payments, businesses, bizCurrencyMap]);
 
-  const maxCatRevenue = Math.max(...categoryRevenue.map(c => c.amount), 1);
+  const maxCatRevenue = Math.max(...categoryRevenue.map(c => c.total), 1);
 
   if (loading) {
     return (
@@ -279,6 +312,24 @@ export default function Finance() {
             <button onClick={() => { setDateFrom(''); setDateTo(''); }}
               className="text-xs text-brand hover:underline">Clear</button>
           )}
+          <button
+            onClick={() => downloadCSV(
+              monthly.map(r => ({
+                month: r.month,
+                currency: r.currency,
+                transactions: r.transactions,
+                gross: r.gross,
+                refunded: r.refunded,
+                platform_fees: r.fees,
+                payouts: r.payouts,
+                net: r.net,
+              })),
+              `finance-monthly-${new Date().toISOString().slice(0, 10)}.csv`,
+            )}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+          >
+            Export CSV
+          </button>
         </div>
       </div>
 
@@ -298,14 +349,14 @@ export default function Finance() {
         </div>
       )}
 
-      {/* Platform metrics (single currency — platform fees are in NGN) */}
+      {/* Platform metrics — per currency */}
       <div className="mt-6">
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-3">Platform</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard label="Platform Fees Earned" value={formatMoney(metrics.platformFees)} color="green" />
-          <MetricCard label="Payouts Owed" value={formatMoney(metrics.payoutsOwed)} color="yellow" />
-          <MetricCard label="Paid Out" value={formatMoney(metrics.paidOut)} color="green" />
-          <MetricCard label="Outstanding Liability" value={formatMoney(metrics.outstanding)} color="red" />
+          <MetricCard label="Platform Fees Earned" value={formatMultiCurrency(metrics.platformFeesByCurrency)} color="green" />
+          <MetricCard label="Payouts Owed" value={formatMultiCurrency(metrics.payoutsOwedByCurrency)} color="yellow" />
+          <MetricCard label="Paid Out" value={formatMultiCurrency(metrics.paidOutByCurrency)} color="green" />
+          <MetricCard label="Outstanding Liability" value={formatMultiCurrency(metrics.outstandingByCurrency)} color="red" />
         </div>
       </div>
 
@@ -420,16 +471,16 @@ export default function Finance() {
         <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
           <h3 className="text-sm font-semibold text-gray-900">Revenue by Business Category</h3>
           <div className="mt-4 space-y-3">
-            {categoryRevenue.map(({ category, amount }) => (
+            {categoryRevenue.map(({ category, amounts, total }) => (
               <div key={category} className="flex items-center gap-3">
                 <span className="w-24 text-sm text-gray-600 capitalize truncate">{category}</span>
                 <div className="flex-1 h-6 bg-gray-100 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-brand rounded-full transition-all"
-                    style={{ width: `${(amount / maxCatRevenue) * 100}%` }}
+                    style={{ width: `${(total / maxCatRevenue) * 100}%` }}
                   />
                 </div>
-                <span className="text-sm font-medium text-gray-900 w-28 text-right">{formatMoney(amount)}</span>
+                <span className="text-sm font-medium text-gray-900 w-36 text-right">{formatMultiCurrency(amounts)}</span>
               </div>
             ))}
           </div>
@@ -465,7 +516,8 @@ export default function Finance() {
                 row.subs++;
                 byCountry.set(cc, row);
               }
-              const FLAG: Record<string, string> = { NG: '🇳🇬', US: '🇺🇸', GB: '🇬🇧', CA: '🇨🇦', GH: '🇬🇭', IN: '🇮🇳' };
+              const FLAG: Record<string, string> = { NG: '🇳🇬', US: '🇺🇸', GB: '🇬🇧', CA: '🇨🇦', GH: '🇬🇭', KE: '🇰🇪', ZA: '🇿🇦', IN: '🇮🇳' };
+              const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS', KE: 'KES', ZA: 'ZAR' };
               return Array.from(byCountry.entries())
                 .sort((a, b) => b[1].count - a[1].count)
                 .map(([cc, data]) => (
@@ -474,7 +526,7 @@ export default function Finance() {
                     <div className="text-right space-x-3">
                       <span className="text-gray-500">{data.count} biz</span>
                       <span className="text-gray-500">{data.subs} paid</span>
-                      <span className="font-medium text-gray-900">{formatMoney(data.revenue)}</span>
+                      <span className="font-medium text-gray-900">{formatMoney(data.revenue, countryToCur[cc] || 'USD')}</span>
                     </div>
                   </div>
                 ));
@@ -486,17 +538,18 @@ export default function Finance() {
           <h3 className="text-sm font-semibold text-gray-900">Businesses by Subscription Tier</h3>
           <div className="mt-4 space-y-3">
             {(() => {
-              const byTier = new Map<string, { count: number; mrr: number }>();
+              const byTier = new Map<string, { count: number; mrrByCurrency: Record<string, number> }>();
               for (const b of businesses) {
                 const tier = b.subscription_tier || 'free';
-                const row = byTier.get(tier) || { count: 0, mrr: 0 };
+                const row = byTier.get(tier) || { count: 0, mrrByCurrency: {} };
                 row.count++;
                 byTier.set(tier, row);
               }
               for (const s of subscriptions) {
                 const tier = s.tier || 'free';
-                const row = byTier.get(tier) || { count: 0, mrr: 0 };
-                row.mrr += Number(s.amount || 0);
+                const row = byTier.get(tier) || { count: 0, mrrByCurrency: {} };
+                const cur = s.currency || 'NGN';
+                row.mrrByCurrency[cur] = (row.mrrByCurrency[cur] || 0) + Number(s.amount || 0);
                 byTier.set(tier, row);
               }
               const TIER_COLORS: Record<string, string> = {
@@ -507,7 +560,7 @@ export default function Finance() {
               };
               const totalBiz = businesses.length || 1;
               return ['free', 'growth', 'business'].map(tier => {
-                const data = byTier.get(tier) || { count: 0, mrr: 0 };
+                const data = byTier.get(tier) || { count: 0, mrrByCurrency: {} };
                 const pct = Math.round((data.count / totalBiz) * 100);
                 return (
                   <div key={tier}>
@@ -515,7 +568,7 @@ export default function Finance() {
                       <span className="text-gray-700">{TIER_LABELS[tier] || tier}</span>
                       <div className="text-right space-x-3">
                         <span className="text-gray-500">{data.count} ({pct}%)</span>
-                        <span className="font-medium text-green-700">MRR: {formatMoney(data.mrr)}</span>
+                        <span className="font-medium text-green-700">MRR: {formatMultiCurrency(data.mrrByCurrency)}</span>
                       </div>
                     </div>
                     <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -530,25 +583,37 @@ export default function Finance() {
       </div>
 
       {/* Subscription MRR Summary */}
-      {subscriptions.length > 0 && (
-        <div className="mt-6 grid gap-4 sm:grid-cols-3">
-          <MetricCard
-            label="Total MRR (Subscriptions)"
-            value={formatMoney(subscriptions.reduce((s, sub) => s + Number(sub.amount || 0), 0))}
-            color="green"
-          />
-          <MetricCard
-            label="Active Paid Subscribers"
-            value={String(subscriptions.length)}
-            color="blue"
-          />
-          <MetricCard
-            label="Avg Revenue Per Subscriber"
-            value={formatMoney(subscriptions.length > 0 ? subscriptions.reduce((s, sub) => s + Number(sub.amount || 0), 0) / subscriptions.length : 0)}
-            color="purple"
-          />
-        </div>
-      )}
+      {subscriptions.length > 0 && (() => {
+        const mrrByCur: Record<string, number> = {};
+        for (const sub of subscriptions) {
+          const cur = sub.currency || 'NGN';
+          mrrByCur[cur] = (mrrByCur[cur] || 0) + Number(sub.amount || 0);
+        }
+        return (
+          <div className="mt-6 grid gap-4 sm:grid-cols-3">
+            <MetricCard
+              label="Total MRR (Subscriptions)"
+              value={formatMultiCurrency(mrrByCur)}
+              color="green"
+            />
+            <MetricCard
+              label="Active Paid Subscribers"
+              value={String(subscriptions.length)}
+              color="blue"
+            />
+            <MetricCard
+              label="Avg Revenue Per Subscriber"
+              value={formatMultiCurrency(Object.fromEntries(
+                Object.entries(mrrByCur).map(([cur, amt]) => {
+                  const count = subscriptions.filter(s => (s.currency || 'NGN') === cur).length;
+                  return [cur, count > 0 ? amt / count : 0];
+                })
+              ))}
+              color="purple"
+            />
+          </div>
+        );
+      })()}
 
       {/* Monthly Rollup Table */}
       <div className="mt-8">
@@ -561,6 +626,7 @@ export default function Finance() {
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Month</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Currency</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Transactions</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Gross Volume</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Refunds</th>
@@ -571,14 +637,15 @@ export default function Finance() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {monthly.map(row => (
-                  <tr key={row.month} className="transition hover:bg-gray-50">
+                  <tr key={`${row.month}-${row.currency}`} className="transition hover:bg-gray-50">
                     <td className="px-4 py-3 font-medium text-gray-900">{formatMonth(row.month)}</td>
+                    <td className="px-4 py-3 text-gray-600">{row.currency}</td>
                     <td className="px-4 py-3 text-right text-gray-600">{row.transactions}</td>
-                    <td className="px-4 py-3 text-right text-gray-900">{formatMoney(row.gross)}</td>
-                    <td className="px-4 py-3 text-right text-red-600">{row.refunded > 0 ? formatMoney(row.refunded) : '—'}</td>
-                    <td className="px-4 py-3 text-right text-green-700">{formatMoney(row.fees)}</td>
-                    <td className="px-4 py-3 text-right text-orange-700">{formatMoney(row.payouts)}</td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(row.net)}</td>
+                    <td className="px-4 py-3 text-right text-gray-900">{formatMoney(row.gross, row.currency)}</td>
+                    <td className="px-4 py-3 text-right text-red-600">{row.refunded > 0 ? formatMoney(row.refunded, row.currency) : '—'}</td>
+                    <td className="px-4 py-3 text-right text-green-700">{formatMoney(row.fees, row.currency)}</td>
+                    <td className="px-4 py-3 text-right text-orange-700">{formatMoney(row.payouts, row.currency)}</td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(row.net, row.currency)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -615,8 +682,9 @@ function formatMonth(m: string) {
 }
 
 function formatMoney(amount: number, currency = 'NGN'): string {
-  const locales: Record<string, string> = { NGN: 'en-NG', USD: 'en-US', GBP: 'en-GB', CAD: 'en-CA', GHS: 'en-GH' };
-  const hasCents = amount % 1 !== 0;
+  const locales: Record<string, string> = { NGN: 'en-NG', USD: 'en-US', GBP: 'en-GB', CAD: 'en-CA', GHS: 'en-GH', KES: 'en-KE', ZAR: 'en-ZA' };
+  const wholeOnly = ['NGN', 'GHS', 'KES'].includes(currency);
+  const hasCents = !wholeOnly && amount % 1 !== 0;
   try {
     return new Intl.NumberFormat(locales[currency] || 'en-US', {
       style: 'currency', currency,

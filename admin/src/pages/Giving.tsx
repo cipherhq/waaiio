@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -12,19 +13,20 @@ const GIVING_CATEGORIES = ['church', 'mosque', 'ngo', 'crowdfunding_org'];
 
 interface GivingRecord {
   id: string;
-  source: 'booking' | 'payment';
   business_id: string;
   business_name: string;
   business_category: string;
+  country_code: string;
   giver_id: string | null;
   giver_name: string;
   giver_email: string;
+  giver_phone: string | null;
   service_name: string | null;
-  amount: number | null;
-  currency: string | null;
+  amount: number;
   status: string;
-  payment_status: string | null;
+  deposit_status: string | null;
   payment_method: string | null;
+  reference_code: string | null;
   notes: string | null;
   gateway: string | null;
   gateway_ref: string | null;
@@ -79,11 +81,11 @@ export default function Giving() {
       // 1. Load giving-category businesses
       const { data: bizData } = await adminDb
         .from('businesses')
-        .select('id, name, category')
+        .select('id, name, category, country_code')
         .in('category', GIVING_CATEGORIES);
 
       const givingBusinesses = bizData || [];
-      const bizMap = new Map(givingBusinesses.map(b => [b.id, b]));
+      const bizMap = new Map(givingBusinesses.map(b => [b.id, { name: b.name, category: b.category, country_code: b.country_code || 'NG' }]));
       const bizIds = givingBusinesses.map(b => b.id);
 
       setBusinesses(
@@ -98,32 +100,33 @@ export default function Giving() {
         return;
       }
 
-      // 2. Load bookings from these businesses
-      const { data: bookingData } = await adminDb
+      // 2. Load giving records — bookings with flow_type='payment' from giving orgs
+      const { data: givingData } = await adminDb
         .from('bookings')
-        .select('id, business_id, customer_id, service_name, amount, currency, status, payment_status, payment_method, notes, created_at')
+        .select('id, business_id, user_id, service_id, total_amount, deposit_status, status, guest_name, guest_phone, reference_code, notes, created_at')
         .in('business_id', bizIds)
+        .eq('flow_type', 'payment')
         .order('created_at', { ascending: false });
 
-      // 3. Load payments from these businesses
-      const { data: paymentData } = await adminDb
-        .from('payments')
-        .select('id, business_id, customer_id, amount, currency, status, payment_method, gateway, gateway_ref, created_at')
-        .in('business_id', bizIds)
-        .order('created_at', { ascending: false });
+      // 3. Resolve service names for giving categories
+      const serviceIds = [...new Set((givingData || []).map(g => g.service_id).filter(Boolean))];
+      const { data: serviceData } = serviceIds.length > 0
+        ? await adminDb.from('services').select('id, name').in('id', serviceIds)
+        : { data: [] };
+      const serviceMap = new Map((serviceData || []).map(s => [s.id, s.name]));
 
-      // 4. Collect all customer/giver IDs for profile enrichment
-      const giverIds = [
-        ...new Set([
-          ...(bookingData || []).map(b => b.customer_id),
-          ...(paymentData || []).map(p => p.customer_id),
-        ].filter(Boolean)),
-      ];
+      // 4. Get payment details (gateway info) linked to these bookings
+      const bookingIds = (givingData || []).map(g => g.id);
+      const { data: paymentData } = bookingIds.length > 0
+        ? await adminDb.from('payments').select('booking_id, payment_method, gateway, gateway_reference, status').in('booking_id', bookingIds)
+        : { data: [] };
+      const paymentMap = new Map((paymentData || []).map(p => [p.booking_id, p]));
 
+      // 5. Enrich with giver profiles
+      const giverIds = [...new Set((givingData || []).map(g => g.user_id).filter(Boolean))];
       const { data: profileData } = giverIds.length > 0
         ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', giverIds)
         : { data: [] };
-
       const profileMap = new Map(
         (profileData || []).map(p => [
           p.id,
@@ -134,61 +137,34 @@ export default function Giving() {
         ])
       );
 
-      // 5. Combine into unified records
-      const combined: GivingRecord[] = [];
+      // 6. Build giving records
+      const combined: GivingRecord[] = (givingData || []).map(g => {
+        const biz = bizMap.get(g.business_id);
+        const profile = profileMap.get(g.user_id);
+        const payment = paymentMap.get(g.id);
 
-      for (const b of bookingData || []) {
-        const biz = bizMap.get(b.business_id);
-        const profile = profileMap.get(b.customer_id);
-        combined.push({
-          id: b.id,
-          source: 'booking',
-          business_id: b.business_id,
+        return {
+          id: g.id,
+          business_id: g.business_id,
           business_name: biz?.name || 'Unknown',
           business_category: biz?.category || '',
-          giver_id: b.customer_id,
-          giver_name: profile?.name || 'Anonymous',
+          country_code: biz?.country_code || 'NG',
+          giver_id: g.user_id,
+          giver_name: profile?.name || g.guest_name || 'Anonymous',
           giver_email: profile?.email || '—',
-          service_name: b.service_name,
-          amount: b.amount,
-          currency: b.currency,
-          status: b.status,
-          payment_status: b.payment_status,
-          payment_method: b.payment_method,
-          notes: b.notes,
-          gateway: null,
-          gateway_ref: null,
-          created_at: b.created_at,
-        });
-      }
-
-      for (const p of paymentData || []) {
-        const biz = bizMap.get(p.business_id);
-        const profile = profileMap.get(p.customer_id);
-        combined.push({
-          id: p.id,
-          source: 'payment',
-          business_id: p.business_id,
-          business_name: biz?.name || 'Unknown',
-          business_category: biz?.category || '',
-          giver_id: p.customer_id,
-          giver_name: profile?.name || 'Anonymous',
-          giver_email: profile?.email || '—',
-          service_name: null,
-          amount: p.amount,
-          currency: p.currency,
-          status: p.status,
-          payment_status: null,
-          payment_method: p.payment_method,
-          notes: null,
-          gateway: p.gateway,
-          gateway_ref: p.gateway_ref,
-          created_at: p.created_at,
-        });
-      }
-
-      // Sort by date descending
-      combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          giver_phone: g.guest_phone || null,
+          service_name: g.service_id ? serviceMap.get(g.service_id) || null : null,
+          amount: Number(g.total_amount || 0),
+          status: g.status,
+          deposit_status: g.deposit_status,
+          payment_method: payment?.payment_method || null,
+          reference_code: g.reference_code,
+          notes: g.notes,
+          gateway: payment?.gateway || null,
+          gateway_ref: payment?.gateway_reference || null,
+          created_at: g.created_at,
+        };
+      });
 
       setRecords(combined);
       setLoading(false);
@@ -223,9 +199,17 @@ export default function Giving() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
   const pageItems = filtered.slice((page - 1) * perPage, page * perPage);
 
-  // Stats
-  const totalAmount = filtered.reduce((s, r) => s + Number(r.amount || 0), 0);
-  const currency = records.length > 0 ? records[0].currency || 'NGN' : 'NGN';
+  // Stats — per currency
+  const COUNTRY_CURRENCY: Record<string, string> = { NG: 'NGN', US: 'USD', GB: 'GBP', CA: 'CAD', GH: 'GHS', KE: 'KES', ZA: 'ZAR' };
+  const totalByCurrency: Record<string, number> = {};
+  for (const r of filtered) {
+    const cur = COUNTRY_CURRENCY[r.country_code] || 'NGN';
+    totalByCurrency[cur] = (totalByCurrency[cur] || 0) + r.amount;
+  }
+  const totalDisplay = Object.entries(totalByCurrency)
+    .filter(([, a]) => a > 0)
+    .map(([cur, amt]) => fmtCurrency(amt, cur))
+    .join(' · ') || fmtCurrency(0);
   const uniqueGivers = new Set(filtered.map(r => r.giver_id || r.giver_email)).size;
   const uniqueOrgs = new Set(filtered.map(r => r.business_id)).size;
   const faithCount = filtered.filter(r => ['church', 'mosque'].includes(r.business_category)).length;
@@ -243,14 +227,38 @@ export default function Giving() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Giving</h1>
-      <p className="mt-1 text-sm text-gray-500">
-        Voluntary contributions from faith-based and crowdfunding organizations
-      </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Giving</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Voluntary contributions from faith-based and crowdfunding organizations
+          </p>
+        </div>
+        <button
+          onClick={() => downloadCSV(
+            filtered.map(r => ({
+              giver: r.giver_name,
+              email: r.giver_email,
+              organization: r.business_name,
+              type: givingTypeLabel(r.business_category),
+              purpose: r.service_name || 'General Giving',
+              amount: r.amount,
+              currency: COUNTRY_CURRENCY[r.country_code] || 'NGN',
+              status: r.status,
+              gateway: r.gateway || '',
+              date: r.created_at,
+            })),
+            `giving-${new Date().toISOString().slice(0, 10)}.csv`,
+          )}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+        >
+          Export CSV
+        </button>
+      </div>
 
       {/* Summary Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <SummaryCard label="Total Giving" value={fmtCurrency(totalAmount, currency)} icon={Heart} color="pink" />
+        <SummaryCard label="Total Giving" value={totalDisplay} icon={Heart} color="pink" />
         <SummaryCard label="Givers" value={uniqueGivers} icon={Users} color="blue" />
         <SummaryCard label="Organizations" value={uniqueOrgs} icon={Building2} color="purple" />
         <SummaryCard label="Contributions" value={filtered.length} icon={TrendingUp} color="green" />
@@ -382,7 +390,7 @@ export default function Giving() {
                     <StatusBadge status={r.status} />
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {r.amount != null ? fmtCurrency(r.amount, r.currency || 'NGN') : '—'}
+                    {r.amount > 0 ? fmtCurrency(r.amount, COUNTRY_CURRENCY[r.country_code] || 'NGN') : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(r.created_at)}</td>
                 </tr>
@@ -400,61 +408,47 @@ export default function Giving() {
         onClose={() => setSelected(null)}
         title="Giving Details"
       >
-        {selected && (
-          <div className="space-y-3 text-sm">
-            <DetailRow label="ID" value={selected.id} />
-            <DetailRow label="Source" value={selected.source === 'booking' ? 'Booking Record' : 'Payment Record'} />
-            <DetailRow label="Status" value={selected.status} />
-            <DetailRow label="Date" value={fmtDateTime(selected.created_at)} />
+        {selected && (() => {
+          const cur = COUNTRY_CURRENCY[selected.country_code] || 'NGN';
+          return (
+            <div className="space-y-3 text-sm">
+              <DetailRow label="Reference" value={selected.reference_code} />
+              <DetailRow label="Status" value={selected.status} />
+              <DetailRow label="Deposit Status" value={selected.deposit_status} />
+              <DetailRow label="Date" value={fmtDateTime(selected.created_at)} />
 
-            <div className="mt-4 rounded-lg bg-gray-50 p-4">
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Giver</p>
-              <div className="space-y-2">
-                <DetailRow label="Name" value={selected.giver_name} />
-                <DetailRow label="Email" value={selected.giver_email} />
-                {selected.giver_id && (
-                  <DetailRow label="Giver ID" value={selected.giver_id} />
-                )}
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Giver</p>
+                <div className="space-y-2">
+                  <DetailRow label="Name" value={selected.giver_name} />
+                  <DetailRow label="Email" value={selected.giver_email} />
+                  {selected.giver_phone && <DetailRow label="Phone" value={selected.giver_phone} />}
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Organization</p>
+                <div className="space-y-2">
+                  <DetailRow label="Name" value={`${categoryIcon(selected.business_category)} ${selected.business_name}`} />
+                  <DetailRow label="Type" value={givingTypeLabel(selected.business_category)} />
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Contribution</p>
+                <div className="space-y-2">
+                  <DetailRow label="Purpose" value={selected.service_name || 'General Giving'} />
+                  <DetailRow label="Amount" value={selected.amount > 0 ? fmtCurrency(selected.amount, cur) : '—'} />
+                  <DetailRow label="Currency" value={cur} />
+                  {selected.payment_method && <DetailRow label="Payment Method" value={selected.payment_method} />}
+                  {selected.gateway && <DetailRow label="Gateway" value={selected.gateway} />}
+                  {selected.gateway_ref && <DetailRow label="Gateway Ref" value={selected.gateway_ref} />}
+                  {selected.notes && <DetailRow label="Notes" value={selected.notes} />}
+                </div>
               </div>
             </div>
-
-            <div className="mt-4 rounded-lg bg-gray-50 p-4">
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Organization</p>
-              <div className="space-y-2">
-                <DetailRow label="Name" value={`${categoryIcon(selected.business_category)} ${selected.business_name}`} />
-                <DetailRow label="Type" value={givingTypeLabel(selected.business_category)} />
-                <DetailRow label="Category" value={selected.business_category.replace(/_/g, ' ')} />
-              </div>
-            </div>
-
-            <div className="mt-4 rounded-lg bg-gray-50 p-4">
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Contribution</p>
-              <div className="space-y-2">
-                <DetailRow label="Purpose" value={selected.service_name || 'General Giving'} />
-                <DetailRow
-                  label="Amount"
-                  value={selected.amount != null ? fmtCurrency(selected.amount, selected.currency || 'NGN') : '—'}
-                />
-                <DetailRow label="Currency" value={selected.currency || '—'} />
-                {selected.payment_method && (
-                  <DetailRow label="Payment Method" value={selected.payment_method} />
-                )}
-                {selected.payment_status && (
-                  <DetailRow label="Payment Status" value={selected.payment_status} />
-                )}
-                {selected.gateway && (
-                  <DetailRow label="Gateway" value={selected.gateway} />
-                )}
-                {selected.gateway_ref && (
-                  <DetailRow label="Reference" value={selected.gateway_ref} />
-                )}
-                {selected.notes && (
-                  <DetailRow label="Notes" value={selected.notes} />
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </DetailModal>
     </div>
   );

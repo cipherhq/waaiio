@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
+import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -218,9 +219,30 @@ export default function Payments() {
 
   return (
     <div>
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
-        <p className="mt-1 text-sm text-gray-500">View and inspect all payment transactions</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
+          <p className="mt-1 text-sm text-gray-500">View and inspect all payment transactions</p>
+        </div>
+        <button
+          onClick={() => downloadCSV(
+            filtered.map(p => ({
+              ref: p.gateway_ref || p.id.slice(0, 8),
+              business: p.business_name,
+              amount: p.amount,
+              currency: p.currency || 'NGN',
+              gateway: p.gateway || '',
+              status: p.status,
+              method: p.payment_method || '',
+              refund_amount: p.refund_amount || 0,
+              date: p.created_at,
+            })),
+            `payments-${new Date().toISOString().slice(0, 10)}.csv`,
+          )}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+        >
+          Export CSV
+        </button>
       </div>
 
       {/* Pending Refund Requests */}
