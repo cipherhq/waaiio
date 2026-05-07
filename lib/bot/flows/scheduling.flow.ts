@@ -327,9 +327,25 @@ export const schedulingFlow: FlowDefinition = {
         // Auto-assign if only 1 staff or customer selection disabled
         const allowSelection = d._service_allow_staff_selection as boolean | undefined;
         if (staff.length === 1 || allowSelection === false) {
-          // Pick the first (or least-busy) staff member
-          ctx.session.session_data.staff_id = staff[0].id;
-          ctx.session.session_data.staff_name = staff[0].name;
+          let assigned = staff[0];
+          // Pick least-busy staff (fewest bookings today)
+          if (staff.length > 1) {
+            const selectedDate = d.date as string;
+            const counts = await Promise.all(staff.map(async s => {
+              const { count } = await ctx.supabase
+                .from('bookings')
+                .select('id', { count: 'exact', head: true })
+                .eq('business_id', ctx.business!.id)
+                .eq('staff_id', s.id)
+                .eq('date', selectedDate)
+                .in('status', ['confirmed', 'pending', 'in_progress']);
+              return { staff: s, bookings: count || 0 };
+            }));
+            counts.sort((a, b) => a.bookings - b.bookings);
+            assigned = counts[0].staff;
+          }
+          ctx.session.session_data.staff_id = assigned.id;
+          ctx.session.session_data.staff_name = assigned.name;
           return true;
         }
 
