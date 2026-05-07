@@ -1048,17 +1048,16 @@ export const schedulingFlow: FlowDefinition = {
         const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
         if (!caps.includes('referral')) return true;
         // Skip if user already has a converted referral for this business
-        if (ctx.session.user_id) {
-          const { data: existing } = await ctx.supabase
-            .from('referrals')
-            .select('id')
-            .eq('business_id', ctx.business.id)
-            .eq('referred_user_id', ctx.session.user_id)
-            .eq('status', 'converted')
-            .limit(1)
-            .maybeSingle();
-          if (existing) return true;
-        }
+        const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const { data: existing } = await ctx.supabase
+          .from('referrals')
+          .select('id')
+          .eq('business_id', ctx.business.id)
+          .eq('referee_phone', phone)
+          .eq('status', 'converted')
+          .limit(1)
+          .maybeSingle();
+        if (existing) return true;
         return false;
       },
     },
@@ -1302,6 +1301,19 @@ export const schedulingFlow: FlowDefinition = {
               .update({ current_uses: (promoData.current_uses || 0) + 1 })
               .eq('id', d._promo_id as string);
           }
+        }
+
+        // Convert referral if applied
+        if (d.referral_id) {
+          const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          await ctx.supabase
+            .from('referrals')
+            .update({
+              status: 'converted',
+              referee_phone: refPhone,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', d.referral_id as string);
         }
 
         d.booking_id = booking.id;

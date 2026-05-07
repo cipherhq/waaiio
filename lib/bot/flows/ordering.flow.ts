@@ -1686,17 +1686,16 @@ export const orderingFlow: FlowDefinition = {
         const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
         if (!caps.includes('referral')) return true;
         // Skip if user already has a converted referral for this business
-        if (ctx.session.user_id) {
-          const { data: existing } = await ctx.supabase
-            .from('referrals')
-            .select('id')
-            .eq('business_id', ctx.business.id)
-            .eq('referred_user_id', ctx.session.user_id)
-            .eq('status', 'converted')
-            .limit(1)
-            .maybeSingle();
-          if (existing) return true;
-        }
+        const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const { data: existing } = await ctx.supabase
+          .from('referrals')
+          .select('id')
+          .eq('business_id', ctx.business.id)
+          .eq('referee_phone', phone)
+          .eq('status', 'converted')
+          .limit(1)
+          .maybeSingle();
+        if (existing) return true;
         return false;
       },
     },
@@ -2322,6 +2321,19 @@ export const orderingFlow: FlowDefinition = {
         d.reference_code = order.reference_code;
         d.total_amount = total;
         d.shipping_cost = shippingCost;
+
+        // Convert referral if applied
+        if (d.referral_id) {
+          const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          await ctx.supabase
+            .from('referrals')
+            .update({
+              status: 'converted',
+              referee_phone: refPhone,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', d.referral_id as string);
+        }
 
         // ── Fire order_created rules + sequences (non-blocking) ──
         if (ctx.business) {
