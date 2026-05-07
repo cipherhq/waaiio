@@ -117,8 +117,47 @@ export default function BookingsPage() {
     }
   }
 
+  const isReservationType = business.flow_type === 'reservation';
+
   const fetchBookings = useCallback(async () => {
     const supabase = createClient();
+
+    if (isReservationType) {
+      // Hotel/shortlet/car_rental — query reservations table
+      let rQuery = supabase
+        .from('reservations')
+        .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, nightly_rate, created_at, confirmed_at, checked_in_at, checked_out_at, cancelled_at, payment_id, service_id')
+        .eq('business_id', business.id)
+        .order('check_in', { ascending: false })
+        .limit(100);
+
+      if (filter !== 'all') rQuery = rQuery.eq('status', filter);
+      if (dateFrom) rQuery = rQuery.gte('check_in', dateFrom);
+      if (dateTo) rQuery = rQuery.lte('check_in', dateTo);
+
+      const { data } = await rQuery;
+      // Map reservation fields to booking interface for display
+      const mapped = (data || []).map(r => ({
+        ...r,
+        date: r.check_in,
+        time: r.check_out ? `${r.nights || '?'} night${r.nights !== 1 ? 's' : ''}` : '',
+        party_size: r.guests || 1,
+        staff_id: null,
+        staff_name: null,
+        notes: null,
+        refund_amount: null,
+        rescheduled_at: null,
+        original_date: null,
+        original_time: null,
+        seated_at: r.checked_in_at,
+        completed_at: r.checked_out_at,
+      })) as Booking[];
+      setBookings(mapped);
+      setLoading(false);
+      return;
+    }
+
+    // Standard scheduling businesses — query bookings table
     let query = supabase
       .from('bookings')
       .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, refund_amount')
@@ -176,7 +215,8 @@ export default function BookingsPage() {
       extra.cancelled_by = 'business';
     }
 
-    await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
+    const table = isReservationType ? 'reservations' : 'bookings';
+    await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
 
     // Release booking slot on cancel/no_show so the time becomes available again
     if (newStatus === 'cancelled' || newStatus === 'no_show') {

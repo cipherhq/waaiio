@@ -53,13 +53,25 @@ export default function Bookings() {
 
   useEffect(() => {
     async function load() {
-      // Load bookings
-      const { data: bookingData } = await adminDb
-        .from('bookings')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // Load bookings + reservations
+      const [bookingsRes, reservationsRes] = await Promise.all([
+        adminDb.from('bookings').select('*').order('created_at', { ascending: false }),
+        adminDb.from('reservations').select('*').order('created_at', { ascending: false }),
+      ]);
 
-      const rows = bookingData || [];
+      // Map reservations to booking-like structure
+      const mappedReservations = (reservationsRes.data || []).map(r => ({
+        ...r,
+        date: r.check_in,
+        time: r.check_out ? `${r.nights || '?'} nights` : '',
+        party_size: r.guests || 1,
+        flow_type: 'reservation',
+        staff_name: null,
+        reference_code: r.reference_code || '',
+      }));
+
+      const rows = [...(bookingsRes.data || []), ...mappedReservations]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       // Load business names + categories to filter out giving orgs
       const bizIds = [...new Set(rows.map(b => b.business_id).filter(Boolean))];

@@ -131,7 +131,7 @@ export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
   photographer: ['scheduling', 'payment', 'feedback', 'chat', 'referral', 'staff'],
   mall_vendor: ['payment', 'ordering', 'feedback', 'loyalty', 'chat'],
   pharmacy: ['ordering', 'payment', 'feedback', 'loyalty', 'chat'],
-  hotel: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff', 'survey'],
+  hotel: ['reservation', 'payment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff', 'survey'],
   car_wash: ['scheduling', 'payment', 'feedback', 'loyalty', 'chat', 'referral'],
   catering: ['ordering', 'payment', 'feedback', 'chat', 'referral'],
   funeral: ['payment', 'scheduling', 'feedback', 'chat'],

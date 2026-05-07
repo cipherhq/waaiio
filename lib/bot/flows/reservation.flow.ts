@@ -80,7 +80,7 @@ export const reservationFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const dates: Array<{ title: string; postbackText: string }> = [];
-        for (let i = 1; i <= 7; i++) {
+        for (let i = 1; i <= 30 && dates.length < 10; i++) {
           const d = new Date();
           d.setDate(d.getDate() + i);
           const label = d.toLocaleDateString(getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' });
@@ -128,7 +128,7 @@ export const reservationFlow: FlowDefinition = {
         const checkInStr = ctx.session.session_data.check_in as string;
         const checkInDate = new Date(checkInStr + 'T00:00');
         const dates: Array<{ title: string; description: string; postbackText: string }> = [];
-        for (let i = 1; i <= 7; i++) {
+        for (let i = 1; i <= 30 && dates.length < 10; i++) {
           const d = new Date(checkInDate);
           d.setDate(d.getDate() + i);
           const label = d.toLocaleDateString(getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' });
@@ -398,10 +398,31 @@ export const reservationFlow: FlowDefinition = {
           return [{ type: 'text', text: 'No problem! Your reservation has been cancelled. Send *Hi* to start over.' }];
         }
 
+        // Check availability — prevent double-booking same service on overlapping dates
+        const serviceId = (d.service_id as string) || null;
+        if (serviceId) {
+          const { data: overlapping } = await ctx.supabase
+            .from('reservations')
+            .select('id')
+            .eq('business_id', ctx.business!.id)
+            .eq('service_id', serviceId)
+            .in('status', ['pending', 'confirmed'])
+            .lt('check_in', d.check_out as string)
+            .gt('check_out', d.check_in as string)
+            .limit(1);
+
+          if (overlapping && overlapping.length > 0) {
+            return [{
+              type: 'text',
+              text: 'Sorry, this property is not available for the selected dates. Please try different dates or another option. Send *Hi* to start over.',
+            }];
+          }
+        }
+
         const insertPayload: Record<string, unknown> = {
           business_id: ctx.business!.id,
           user_id: userId,
-          service_id: (d.service_id as string) || null,
+          service_id: serviceId,
           check_in: d.check_in as string,
           check_out: d.check_out as string,
           guests: (d.guests as number) || 1,
