@@ -166,6 +166,51 @@ const enterDonationAmountStep: FlowStepConfig = {
   },
 
   async next() {
+    return 'enter_donor_name';
+  },
+};
+
+const enterDonorNameStep: FlowStepConfig = {
+  id: 'enter_donor_name',
+
+  async skipIf(ctx: FlowContext): Promise<boolean> {
+    // Skip if user already has a profile with a name
+    if (ctx.session.user_id) {
+      const { data: profile } = await ctx.supabase
+        .from('profiles')
+        .select('first_name')
+        .eq('id', ctx.session.user_id)
+        .maybeSingle();
+      if (profile?.first_name) {
+        ctx.session.session_data.donor_display_name = `${profile.first_name}`;
+        return true;
+      }
+    }
+    return false;
+  },
+
+  async prompt(): Promise<PromptMessage[]> {
+    return [{
+      type: 'buttons',
+      body: 'What name should we display for your donation?',
+      buttons: [
+        { id: 'donate_anonymous', title: 'Stay Anonymous' },
+      ],
+    }];
+  },
+
+  async validate(input: string) {
+    if (input === 'donate_anonymous') {
+      return { valid: true, data: { donor_display_name: null } };
+    }
+    const name = input.trim();
+    if (!name || name.length < 2) {
+      return { valid: false, errorMessage: 'Please enter your name or tap *Stay Anonymous*.' };
+    }
+    return { valid: true, data: { donor_display_name: name } };
+  },
+
+  async next() {
     return 'confirm_donation';
   },
 };
@@ -212,18 +257,8 @@ const donationPaymentStep: FlowStepConfig = {
     // Generate reference
     const refCode = `DON-${Date.now().toString(36).toUpperCase()}`;
 
-    // Resolve donor name from profile if available
-    let donorName = '';
-    if (ctx.session.user_id) {
-      const { data: profile } = await ctx.supabase
-        .from('profiles')
-        .select('first_name, last_name')
-        .eq('id', ctx.session.user_id)
-        .maybeSingle();
-      if (profile?.first_name) {
-        donorName = `${profile.first_name} ${profile.last_name || ''}`.trim();
-      }
-    }
+    // Use name from the donor name step (or profile if skipped)
+    const donorName = (sd.donor_display_name as string) || '';
 
     // Initialize payment
     const { initializePayment } = await import('./shared/payment');
@@ -366,6 +401,7 @@ export const crowdfundingFlow: FlowDefinition = {
     selectCampaignStep,
     campaignViewStep,
     enterDonationAmountStep,
+    enterDonorNameStep,
     confirmDonationStep,
     donationPaymentStep,
     awaitDonationPaymentStep,
