@@ -105,6 +105,54 @@ export class BotService {
       return;
     }
 
+    // Handle waitlist notification responses (yes/no after "a spot has opened up")
+    const isWaitlistReply = /^(yes|no|yep|nah|nope|yeah)$/i.test(text);
+    if (isWaitlistReply) {
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: notifiedEntry } = await this.supabase
+        .from('waitlist_entries')
+        .select('id, business_id, customer_name, service_id')
+        .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+        .eq('status', 'notified')
+        .order('notified_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (notifiedEntry) {
+        const accepted = /^(yes|yep|yeah)$/i.test(text);
+        if (accepted) {
+          // Mark as confirmed and route to booking
+          await this.supabase
+            .from('waitlist_entries')
+            .update({ status: 'confirmed' })
+            .eq('id', notifiedEntry.id);
+
+          const { data: biz } = await this.supabase
+            .from('businesses')
+            .select('name')
+            .eq('id', notifiedEntry.business_id)
+            .single();
+
+          await this.sendText(from, `Great! Let's get you booked at *${biz?.name || 'the business'}*.`);
+
+          // Deactivate any existing session and start a new booking flow
+          const existingSession = await this.getActiveSession(from);
+          if (existingSession) await this.deactivateSession(existingSession.id);
+          return this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id);
+        } else {
+          // Declined — mark as expired so next person can be notified
+          await this.supabase
+            .from('waitlist_entries')
+            .update({ status: 'expired' })
+            .eq('id', notifiedEntry.id);
+
+          await this.sendText(from, "No problem! We've released the spot. Send *Hi* if you'd like to do anything else.");
+          return;
+        }
+      }
+    }
+
     // ── Early profile lookup (cached for reuse across all query paths) ──
     const phoneP = from.startsWith('+') ? from : `+${from}`;
     const phoneN = from.startsWith('+') ? from.slice(1) : from;
