@@ -1270,6 +1270,7 @@ export const schedulingFlow: FlowDefinition = {
           venue_address: (d.venue_address as string) || null,
           end_date: (d.end_date as string) || null,
           addons_snapshot: d._selected_addons || null,
+          promo_code_id: (d._promo_id as string) || null,
           guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
           guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
           guest_email: (d.email as string) || null,
@@ -1286,6 +1287,21 @@ export const schedulingFlow: FlowDefinition = {
         if (insertError || !booking) {
           console.error('Failed to create booking', insertError);
           return [{ type: 'text', text: 'Sorry, something went wrong. Send "Hi" to try again.' }];
+        }
+
+        // Increment promo code usage if applied
+        if (d._promo_id) {
+          const { data: promoData } = await ctx.supabase
+            .from('promo_codes')
+            .select('current_uses')
+            .eq('id', d._promo_id as string)
+            .single();
+          if (promoData) {
+            await ctx.supabase
+              .from('promo_codes')
+              .update({ current_uses: (promoData.current_uses || 0) + 1 })
+              .eq('id', d._promo_id as string);
+          }
         }
 
         d.booking_id = booking.id;
@@ -1670,7 +1686,7 @@ export const schedulingFlow: FlowDefinition = {
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
         if (d._action === 'cancel') return null;
-        if (d._saved_card_paid) return 'post_payment'; // Skip payment step
+        if (d._saved_card_paid) return null; // Payment complete, end flow
         // Saved card failed or user chose new card — go to regular payment
         return 'create_booking'; // Re-enter create_booking which will skip saved card this time
       },
