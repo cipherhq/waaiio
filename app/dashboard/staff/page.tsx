@@ -315,21 +315,23 @@ export default function StaffPage() {
     };
 
     try {
-      if (view === 'add') {
-        await fetch('/api/staff', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        await fetch('/api/staff', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ staffId: form.id, ...payload }),
-        });
+      const res = await fetch('/api/staff', {
+        method: view === 'add' ? 'POST' : 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(view === 'add' ? payload : { staffId: form.id, ...payload }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Failed to save staff member. Please try again.');
+        setSaving(false);
+        return;
       }
     } catch (err) {
       console.error(err);
+      alert('Network error. Please try again.');
+      setSaving(false);
+      return;
     }
     setSaving(false);
     setView('list');

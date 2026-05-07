@@ -74,9 +74,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'businessId and name required' }, { status: 400 });
     }
 
-    const ALLOWED_ROLES = ['Staff', 'Manager', 'Driver', 'Technician', 'Barber', 'Stylist', 'Therapist', 'Chef', 'Instructor'];
-    if (role && !ALLOWED_ROLES.includes(role)) {
-      return NextResponse.json({ error: 'Invalid staff role' }, { status: 400 });
+    // Sanitize role — allow any alphanumeric string up to 50 chars
+    if (role && (typeof role !== 'string' || role.length > 50)) {
+      return NextResponse.json({ error: 'Role must be a string under 50 characters' }, { status: 400 });
     }
 
     // Verify ownership
