@@ -35,6 +35,17 @@ export async function GET(
       authorized = true;
     }
 
+    // Also check multi-signer tokens
+    if (!authorized && signerToken) {
+      const { data: signer } = await service
+        .from('contract_signers')
+        .select('id')
+        .eq('contract_id', contract.id)
+        .eq('token', signerToken)
+        .maybeSingle();
+      if (signer) authorized = true;
+    }
+
     if (!authorized) {
       try {
         const supabase = await createClient();

@@ -14,13 +14,49 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    const { data: contract, error } = await supabase
+    // Check single-signer contracts first
+    let contract = null as { id: string; status: string; token_expires_at: string; business_id: string; title: string; signer_name: string; signer_phone: string } | null;
+    let isMultiSigner = false;
+    let signerId: string | null = null;
+
+    const { data: singleContract } = await supabase
       .from('contracts')
       .select('id, status, token_expires_at, business_id, title, signer_name, signer_phone')
       .eq('token', token)
-      .single();
+      .maybeSingle();
 
-    if (error || !contract) {
+    if (singleContract) {
+      contract = singleContract;
+    } else {
+      // Check multi-signer contracts
+      const { data: signer } = await supabase
+        .from('contract_signers')
+        .select('id, contract_id, status, token_expires_at, signer_name, signer_phone')
+        .eq('token', token)
+        .maybeSingle();
+
+      if (signer) {
+        isMultiSigner = true;
+        signerId = signer.id;
+        const { data: parentContract } = await supabase
+          .from('contracts')
+          .select('id, status, business_id, title')
+          .eq('id', signer.contract_id)
+          .single();
+
+        if (parentContract) {
+          contract = {
+            ...parentContract,
+            token_expires_at: signer.token_expires_at,
+            signer_name: signer.signer_name,
+            signer_phone: signer.signer_phone,
+            status: signer.status,
+          };
+        }
+      }
+    }
+
+    if (!contract) {
       return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
     }
 
@@ -29,23 +65,44 @@ export async function POST(request: NextRequest) {
     }
 
     if (new Date(contract.token_expires_at) < new Date()) {
-      await supabase.from('contracts').update({ status: 'expired' }).eq('id', contract.id);
+      if (isMultiSigner && signerId) {
+        await supabase.from('contract_signers').update({ status: 'expired' }).eq('id', signerId);
+      } else {
+        await supabase.from('contracts').update({ status: 'expired' }).eq('id', contract.id);
+      }
       return NextResponse.json({ error: 'This signing link has expired' }, { status: 410 });
     }
 
-    const { error: updateError } = await supabase
-      .from('contracts')
-      .update({
-        status: 'declined',
-        declined_at: new Date().toISOString(),
-        decline_reason: reason || null,
-      })
-      .eq('id', contract.id);
-
-    if (updateError) {
-      console.error('Failed to decline contract:', updateError);
-      return NextResponse.json({ error: 'Failed to decline' }, { status: 500 });
+    // Update the correct table
+    if (isMultiSigner && signerId) {
+      const { error: updateError } = await supabase
+        .from('contract_signers')
+        .update({
+          status: 'declined',
+          declined_at: new Date().toISOString(),
+          decline_reason: reason || null,
+        })
+        .eq('id', signerId);
+      if (updateError) {
+        return NextResponse.json({ error: 'Failed to decline' }, { status: 500 });
+      }
+      // Also mark parent contract as declined
+      await supabase.from('contracts').update({ status: 'declined', declined_at: new Date().toISOString(), decline_reason: reason || null }).eq('id', contract.id);
+    } else {
+      const { error: updateError } = await supabase
+        .from('contracts')
+        .update({
+          status: 'declined',
+          declined_at: new Date().toISOString(),
+          decline_reason: reason || null,
+        })
+        .eq('id', contract.id);
+      if (updateError) {
+        return NextResponse.json({ error: 'Failed to decline' }, { status: 500 });
+      }
     }
+
+
 
     // Notify business owner
     const { data: biz } = await supabase

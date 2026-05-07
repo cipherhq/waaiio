@@ -20,7 +20,7 @@ async function sendWhatsAppMessage(
   countryCode: string,
   phone: string,
   message: string,
-  templateParams?: { businessName: string; title: string; signUrl: string },
+  templateParams?: { signerName: string; businessName: string; title: string; token?: string },
 ): Promise<{ messageId: string | null; delivered: boolean }> {
   const cleanPhone = phone.replace(/\D/g, '');
   const resolver = new ChannelResolver(service);
@@ -38,7 +38,8 @@ async function sendWhatsAppMessage(
         const result = await resolved.sender.sendTemplate({
           to: cleanPhone,
           templateName: CONTRACT_TEMPLATE_NAME,
-          templateParams: [templateParams.businessName, templateParams.title, templateParams.signUrl],
+          templateParams: [templateParams.signerName || 'there', templateParams.businessName, templateParams.title],
+          buttonParams: templateParams.token ? [templateParams.token] : undefined,
         });
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
@@ -69,7 +70,7 @@ async function sendWhatsAppMessage(
           const result = await gupshup.sendTemplate({
             to: cleanPhone,
             templateId: CONTRACT_TEMPLATE_NAME,
-            templateParams: [templateParams.businessName, templateParams.title, templateParams.signUrl],
+            templateParams: [templateParams.signerName || 'there', templateParams.businessName, templateParams.title],
           });
           if (result.success && result.messageId) {
             messageId = result.messageId;
@@ -182,7 +183,7 @@ export async function POST(request: NextRequest) {
 
           const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(
             service, contract.business_id, biz.country_code, signer.signer_phone, message,
-            { businessName: biz.name, title: contract.title, signUrl },
+            { signerName: signer.signer_name, businessName: biz.name, title: contract.title, token: newToken },
           );
           if (delivered && waMessageId) {
             await service
@@ -244,7 +245,7 @@ export async function POST(request: NextRequest) {
 
     const { messageId: waMessageId, delivered } = await sendWhatsAppMessage(
       service, contract.business_id, biz.country_code, contract.signer_phone, message,
-      { businessName: biz.name, title: contract.title, signUrl },
+      { signerName: contract.signer_name, businessName: biz.name, title: contract.title, token },
     );
     if (delivered && waMessageId) {
       await service

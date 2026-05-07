@@ -24,9 +24,18 @@ export async function GET(
   const signerToken = request.nextUrl.searchParams.get('token');
   let authorized = false;
 
-  // Check if signer token matches
+  // Check if signer token matches (single or multi-signer)
   if (signerToken && signerToken === contract.token) {
     authorized = true;
+  }
+  if (!authorized && signerToken) {
+    const { data: signer } = await service
+      .from('contract_signers')
+      .select('id')
+      .eq('contract_id', contract.id)
+      .eq('token', signerToken)
+      .maybeSingle();
+    if (signer) authorized = true;
   }
 
   // Check if authenticated business owner

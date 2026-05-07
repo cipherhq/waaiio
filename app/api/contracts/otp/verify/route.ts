@@ -50,8 +50,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, already_verified: true });
     }
 
-    // Check attempts
-    if ((record.otp_attempts || 0) >= 5) {
+    // Check expiration first (don't waste attempts on expired codes)
+    if (!record.otp_expires_at || new Date(record.otp_expires_at) < new Date()) {
+      return NextResponse.json({ error: 'Code has expired. Please request a new one.' }, { status: 410 });
+    }
+
+    // Check attempts (3 max)
+    if ((record.otp_attempts || 0) >= 3) {
       return NextResponse.json({ error: 'Too many attempts. Please request a new code.' }, { status: 429 });
     }
 
@@ -60,11 +65,6 @@ export async function POST(request: NextRequest) {
       .from(table)
       .update({ otp_attempts: (record.otp_attempts || 0) + 1 })
       .eq('id', record.id);
-
-    // Check expiration
-    if (!record.otp_expires_at || new Date(record.otp_expires_at) < new Date()) {
-      return NextResponse.json({ error: 'Code has expired. Please request a new one.' }, { status: 410 });
-    }
 
     // Check code
     if (record.otp_code !== otp) {
