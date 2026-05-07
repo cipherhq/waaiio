@@ -76,14 +76,31 @@ const waitlistConfirmStep: FlowStepConfig = {
     const d = ctx.session.session_data;
     const customerName = d.waitlist_name as string;
 
+    // Normalize phone + prevent duplicates
+    const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+    const serviceId = (d.service_id as string) || null;
+
+    // Check for existing waiting entry
+    const { data: existing } = await ctx.supabase
+      .from('waitlist_entries')
+      .select('id')
+      .eq('business_id', ctx.business.id)
+      .eq('customer_phone', phone)
+      .eq('status', 'waiting')
+      .maybeSingle();
+
+    if (existing) {
+      return [{ type: 'text', text: `You're already on the waitlist, ${customerName}! We'll notify you when a spot opens up.` }];
+    }
+
     // Insert waitlist entry
     const { error } = await ctx.supabase
       .from('waitlist_entries')
       .insert({
         business_id: ctx.business.id,
-        customer_phone: ctx.from,
+        customer_phone: phone,
         customer_name: customerName,
-        service_id: (d.service_id as string) || null,
+        service_id: serviceId,
         event_id: (d.event_id as string) || null,
         preferred_date: (d.date as string) || null,
         status: 'waiting',

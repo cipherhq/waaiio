@@ -243,6 +243,18 @@ export default function BookingsPage() {
             }),
           }).catch(() => {});
         }
+
+        // Notify next waitlist customer (non-blocking)
+        if (newStatus === 'cancelled') {
+          fetch('/api/waitlist/notify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              business_id: business.id,
+              service_id: booking.service_id || null,
+            }),
+          }).catch(() => {});
+        }
       }
     }
 

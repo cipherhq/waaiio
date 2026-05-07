@@ -436,6 +436,18 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (dates.length === 0) {
+          // Offer waitlist if capability enabled
+          const caps = (ctx.session.session_data.capabilities as string[]) || [];
+          if (caps.includes('waitlist')) {
+            return [...messages, {
+              type: 'buttons' as const,
+              body: 'Sorry, there are no available dates right now. Would you like to join the waitlist? We\'ll notify you when a spot opens up.',
+              buttons: [
+                { id: 'wl_join', title: 'Join Waitlist' },
+                { id: 'wl_skip', title: 'No Thanks' },
+              ],
+            }];
+          }
           return [...messages, { type: 'text', text: 'Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit.' }];
         }
 
@@ -449,6 +461,14 @@ export const schedulingFlow: FlowDefinition = {
         return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Handle waitlist join from "no dates" prompt
+        if (input === 'wl_join') {
+          return { valid: true, data: { _join_waitlist: true } };
+        }
+        if (input === 'wl_skip') {
+          return { valid: true, data: { _action: 'cancel' } };
+        }
+
         let dateStr = input;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
           const parsed = new Date(input);
@@ -475,7 +495,11 @@ export const schedulingFlow: FlowDefinition = {
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { date: dateStr } };
       },
-      async next() { return 'select_staff'; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._join_waitlist) return 'waitlist_join';
+        if (ctx.session.session_data._action === 'cancel') return null;
+        return 'select_staff';
+      },
     },
 
     // ── Select Time ──
