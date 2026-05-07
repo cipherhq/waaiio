@@ -37,6 +37,12 @@ const navItems: NavItem[] = [
     section: 'main',
   },
   {
+    href: '/dashboard/activity',
+    label: 'Activity',
+    icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+    section: 'main',
+  },
+  {
     href: '/dashboard/setup-assistant',
     label: 'Ace AI Assistant',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',

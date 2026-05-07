@@ -55,6 +55,10 @@ export default function Finance() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
 
+  // Date range filter
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+
   useEffect(() => {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
@@ -77,6 +81,17 @@ export default function Finance() {
     load();
   }, []);
 
+  // Date-filtered data
+  function inRange(date: string): boolean {
+    if (dateFrom && date < dateFrom) return false;
+    if (dateTo && date > dateTo + 'T23:59:59') return false;
+    return true;
+  }
+  const filteredPayments = useMemo(() => payments.filter(p => inRange(p.created_at)), [payments, dateFrom, dateTo]);
+  const filteredFees = useMemo(() => fees.filter(f => inRange(f.created_at)), [fees, dateFrom, dateTo]);
+  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at)), [payouts, dateFrom, dateTo]);
+  const filteredRefunds = useMemo(() => refunds.filter(r => inRange(r.created_at)), [refunds, dateFrom, dateTo]);
+
   // Resolve business → currency
   const bizCurrencyMap = useMemo(() => {
     const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
@@ -98,9 +113,9 @@ export default function Finance() {
     return entries.map(([cur, amt]) => formatMoney(amt, cur)).join(' · ');
   }
 
-  // Compute metrics (per-currency)
+  // Compute metrics (per-currency) using filtered data
   const metrics = useMemo(() => {
-    const successPayments = payments.filter(p => p.status === 'success');
+    const successPayments = filteredPayments.filter(p => p.status === 'success');
 
     const grossVolume: Record<string, number> = {};
     for (const p of successPayments) {
@@ -109,21 +124,21 @@ export default function Finance() {
     }
 
     const totalRefunds: Record<string, number> = {};
-    for (const r of refunds) {
-      totalRefunds['NGN'] = (totalRefunds['NGN'] || 0) + Number(r.amount || 0); // refunds don't have currency yet
+    for (const r of filteredRefunds) {
+      totalRefunds['NGN'] = (totalRefunds['NGN'] || 0) + Number(r.amount || 0);
     }
 
-    const platformFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+    const platformFees = filteredFees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
 
-    const payoutsOwed = payouts
+    const payoutsOwed = filteredPayouts
       .filter(p => ['pending', 'approved'].includes(p.status))
       .reduce((s, p) => s + Number(p.net_amount || 0), 0);
 
-    const paidOut = payouts
+    const paidOut = filteredPayouts
       .filter(p => p.status === 'paid')
       .reduce((s, p) => s + Number(p.net_amount || 0), 0);
 
-    const processingPayouts = payouts
+    const processingPayouts = filteredPayouts
       .filter(p => p.status === 'processing')
       .reduce((s, p) => s + Number(p.net_amount || 0), 0);
 
@@ -131,7 +146,7 @@ export default function Finance() {
 
     // Payment status breakdown
     const paymentBuckets: Record<string, { count: number; amount: number }> = {};
-    for (const p of payments) {
+    for (const p of filteredPayments) {
       if (!paymentBuckets[p.status]) paymentBuckets[p.status] = { count: 0, amount: 0 };
       paymentBuckets[p.status].count++;
       paymentBuckets[p.status].amount += Number(p.amount || 0);
@@ -139,7 +154,7 @@ export default function Finance() {
 
     // Payout status breakdown
     const payoutBuckets: Record<string, { count: number; amount: number }> = {};
-    for (const p of payouts) {
+    for (const p of filteredPayouts) {
       if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0, amount: 0 };
       payoutBuckets[p.status].count++;
       payoutBuckets[p.status].amount += Number(p.net_amount || 0);
@@ -155,7 +170,7 @@ export default function Finance() {
       paymentBuckets,
       payoutBuckets,
     };
-  }, [payments, fees, payouts, refunds, bizCurrencyMap]);
+  }, [filteredPayments, filteredFees, filteredPayouts, filteredRefunds, bizCurrencyMap]);
 
   // Monthly rollup (last 12 months)
   const monthly = useMemo(() => {
@@ -238,8 +253,23 @@ export default function Finance() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Finance</h1>
-      <p className="mt-1 text-sm text-gray-500">Comprehensive financial dashboard</p>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Finance</h1>
+          <p className="mt-1 text-sm text-gray-500">Comprehensive financial dashboard</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+          <span className="text-sm text-gray-400">to</span>
+          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+          {(dateFrom || dateTo) && (
+            <button onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="text-xs text-brand hover:underline">Clear</button>
+          )}
+        </div>
+      </div>
 
       {/* Metric Cards */}
       {/* Per-currency transaction volume */}

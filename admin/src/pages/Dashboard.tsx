@@ -41,7 +41,8 @@ export default function Dashboard() {
         const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
         const { adminQuery } = await import('@/lib/adminQuery');
-        const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes, overridesRes] = await Promise.all([
+        const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+        const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes, overridesRes, newBizRes, newUsersRes, churnedRes] = await Promise.all([
           adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'active' }], count: 'exact' }),
           adminQuery('platform_fees', { select: 'fee_total, business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }, { column: 'waived', op: 'eq', value: false }] }),
           adminQuery('business_payouts', { select: 'net_amount, status', filters: [{ column: 'status', op: 'eq', value: 'pending' }] }),
@@ -54,6 +55,10 @@ export default function Dashboard() {
           adminQuery('business_documents', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'pending' }], count: 'exact' }),
           adminQuery('business_payouts', { select: 'id', filters: [{ column: 'flags', op: 'neq', value: '[]' }], count: 'exact' }),
           adminQuery('capability_overrides', { select: 'business_id' }),
+          // Growth metrics
+          adminQuery('businesses', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
+          adminQuery('profiles', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
+          adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'in', value: ['suspended', 'cancelled'] }], count: 'exact' }),
         ]);
 
         // Group fees by currency via business country
@@ -100,12 +105,34 @@ export default function Dashboard() {
             color: 'green',
           }));
 
+        const newBizCount = newBizRes?.count || 0;
+        const newUserCount = newUsersRes?.count || 0;
+        const churnedCount = churnedRes?.count || 0;
+
         setStats([
           {
             label: 'Total Businesses',
             value: String(bizRes.count || 0),
             icon: Building2,
             color: 'blue',
+          },
+          {
+            label: 'New Businesses (this month)',
+            value: String(newBizCount),
+            icon: Zap,
+            color: 'green',
+          },
+          {
+            label: 'New Users (this month)',
+            value: String(newUserCount),
+            icon: Users,
+            color: 'green',
+          },
+          {
+            label: 'Churned / Suspended',
+            value: String(churnedCount),
+            icon: AlertTriangle,
+            color: churnedCount > 0 ? 'red' : 'green',
           },
           ...currencyCards,
           {
