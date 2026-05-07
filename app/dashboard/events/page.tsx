@@ -21,6 +21,17 @@ interface EventItem {
   created_at: string;
 }
 
+interface TicketType {
+  id: string;
+  event_id: string;
+  name: string;
+  price: number;
+  total_tickets: number;
+  tickets_sold: number;
+  sort_order: number;
+  is_active: boolean;
+}
+
 type ViewMode = 'list' | 'add' | 'edit';
 
 export default function EventsPage() {
@@ -31,6 +42,10 @@ export default function EventsPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
+  const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
+  const [newTypeName, setNewTypeName] = useState('');
+  const [newTypePrice, setNewTypePrice] = useState(0);
+  const [newTypeTotal, setNewTypeTotal] = useState(100);
 
   const [form, setForm] = useState({
     id: '',
@@ -58,6 +73,39 @@ export default function EventsPage() {
 
   useEffect(() => { loadEvents(); }, [loadEvents]);
 
+  async function loadTicketTypes(eventId: string) {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('event_ticket_types')
+      .select('*')
+      .eq('event_id', eventId)
+      .order('sort_order');
+    setTicketTypes((data || []) as TicketType[]);
+  }
+
+  async function addTicketType() {
+    if (!newTypeName.trim() || !form.id) return;
+    const supabase = createClient();
+    await supabase.from('event_ticket_types').insert({
+      event_id: form.id,
+      name: newTypeName.trim(),
+      price: newTypePrice,
+      total_tickets: newTypeTotal,
+      sort_order: ticketTypes.length,
+    });
+    setNewTypeName('');
+    setNewTypePrice(0);
+    setNewTypeTotal(100);
+    loadTicketTypes(form.id);
+  }
+
+  async function removeTicketType(typeId: string) {
+    if (!confirm('Remove this ticket type?')) return;
+    const supabase = createClient();
+    await supabase.from('event_ticket_types').delete().eq('id', typeId);
+    loadTicketTypes(form.id);
+  }
+
   function openAdd() {
     setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published' });
     setView('add');
@@ -77,6 +125,7 @@ export default function EventsPage() {
       status: event.status,
     });
     setView('edit');
+    loadTicketTypes(event.id);
   }
 
   async function handleSave() {
@@ -181,6 +230,68 @@ export default function EventsPage() {
                 <input type="number" min={1} value={form.max_per_order || ''} onChange={e => setForm({ ...form, max_per_order: Number(e.target.value) })} placeholder="Default" className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
             </div>
+
+            {/* Ticket Types (edit only) */}
+            {view === 'edit' && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Ticket Types</label>
+                <p className="mb-3 text-xs text-gray-400">Add different ticket tiers (e.g. Regular, VIP). If none are added, the event price above is used.</p>
+
+                {ticketTypes.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {ticketTypes.map(tt => (
+                      <div key={tt.id} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                        <div>
+                          <span className="text-sm font-medium text-gray-900">{tt.name}</span>
+                          <span className="ml-2 text-sm text-gray-500">{formatCurrency(tt.price, country)}</span>
+                          <span className="ml-2 text-xs text-gray-400">{tt.tickets_sold}/{tt.total_tickets} sold</span>
+                        </div>
+                        <button onClick={() => removeTicketType(tt.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-end gap-2">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={newTypeName}
+                      onChange={e => setNewTypeName(e.target.value)}
+                      placeholder="e.g. VIP"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <div className="w-24">
+                    <input
+                      type="number"
+                      min={0}
+                      value={newTypePrice || ''}
+                      onChange={e => setNewTypePrice(Number(e.target.value))}
+                      placeholder="Price"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <div className="w-20">
+                    <input
+                      type="number"
+                      min={1}
+                      value={newTypeTotal}
+                      onChange={e => setNewTypeTotal(Number(e.target.value))}
+                      placeholder="Qty"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <button
+                    onClick={addTicketType}
+                    disabled={!newTypeName.trim()}
+                    className="rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right: Settings */}

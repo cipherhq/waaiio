@@ -1,6 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
-import { initializePaystackPayment, verifyPaystackPayment, recordPlatformFee } from './shared/payment';
+import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { getTicketConfirmationMessage } from './shared/templates';
 import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
@@ -75,6 +75,62 @@ export const ticketingFlow: FlowDefinition = {
           },
         };
       },
+      async next() { return 'select_ticket_type'; },
+    },
+
+    // ── Select Ticket Type (skipped if no types exist) ──
+    {
+      id: 'select_ticket_type',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        const eventId = ctx.session.session_data.event_id as string;
+        const { data: types } = await ctx.supabase
+          .from('event_ticket_types')
+          .select('id, name, price, total_tickets, tickets_sold, is_active')
+          .eq('event_id', eventId)
+          .eq('is_active', true)
+          .order('sort_order');
+
+        if (!types || types.length === 0) return true; // No types — use event-level price
+        ctx.session.session_data._ticket_types = types;
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        return [{
+          type: 'list',
+          title: 'Ticket Types',
+          body: 'Select your ticket type:',
+          buttonLabel: 'View Options',
+          items: types.map(t => {
+            const available = t.total_tickets - t.tickets_sold;
+            return {
+              title: t.name,
+              description: `${formatCurrency(t.price, cc)} • ${available} left`,
+              postbackText: t.id,
+            };
+          }),
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
+        const selected = types?.find(t => t.id === input);
+        if (!selected) return { valid: false, errorMessage: 'Please select a ticket type from the list.' };
+
+        const available = selected.total_tickets - selected.tickets_sold;
+        if (available <= 0) return { valid: false, errorMessage: `Sorry, ${selected.name} tickets are sold out.` };
+
+        return {
+          valid: true,
+          data: {
+            ticket_type_id: selected.id,
+            ticket_type_name: selected.name,
+            event_price: selected.price, // Override event-level price
+            event_available: available,
+          },
+        };
+      },
       async next() { return 'select_quantity'; },
     },
 
@@ -106,9 +162,9 @@ export const ticketingFlow: FlowDefinition = {
             body: `How many tickets? (max ${maxShow})`,
             buttons: [
               { id: '1', title: '1 ticket' },
-              { id: '2', title: '2 tickets' },
-              { id: '4', title: '4 tickets' },
-            ],
+              ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
+              ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
+            ].slice(0, 3), // WhatsApp max 3 buttons
           },
         ];
       },
@@ -307,7 +363,7 @@ export const ticketingFlow: FlowDefinition = {
         });
 
         if (total > 0) {
-          const paymentResult = await initializePaystackPayment(ctx.supabase, {
+          const paymentResult = await initializePayment(ctx.supabase, {
             bookingId: booking.id,
             userId,
             amount: total,
@@ -429,7 +485,8 @@ export const ticketingFlow: FlowDefinition = {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
-          const verified = await verifyPaystackPayment(ctx.supabase, ref);
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const verified = await verifyPayment(ctx.supabase, ref, cc);
           if (verified) {
             const d = ctx.session.session_data;
             const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
