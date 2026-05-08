@@ -304,17 +304,91 @@ export const reservationFlow: FlowDefinition = {
         ];
       },
       async validate(input: string): Promise<ValidationResult> {
-        const requestMap: Record<string, string> = {
-          req_airport: 'Airport pickup requested',
-          req_early: 'Early check-in requested',
-        };
-        let request: string | undefined;
-        if (requestMap[input]) {
-          request = requestMap[input];
-        } else if (input !== 'req_none') {
-          request = input;
+        if (input === 'req_airport') {
+          return { valid: true, data: { _request_type: 'airport' } };
         }
-        return { valid: true, data: { special_requests: request || '' } };
+        if (input === 'req_early') {
+          return { valid: true, data: { special_requests: 'Early check-in requested' } };
+        }
+        if (input === 'req_none') {
+          return { valid: true, data: { special_requests: '' } };
+        }
+        // Free text request
+        return { valid: true, data: { special_requests: input.trim() } };
+      },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._request_type === 'airport') return 'airport_pickup_time';
+        return 'reservation_confirmation';
+      },
+    },
+
+    // ── Step 5a: Airport Pickup — Arrival Time ──
+    {
+      id: 'airport_pickup_time',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{ type: 'text', text: '✈️ *Airport Pickup*\n\nWhat time does your flight arrive?\n\ne.g. *2:30 PM* or *14:30*' }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.trim();
+        if (text.length < 3) return { valid: false, errorMessage: 'Please enter your arrival time, e.g. 2:30 PM' };
+        return { valid: true, data: { _airport_arrival_time: text } };
+      },
+      async next() { return 'airport_pickup_passengers'; },
+    },
+
+    // ── Step 5b: Airport Pickup — Passengers ──
+    {
+      id: 'airport_pickup_passengers',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: 'How many passengers need pickup?',
+          buttons: [
+            { id: '1', title: '1 passenger' },
+            { id: '2', title: '2 passengers' },
+            { id: '3', title: '3+ passengers' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const num = parseInt(input, 10);
+        if (num && num > 0) return { valid: true, data: { _airport_passengers: num } };
+        return { valid: false, errorMessage: 'Please select or type the number of passengers.' };
+      },
+      async next() { return 'airport_pickup_flight'; },
+    },
+
+    // ── Step 5c: Airport Pickup — Flight Number (optional) ──
+    {
+      id: 'airport_pickup_flight',
+      async prompt(): Promise<PromptMessage[]> {
+        return [{
+          type: 'buttons',
+          body: 'Do you have a flight number? (helps us track your arrival)',
+          buttons: [
+            { id: 'flight_skip', title: 'Skip' },
+          ],
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const d = ctx.session.session_data;
+        const arrivalTime = d._airport_arrival_time as string;
+        const passengers = d._airport_passengers as number;
+
+        let flightNumber = '';
+        if (input !== 'flight_skip' && input.toLowerCase() !== 'skip') {
+          flightNumber = input.trim().toUpperCase();
+        }
+
+        // Build structured special request
+        const lines = [
+          '✈️ AIRPORT PICKUP',
+          `Arrival: ${arrivalTime}`,
+          `Passengers: ${passengers}`,
+        ];
+        if (flightNumber) lines.push(`Flight: ${flightNumber}`);
+
+        return { valid: true, data: { special_requests: lines.join('\n'), _airport_flight: flightNumber || null } };
       },
       async next() { return 'reservation_confirmation'; },
     },
