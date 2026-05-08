@@ -35,6 +35,7 @@ interface InvoiceData {
   terms: string | null;
   paid_at: string | null;
   business_name: string;
+  business_phone: string | null;
   logo_url: string | null;
   show_logo: boolean;
   whitelabel: boolean;
@@ -339,7 +340,7 @@ export default function InvoicePage() {
 
         {/* Return to WhatsApp */}
         <div className="mt-6 text-center">
-          <ReturnToWhatsApp />
+          <ReturnToWhatsApp phone={invoice.business_phone || undefined} />
         </div>
 
         {/* Footer — hidden for whitelabel */}

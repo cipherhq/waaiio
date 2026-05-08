@@ -41,7 +41,7 @@ export async function GET(
     // Fetch business name + tier (no sensitive data)
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, logo_url, subscription_tier')
+      .select('name, phone, logo_url, subscription_tier')
       .eq('id', invoice.business_id)
       .single();
 
@@ -81,6 +81,7 @@ export async function GET(
       terms: invoice.terms,
       paid_at: invoice.paid_at,
       business_name: biz?.name || '',
+      business_phone: biz?.phone || null,
       logo_url: biz?.logo_url || null,
       show_logo: (biz?.subscription_tier || 'free') !== 'free',
       whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,

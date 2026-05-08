@@ -3,10 +3,12 @@
 /**
  * "Return to WhatsApp" button — shown on all customer-facing pages
  * (payment success, contract signing, document download, etc.)
- * Links back to the Waaiio bot chat.
+ * Links back to the business or platform WhatsApp chat.
  */
-export function ReturnToWhatsApp() {
-  const waNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG
+export function ReturnToWhatsApp({ phone }: { phone?: string }) {
+  // Use business phone if provided, otherwise fall back to platform number
+  const waNumber = phone?.replace(/[^0-9]/g, '')
+    || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG
     || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US
     || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER
     || '';
