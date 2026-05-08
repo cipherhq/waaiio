@@ -150,7 +150,7 @@ export default function BookingsPage() {
       // Hotel/shortlet/car_rental — query reservations table
       let rQuery = supabase
         .from('reservations')
-        .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, nightly_rate, created_at, confirmed_at, checked_in_at, checked_out_at, cancelled_at, payment_id, service_id')
+        .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, nightly_rate, created_at, confirmed_at, checked_in_at, checked_out_at, cancelled_at, payment_id, service_id, property_id, property:properties!property_id(name)')
         .eq('business_id', business.id)
         .order('check_in', { ascending: false })
         .limit(100);
@@ -161,21 +161,24 @@ export default function BookingsPage() {
 
       const { data } = await rQuery;
       // Map reservation fields to booking interface for display
-      const mapped = (data || []).map(r => ({
-        ...r,
-        date: r.check_in,
-        time: r.check_out ? `${r.nights || '?'} night${r.nights !== 1 ? 's' : ''}` : '',
-        party_size: r.guests || 1,
-        staff_id: null,
-        staff_name: null,
-        notes: null,
-        refund_amount: null,
-        rescheduled_at: null,
-        original_date: null,
-        original_time: null,
-        seated_at: r.checked_in_at,
-        completed_at: r.checked_out_at,
-      })) as Booking[];
+      const mapped = (data || []).map(r => {
+        const prop = r.property as unknown as { name: string } | null;
+        return {
+          ...r,
+          date: r.check_in,
+          time: r.check_out ? `${r.nights || '?'} night${r.nights !== 1 ? 's' : ''}` : '',
+          party_size: r.guests || 1,
+          staff_id: null,
+          staff_name: prop?.name || null,  // Reuse staff_name field for property name display
+          notes: null,
+          refund_amount: null,
+          rescheduled_at: null,
+          original_date: null,
+          original_time: null,
+          seated_at: r.checked_in_at,
+          completed_at: r.checked_out_at,
+        };
+      }) as Booking[];
       setBookings(mapped);
       setLoading(false);
       return;
@@ -368,7 +371,7 @@ export default function BookingsPage() {
               <tr className="border-b border-gray-50 bg-gray-50/50">
                 <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{isReservationType ? (labels.propertyName || 'Property') : 'Staff'}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
@@ -529,6 +532,12 @@ export default function BookingsPage() {
                 {selected.guest_phone && <p className="text-sm text-gray-500">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-500">{selected.guest_email}</p>}
               </div>
+              {isReservationType && selected.staff_name && (
+                <div>
+                  <h3 className="text-sm font-medium text-gray-500">{labels.propertyName || 'Property'}</h3>
+                  <p className="mt-1 text-sm font-medium text-gray-900">{selected.staff_name}</p>
+                </div>
+              )}
               <div>
                 <h3 className="text-sm font-medium text-gray-500">Details</h3>
                 <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
