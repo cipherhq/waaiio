@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { exportToCsv } from '@/lib/utils/csv-export';
 
 interface PromoCode {
@@ -44,6 +45,8 @@ type ViewMode = 'list' | 'add' | 'edit';
 
 export default function PromoCodesPage() {
   const business = useBusiness();
+  const country = (business.country_code || 'NG') as CountryCode;
+  const currSymbol = formatCurrency(0, country).replace(/[\d.,\s]/g, '').trim() || '$';
   const [codes, setCodes] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
@@ -145,7 +148,7 @@ export default function PromoCodesPage() {
   function statusColor(s: string) {
     return s === 'Active' ? 'bg-green-50 text-green-700' : s === 'Expired' ? 'bg-red-50 text-red-700' : s === 'Maxed Out' ? 'bg-amber-50 text-amber-700' : 'bg-gray-100 text-gray-500';
   }
-  function formatDiscount(p: PromoCode) { return p.discount_type === 'percentage' ? `${p.discount_value}%` : `\u20A6${p.discount_value.toLocaleString()} off`; }
+  function formatDiscount(p: PromoCode) { return p.discount_type === 'percentage' ? `${p.discount_value}%` : `${currSymbol}${p.discount_value.toLocaleString()} off`; }
 
   const activeCodes = codes.filter(c => c.is_active && !isExpired(c) && !isMaxedOut(c)).length;
   const totalRedemptions = codes.reduce((s, c) => s + c.current_uses, 0);
@@ -199,13 +202,13 @@ export default function PromoCodesPage() {
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Discount Value {form.discount_type === 'percentage' ? '(%)' : '(\u20A6)'}</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Discount Value {form.discount_type === 'percentage' ? '(%)' : `(${currSymbol})`}</label>
                 <input type="number" min={0} value={form.discount_value || ''} onChange={e => setForm({ ...form, discount_value: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Min Order (\u20A6)</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Min Order ({currSymbol})</label>
                 <input type="number" min={0} value={form.min_order_amount || ''} onChange={e => setForm({ ...form, min_order_amount: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
               <div>
