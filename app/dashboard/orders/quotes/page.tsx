@@ -105,9 +105,9 @@ export default function QuotesPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Quote Requests</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Price Requests</h1>
       <p className="mt-1 text-sm text-gray-500">
-        Manage pricing quotes for custom orders with negotiable items.
+        Manage pricing for custom orders and items with negotiable prices.
       </p>
 
       {/* Status Tabs */}
@@ -194,7 +194,7 @@ export default function QuotesPage() {
           <div className="max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-lg font-bold text-gray-900">Quote Request</h2>
+                <h2 className="text-lg font-bold text-gray-900">Price Request</h2>
                 <p className="text-sm text-gray-500">
                   {selectedQuote.customer_name || 'Customer'}
                   {selectedQuote.customer_phone && ` (${selectedQuote.customer_phone})`}
@@ -300,7 +300,7 @@ export default function QuotesPage() {
             {/* Respond Form (only for pending quotes) */}
             {selectedQuote.status === 'pending' && (
               <div className="mt-5 border-t border-gray-100 pt-4">
-                <p className="text-sm font-semibold text-gray-900">Respond to Quote</p>
+                <p className="text-sm font-semibold text-gray-900">Set Your Price</p>
                 <div className="mt-3 space-y-3">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-600">Quoted Amount ({curr})</label>
@@ -331,7 +331,7 @@ export default function QuotesPage() {
                     disabled={responding || !respondAmount}
                     className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
                   >
-                    {responding ? 'Sending...' : 'Send Quote to Customer'}
+                    {responding ? 'Sending...' : 'Send Price to Customer'}
                   </button>
                 </div>
               </div>

@@ -819,8 +819,8 @@ export default function ServicesPage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Quote-based pricing</p>
-                    <p className="text-xs text-gray-400">Customers request a quote instead of booking at fixed price</p>
+                    <p className="text-sm font-medium text-gray-700">Price request</p>
+                    <p className="text-xs text-gray-400">Customers request a price instead of booking at fixed price</p>
                   </div>
                   <button type="button" onClick={() => setForm({ ...form, quote_enabled: !form.quote_enabled })}
                     className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.quote_enabled ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -988,7 +988,7 @@ export default function ServicesPage() {
                         <span>{service.staff_ids.length} staff</span>
                       )}
                       {service.is_package && <span className="text-brand font-medium">Package</span>}
-                      {service.quote_enabled && <span className="text-amber-600">Quote</span>}
+                      {service.quote_enabled && <span className="text-amber-600">Price Request</span>}
                       {(service.gallery_urls || []).length > 0 && <span>{service.gallery_urls.length} photos</span>}
                     </div>
                   </div>

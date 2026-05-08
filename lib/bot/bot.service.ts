@@ -2056,7 +2056,7 @@ export class BotService {
       }
 
       if (action === 'reject') {
-        await this.sendText(from, 'Quote declined. Thank you for considering!');
+        await this.sendText(from, 'Price declined. Thank you for considering!');
       }
       // Accept case: payment link is sent by the API route itself
     } catch (err) {

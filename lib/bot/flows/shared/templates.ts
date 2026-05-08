@@ -138,7 +138,7 @@ export function getQuoteNotificationMessage(opts: {
   });
 
   const lines = [
-    `📋 *New Quote Request*`,
+    `📋 *New Price Request*`,
     '',
     `👤 Customer: ${opts.customerName}`,
     `🛒 ${opts.businessName}`,

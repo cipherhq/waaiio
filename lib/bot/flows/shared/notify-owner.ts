@@ -158,9 +158,9 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
     }
     sendEmail({
       to: ownerEmail,
-      subject: `New ${customOrderData ? 'Custom Order' : 'Quote'} Request from ${customerName} - ${businessName}`,
+      subject: `New ${customOrderData ? 'Custom Order' : 'Price'} Request from ${customerName} - ${businessName}`,
       html: `
-        <h2>New ${customOrderData ? 'Custom Order' : 'Quote'} Request</h2>
+        <h2>New ${customOrderData ? 'Custom Order' : 'Price'} Request</h2>
         <p><strong>Customer:</strong> ${customerName}</p>
         <p><strong>Items:</strong> ${itemLines}</p>
         <p><strong>Estimated Subtotal:</strong> ${formattedTotal}</p>
@@ -179,7 +179,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
     }).join('\n');
 
     const lines = [
-      `📋 *New Quote Request*`,
+      `📋 *New Price Request*`,
       '',
       `👤 ${customerName}`,
       '',

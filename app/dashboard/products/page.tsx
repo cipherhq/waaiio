@@ -1008,7 +1008,7 @@ export default function ProductsPage() {
                             >
                               <option value="fixed">Fixed</option>
                               <option value="per_unit">Per Unit</option>
-                              <option value="quote">Quote</option>
+                              <option value="quote">Price Request</option>
                             </select>
                           </div>
                         </div>

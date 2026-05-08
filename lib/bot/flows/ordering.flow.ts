@@ -1913,13 +1913,13 @@ export const orderingFlow: FlowDefinition = {
 
         const buttons = isForceQuote
           ? [
-              { id: 'request_quote', title: 'Request Quote \uD83D\uDCCB' },
+              { id: 'request_quote', title: 'Get Price 📋' },
               { id: 'edit_order', title: 'Edit Order' },
             ]
           : hasNegotiable
           ? [
               { id: 'confirm_order', title: 'Confirm Order' },
-              { id: 'request_quote', title: 'Request Quote' },
+              { id: 'request_quote', title: 'Get Price' },
               { id: 'edit_order', title: 'Edit Order' },
             ]
           : [
@@ -1933,9 +1933,9 @@ export const orderingFlow: FlowDefinition = {
           {
             type: 'buttons',
             body: isForceQuote
-              ? 'This is a custom order. Submit a quote request for the maker to price:'
+              ? 'This is a custom order. Submit a price request for the maker to review:'
               : hasNegotiable
-              ? 'Some items have negotiable pricing. Request a quote or confirm at listed prices?'
+              ? 'Some items have negotiable pricing. Request a price or confirm at listed prices?'
               : 'Ready to place your order?',
             buttons,
           },
@@ -2171,7 +2171,7 @@ export const orderingFlow: FlowDefinition = {
 
         return [{
           type: 'text',
-          text: `\uD83D\uDCCB *Quote Request Submitted!*\n\n${ctx.business?.name || 'The business'} will review your order and send you a price.\n\nYou'll receive a WhatsApp message with their quote.\n\nThank you! \uD83D\uDE4F`,
+          text: `📋 *Price Request Submitted!*\n\n${ctx.business?.name || 'The business'} will review your order and send you a price.\n\nYou'll receive a WhatsApp message with their response.\n\nThank you! 🙏`,
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },

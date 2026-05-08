@@ -2309,7 +2309,7 @@ export default function SettingsPage() {
                     <p className="text-sm font-medium text-gray-700">Enable Custom Order Mode</p>
                     <p className="mt-0.5 text-xs text-gray-400">
                       {customOrderMode
-                        ? 'Customers provide photos, measurements, and notes. All orders go through the quote system.'
+                        ? 'Customers provide photos, measurements, and notes. All orders go through price request.'
                         : 'Standard ordering flow. Customers select products and pay at listed prices.'}
                     </p>
                   </div>
@@ -2336,7 +2336,7 @@ export default function SettingsPage() {
                       Deposit Percentage
                     </label>
                     <p className="mb-2 text-xs text-gray-400">
-                      When a quote is accepted, this percentage is charged upfront. The rest is charged when the order is ready.
+                      When a price is accepted, this percentage is charged upfront. The rest is charged when the order is ready.
                     </p>
                     <div className="flex items-center gap-2">
                       <input
@@ -2349,7 +2349,7 @@ export default function SettingsPage() {
                       />
                       <span className="text-sm text-gray-500">%</span>
                       <span className="ml-2 text-xs text-gray-400">
-                        {customDepositPct === 0 ? 'Full payment on quote accept' : customDepositPct === 100 ? 'Full payment upfront' : `${customDepositPct}% upfront, ${100 - customDepositPct}% on completion`}
+                        {customDepositPct === 0 ? 'Full payment on price accept' : customDepositPct === 100 ? 'Full payment upfront' : `${customDepositPct}% upfront, ${100 - customDepositPct}% on completion`}
                       </span>
                     </div>
                   </div>

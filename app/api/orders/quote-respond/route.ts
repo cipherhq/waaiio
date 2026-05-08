@@ -81,27 +81,27 @@ export async function POST(request: NextRequest) {
           : quote.customer_phone;
 
         const lines = [
-          `\uD83D\uDCCB *Quote from ${biz?.name || 'Business'}*`,
+          `📋 *Price from ${biz?.name || 'Business'}*`,
           '',
-          `\uD83D\uDCB0 Quoted Price: *${formatCurrency(Number(quoted_amount), cc)}*`,
+          `💰 Price: *${formatCurrency(Number(quoted_amount), cc)}*`,
         ];
 
         if (quote_notes) {
-          lines.push(`\uD83D\uDCDD Note: ${quote_notes}`);
+          lines.push(`📝 Note: ${quote_notes}`);
         }
 
         lines.push(
           '',
-          `_This quote expires in 24 hours._`,
+          `_This price is valid for 24 hours._`,
           '',
-          'Would you like to accept this quote?',
+          'Would you like to accept?',
         );
 
         await sender.sendText({ to: phone, text: lines.join('\n') });
 
         await sender.sendButtons({
           to: phone,
-          body: 'Accept or decline this quote:',
+          body: 'Accept or decline this price:',
           buttons: [
             { id: `accept_quote_${quote_id}`, title: 'Accept' },
             { id: `reject_quote_${quote_id}`, title: 'Decline' },

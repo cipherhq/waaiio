@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
           const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
           await sender.sendText({
             to: phone,
-            text: `\u274C Quote declined by ${quote.customer_name || quote.customer_phone || 'customer'}.\n\nEstimated: ${formatCurrency(quote.estimated_subtotal, cc)}\nQuoted: ${formatCurrency(quote.quoted_amount, cc)}`,
+            text: `❌ Price declined by ${quote.customer_name || quote.customer_phone || 'customer'}.\n\nEstimated: ${formatCurrency(quote.estimated_subtotal, cc)}\nYour price: ${formatCurrency(quote.quoted_amount, cc)}`,
           });
         } catch {}
       }
@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
 
           const messageLines = depositAmount > 0
             ? [
-                `\u2705 *Quote Accepted!*`,
+                `✅ *Price Accepted!*`,
                 '',
                 `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
                 `\uD83D\uDD11 Ref: *${order.reference_code}*`,
@@ -244,7 +244,7 @@ export async function POST(request: NextRequest) {
                 `Balance will be requested when your order is ready.`,
               ]
             : [
-                `\u2705 *Quote Accepted!*`,
+                `✅ *Price Accepted!*`,
                 '',
                 `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
                 `\uD83D\uDD11 Ref: *${order.reference_code}*`,
@@ -279,7 +279,7 @@ export async function POST(request: NextRequest) {
         const phone = (ownerBiz.phone as string).startsWith('+') ? (ownerBiz.phone as string).slice(1) : ownerBiz.phone as string;
         await sender.sendText({
           to: phone,
-          text: `\u2705 Quote accepted by ${quote.customer_name || 'customer'}!\n\n\uD83D\uDD11 Order: *${order.reference_code}*\n\uD83D\uDCB0 Amount: *${formatCurrency(total, cc)}*`,
+          text: `✅ Price accepted by ${quote.customer_name || 'customer'}!\n\n🔑 Order: *${order.reference_code}*\n💰 Amount: *${formatCurrency(total, cc)}*`,
         });
       } catch {}
     }
