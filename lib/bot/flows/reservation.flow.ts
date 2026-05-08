@@ -44,15 +44,6 @@ export const reservationFlow: FlowDefinition = {
           return [{ type: 'text', text: 'No options are currently available. Please try again later.' }];
         }
 
-        if (listings.length === 1) {
-          ctx.session.session_data.property_id = listings[0].id;
-          ctx.session.session_data.service_name = listings[0].name;
-          ctx.session.session_data.nightly_rate = listings[0].price;
-          ctx.session.session_data.service_deposit = listings[0].deposit_amount || 0;
-          ctx.session.session_data.skip_apartment = true;
-          return [];
-        }
-
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
         return [{
           type: 'list',
@@ -102,7 +93,38 @@ export const reservationFlow: FlowDefinition = {
         };
       },
       async next() { return 'select_checkin'; },
-      async skipIf(ctx: FlowContext) { return !!ctx.session.session_data.skip_apartment; },
+      async skipIf(ctx: FlowContext) {
+        if (ctx.session.session_data.skip_apartment) return true;
+        if (!ctx.business) return false;
+
+        // Auto-select if only one property/listing exists
+        const { data: properties } = await ctx.supabase
+          .from('properties')
+          .select('id, name, price, deposit_amount')
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true);
+
+        let listings = properties || [];
+        if (listings.length === 0) {
+          const { data: services } = await ctx.supabase
+            .from('services')
+            .select('id, name, price, deposit_amount')
+            .eq('business_id', ctx.business.id)
+            .eq('is_active', true)
+            .neq('service_type', 'giving');
+          listings = services || [];
+        }
+
+        if (listings.length === 1) {
+          ctx.session.session_data.property_id = listings[0].id;
+          ctx.session.session_data.service_name = listings[0].name;
+          ctx.session.session_data.nightly_rate = listings[0].price;
+          ctx.session.session_data.service_deposit = listings[0].deposit_amount || 0;
+          ctx.session.session_data.skip_apartment = true;
+          return true;
+        }
+        return false;
+      },
     },
 
     // ── Step 2: Select Check-in Date ──
