@@ -123,7 +123,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, max_capacity, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -216,6 +216,7 @@ export const schedulingFlow: FlowDefinition = {
             _service_available_days: (matched as Record<string, unknown>).available_days || [],
             _service_available_from: (matched as Record<string, unknown>).available_from || null,
             _service_available_to: (matched as Record<string, unknown>).available_to || null,
+            _service_max_capacity: (matched as Record<string, unknown>).max_capacity || 1,
             _service_requires_staff: (matched as Record<string, unknown>).requires_staff || false,
             _service_staff_ids: (matched as Record<string, unknown>).staff_ids || [],
             _service_allow_staff_selection: (matched as Record<string, unknown>).allow_staff_selection || false,
@@ -229,7 +230,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -253,6 +254,7 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data._service_available_days = s.available_days || [];
           ctx.session.session_data._service_available_from = s.available_from || null;
           ctx.session.session_data._service_available_to = s.available_to || null;
+          ctx.session.session_data._service_max_capacity = s.max_capacity || 1;
           ctx.session.session_data._service_requires_staff = s.requires_staff || false;
           ctx.session.session_data._service_staff_ids = s.staff_ids || [];
           ctx.session.session_data._service_allow_staff_selection = s.allow_staff_selection || false;
@@ -542,15 +544,62 @@ export const schedulingFlow: FlowDefinition = {
           allSlots = generateTimeSlots('17:00', closeTime, slotInterval);
         }
 
+        // ── Availability check: remove fully booked slots ──
+        const staffId = ctx.session.session_data.staff_id as string | null;
+        const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
+
+        // Fetch existing bookings for this date
+        let bookingsQuery = ctx.supabase
+          .from('bookings')
+          .select('time, staff_id')
+          .eq('business_id', ctx.business!.id)
+          .eq('date', dateStr)
+          .in('status', ['confirmed', 'pending', 'in_progress']);
+
+        if (staffId) {
+          bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+        }
+
+        const { data: existingBookings } = await bookingsQuery;
+
+        // Count bookings per time slot
+        const slotCounts = new Map<string, number>();
+        for (const b of existingBookings || []) {
+          if (b.time) {
+            const t = b.time.slice(0, 5); // normalize to HH:MM
+            slotCounts.set(t, (slotCounts.get(t) || 0) + 1);
+          }
+        }
+
+        // Filter out fully booked slots and add availability info
+        const availableSlots = allSlots
+          .map(t => {
+            const booked = slotCounts.get(t) || 0;
+            const remaining = maxCapacity - booked;
+            return { time: t, remaining };
+          })
+          .filter(s => s.remaining > 0);
+
+        if (availableSlots.length === 0) {
+          return [{
+            type: 'text',
+            text: `Sorry, all time slots for ${dateLabel} are fully booked. Please go back and choose a different date.\n\nSend *Hi* to start over.`,
+          }];
+        }
+
         const prefLabel = pref ? ` ${pref}` : '';
         // WhatsApp list messages support max 10 items per section
-        const displaySlots = allSlots.slice(0, 10);
+        const displaySlots = availableSlots.slice(0, 10);
         return [{
           type: 'list',
           title: 'Select Time',
           body: `Available${prefLabel} times for ${dateLabel}:`,
           buttonLabel: 'Choose Time',
-          items: displaySlots.map(t => ({ title: t, postbackText: t })),
+          items: displaySlots.map(s => ({
+            title: s.time,
+            description: maxCapacity > 1 ? `${s.remaining} spot${s.remaining !== 1 ? 's' : ''} left` : undefined,
+            postbackText: s.time,
+          })),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -559,6 +608,27 @@ export const schedulingFlow: FlowDefinition = {
           const abuse = ctx.intelligence.recordGibberish(ctx.from);
           return { valid: false, errorMessage: abuse.warn ? abuse.message : "Please tap one of the time options." };
         }
+
+        // Double-check slot availability (prevent race condition)
+        const dateStr = ctx.session.session_data.date as string;
+        const staffId = ctx.session.session_data.staff_id as string | null;
+        const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
+
+        let checkQuery = ctx.supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business!.id)
+          .eq('date', dateStr)
+          .eq('time', input)
+          .in('status', ['confirmed', 'pending', 'in_progress']);
+
+        if (staffId) checkQuery = checkQuery.eq('staff_id', staffId);
+
+        const { count } = await checkQuery;
+        if ((count || 0) >= maxCapacity) {
+          return { valid: false, errorMessage: 'Sorry, this time slot just got booked. Please choose another time.' };
+        }
+
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { time: input } };
       },
