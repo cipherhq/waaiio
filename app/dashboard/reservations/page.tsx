@@ -324,6 +324,68 @@ export default function BookingsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
 
+      {/* Summary Cards */}
+      {(() => {
+        const today = new Date().toISOString().split('T')[0];
+        const active = bookings.filter(b => !['cancelled', 'no_show'].includes(b.status));
+        const todayBookings = active.filter(b => b.date === today);
+        const pendingCount = bookings.filter(b => b.status === 'pending').length;
+        const totalRevenue = active.reduce((s, b) => s + Number(b.total_amount || b.deposit_amount || 0), 0);
+        const confirmedCount = bookings.filter(b => b.status === 'confirmed').length;
+
+        return (
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+              <p className="text-xs font-medium text-gray-500">Today</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{todayBookings.length}</p>
+            </div>
+            <div className="rounded-xl border border-yellow-100 bg-yellow-50 p-4">
+              <p className="text-xs font-medium text-gray-500">Pending</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{pendingCount}</p>
+            </div>
+            <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+              <p className="text-xs font-medium text-gray-500">Confirmed</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{confirmedCount}</p>
+            </div>
+            <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+              <p className="text-xs font-medium text-gray-500">Revenue</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(totalRevenue, (business.country_code || 'NG') as CountryCode)}</p>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Today's upcoming */}
+      {(() => {
+        const today = new Date().toISOString().split('T')[0];
+        const todayItems = bookings.filter(b => b.date === today && !['cancelled', 'no_show', 'completed'].includes(b.status));
+        if (todayItems.length === 0) return null;
+
+        return (
+          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+            <h3 className="text-sm font-semibold text-blue-900">Today&apos;s Schedule ({todayItems.length})</h3>
+            <div className="mt-2 space-y-2">
+              {todayItems.slice(0, 5).map(b => (
+                <div key={b.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-gray-900">{b.guest_name || 'Guest'}</span>
+                    {b.time && !b._isReservation && <span className="text-gray-500">{b.time.slice(0, 5)}</span>}
+                    {b._isReservation && b.staff_name && <span className="text-gray-400">{b.staff_name}</span>}
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    b.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                    b.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                    b.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>{b.status === 'in_progress' ? (b._isReservation ? 'Checked In' : 'In Progress') : b.status}</span>
+                </div>
+              ))}
+              {todayItems.length > 5 && <p className="text-xs text-blue-600">+{todayItems.length - 5} more</p>}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Booking type tabs — only show when business has multiple types */}
       {showReservations && !isReservationType && (
         <div className="mt-4 flex gap-1 border-b border-gray-200">
