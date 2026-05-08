@@ -8,7 +8,7 @@ import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 interface FormField {
   id: string;
   label: string;
-  type: 'text' | 'textarea' | 'number' | 'email' | 'phone' | 'select' | 'checkbox' | 'date' | 'file';
+  type: 'text' | 'textarea' | 'number' | 'email' | 'phone' | 'select' | 'radio' | 'checkbox' | 'multi_select' | 'date' | 'file';
   required: boolean;
   placeholder?: string;
   options?: string[]; // for select type
@@ -46,7 +46,9 @@ const FIELD_TYPES: Array<{ value: FormField['type']; label: string }> = [
   { value: 'email', label: 'Email' },
   { value: 'phone', label: 'Phone' },
   { value: 'select', label: 'Dropdown' },
-  { value: 'checkbox', label: 'Checkbox' },
+  { value: 'radio', label: 'Radio Buttons' },
+  { value: 'multi_select', label: 'Multi Select' },
+  { value: 'checkbox', label: 'Checkbox (Yes/No)' },
   { value: 'date', label: 'Date' },
 ];
 
@@ -140,7 +142,7 @@ export default function FormsPage() {
       type: newType,
       required: newRequired,
     };
-    if (newType === 'select' && newOptions.trim()) {
+    if (['select', 'radio', 'multi_select'].includes(newType) && newOptions.trim()) {
       field.options = newOptions.split(',').map(o => o.trim()).filter(Boolean);
     }
     setFields([...fields, field]);
@@ -405,7 +407,7 @@ export default function FormsPage() {
                             {FIELD_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                           </select>
                         </div>
-                        {f.type === 'select' && (
+                        {['select', 'radio', 'multi_select'].includes(f.type) && (
                           <input type="text" value={(f.options || []).join(', ')}
                             onChange={e => updateField(f.id, { options: e.target.value.split(',').map(o => o.trim()).filter(Boolean) })}
                             placeholder="Options (comma separated)"
@@ -443,7 +445,7 @@ export default function FormsPage() {
                 <button onClick={addField} disabled={!newLabel.trim()}
                   className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">Add</button>
               </div>
-              {newType === 'select' && (
+              {['select', 'radio', 'multi_select'].includes(newType) && (
                 <input type="text" value={newOptions} onChange={e => setNewOptions(e.target.value)}
                   placeholder="Options (comma separated): e.g. Male, Female, Other"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />

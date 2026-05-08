@@ -7,7 +7,7 @@ import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 interface FormField {
   id: string;
   label: string;
-  type: 'text' | 'textarea' | 'number' | 'email' | 'phone' | 'select' | 'checkbox' | 'date' | 'file';
+  type: 'text' | 'textarea' | 'number' | 'email' | 'phone' | 'select' | 'radio' | 'checkbox' | 'multi_select' | 'date' | 'file';
   required: boolean;
   placeholder?: string;
   options?: string[];
@@ -214,6 +214,37 @@ export default function PublicFormPage() {
                     <option value="">Select...</option>
                     {(field.options || []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
                   </select>
+                )}
+                {field.type === 'radio' && (
+                  <div className="space-y-2">
+                    {(field.options || []).map(opt => (
+                      <label key={opt} className="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name={field.id} value={opt}
+                          checked={(answers[field.id] as string) === opt}
+                          onChange={() => updateAnswer(field.id, opt)}
+                          className="border-gray-300 text-violet-600 focus:ring-violet-500" />
+                        <span className="text-sm text-gray-700">{opt}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {field.type === 'multi_select' && (
+                  <div className="space-y-2">
+                    {(field.options || []).map(opt => {
+                      const selected = ((answers[field.id] as string[]) || []).includes(opt);
+                      return (
+                        <label key={opt} className="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox" checked={selected}
+                            onChange={() => {
+                              const current = (answers[field.id] as string[]) || [];
+                              updateAnswer(field.id, selected ? current.filter(v => v !== opt) : [...current, opt]);
+                            }}
+                            className="rounded border-gray-300 text-violet-600 focus:ring-violet-500" />
+                          <span className="text-sm text-gray-700">{opt}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 )}
                 {field.type === 'checkbox' && (
                   <label className="flex items-center gap-2">
