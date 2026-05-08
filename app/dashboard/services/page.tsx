@@ -115,6 +115,12 @@ export default function ServicesPage() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showPrice, setShowPrice] = useState(labels.defaultHasPrice);
+  // Toggle states for progressive disclosure
+  const [showDuration, setShowDuration] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [showStaff, setShowStaff] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
+  const [showAddons, setShowAddons] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -193,8 +199,13 @@ export default function ServicesPage() {
   useEffect(() => { fetchServices(); fetchStaff(); }, [business.id]);
 
   function openAdd() {
-    setForm({ ...emptyForm, sort_order: services.length, duration_minutes: isScheduling ? 30 : null });
+    setForm({ ...emptyForm, sort_order: services.length, duration_minutes: null });
     setShowPrice(labels.defaultHasPrice);
+    setShowDuration(false);
+    setShowSchedule(false);
+    setShowStaff(false);
+    setShowGallery(false);
+    setShowAddons(false);
     setView('add');
   }
 
@@ -210,6 +221,12 @@ export default function ServicesPage() {
       metadata: meta,
     });
     setShowPrice(labels.defaultHasPrice || service.price > 0 || service.deposit_amount > 0);
+    // Auto-expand toggles based on existing data
+    setShowDuration(!!service.duration_minutes && service.duration_minutes > 0);
+    setShowSchedule((service.available_days || []).length > 0 || !!service.available_from);
+    setShowStaff(service.requires_staff);
+    setShowGallery((service.gallery_urls || []).length > 0);
+    setShowAddons(true); // always show if editing
     if (service.id) fetchAddons(service.id);
     setView('edit');
   }
@@ -536,159 +553,117 @@ export default function ServicesPage() {
               </div>
             )}
 
-            {isScheduling && (
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Duration (minutes)</label>
-                <input
-                  type="number"
-                  min={5}
-                  step={5}
-                  value={form.duration_minutes || ''}
-                  onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-                />
+            {/* ── Optional Sections (toggle to reveal) ── */}
+            <div className="space-y-2 rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-2">Additional Options</p>
+
+              {/* Duration toggle */}
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Duration</p>
+                  <p className="text-xs text-gray-400">This service takes a specific amount of time</p>
+                </div>
+                <button type="button" onClick={() => { setShowDuration(!showDuration); if (showDuration) setForm({ ...form, duration_minutes: null }); }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${showDuration ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: showDuration ? '22px' : '2px' }} />
+                </button>
               </div>
-            )}
-
-            {/* ── Scheduling Availability (only for scheduling businesses) ── */}
-            {isScheduling && (
-              <div className="space-y-4 rounded-lg border border-gray-100 bg-gray-50 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Availability</p>
-
-                {/* Available Days */}
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Available Days</label>
-                  <p className="mb-2 text-xs text-gray-400">Leave empty for every day the business is open</p>
-                  <div className="flex flex-wrap gap-2">
-                    {WEEKDAYS.map(day => {
-                      const active = form.available_days.includes(day.key);
-                      return (
-                        <button
-                          key={day.key}
-                          type="button"
-                          onClick={() => {
-                            const next = active
-                              ? form.available_days.filter(d => d !== day.key)
-                              : [...form.available_days, day.key];
-                            setForm({ ...form, available_days: next });
-                          }}
-                          className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                            active
-                              ? 'bg-brand text-white'
-                              : 'bg-white border border-gray-200 text-gray-600 hover:border-brand hover:text-brand'
-                          }`}
-                        >
-                          {day.short}
-                        </button>
-                      );
-                    })}
-                  </div>
+              {showDuration && (
+                <div className="ml-1 pb-2">
+                  <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
+                    placeholder="e.g. 30" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <span className="ml-2 text-xs text-gray-400">minutes</span>
                 </div>
+              )}
 
-                {/* Service Hours */}
+              {/* Schedule toggle */}
+              <div className="flex items-center justify-between py-1">
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700">Service Hours</label>
-                  <p className="mb-2 text-xs text-gray-400">Override business hours for this service (optional)</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="time"
-                      value={form.available_from || ''}
-                      onChange={(e) => setForm({ ...form, available_from: e.target.value || null })}
-                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                    />
-                    <span className="text-sm text-gray-400">to</span>
-                    <input
-                      type="time"
-                      value={form.available_to || ''}
-                      onChange={(e) => setForm({ ...form, available_to: e.target.value || null })}
-                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                    />
-                    {(form.available_from || form.available_to) && (
-                      <button
-                        type="button"
-                        onClick={() => setForm({ ...form, available_from: null, available_to: null })}
-                        className="text-xs text-red-400 hover:text-red-600"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
+                  <p className="text-sm font-medium text-gray-700">Availability Schedule</p>
+                  <p className="text-xs text-gray-400">Limit which days/hours this service is available</p>
                 </div>
-
-                {/* Requires Staff */}
-                {staffList.length > 0 && (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-gray-700">Requires Staff</p>
-                        <p className="text-xs text-gray-400">This service needs a staff member</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setForm({ ...form, requires_staff: !form.requires_staff, staff_ids: !form.requires_staff ? form.staff_ids : [], allow_staff_selection: false })}
-                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.requires_staff ? 'bg-brand' : 'bg-gray-200'}`}
-                      >
-                        <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.requires_staff ? '22px' : '2px' }} />
-                      </button>
+                <button type="button" onClick={() => { setShowSchedule(!showSchedule); if (showSchedule) setForm({ ...form, available_days: [], available_from: null, available_to: null }); }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${showSchedule ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: showSchedule ? '22px' : '2px' }} />
+                </button>
+              </div>
+              {showSchedule && (
+                <div className="ml-1 pb-2 space-y-3">
+                  <div>
+                    <p className="mb-1.5 text-xs text-gray-500">Available Days</p>
+                    <div className="flex flex-wrap gap-2">
+                      {WEEKDAYS.map(day => {
+                        const active = form.available_days.includes(day.key);
+                        return (
+                          <button key={day.key} type="button"
+                            onClick={() => setForm({ ...form, available_days: active ? form.available_days.filter(d => d !== day.key) : [...form.available_days, day.key] })}
+                            className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${active ? 'bg-brand text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-brand'}`}>
+                            {day.short}
+                          </button>
+                        );
+                      })}
                     </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input type="time" value={form.available_from || ''} onChange={(e) => setForm({ ...form, available_from: e.target.value || null })}
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    <span className="text-sm text-gray-400">to</span>
+                    <input type="time" value={form.available_to || ''} onChange={(e) => setForm({ ...form, available_to: e.target.value || null })}
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  </div>
+                </div>
+              )}
 
-                    {/* Assigned Staff */}
-                    {form.requires_staff && (
-                      <div>
-                        <label className="mb-1.5 block text-sm font-medium text-gray-700">Assigned Staff</label>
-                        <p className="mb-2 text-xs text-gray-400">Leave empty if any staff can do this</p>
-                        <div className="flex flex-wrap gap-2">
-                          {staffList.map(s => {
-                            const active = form.staff_ids.includes(s.id);
-                            const schedDays = Object.entries(s.schedule || {})
-                              .filter(([, v]) => v?.start)
-                              .map(([k]) => k.slice(0, 3))
-                              .join(', ');
-                            return (
-                              <button
-                                key={s.id}
-                                type="button"
-                                onClick={() => {
-                                  const next = active
-                                    ? form.staff_ids.filter(id => id !== s.id)
-                                    : [...form.staff_ids, s.id];
-                                  setForm({ ...form, staff_ids: next });
-                                }}
-                                className={`rounded-lg px-3 py-2 text-xs font-medium transition ${
-                                  active
-                                    ? 'bg-brand text-white'
-                                    : 'bg-white border border-gray-200 text-gray-600 hover:border-brand'
-                                }`}
-                              >
-                                <span>{s.name}</span>
-                                {schedDays && <span className="ml-1 opacity-60">({schedDays})</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
+              {/* Staff toggle */}
+              {staffList.length > 0 && (
+                <>
+                  <div className="flex items-center justify-between py-1">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Staff Assignment</p>
+                      <p className="text-xs text-gray-400">Assign specific staff to this service</p>
+                    </div>
+                    <button type="button" onClick={() => { setShowStaff(!showStaff); if (showStaff) setForm({ ...form, requires_staff: false, staff_ids: [], allow_staff_selection: false }); else setForm({ ...form, requires_staff: true }); }}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition ${showStaff ? 'bg-brand' : 'bg-gray-200'}`}>
+                      <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: showStaff ? '22px' : '2px' }} />
+                    </button>
+                  </div>
+                  {showStaff && (
+                    <div className="ml-1 pb-2 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        {staffList.map(s => {
+                          const active = form.staff_ids.includes(s.id);
+                          return (
+                            <button key={s.id} type="button"
+                              onClick={() => setForm({ ...form, staff_ids: active ? form.staff_ids.filter(id => id !== s.id) : [...form.staff_ids, s.id] })}
+                              className={`rounded-lg px-3 py-2 text-xs font-medium transition ${active ? 'bg-brand text-white' : 'bg-white border border-gray-200 text-gray-600 hover:border-brand'}`}>
+                              {s.name}
+                            </button>
+                          );
+                        })}
                       </div>
-                    )}
+                      {form.staff_ids.length > 0 && (
+                        <label className="flex items-center gap-2 text-xs text-gray-500">
+                          <input type="checkbox" checked={form.allow_staff_selection} onChange={e => setForm({ ...form, allow_staff_selection: e.target.checked })} className="rounded" />
+                          Let customers choose their staff
+                        </label>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
 
-                    {/* Let customers choose staff */}
-                    {form.requires_staff && form.staff_ids.length > 0 && (
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-700">Let customers choose staff</p>
-                          <p className="text-xs text-gray-400">Customers pick their preferred staff member</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setForm({ ...form, allow_staff_selection: !form.allow_staff_selection })}
-                          className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.allow_staff_selection ? 'bg-brand' : 'bg-gray-200'}`}
-                        >
-                          <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.allow_staff_selection ? '22px' : '2px' }} />
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
+              {/* Gallery toggle */}
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Photos</p>
+                  <p className="text-xs text-gray-400">Add images for this service</p>
+                </div>
+                <button type="button" onClick={() => setShowGallery(!showGallery)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${showGallery ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: showGallery ? '22px' : '2px' }} />
+                </button>
               </div>
-            )}
+            </div>
 
             {/* Cancellation Policy — hidden for free-giving categories */}
             {labels.defaultHasPrice && <div>
@@ -703,7 +678,7 @@ export default function ServicesPage() {
             </div>}
 
             {/* ── Package Toggle ── */}
-            {isScheduling && services.length > 1 && (
+            {services.length > 1 && (
               <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -736,7 +711,7 @@ export default function ServicesPage() {
             )}
 
             {/* ── Gallery (max 3 images) ── */}
-            {isScheduling && (
+            {showGallery && (
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-gray-700">Portfolio Gallery</label>
                 <p className="mb-2 text-xs text-gray-400">Up to 3 images shown to customers before booking</p>
@@ -761,7 +736,7 @@ export default function ServicesPage() {
             )}
 
             {/* ── Add-ons (only on edit, after service exists) ── */}
-            {isScheduling && view === 'edit' && form.id && (
+            {view === 'edit' && form.id && (
               <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Add-ons</p>
                 <p className="text-xs text-gray-400">Optional extras customers can add when booking</p>
@@ -791,7 +766,7 @@ export default function ServicesPage() {
             )}
 
             {/* ── Feature Toggles (venue, multi-day, quotes) ── */}
-            {isScheduling && (
+            {(
               <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Options</p>
 
