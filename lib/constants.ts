@@ -294,6 +294,8 @@ export const CATEGORY_FLOW_MAP: Record<BusinessCategoryKey, FlowType> = Object.f
 ) as Record<BusinessCategoryKey, FlowType>;
 
 // ── Per-Category Labels ──
+export const RESERVATION_CATEGORIES: BusinessCategoryKey[] = ['shortlet', 'hotel', 'car_rental'];
+
 export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   entityName: string;
   entityNamePlural: string;
@@ -308,6 +310,8 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   serviceNamePlural: string;
   namePlaceholder: string;
   defaultHasPrice: boolean;
+  propertyName?: string;
+  propertyNamePlural?: string;
 }> = {
   restaurant: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🍽️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Table Reservation, Private Dining', defaultHasPrice: true },
   barber: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💈', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Haircut, Beard Trim', defaultHasPrice: true },
@@ -344,12 +348,12 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   photographer: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '📷', receiptTitle: 'Session Confirmed', quantityLabel: 'sessions', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Portrait Session, Event Coverage', defaultHasPrice: true },
   mall_vendor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🏪', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Perfume, Accessories', defaultHasPrice: true },
   pharmacy: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '💊', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Prescription, OTC Medicine', defaultHasPrice: true },
-  hotel: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🛏️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'nights', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Standard Room, Deluxe Suite', defaultHasPrice: true },
+  hotel: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🛏️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'nights', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Standard Room, Deluxe Suite', defaultHasPrice: true, propertyName: 'Room', propertyNamePlural: 'Rooms' },
   car_wash: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🚿', receiptTitle: 'Booking Confirmed', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Basic Wash, Full Detail', defaultHasPrice: true },
   catering: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🍳', receiptTitle: 'Order Confirmed', quantityLabel: 'servings', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Party Package, Corporate Lunch', defaultHasPrice: true },
   funeral: { entityName: 'service', entityNamePlural: 'services', actionVerb: 'Pay', confirmationEmoji: '🌺', receiptTitle: 'Payment Received', quantityLabel: 'amount', personLabel: 'Family', personLabelPlural: 'Families', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Service Fee, Memorial Contribution', defaultHasPrice: false },
   tailor: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '✂️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Custom Suit, Alteration', defaultHasPrice: true },
-  shortlet: { entityName: 'stay', entityNamePlural: 'stays', actionVerb: 'Book a Stay', confirmationEmoji: '🏘️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Apartment', serviceNamePlural: 'Apartments', namePlaceholder: 'e.g. Studio Apartment, 2-Bed Flat', defaultHasPrice: true },
+  shortlet: { entityName: 'stay', entityNamePlural: 'stays', actionVerb: 'Book a Stay', confirmationEmoji: '🏘️', receiptTitle: 'Reservation Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Cleaning, Tour Guide', defaultHasPrice: true, propertyName: 'Apartment', propertyNamePlural: 'Apartments' },
   nail_tech: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💅', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Gel Nails, Pedicure, Nail Art', defaultHasPrice: true },
   mua: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💄', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Bridal Makeup, Photoshoot, Glow Up', defaultHasPrice: true },
   pet_grooming: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🐕', receiptTitle: 'Appointment Confirmed', quantityLabel: 'pets', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Full Groom, Bath & Brush, Nail Trim', defaultHasPrice: true },
@@ -364,7 +368,7 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   legal: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '⚖️', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Legal Consultation, Notarization, Contract Review', defaultHasPrice: true },
   daycare: { entityName: 'payment', entityNamePlural: 'payments', actionVerb: 'Pay', confirmationEmoji: '👶', receiptTitle: 'Payment Received', quantityLabel: 'children', personLabel: 'Parent', personLabelPlural: 'Parents', hiddenStatuses: ['no_show', 'in_progress', 'confirmed'], serviceName: 'Fee Category', serviceNamePlural: 'Fee Categories', namePlaceholder: 'e.g. Monthly Fee, After-School, Holiday Camp', defaultHasPrice: false },
   printing: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🖨️', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Business Cards, Banner, T-Shirt Print', defaultHasPrice: true },
-  car_rental: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🚙', receiptTitle: 'Reservation Confirmed', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Vehicle', serviceNamePlural: 'Vehicles', namePlaceholder: 'e.g. Sedan, SUV, Van', defaultHasPrice: true },
+  car_rental: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🚙', receiptTitle: 'Reservation Confirmed', quantityLabel: 'vehicles', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Chauffeur, Airport Shuttle', defaultHasPrice: true, propertyName: 'Vehicle', propertyNamePlural: 'Vehicles' },
   supermarket: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛒', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Groceries, Household Items', defaultHasPrice: true },
   security: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🛡️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guards', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Event Security, CCTV Installation', defaultHasPrice: true },
   accounting: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '📊', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Tax Filing, Bookkeeping, Advisory', defaultHasPrice: true },
@@ -644,10 +648,7 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   ],
   mall_vendor: [],
   pharmacy: [],
-  hotel: [
-    { name: 'Standard Room', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
-    { name: 'Deluxe Room', price: 45000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
-  ],
+  hotel: [],
   car_wash: [
     { name: 'Basic Wash', price: 2000, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
     { name: 'Full Wash & Polish', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
@@ -659,11 +660,7 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Memorial Contribution', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
   ],
   tailor: [],
-  shortlet: [
-    { name: 'Studio Apartment', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
-    { name: '1-Bedroom Apartment', price: 45000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
-    { name: '2-Bedroom Apartment', price: 75000, price_is_variable: false, duration_minutes: null, deposit_amount: 25000 },
-  ],
+  shortlet: [],
   nail_tech: [
     { name: 'Gel Nails', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Pedicure', price: 3000, price_is_variable: false, duration_minutes: 45, deposit_amount: 0 },
@@ -719,10 +716,7 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Business Cards', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
     { name: 'Banner / Signage', price: 15000, price_is_variable: true, duration_minutes: null, deposit_amount: 5000 },
   ],
-  car_rental: [
-    { name: 'Sedan (per day)', price: 25000, price_is_variable: false, duration_minutes: null, deposit_amount: 10000 },
-    { name: 'SUV (per day)', price: 40000, price_is_variable: false, duration_minutes: null, deposit_amount: 15000 },
-  ],
+  car_rental: [],
   supermarket: [],
   security: [
     { name: 'Event Security', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
@@ -734,6 +728,33 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   ],
   other: [
     { name: 'General Booking', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
+  ],
+};
+
+// ── Default Properties (for reservation categories) ──
+export const DEFAULT_PROPERTIES: Partial<Record<BusinessCategoryKey, Array<{
+  name: string;
+  price: number;
+  deposit_amount: number;
+  property_type: string;
+  max_guests: number;
+  bedrooms: number;
+  bathrooms: number;
+}>>> = {
+  shortlet: [
+    { name: 'Studio Apartment', price: 25000, deposit_amount: 10000, property_type: 'studio', max_guests: 2, bedrooms: 0, bathrooms: 1 },
+    { name: '1-Bedroom Apartment', price: 45000, deposit_amount: 15000, property_type: 'apartment', max_guests: 3, bedrooms: 1, bathrooms: 1 },
+    { name: '2-Bedroom Apartment', price: 75000, deposit_amount: 25000, property_type: 'apartment', max_guests: 5, bedrooms: 2, bathrooms: 2 },
+  ],
+  hotel: [
+    { name: 'Standard Room', price: 25000, deposit_amount: 10000, property_type: 'room', max_guests: 2, bedrooms: 1, bathrooms: 1 },
+    { name: 'Deluxe Room', price: 45000, deposit_amount: 15000, property_type: 'room', max_guests: 2, bedrooms: 1, bathrooms: 1 },
+    { name: 'Suite', price: 80000, deposit_amount: 25000, property_type: 'suite', max_guests: 4, bedrooms: 2, bathrooms: 2 },
+  ],
+  car_rental: [
+    { name: 'Sedan', price: 25000, deposit_amount: 10000, property_type: 'vehicle', max_guests: 4, bedrooms: 0, bathrooms: 0 },
+    { name: 'SUV', price: 40000, deposit_amount: 15000, property_type: 'vehicle', max_guests: 6, bedrooms: 0, bathrooms: 0 },
+    { name: 'Van / Bus', price: 60000, deposit_amount: 20000, property_type: 'vehicle', max_guests: 12, bedrooms: 0, bathrooms: 0 },
   ],
 };
 

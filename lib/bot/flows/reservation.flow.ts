@@ -11,28 +11,43 @@ import type { SubscriptionTier } from '@/lib/constants';
 export const reservationFlow: FlowDefinition = {
   type: 'reservation',
   steps: [
-    // ── Step 1: Select Apartment ──
+    // ── Step 1: Select Property ──
     {
       id: 'select_apartment',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
-        const { data: services } = await ctx.supabase
-          .from('services')
-          .select('id, name, price, deposit_amount')
+        // Query properties table (new) with fallback to services (legacy)
+        let listings: Array<{ id: string; name: string; price: number; deposit_amount: number; max_guests?: number }> = [];
+        const { data: properties } = await ctx.supabase
+          .from('properties')
+          .select('id, name, price, deposit_amount, max_guests')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .order('sort_order');
 
-        if (!services || services.length === 0) {
-          return [{ type: 'text', text: 'No apartments are currently available. Please try again later.' }];
+        if (properties && properties.length > 0) {
+          listings = properties;
+        } else {
+          // Fallback: legacy services for businesses not yet migrated
+          const { data: services } = await ctx.supabase
+            .from('services')
+            .select('id, name, price, deposit_amount')
+            .eq('business_id', ctx.business.id)
+            .eq('is_active', true)
+            .order('sort_order');
+          listings = (services || []).map(s => ({ ...s, deposit_amount: s.deposit_amount || 0 }));
         }
 
-        if (services.length === 1) {
-          ctx.session.session_data.service_id = services[0].id;
-          ctx.session.session_data.service_name = services[0].name;
-          ctx.session.session_data.nightly_rate = services[0].price;
-          ctx.session.session_data.service_deposit = services[0].deposit_amount || 0;
+        if (listings.length === 0) {
+          return [{ type: 'text', text: 'No options are currently available. Please try again later.' }];
+        }
+
+        if (listings.length === 1) {
+          ctx.session.session_data.property_id = listings[0].id;
+          ctx.session.session_data.service_name = listings[0].name;
+          ctx.session.session_data.nightly_rate = listings[0].price;
+          ctx.session.session_data.service_deposit = listings[0].deposit_amount || 0;
           ctx.session.session_data.skip_apartment = true;
           return [];
         }
@@ -40,33 +55,48 @@ export const reservationFlow: FlowDefinition = {
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
         return [{
           type: 'list',
-          title: 'Select Apartment',
-          body: 'What type of apartment would you like?',
+          title: 'Select Option',
+          body: 'What would you like to book?',
           buttonLabel: 'Choose',
-          items: services.map(s => ({
-            title: s.name,
-            description: s.price > 0 ? `${formatCurrency(s.price, cc)}/night` : '',
-            postbackText: s.id,
+          items: listings.map(p => ({
+            title: p.name,
+            description: p.price > 0 ? `${formatCurrency(p.price, cc)}/night${p.max_guests ? ` • up to ${p.max_guests} guests` : ''}` : '',
+            postbackText: p.id,
           })),
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-        const { data: service } = await ctx.supabase
-          .from('services')
+        // Try properties first, fall back to services
+        let match: { id: string; name: string; price: number; deposit_amount: number } | null = null;
+
+        const { data: property } = await ctx.supabase
+          .from('properties')
           .select('id, name, price, deposit_amount')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
-          .single();
+          .maybeSingle();
 
-        if (!service) return { valid: false, errorMessage: 'Please select a valid apartment.' };
+        if (property) {
+          match = { ...property, deposit_amount: property.deposit_amount || 0 };
+        } else {
+          const { data: service } = await ctx.supabase
+            .from('services')
+            .select('id, name, price, deposit_amount')
+            .eq('id', input)
+            .eq('business_id', ctx.business!.id)
+            .maybeSingle();
+          if (service) match = { ...service, deposit_amount: service.deposit_amount || 0 };
+        }
+
+        if (!match) return { valid: false, errorMessage: 'Please select a valid option.' };
 
         return {
           valid: true,
           data: {
-            service_id: service.id,
-            service_name: service.name,
-            nightly_rate: service.price,
-            service_deposit: service.deposit_amount || 0,
+            property_id: match.id,
+            service_name: match.name,
+            nightly_rate: match.price,
+            service_deposit: match.deposit_amount,
           },
         };
       },
@@ -398,14 +428,14 @@ export const reservationFlow: FlowDefinition = {
           return [{ type: 'text', text: 'No problem! Your reservation has been cancelled. Send *Hi* to start over.' }];
         }
 
-        // Check availability — prevent double-booking same service on overlapping dates
-        const serviceId = (d.service_id as string) || null;
-        if (serviceId) {
+        // Check availability — prevent double-booking same property on overlapping dates
+        const propertyId = (d.property_id as string) || null;
+        if (propertyId) {
           const { data: overlapping } = await ctx.supabase
             .from('reservations')
             .select('id')
             .eq('business_id', ctx.business!.id)
-            .eq('service_id', serviceId)
+            .or(`property_id.eq.${propertyId},service_id.eq.${propertyId}`)
             .in('status', ['pending', 'confirmed'])
             .lt('check_in', d.check_out as string)
             .gt('check_out', d.check_in as string)
@@ -422,7 +452,7 @@ export const reservationFlow: FlowDefinition = {
         const insertPayload: Record<string, unknown> = {
           business_id: ctx.business!.id,
           user_id: userId,
-          service_id: serviceId,
+          property_id: propertyId,
           check_in: d.check_in as string,
           check_out: d.check_out as string,
           guests: (d.guests as number) || 1,

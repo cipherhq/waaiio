@@ -200,6 +200,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Auto-create default properties for reservation categories (shortlet, hotel, car_rental)
+    const { DEFAULT_PROPERTIES, RESERVATION_CATEGORIES } = await import('@/lib/constants');
+    if (RESERVATION_CATEGORIES.includes(category as BusinessCategoryKey)) {
+      const defaultProps = DEFAULT_PROPERTIES[category as BusinessCategoryKey] || [];
+      if (defaultProps.length > 0) {
+        await service.from('properties').insert(
+          defaultProps.map((p, i) => ({
+            business_id: business.id,
+            name: p.name,
+            price: p.price,
+            deposit_amount: p.deposit_amount,
+            property_type: p.property_type,
+            max_guests: p.max_guests,
+            bedrooms: p.bedrooms,
+            bathrooms: p.bathrooms,
+            sort_order: i,
+          })),
+        );
+      }
+    }
+
     // Auto-create capabilities
     // Priority: user-selected > template metadata > hardcoded defaults
     const templateCaps = (template?.metadata as Record<string, unknown>)?.default_capabilities as CapabilityId[] | undefined;
