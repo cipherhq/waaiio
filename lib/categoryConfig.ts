@@ -40,6 +40,8 @@ export interface CategoryLabels {
   defaultHasPrice?: boolean;
   propertyName?: string;
   propertyNamePlural?: string;
+  appointmentName?: string;
+  appointmentNamePlural?: string;
 }
 
 // ── In-memory cache (60s TTL, same pattern as lib/countries.ts) ──

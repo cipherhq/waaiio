@@ -312,9 +312,11 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   defaultHasPrice: boolean;
   propertyName?: string;
   propertyNamePlural?: string;
+  appointmentName?: string;
+  appointmentNamePlural?: string;
 }> = {
   restaurant: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🍽️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Table Reservation, Private Dining', defaultHasPrice: true },
-  barber: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💈', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Haircut, Beard Trim', defaultHasPrice: true },
+  barber: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💈', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Haircut, Beard Trim', defaultHasPrice: true, appointmentName: 'Appointment', appointmentNamePlural: 'Appointments' },
   spa: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🧖', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Full Body Massage, Facial', defaultHasPrice: true },
   salon: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💇', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Haircut & Styling, Braiding', defaultHasPrice: true },
   gym: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🏋️', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Personal Training, Group Class', defaultHasPrice: true },
@@ -525,17 +527,15 @@ export const PRICING = {
   },
 } as const;
 
-// ── Default Services per Category ──
-export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
+// ── Default Appointments per Category (calendar-based, need date+time+staff) ──
+export const DEFAULT_APPOINTMENTS: Partial<Record<BusinessCategoryKey, Array<{
   name: string;
   price: number;
   price_is_variable: boolean;
-  duration_minutes: number | null;
+  duration_minutes: number;
   deposit_amount: number;
-}>> = {
-  restaurant: [
-    { name: 'Table Reservation', price: 0, price_is_variable: false, duration_minutes: 120, deposit_amount: 0 },
-  ],
+}>>> = {
+  restaurant: [{ name: 'Table Reservation', price: 0, price_is_variable: false, duration_minutes: 120, deposit_amount: 0 }],
   barber: [
     { name: 'Haircut', price: 3000, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
     { name: 'Beard Trim', price: 1500, price_is_variable: false, duration_minutes: 15, deposit_amount: 0 },
@@ -558,44 +558,12 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Consultation', price: 10000, price_is_variable: false, duration_minutes: 30, deposit_amount: 5000 },
     { name: 'Check-up', price: 20000, price_is_variable: false, duration_minutes: 60, deposit_amount: 10000 },
   ],
-  consultant: [
-    { name: 'Consultation Session', price: 25000, price_is_variable: false, duration_minutes: 60, deposit_amount: 10000 },
-  ],
-  church: [
-    { name: 'Tithe', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Offering', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Building Fund', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Welfare', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  mosque: [
-    { name: 'Zakat', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Sadaqah', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Fitrah', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  school: [
-    { name: 'School Fees', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'PTA Dues', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Exam Fees', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  ngo: [
-    { name: 'Donation', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Membership', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  shop: [],
-  food_delivery: [],
-  events: [],
+  consultant: [{ name: 'Consultation Session', price: 25000, price_is_variable: false, duration_minutes: 60, deposit_amount: 10000 }],
   event_services: [
     { name: 'Standard Package', price: 50000, price_is_variable: false, duration_minutes: 180, deposit_amount: 15000 },
     { name: 'Premium Package', price: 100000, price_is_variable: false, duration_minutes: 300, deposit_amount: 30000 },
   ],
-  transport: [],
-  cinema: [],
-  // ── New Categories ──
-  car_park: [
-    { name: 'Hourly Parking', price: 500, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
-    { name: 'Daily Parking', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Monthly Pass', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-  ],
+  car_park: [{ name: 'Hourly Parking', price: 500, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 }],
   tattoo: [
     { name: 'Small Tattoo', price: 15000, price_is_variable: false, duration_minutes: 60, deposit_amount: 5000 },
     { name: 'Medium Tattoo', price: 35000, price_is_variable: false, duration_minutes: 120, deposit_amount: 10000 },
@@ -605,24 +573,7 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Property Viewing', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Consultation', price: 10000, price_is_variable: false, duration_minutes: 45, deposit_amount: 0 },
   ],
-  travel_agency: [
-    { name: 'Travel Consultation', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
-  ],
-  logistics: [],
-  taxi: [
-    { name: 'Ride Payment', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  government: [
-    { name: 'Utility Bill', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Application Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  instagram_vendor: [],
-  crowdfunding_org: [],
-  laundry: [
-    { name: 'Wash & Fold', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Dry Cleaning', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Ironing Only', price: 1500, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-  ],
+  travel_agency: [{ name: 'Travel Consultation', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 }],
   veterinary: [
     { name: 'Consultation', price: 10000, price_is_variable: false, duration_minutes: 30, deposit_amount: 3000 },
     { name: 'Vaccination', price: 8000, price_is_variable: false, duration_minutes: 15, deposit_amount: 0 },
@@ -646,21 +597,11 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Portrait Session', price: 30000, price_is_variable: false, duration_minutes: 60, deposit_amount: 10000 },
     { name: 'Event Coverage', price: 100000, price_is_variable: false, duration_minutes: 240, deposit_amount: 30000 },
   ],
-  mall_vendor: [],
-  pharmacy: [],
-  hotel: [],
   car_wash: [
     { name: 'Basic Wash', price: 2000, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
     { name: 'Full Wash & Polish', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Interior Detail', price: 8000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
   ],
-  catering: [],
-  funeral: [
-    { name: 'Service Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'Memorial Contribution', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-  ],
-  tailor: [],
-  shortlet: [],
   nail_tech: [
     { name: 'Gel Nails', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Pedicure', price: 3000, price_is_variable: false, duration_minutes: 45, deposit_amount: 0 },
@@ -677,10 +618,6 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Individual Session', price: 25000, price_is_variable: false, duration_minutes: 50, deposit_amount: 0 },
     { name: 'Couples Session', price: 40000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
   ],
-  bakery: [
-    { name: 'Custom Cake', price: 15000, price_is_variable: true, duration_minutes: null, deposit_amount: 5000 },
-    { name: 'Pastries Box', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-  ],
   mechanic: [
     { name: 'General Service', price: 15000, price_is_variable: false, duration_minutes: 120, deposit_amount: 0 },
     { name: 'Diagnostics', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
@@ -693,9 +630,7 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Repair / Fix', price: 0, price_is_variable: true, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Installation', price: 0, price_is_variable: true, duration_minutes: 120, deposit_amount: 0 },
   ],
-  pest_control: [
-    { name: 'Fumigation', price: 25000, price_is_variable: false, duration_minutes: 120, deposit_amount: 10000 },
-  ],
+  pest_control: [{ name: 'Fumigation', price: 25000, price_is_variable: false, duration_minutes: 120, deposit_amount: 10000 }],
   driving_school: [
     { name: 'Beginner Lesson', price: 5000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Test Preparation', price: 8000, price_is_variable: false, duration_minutes: 90, deposit_amount: 0 },
@@ -708,6 +643,103 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Legal Consultation', price: 25000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
     { name: 'Notarization', price: 10000, price_is_variable: false, duration_minutes: 30, deposit_amount: 0 },
   ],
+  accounting: [{ name: 'Tax Consultation', price: 15000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 }],
+  security: [{ name: 'CCTV Installation', price: 0, price_is_variable: true, duration_minutes: 180, deposit_amount: 0 }],
+  other: [{ name: 'General Booking', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 }],
+};
+
+// ── Default Services per Category (on-demand, no calendar needed) ──
+export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
+  name: string;
+  price: number;
+  price_is_variable: boolean;
+  duration_minutes: number | null;
+  deposit_amount: number;
+}>> = {
+  restaurant: [],
+  barber: [],
+  spa: [],
+  salon: [],
+  gym: [],
+  clinic: [],
+  consultant: [],
+  church: [
+    { name: 'Tithe', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Offering', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Building Fund', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Welfare', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  mosque: [
+    { name: 'Zakat', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Sadaqah', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Fitrah', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  school: [
+    { name: 'School Fees', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'PTA Dues', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Exam Fees', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  ngo: [
+    { name: 'Donation', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Membership', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  shop: [],
+  food_delivery: [],
+  events: [],
+  event_services: [],
+  transport: [],
+  cinema: [],
+  car_park: [
+    { name: 'Daily Parking', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Monthly Pass', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  tattoo: [],
+  real_estate: [],
+  travel_agency: [],
+  logistics: [],
+  taxi: [{ name: 'Ride Payment', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 }],
+  government: [
+    { name: 'Utility Bill', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Application Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  instagram_vendor: [],
+  crowdfunding_org: [],
+  laundry: [
+    { name: 'Wash & Fold', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Dry Cleaning', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Ironing Only', price: 1500, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  veterinary: [],
+  dental: [],
+  coworking: [],
+  tutor: [],
+  photographer: [],
+  mall_vendor: [],
+  pharmacy: [],
+  hotel: [],
+  car_wash: [],
+  catering: [],
+  funeral: [
+    { name: 'Service Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+    { name: 'Memorial Contribution', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
+  ],
+  tailor: [],
+  shortlet: [],
+  nail_tech: [],
+  mua: [],
+  pet_grooming: [],
+  therapy: [],
+  bakery: [
+    { name: 'Custom Cake', price: 15000, price_is_variable: true, duration_minutes: null, deposit_amount: 5000 },
+    { name: 'Pastries Box', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
+  ],
+  mechanic: [],
+  cleaning: [],
+  plumber: [],
+  pest_control: [],
+  driving_school: [],
+  music_studio: [],
+  legal: [],
   daycare: [
     { name: 'Monthly Fee', price: 50000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
     { name: 'After-School Care', price: 20000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
@@ -718,17 +750,9 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   ],
   car_rental: [],
   supermarket: [],
-  security: [
-    { name: 'Event Security', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
-    { name: 'CCTV Installation', price: 0, price_is_variable: true, duration_minutes: 180, deposit_amount: 0 },
-  ],
-  accounting: [
-    { name: 'Tax Consultation', price: 15000, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
-    { name: 'Bookkeeping (monthly)', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
-  ],
-  other: [
-    { name: 'General Booking', price: 0, price_is_variable: false, duration_minutes: 60, deposit_amount: 0 },
-  ],
+  security: [{ name: 'Event Security', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 }],
+  accounting: [{ name: 'Bookkeeping (monthly)', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 }],
+  other: [],
 };
 
 // ── Default Properties (for reservation categories) ──
