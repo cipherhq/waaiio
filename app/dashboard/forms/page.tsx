@@ -31,6 +31,8 @@ interface FormResponse {
   customer_email: string | null;
   answers: Record<string, unknown>;
   business_notes: string | null;
+  status: string;
+  channel: string | null;
   submitted_at: string;
 }
 
@@ -210,17 +212,25 @@ export default function FormsPage() {
     if (!sendPhone.trim() || !form.token) return;
     setSendingForm(true);
     try {
-      await fetch('/api/notifications/send', {
+      const res = await fetch('/api/forms/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          business_id: business.id,
+          formId: form.id,
+          businessId: business.id,
           phone: sendPhone.trim(),
-          message: `📋 *${form.title}*${form.description ? `\n${form.description}` : ''}\n\nPlease fill out this form:\n${appUrl}/form/${form.token}`,
         }),
       });
-      setSendPhone('');
-    } catch { /* silent */ }
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to send form');
+      } else {
+        setSendPhone('');
+        loadForms(); // refresh response counts
+      }
+    } catch {
+      alert('Network error. Please try again.');
+    }
     setSendingForm(false);
   }
 
@@ -253,24 +263,35 @@ export default function FormsPage() {
           </button>
           <div>
             <h1 className="text-xl font-bold text-gray-900">{selectedForm.title}</h1>
-            <p className="text-sm text-gray-500">{responses.length} response{responses.length !== 1 ? 's' : ''}</p>
+            <p className="text-sm text-gray-500">
+              {responses.filter(r => r.status === 'submitted').length} responded · {responses.filter(r => r.status === 'sent').length} pending
+            </p>
           </div>
         </div>
 
         {responses.length === 0 ? (
-          <div className="mt-8 text-center text-sm text-gray-400">No responses yet</div>
+          <div className="mt-8 text-center text-sm text-gray-400">No responses yet. Send the form to customers to start collecting data.</div>
         ) : (
           <div className="mt-6 space-y-4">
             {responses.map(r => (
-              <div key={r.id} className="rounded-xl border border-gray-200 bg-white p-5">
+              <div key={r.id} className={`rounded-xl border bg-white p-5 ${r.status === 'sent' ? 'border-yellow-200 bg-yellow-50/30' : 'border-gray-200'}`}>
                 <div className="flex items-center justify-between mb-3">
-                  <div>
+                  <div className="flex items-center gap-2">
                     <p className="text-sm font-medium text-gray-900">{r.customer_name || r.customer_phone || 'Anonymous'}</p>
-                    {r.customer_email && <p className="text-xs text-gray-400">{r.customer_email}</p>}
-                    {r.customer_phone && <p className="text-xs text-gray-400">{r.customer_phone}</p>}
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      r.status === 'submitted' ? 'bg-green-100 text-green-700' :
+                      r.status === 'sent' ? 'bg-yellow-100 text-yellow-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>{r.status === 'sent' ? 'Awaiting response' : 'Responded'}</span>
                   </div>
-                  <p className="text-xs text-gray-400">{new Date(r.submitted_at).toLocaleString()}</p>
+                  <div className="text-right">
+                    <p className="text-xs text-gray-400">{new Date(r.submitted_at).toLocaleString()}</p>
+                    {r.channel && <p className="text-xs text-gray-300">{r.channel}</p>}
+                  </div>
                 </div>
+                {r.status === 'sent' && Object.keys(r.answers).length === 0 ? (
+                  <p className="text-sm text-yellow-600">Form sent — waiting for customer to fill it out.</p>
+                ) : (
                 <div className="space-y-2">
                   {selectedForm.fields.map(field => {
                     const value = r.answers[field.id];
@@ -283,6 +304,7 @@ export default function FormsPage() {
                     );
                   })}
                 </div>
+                )}
 
                 {/* Business Notes */}
                 <div className="mt-3 border-t border-gray-100 pt-3">

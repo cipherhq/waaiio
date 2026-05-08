@@ -42,17 +42,62 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Insert response
-    const { error: insertError } = await supabase
-      .from('form_responses')
-      .insert({
-        form_id: form.id,
-        business_id: form.business_id,
-        customer_name: customer_name || null,
-        customer_phone: customer_phone || null,
-        customer_email: customer_email || null,
-        answers,
-      });
+    // Check if there's a pending "sent" record for this phone + form (update instead of insert)
+    let insertError: { message: string; code?: string } | null = null;
+    const normalizedPhone = customer_phone?.startsWith('+') ? customer_phone : customer_phone ? `+${customer_phone}` : null;
+
+    if (normalizedPhone) {
+      const { data: existing } = await supabase
+        .from('form_responses')
+        .select('id')
+        .eq('form_id', form.id)
+        .eq('customer_phone', normalizedPhone)
+        .eq('status', 'sent')
+        .maybeSingle();
+
+      if (existing) {
+        // Update the existing sent record
+        const { error } = await supabase
+          .from('form_responses')
+          .update({
+            customer_name: customer_name || null,
+            customer_email: customer_email || null,
+            answers,
+            status: 'submitted',
+            submitted_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+        insertError = error;
+      } else {
+        const { error } = await supabase
+          .from('form_responses')
+          .insert({
+            form_id: form.id,
+            business_id: form.business_id,
+            customer_name: customer_name || null,
+            customer_phone: normalizedPhone,
+            customer_email: customer_email || null,
+            answers,
+            status: 'submitted',
+            channel: 'web',
+          });
+        insertError = error;
+      }
+    } else {
+      const { error } = await supabase
+        .from('form_responses')
+        .insert({
+          form_id: form.id,
+          business_id: form.business_id,
+          customer_name: customer_name || null,
+          customer_phone: null,
+          customer_email: customer_email || null,
+          answers,
+          status: 'submitted',
+          channel: 'web',
+        });
+      insertError = error;
+    }
 
     if (insertError) {
       logger.error('[FORMS] Insert error:', insertError);
