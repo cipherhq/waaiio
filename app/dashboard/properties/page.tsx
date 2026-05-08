@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
@@ -48,6 +48,9 @@ export default function PropertiesPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+  const [photos, setPhotos] = useState<string[]>([]);
 
   const [form, setForm] = useState({
     id: '',
@@ -77,12 +80,30 @@ export default function PropertiesPage() {
 
   useEffect(() => { loadProperties(); }, [loadProperties]);
 
+  async function handlePhotoUpload(file: File) {
+    if (photos.length >= 5) return;
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('business_id', business.id);
+      const res = await fetch('/api/services/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success && json.url) {
+        setPhotos(prev => [...prev, json.url]);
+      }
+    } catch { /* silent */ }
+    setUploading(false);
+    if (photoInputRef.current) photoInputRef.current.value = '';
+  }
+
   function openAdd() {
     setForm({
       id: '', name: '', description: '', property_type: types[0] || 'apartment',
       price: 0, deposit_amount: 0, max_guests: 1, bedrooms: 0, bathrooms: 0,
       amenities: [], address: '', is_active: true,
     });
+    setPhotos([]);
     setView('add');
   }
 
@@ -93,6 +114,7 @@ export default function PropertiesPage() {
       max_guests: p.max_guests, bedrooms: p.bedrooms, bathrooms: p.bathrooms,
       amenities: p.amenities || [], address: p.address || '', is_active: p.is_active,
     });
+    setPhotos(p.photos || []);
     setView('edit');
   }
 
@@ -111,6 +133,7 @@ export default function PropertiesPage() {
       bedrooms: form.bedrooms,
       bathrooms: form.bathrooms,
       amenities: form.amenities,
+      photos,
       address: form.address.trim() || null,
       is_active: form.is_active,
     };
@@ -250,6 +273,38 @@ export default function PropertiesPage() {
                 placeholder="e.g. 5 Marina Drive, Lekki"
                 className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
             </div>
+
+            {/* Photos */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Photos (max 5)</label>
+              <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) handlePhotoUpload(f); }} />
+              <div className="flex flex-wrap gap-3">
+                {photos.map((url, i) => (
+                  <div key={i} className="group relative h-24 w-24 overflow-hidden rounded-lg border border-gray-200">
+                    <img src={url} alt="" className="h-full w-full object-cover" />
+                    <button type="button" onClick={() => setPhotos(photos.filter((_, j) => j !== i))}
+                      className="absolute right-1 top-1 hidden rounded-full bg-black/50 p-1 text-white group-hover:block">
+                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                ))}
+                {photos.length < 5 && (
+                  <button type="button" onClick={() => photoInputRef.current?.click()} disabled={uploading}
+                    className="flex h-24 w-24 items-center justify-center rounded-lg border-2 border-dashed border-gray-200 text-gray-400 hover:border-brand hover:text-brand disabled:opacity-50">
+                    {uploading ? (
+                      <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                    ) : (
+                      <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+                      </svg>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Right: Settings */}
@@ -323,9 +378,15 @@ export default function PropertiesPage() {
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {properties.map(p => (
             <div key={p.id} onClick={() => openEdit(p)}
-              className={`cursor-pointer rounded-xl border bg-white p-5 transition hover:shadow-sm ${
+              className={`cursor-pointer rounded-xl border bg-white overflow-hidden transition hover:shadow-sm ${
                 p.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
               }`}>
+              {p.photos && p.photos.length > 0 && (
+                <div className="h-32 w-full overflow-hidden">
+                  <img src={p.photos[0]} alt={p.name} className="h-full w-full object-cover" />
+                </div>
+              )}
+              <div className="p-5">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-gray-900">{p.name}</h3>
                 <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 capitalize">{p.property_type}</span>
@@ -353,6 +414,7 @@ export default function PropertiesPage() {
               {!p.is_active && (
                 <span className="mt-2 inline-block rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-500">Inactive</span>
               )}
+              </div>
             </div>
           ))}
         </div>
