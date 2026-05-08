@@ -11,6 +11,7 @@ import { recurringManageFlow } from './recurring-manage.flow';
 import { queueCheckinFlow } from './queue-checkin.flow';
 import { feedbackFlow } from './feedback.flow';
 import { waitlistFlow } from './waitlist.flow';
+import { appointmentFlow } from './appointment.flow';
 import { chatFlow } from './chat.flow';
 import { loyaltyFlow } from './loyalty.flow';
 import { invoiceFlow } from './invoice.flow';
@@ -19,6 +20,7 @@ import { pollFlow } from './poll.flow';
 
 const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
   scheduling: schedulingFlow,
+  appointment: appointmentFlow,
   payment: paymentFlow,
   ordering: orderingFlow,
   ticketing: ticketingFlow,
@@ -30,6 +32,7 @@ const FLOW_REGISTRY: Record<FlowType, FlowDefinition> = {
 const EXTENDED_REGISTRY: Record<string, FlowDefinition> = {
   ...FLOW_REGISTRY,
   'capability-selection': capabilitySelectionFlow,
+  appointment: appointmentFlow,
   crowdfunding: crowdfundingFlow,
   'recurring-manage': recurringManageFlow,
   feedback: feedbackFlow,

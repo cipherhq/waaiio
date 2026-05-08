@@ -200,6 +200,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Auto-create default appointments (calendar-based bookable items)
+    const { DEFAULT_APPOINTMENTS } = await import('@/lib/constants');
+    const defaultAppts = DEFAULT_APPOINTMENTS[category as BusinessCategoryKey] || [];
+    if (defaultAppts.length > 0) {
+      await service.from('appointments').insert(
+        defaultAppts.map((a, i) => ({
+          business_id: business.id,
+          name: a.name,
+          price: a.price,
+          price_is_variable: a.price_is_variable,
+          duration_minutes: a.duration_minutes,
+          deposit_amount: a.deposit_amount,
+          sort_order: i,
+        })),
+      );
+    }
+
     // Auto-create default properties for reservation categories (shortlet, hotel, car_rental)
     const { DEFAULT_PROPERTIES, RESERVATION_CATEGORIES } = await import('@/lib/constants');
     if (RESERVATION_CATEGORIES.includes(category as BusinessCategoryKey)) {

@@ -4,18 +4,17 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 /** Generic labels for capability selection buttons */
 export function getCapabilityLabel(cap: CapabilityId, category: string): string {
   switch (cap) {
-    case 'scheduling': {
+    case 'scheduling':
+      return 'Our Services';
+    case 'appointment': {
       const bookingLabels: Record<string, string> = {
         restaurant: 'Book a Table',
-        hotel: 'Book a Stay',
-        shortlet: 'Book a Stay',
         event_services: 'Book a Service',
         photographer: 'Book a Session',
         gym: 'Book a Session',
         tutor: 'Book a Session',
         coworking: 'Book a Space',
         car_wash: 'Book a Wash',
-        laundry: 'Book Pickup',
       };
       return bookingLabels[category] || 'Book Appointment';
     }
@@ -51,6 +50,7 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
 /** Map capability to the first step of its corresponding flow */
 function getFirstStepForCapability(cap: CapabilityId): string {
   switch (cap) {
+    case 'appointment': return 'select_appointment';
     case 'scheduling': return 'select_service';
     case 'giving': return 'select_category'; // giving uses the payment flow
     case 'payment': return 'select_category';
@@ -91,6 +91,11 @@ const selectCapabilityStep: FlowStepConfig = {
         case 'giving': {
           const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
             .eq('business_id', businessId).eq('is_active', true).eq('service_type', 'giving').is('deleted_at', null);
+          return [cap, (count || 0) > 0];
+        }
+        case 'appointment': {
+          const { count } = await ctx.supabase.from('appointments').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
           return [cap, (count || 0) > 0];
         }
         case 'scheduling': {

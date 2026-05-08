@@ -427,6 +427,7 @@ export class FlowExecutor {
       case 'scheduling': return 'scheduling';
       case 'payment': return 'payment';
       case 'ordering': return 'ordering';
+      case 'appointment': return 'scheduling'; // appointments use scheduling infrastructure
       case 'ticketing': return 'ticketing';
       case 'reservation': return 'reservation';
       case 'whatsapp_sign': return 'scheduling'; // no bot flow — dashboard only
