@@ -23,7 +23,23 @@ interface Property {
   sort_order: number;
 }
 
-type ViewMode = 'list' | 'add' | 'edit';
+interface Reservation {
+  id: string;
+  reference_code: string;
+  check_in: string;
+  check_out: string;
+  nights: number;
+  guests: number;
+  status: string;
+  guest_name: string;
+  guest_phone: string;
+  total_amount: number;
+  nightly_rate: number;
+  special_requests: string | null;
+  created_at: string;
+}
+
+type ViewMode = 'list' | 'add' | 'edit' | 'reservations';
 
 const AMENITY_OPTIONS = [
   'WiFi', 'Air Conditioning', 'Parking', 'Pool', 'Kitchen', 'Washer/Dryer',
@@ -49,6 +65,9 @@ export default function PropertiesPage() {
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [reservationsLoading, setReservationsLoading] = useState(false);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const [photos, setPhotos] = useState<string[]>([]);
 
@@ -79,6 +98,33 @@ export default function PropertiesPage() {
   }, [business.id]);
 
   useEffect(() => { loadProperties(); }, [loadProperties]);
+
+  async function openReservations(p: Property) {
+    setSelectedProperty(p);
+    setReservationsLoading(true);
+    setView('reservations');
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('reservations')
+      .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, total_amount, nightly_rate, special_requests, created_at')
+      .or(`property_id.eq.${p.id},service_id.eq.${p.id}`)
+      .order('check_in', { ascending: false })
+      .limit(50);
+    setReservations((data || []) as Reservation[]);
+    setReservationsLoading(false);
+  }
+
+  async function updateReservationStatus(id: string, newStatus: string) {
+    const supabase = createClient();
+    const extra: Record<string, unknown> = {};
+    const now = new Date().toISOString();
+    if (newStatus === 'confirmed') extra.confirmed_at = now;
+    if (newStatus === 'in_progress') extra.checked_in_at = now;
+    if (newStatus === 'completed') extra.checked_out_at = now;
+    if (newStatus === 'cancelled') { extra.cancelled_at = now; extra.cancelled_by = 'business'; }
+    await supabase.from('reservations').update({ status: newStatus, ...extra }).eq('id', id);
+    if (selectedProperty) openReservations(selectedProperty);
+  }
 
   async function handlePhotoUpload(file: File) {
     if (photos.length >= 5) return;
@@ -182,6 +228,116 @@ export default function PropertiesPage() {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+      </div>
+    );
+  }
+
+  // ═══════════ RESERVATIONS VIEW ═══════════
+  if (view === 'reservations' && selectedProperty) {
+    const statusColors: Record<string, string> = {
+      confirmed: 'bg-green-100 text-green-700',
+      pending: 'bg-yellow-100 text-yellow-700',
+      in_progress: 'bg-blue-100 text-blue-700',
+      completed: 'bg-gray-100 text-gray-600',
+      cancelled: 'bg-red-100 text-red-700',
+    };
+    const statusLabels: Record<string, string> = { in_progress: 'Checked In', completed: 'Checked Out' };
+    const actions: Record<string, Array<{ label: string; next: string; color: string }>> = {
+      pending: [{ label: 'Confirm', next: 'confirmed', color: 'text-green-600' }, { label: 'Cancel', next: 'cancelled', color: 'text-red-600' }],
+      confirmed: [{ label: 'Check In', next: 'in_progress', color: 'text-blue-600' }, { label: 'Cancel', next: 'cancelled', color: 'text-red-600' }],
+      in_progress: [{ label: 'Check Out', next: 'completed', color: 'text-gray-600' }],
+    };
+
+    return (
+      <div>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <div>
+            <h1 className="text-xl font-bold text-gray-900">{selectedProperty.name}</h1>
+            <p className="text-sm text-gray-500">{reservations.length} reservation{reservations.length !== 1 ? 's' : ''}</p>
+          </div>
+        </div>
+
+        {/* Property summary */}
+        <div className="mt-4 flex items-center gap-4 text-sm text-gray-500">
+          <span>{formatCurrency(selectedProperty.price, country)}/night</span>
+          {selectedProperty.bedrooms > 0 && <span>{selectedProperty.bedrooms} bed · {selectedProperty.bathrooms} bath</span>}
+          <span>{selectedProperty.max_guests} guests max</span>
+        </div>
+
+        {reservationsLoading ? (
+          <div className="mt-8 flex justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          </div>
+        ) : reservations.length === 0 ? (
+          <div className="mt-8 text-center text-sm text-gray-400">No reservations yet for this property.</div>
+        ) : (
+          <div className="mt-6 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="border-b border-gray-100 bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {reservations.map(r => (
+                  <tr key={r.id} className="hover:bg-gray-50">
+                    <td className="px-4 py-3">
+                      <p className="font-medium text-gray-900">{r.guest_name || 'Guest'}</p>
+                      <p className="text-xs text-gray-400">{r.guest_phone}</p>
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                      {new Date(r.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                      {new Date(r.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600">{r.nights}</td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(r.total_amount, country)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
+                        {statusLabels[r.status] || r.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-2">
+                        {(actions[r.status] || []).map(a => (
+                          <button key={a.next} onClick={() => updateReservationStatus(r.id, a.next)}
+                            className={`text-xs font-medium ${a.color}`}>
+                            {a.label}
+                          </button>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Special requests */}
+        {reservations.some(r => r.special_requests) && (
+          <div className="mt-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">Special Requests</h3>
+            {reservations.filter(r => r.special_requests).map(r => (
+              <div key={r.id} className="mb-2 rounded-lg bg-yellow-50 border border-yellow-200 p-3">
+                <p className="text-xs font-medium text-yellow-800">{r.guest_name} — {r.reference_code}</p>
+                <p className="mt-1 text-sm text-yellow-700 whitespace-pre-line">{r.special_requests}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -426,6 +582,12 @@ export default function PropertiesPage() {
               {!p.is_active && (
                 <span className="mt-2 inline-block rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-500">Inactive</span>
               )}
+              <div className="mt-3 flex gap-2 border-t border-gray-50 pt-3">
+                <button onClick={(e) => { e.stopPropagation(); openReservations(p); }}
+                  className="text-xs font-medium text-brand hover:underline">View Reservations</button>
+                <button onClick={(e) => { e.stopPropagation(); openEdit(p); }}
+                  className="text-xs font-medium text-gray-500 hover:underline">Edit</button>
+              </div>
               </div>
             </div>
           ))}
