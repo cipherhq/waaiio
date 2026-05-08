@@ -30,6 +30,7 @@ interface FormResponse {
   customer_name: string | null;
   customer_email: string | null;
   answers: Record<string, unknown>;
+  business_notes: string | null;
   submitted_at: string;
 }
 
@@ -67,6 +68,8 @@ export default function FormsPage() {
   const [selectedForm, setSelectedForm] = useState<Form | null>(null);
   const [responses, setResponses] = useState<FormResponse[]>([]);
   const [copied, setCopied] = useState(false);
+  const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
+  const [savingNotes, setSavingNotes] = useState<string | null>(null);
 
   // Send form state
   const [sendPhone, setSendPhone] = useState('');
@@ -215,6 +218,15 @@ export default function FormsPage() {
     setSendingForm(false);
   }
 
+  async function saveNotes(responseId: string) {
+    setSavingNotes(responseId);
+    const supabase = createClient();
+    const notes = editingNotes[responseId] ?? '';
+    await supabase.from('form_responses').update({ business_notes: notes || null }).eq('id', responseId);
+    setResponses(prev => prev.map(r => r.id === responseId ? { ...r, business_notes: notes || null } : r));
+    setSavingNotes(null);
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -264,6 +276,27 @@ export default function FormsPage() {
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Business Notes */}
+                <div className="mt-3 border-t border-gray-100 pt-3">
+                  <label className="mb-1 block text-xs font-medium text-gray-500">Your Notes</label>
+                  <div className="flex gap-2">
+                    <textarea
+                      value={editingNotes[r.id] ?? r.business_notes ?? ''}
+                      onChange={e => setEditingNotes(prev => ({ ...prev, [r.id]: e.target.value }))}
+                      rows={2}
+                      placeholder="Add internal notes about this response..."
+                      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand resize-none"
+                    />
+                    <button
+                      onClick={() => saveNotes(r.id)}
+                      disabled={savingNotes === r.id || (editingNotes[r.id] ?? r.business_notes ?? '') === (r.business_notes ?? '')}
+                      className="self-end rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {savingNotes === r.id ? '...' : 'Save'}
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
