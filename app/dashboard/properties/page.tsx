@@ -23,6 +23,13 @@ interface Property {
   sort_order: number;
 }
 
+interface BlockedDate {
+  id: string;
+  date_from: string;
+  date_to: string;
+  reason: string | null;
+}
+
 type ViewMode = 'list' | 'add' | 'edit';
 
 const AMENITY_OPTIONS = [
@@ -49,6 +56,10 @@ export default function PropertiesPage() {
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [blockedDates, setBlockedDates] = useState<BlockedDate[]>([]);
+  const [blockFrom, setBlockFrom] = useState('');
+  const [blockTo, setBlockTo] = useState('');
+  const [blockReason, setBlockReason] = useState('');
   const photoInputRef = useRef<HTMLInputElement>(null);
   const [photos, setPhotos] = useState<string[]>([]);
 
@@ -79,6 +90,38 @@ export default function PropertiesPage() {
   }, [business.id]);
 
   useEffect(() => { loadProperties(); }, [loadProperties]);
+
+  async function loadBlockedDates(propertyId: string) {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('property_blocked_dates')
+      .select('id, date_from, date_to, reason')
+      .eq('property_id', propertyId)
+      .order('date_from');
+    setBlockedDates((data || []) as BlockedDate[]);
+  }
+
+  async function addBlockedDate() {
+    if (!blockFrom || !blockTo || !form.id) return;
+    const supabase = createClient();
+    await supabase.from('property_blocked_dates').insert({
+      property_id: form.id,
+      business_id: business.id,
+      date_from: blockFrom,
+      date_to: blockTo,
+      reason: blockReason.trim() || null,
+    });
+    setBlockFrom('');
+    setBlockTo('');
+    setBlockReason('');
+    loadBlockedDates(form.id);
+  }
+
+  async function removeBlockedDate(id: string) {
+    const supabase = createClient();
+    await supabase.from('property_blocked_dates').delete().eq('id', id);
+    if (form.id) loadBlockedDates(form.id);
+  }
 
   async function handlePhotoUpload(file: File) {
     if (photos.length >= 5) return;
@@ -115,6 +158,8 @@ export default function PropertiesPage() {
       amenities: p.amenities || [], address: p.address || '', is_active: p.is_active,
     });
     setPhotos(p.photos || []);
+    setBlockedDates([]);
+    loadBlockedDates(p.id);
     setView('edit');
   }
 
@@ -317,6 +362,53 @@ export default function PropertiesPage() {
                 )}
               </div>
             </div>
+
+            {/* Blocked Dates (edit only) */}
+            {view === 'edit' && (
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">Blocked Dates</label>
+                <p className="mb-3 text-xs text-gray-400">Block dates when this property is unavailable (maintenance, personal use, etc.)</p>
+
+                {blockedDates.length > 0 && (
+                  <div className="mb-3 space-y-2">
+                    {blockedDates.map(bd => (
+                      <div key={bd.id} className="flex items-center justify-between rounded-lg border border-red-100 bg-red-50 px-3 py-2">
+                        <div>
+                          <span className="text-sm font-medium text-red-800">
+                            {new Date(bd.date_from + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                            {bd.date_from !== bd.date_to && ` → ${new Date(bd.date_to + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}`}
+                          </span>
+                          {bd.reason && <span className="ml-2 text-xs text-red-600">{bd.reason}</span>}
+                        </div>
+                        <button onClick={() => removeBlockedDate(bd.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <span className="text-xs text-gray-500">From</span>
+                    <input type="date" value={blockFrom} onChange={e => setBlockFrom(e.target.value)}
+                      className="block rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+                  </div>
+                  <div>
+                    <span className="text-xs text-gray-500">To</span>
+                    <input type="date" value={blockTo} onChange={e => setBlockTo(e.target.value)}
+                      min={blockFrom || undefined}
+                      className="block rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+                  </div>
+                  <div className="flex-1">
+                    <span className="text-xs text-gray-500">Reason (optional)</span>
+                    <input type="text" value={blockReason} onChange={e => setBlockReason(e.target.value)}
+                      placeholder="e.g. Maintenance"
+                      className="block w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+                  </div>
+                  <button onClick={addBlockedDate} disabled={!blockFrom || !blockTo}
+                    className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">Block</button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right: Settings */}

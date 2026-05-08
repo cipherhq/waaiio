@@ -166,12 +166,31 @@ export const reservationFlow: FlowDefinition = {
         }
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        // Load blocked dates for this property
+        const propertyId = ctx.session.session_data.property_id as string | undefined;
+        let blockedRanges: Array<{ from: string; to: string }> = [];
+        if (propertyId) {
+          const { data: blocked } = await ctx.supabase
+            .from('property_blocked_dates')
+            .select('date_from, date_to')
+            .eq('property_id', propertyId)
+            .gte('date_to', new Date().toISOString().split('T')[0]);
+          blockedRanges = (blocked || []).map(b => ({ from: b.date_from, to: b.date_to }));
+        }
+
+        function isBlocked(dateStr: string): boolean {
+          return blockedRanges.some(r => dateStr >= r.from && dateStr <= r.to);
+        }
+
         const dates: Array<{ title: string; postbackText: string }> = [];
-        for (let i = 1; i <= 30 && dates.length < 10; i++) {
+        for (let i = 1; i <= 60 && dates.length < 10; i++) {
           const d = new Date();
           d.setDate(d.getDate() + i);
+          const dateStr = d.toISOString().split('T')[0];
+          if (isBlocked(dateStr)) continue;
           const label = d.toLocaleDateString(getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' });
-          dates.push({ title: label, postbackText: d.toISOString().split('T')[0] });
+          dates.push({ title: label, postbackText: dateStr });
         }
         messages.push({
           type: 'list',
@@ -202,6 +221,21 @@ export const reservationFlow: FlowDefinition = {
         const maxDate = new Date();
         maxDate.setDate(maxDate.getDate() + 90);
         if (selected > maxDate) return { valid: false, errorMessage: 'Bookings can only be made up to 90 days in advance.' };
+
+        // Check blocked dates
+        const propId = ctx.session.session_data.property_id as string | undefined;
+        if (propId) {
+          const { data: blocked } = await ctx.supabase
+            .from('property_blocked_dates')
+            .select('id')
+            .eq('property_id', propId)
+            .lte('date_from', dateStr)
+            .gte('date_to', dateStr)
+            .limit(1);
+          if (blocked && blocked.length > 0) {
+            return { valid: false, errorMessage: 'Sorry, this date is not available. Please choose another date.' };
+          }
+        }
 
         return { valid: true, data: { check_in: dateStr } };
       },
