@@ -35,6 +35,7 @@ export const reservationFlow: FlowDefinition = {
             .select('id, name, price, deposit_amount')
             .eq('business_id', ctx.business.id)
             .eq('is_active', true)
+            .neq('service_type', 'giving')
             .order('sort_order');
           listings = (services || []).map(s => ({ ...s, deposit_amount: s.deposit_amount || 0 }));
         }
