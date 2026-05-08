@@ -94,11 +94,11 @@ export default function PromoCodesPage() {
         businessId: business.id,
         code: form.code.toUpperCase().trim(),
         description: form.description || null,
-        discount_type: form.discount_type,
-        discount_value: form.discount_value,
-        min_order_amount: form.min_order_amount,
-        max_uses: form.max_uses,
-        valid_until: form.valid_until || null,
+        discountType: form.discount_type,
+        discountValue: form.discount_value,
+        minOrderAmount: form.min_order_amount,
+        maxUses: form.max_uses,
+        validUntil: form.valid_until || null,
         is_active: form.is_active,
         ...(view === 'edit' ? { id: form.id } : {}),
       };
@@ -118,7 +118,7 @@ export default function PromoCodesPage() {
     await fetch('/api/promo-codes', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: promo.id, businessId: business.id, is_active: !promo.is_active }),
+      body: JSON.stringify({ id: promo.id, businessId: business.id, isActive: !promo.is_active }),
     });
     fetchCodes();
   }
