@@ -52,22 +52,21 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        // Generate signed URL for the PDF (valid for 1 hour)
-        const { data: signedUrlData, error: signError } = await supabase.storage
-          .from('customer-reports')
-          .createSignedUrl(report.file_path, 3600);
+        // Generate unique access token for secure viewing
+        const accessToken = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const secureLink = `${appUrl}/doc/${accessToken}`;
 
-        if (signError || !signedUrlData?.signedUrl) {
-          logger.error('[REPORTS] Signed URL error:', signError);
-          await supabase.from('customer_reports').update({ status: 'failed' }).eq('id', reportId);
-          results.push({ id: reportId, status: 'failed' });
-          continue;
-        }
+        // Save access token
+        await supabase
+          .from('customer_reports')
+          .update({ access_token: accessToken })
+          .eq('id', reportId);
 
         // Resolve channel for the business
         const resolved = await resolver.resolveByBusinessId(report.business_id);
         if (!resolved) {
-          logger.error('[REPORTS] No channel for business:', report.business_id);
+          logger.error('[DOCUMENTS] No channel for business:', report.business_id);
           await supabase.from('customer_reports').update({ status: 'failed' }).eq('id', reportId);
           results.push({ id: reportId, status: 'failed' });
           continue;
@@ -78,12 +77,18 @@ export async function POST(request: NextRequest) {
           ? report.customer_phone.slice(1)
           : report.customer_phone;
 
-        // Send document via WhatsApp
-        await resolved.sender.sendDocument({
+        // Send secure link via WhatsApp (not the raw PDF URL)
+        await resolved.sender.sendText({
           to: phone,
-          documentUrl: signedUrlData.signedUrl,
-          filename: `${report.title}.pdf`,
-          caption: `${report.title} from ${businessName}`,
+          text: [
+            `📄 *${report.title}*`,
+            `from *${businessName}*`,
+            '',
+            `View your document securely:`,
+            secureLink,
+            '',
+            `You'll need the last 4 digits of your phone number to open it.`,
+          ].join('\n'),
         });
 
         // Update report status
@@ -92,7 +97,6 @@ export async function POST(request: NextRequest) {
           .update({
             status: 'sent',
             sent_at: new Date().toISOString(),
-            file_url: signedUrlData.signedUrl,
           })
           .eq('id', reportId);
 
