@@ -28,10 +28,10 @@ const queueStartStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `Welcome to ${ctx.business.name}! Would you like to check in or view your queue status?`,
+      body: `Welcome to ${ctx.business.name}! Would you like to join the queue or check your position?`,
       buttons: [
-        { id: 'queue_checkin', title: 'Check In' },
-        { id: 'queue_status', title: 'Queue Status' },
+        { id: 'queue_checkin', title: 'Join Queue' },
+        { id: 'queue_status', title: 'My Position' },
       ],
     }];
   },
@@ -139,7 +139,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     if (error) {
       console.error('[QUEUE] Insert error:', error);
-      return [{ type: 'text', text: 'Sorry, there was an error checking you in. Please try again.' }];
+      return [{ type: 'text', text: 'Sorry, there was an error joining the queue. Please try again.' }];
     }
 
     const waitText = estimatedWait > 0
@@ -185,8 +185,8 @@ const queueCheckStatusStep: FlowStepConfig = {
     if (!entry) {
       return [{
         type: 'buttons',
-        body: "You don't have an active queue entry for today. Would you like to check in?",
-        buttons: [{ id: 'queue_checkin', title: 'Check In' }],
+        body: "You don't have an active queue entry for today. Would you like to join the queue?",
+        buttons: [{ id: 'queue_checkin', title: 'Join Queue' }],
       }];
     }
 

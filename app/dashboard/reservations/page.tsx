@@ -51,7 +51,14 @@ const statusColors: Record<string, string> = {
   no_show: 'bg-red-100 text-red-700',
 };
 
-const nextActions: Record<string, { label: string; next: string; color: string }[]> = {
+// Reservation-specific status labels
+const reservationStatusLabels: Record<string, string> = {
+  in_progress: 'Checked In',
+  completed: 'Checked Out',
+};
+
+// Actions for scheduling businesses (appointments, bookings)
+const schedulingActions: Record<string, { label: string; next: string; color: string }[]> = {
   pending: [
     { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
     { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
@@ -63,6 +70,22 @@ const nextActions: Record<string, { label: string; next: string; color: string }
   ],
   in_progress: [
     { label: 'Complete', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
+  ],
+};
+
+// Actions for reservation businesses (hotel, shortlet, car rental)
+const reservationActions: Record<string, { label: string; next: string; color: string }[]> = {
+  pending: [
+    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
+    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
+  ],
+  confirmed: [
+    { label: 'Check In', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
+    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
+    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
+  ],
+  in_progress: [
+    { label: 'Check Out', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
   ],
 };
 
@@ -118,6 +141,7 @@ export default function BookingsPage() {
   }
 
   const isReservationType = business.flow_type === 'reservation';
+  const nextActions = isReservationType ? reservationActions : schedulingActions;
 
   const fetchBookings = useCallback(async () => {
     const supabase = createClient();
@@ -207,12 +231,21 @@ export default function BookingsPage() {
   async function updateStatus(id: string, newStatus: string) {
     const supabase = createClient();
     const extra: Record<string, unknown> = {};
-    if (newStatus === 'confirmed') extra.confirmed_at = new Date().toISOString();
-    if (newStatus === 'in_progress') extra.seated_at = new Date().toISOString();
-    if (newStatus === 'completed') extra.completed_at = new Date().toISOString();
+    const now = new Date().toISOString();
+    if (newStatus === 'confirmed') extra.confirmed_at = now;
     if (newStatus === 'cancelled') {
-      extra.cancelled_at = new Date().toISOString();
+      extra.cancelled_at = now;
       extra.cancelled_by = 'business';
+    }
+
+    if (isReservationType) {
+      // Reservation: use checked_in_at / checked_out_at
+      if (newStatus === 'in_progress') extra.checked_in_at = now;
+      if (newStatus === 'completed') extra.checked_out_at = now;
+    } else {
+      // Scheduling: use seated_at / completed_at
+      if (newStatus === 'in_progress') extra.seated_at = now;
+      if (newStatus === 'completed') extra.completed_at = now;
     }
 
     const table = isReservationType ? 'reservations' : 'bookings';
@@ -369,7 +402,7 @@ export default function BookingsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {r.status.replace('_', ' ')}
+                      {(isReservationType && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
                     </span>
                     {r.rescheduled_at && (
                       <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
@@ -482,7 +515,7 @@ export default function BookingsPage() {
               <div>
                 <p className="font-mono text-lg font-bold text-brand">{selected.reference_code}</p>
                 <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[selected.status] || 'bg-gray-100 text-gray-600'}`}>
-                  {selected.status.replace('_', ' ')}
+                  {(isReservationType && reservationStatusLabels[selected.status]) || selected.status.replace('_', ' ')}
                 </span>
               </div>
               <button onClick={() => setSelectedId(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
