@@ -97,6 +97,7 @@ export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [bookingType, setBookingType] = useState<'all' | 'reservations' | 'bookings'>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
@@ -115,8 +116,13 @@ export default function BookingsPage() {
 
   const selected = bookings.find((b) => b.id === selectedId) || null;
 
-  const totalPages = Math.max(1, Math.ceil(bookings.length / perPage));
-  const pageItems = bookings.slice((page - 1) * perPage, page * perPage);
+  // Filter by booking type tab
+  const filteredByType = bookingType === 'all' ? bookings
+    : bookingType === 'reservations' ? bookings.filter(b => b._isReservation)
+    : bookings.filter(b => !b._isReservation);
+
+  const totalPages = Math.max(1, Math.ceil(filteredByType.length / perPage));
+  const pageItems = filteredByType.slice((page - 1) * perPage, page * perPage);
 
   // Reset page on filter change
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -317,6 +323,27 @@ export default function BookingsPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+
+      {/* Booking type tabs — only show when business has multiple types */}
+      {showReservations && !isReservationType && (
+        <div className="mt-4 flex gap-1 border-b border-gray-200">
+          {([
+            { id: 'all' as const, label: 'All' },
+            { id: 'bookings' as const, label: 'Appointments' },
+            { id: 'reservations' as const, label: 'Reservations' },
+          ]).map(tab => (
+            <button key={tab.id} onClick={() => { setBookingType(tab.id); setPage(1); }}
+              className={`px-4 py-2.5 text-sm font-medium transition border-b-2 -mb-px ${
+                bookingType === tab.id ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}>
+              {tab.label}
+              <span className="ml-1.5 text-xs text-gray-400">
+                {tab.id === 'all' ? bookings.length : tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length : bookings.filter(b => !b._isReservation).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Filters */}
       <div className="mt-4 flex flex-wrap items-center gap-3">
