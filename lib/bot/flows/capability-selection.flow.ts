@@ -108,8 +108,10 @@ const selectCapabilityStep: FlowStepConfig = {
             .eq('business_id', businessId).eq('status', 'active');
           return [cap, (count || 0) > 0];
         }
+        case 'waitlist':
+          return [cap, false]; // waitlist is never shown as a menu option — triggered automatically when no slots
         default:
-          return [cap, true]; // chat, waitlist, queue — always available
+          return [cap, true]; // chat, queue — always available
       }
     }));
     userFacing = checks.filter(([, hasData]) => hasData).map(([cap]) => cap);
