@@ -139,9 +139,21 @@ export default function PropertiesPage() {
     };
 
     if (view === 'add') {
-      await supabase.from('properties').insert({ ...payload, sort_order: properties.length });
+      const { error } = await supabase.from('properties').insert({ ...payload, sort_order: properties.length });
+      if (error) {
+        console.error('Property insert error:', error);
+        alert(error.message || 'Failed to add property. Please try again.');
+        setSaving(false);
+        return;
+      }
     } else {
-      await supabase.from('properties').update(payload).eq('id', form.id);
+      const { error } = await supabase.from('properties').update(payload).eq('id', form.id);
+      if (error) {
+        console.error('Property update error:', error);
+        alert(error.message || 'Failed to update property. Please try again.');
+        setSaving(false);
+        return;
+      }
     }
 
     setSaving(false);
