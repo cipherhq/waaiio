@@ -1,6 +1,40 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
+
+/** Fetch the direct gateway checkout URL from the payments table */
+async function getDirectGatewayUrl(supabase: SupabaseClient, reference: string): Promise<string | null> {
+  const { data: payment } = await supabase
+    .from('payments')
+    .select('gateway, gateway_reference, metadata')
+    .eq('gateway_reference', reference)
+    .eq('status', 'pending')
+    .maybeSingle();
+
+  if (!payment) return null;
+
+  if (payment.gateway === 'paystack' && payment.gateway_reference) {
+    return `https://checkout.paystack.com/${payment.gateway_reference}`;
+  }
+
+  if (payment.gateway === 'stripe') {
+    const meta = (payment.metadata || {}) as Record<string, unknown>;
+    const sessionId = meta.stripe_session_id as string;
+    if (sessionId) {
+      try {
+        const key = process.env.STRIPE_SECRET_KEY || '';
+        const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
+          headers: { Authorization: `Bearer ${key}` },
+        });
+        const session = await res.json();
+        if (session.url) return session.url;
+      } catch { /* fall through */ }
+    }
+  }
+
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -63,10 +97,16 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.waaiio.com';
 
+    // Calculate balance (partial payments supported)
+    const balance = invoice.total_amount - (invoice.amount_paid || 0);
+    if (balance <= 0) {
+      return NextResponse.json({ error: 'Invoice already paid' }, { status: 400 });
+    }
+
     const result = await initializePayment(supabase, {
       invoiceId: invoice.id,
       userId: '00000000-0000-0000-0000-000000000000', // public, no auth user
-      amount: invoice.total_amount,
+      amount: balance,
       referenceCode: invoice.reference_code,
       businessName: biz.name,
       phone: invoice.customer_phone || '',
@@ -77,10 +117,14 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result) {
-      return NextResponse.json({ error: 'Failed to initialize payment' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to initialize payment. Please contact the business.' }, { status: 500 });
     }
 
-    return NextResponse.json({ url: result.url, reference: result.reference });
+    // Get the direct gateway URL (not the shortened WhatsApp URL)
+    // The shortened URL (/api/pay?ref=XX) doesn't reliably resolve for all gateways
+    const gatewayUrl = await getDirectGatewayUrl(supabase, result.reference);
+
+    return NextResponse.json({ url: gatewayUrl || result.url, reference: result.reference });
   } catch (err) {
     console.error('invoices/pay error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
