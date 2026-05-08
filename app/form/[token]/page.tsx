@@ -28,9 +28,6 @@ export default function PublicFormPage() {
   const [state, setState] = useState<PageState>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
-  const [contactName, setContactName] = useState('');
-  const [contactPhone, setContactPhone] = useState('');
-  const [contactEmail, setContactEmail] = useState('');
 
   useEffect(() => {
     async function loadForm() {
@@ -82,9 +79,19 @@ export default function PublicFormPage() {
         body: JSON.stringify({
           token,
           answers,
-          customer_name: contactName.trim() || null,
-          customer_phone: contactPhone.trim() || null,
-          customer_email: contactEmail.trim() || null,
+          // Auto-extract contact info from form answers by field type
+          customer_name: (() => {
+            const nameField = form.fields.find(f => f.label.toLowerCase().includes('name') && f.type === 'text');
+            return nameField ? String(answers[nameField.id] || '') : '';
+          })() || null,
+          customer_phone: (() => {
+            const phoneField = form.fields.find(f => f.type === 'phone');
+            return phoneField ? String(answers[phoneField.id] || '') : '';
+          })() || null,
+          customer_email: (() => {
+            const emailField = form.fields.find(f => f.type === 'email');
+            return emailField ? String(answers[emailField.id] || '') : '';
+          })() || null,
         }),
       });
 
@@ -155,26 +162,6 @@ export default function PublicFormPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Contact info */}
-          <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-3">
-            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Your Info</p>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Name</label>
-              <input type="text" value={contactName} onChange={e => setContactName(e.target.value)}
-                placeholder="Your name" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
-              <input type="tel" value={contactPhone} onChange={e => setContactPhone(e.target.value)}
-                placeholder="Phone number" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
-              <input type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)}
-                placeholder="email@example.com" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
-            </div>
-          </div>
-
           {/* Form fields */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 space-y-4">
             {form.fields.map(field => (
