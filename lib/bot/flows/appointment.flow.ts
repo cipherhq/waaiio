@@ -123,7 +123,8 @@ const selectAppointmentStep: FlowStepConfig = {
 
   async next() {
     // Route into the scheduling flow's shared steps
-    return 'select_staff';
+    // Order: date → staff → time → confirm → payment
+    return 'select_date';
   },
 
   async skipIf(ctx: FlowContext) {

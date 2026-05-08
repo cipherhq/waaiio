@@ -625,6 +625,9 @@ export const schedulingFlow: FlowDefinition = {
       id: 'apply_promo',
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
+        // Skip if service is free (no point asking for promo code)
+        const price = ctx.session.session_data.service_price as number || 0;
+        if (price <= 0) return true;
         // Skip if no active promo codes exist for this business
         const { count } = await ctx.supabase
           .from('promo_codes')
