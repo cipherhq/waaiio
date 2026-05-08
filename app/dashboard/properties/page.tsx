@@ -104,12 +104,14 @@ export default function PropertiesPage() {
     setReservationsLoading(true);
     setView('reservations');
     const supabase = createClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('reservations')
       .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, total_amount, nightly_rate, special_requests, created_at')
+      .eq('business_id', business.id)
       .or(`property_id.eq.${p.id},service_id.eq.${p.id}`)
       .order('check_in', { ascending: false })
       .limit(50);
+    if (error) console.error('Reservations query error:', error);
     setReservations((data || []) as Reservation[]);
     setReservationsLoading(false);
   }
