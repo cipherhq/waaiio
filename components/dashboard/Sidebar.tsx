@@ -462,8 +462,8 @@ export function Sidebar() {
     if (item.label === 'Bookings') {
       if (catLabels) {
         const renamed = catLabels.entityNamePlural.charAt(0).toUpperCase() + catLabels.entityNamePlural.slice(1);
-        // Don't relabel to "Orders" or "Payments" — those have their own pages
-        if (renamed === 'Orders' || renamed === 'Payments') return 'Bookings';
+        // Don't relabel to terms that clash with other nav items
+        if (['Orders', 'Payments', 'Appointments', 'Reservations', 'Stays'].includes(renamed)) return 'Bookings';
         return renamed;
       }
     }
