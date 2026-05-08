@@ -1,5 +1,5 @@
 'use client';
-import { getLocale, type CountryCode } from '@/lib/constants';
+import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -332,7 +332,7 @@ export default function QueuePage() {
               type="text"
               value={addPhone}
               onChange={e => setAddPhone(e.target.value)}
-              placeholder="Phone (e.g., +234...)"
+              placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
               className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
             />
             <select

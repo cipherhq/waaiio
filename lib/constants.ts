@@ -949,6 +949,17 @@ function _getCountryConfig(code: string): CountryConfig {
 
 // ── Multi-Country Helpers ──
 
+/** Get phone placeholder for a country code, e.g. "+234 8012345678" */
+export function getPhonePlaceholder(countryCode: CountryCode = 'NG'): string {
+  const config = _getCountryConfig(countryCode);
+  return `${config.dialingCode} ${config.phonePlaceholder}`;
+}
+
+/** Get dialing code for a country code, e.g. "+234" */
+export function getDialingCode(countryCode: CountryCode = 'NG'): string {
+  return _getCountryConfig(countryCode).dialingCode;
+}
+
 /** Get currency symbol for a country code */
 export function getCurrencySymbol(countryCode: CountryCode = 'NG'): string {
   return _getCountryConfig(countryCode).currencySymbol;

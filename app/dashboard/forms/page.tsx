@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 interface FormField {
   id: string;
@@ -533,7 +534,7 @@ export default function FormsPage() {
                 </button>
                 <div className="flex items-center gap-1 ml-auto">
                   <input type="text" value={sendPhone} onChange={e => setSendPhone(e.target.value)}
-                    placeholder="+234..."
+                    placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
                     className="w-36 rounded-lg border border-gray-200 px-2 py-1.5 text-xs outline-none focus:border-brand" />
                   <button onClick={() => handleSendForm(form)} disabled={sendingForm || !sendPhone.trim()}
                     className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50">

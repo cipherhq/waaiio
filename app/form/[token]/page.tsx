@@ -166,7 +166,7 @@ export default function PublicFormPage() {
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
               <input type="tel" value={contactPhone} onChange={e => setContactPhone(e.target.value)}
-                placeholder="+234..." className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
+                placeholder="Phone number" className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Email</label>
@@ -209,7 +209,7 @@ export default function PublicFormPage() {
                 {field.type === 'phone' && (
                   <input type="tel" value={(answers[field.id] as string) || ''}
                     onChange={e => updateAnswer(field.id, e.target.value)}
-                    placeholder="+234..."
+                    placeholder="Phone number"
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
                 )}
                 {field.type === 'date' && (

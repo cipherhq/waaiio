@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency } from '@/lib/constants';
+import { formatCurrency, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 interface StaffMember {
   id: string;
@@ -458,7 +458,7 @@ export default function StaffPage() {
                   type="tel"
                   value={form.phone || ''}
                   onChange={e => setForm({ ...form, phone: e.target.value })}
-                  placeholder="+234..."
+                  placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
                 />
               </div>

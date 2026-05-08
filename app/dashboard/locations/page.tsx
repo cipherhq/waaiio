@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 interface Location {
   id: string;
@@ -175,7 +176,7 @@ export default function LocationsPage() {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
-                <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder="+234..." className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                <input type="tel" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)} className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
             </div>
 

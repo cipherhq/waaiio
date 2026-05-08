@@ -257,7 +257,7 @@ export default function RecurringSetupPage() {
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               required
-              placeholder="+234..."
+              placeholder="Phone number"
               className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
             />
           </div>

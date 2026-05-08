@@ -1,5 +1,5 @@
 'use client';
-import { getLocale, type CountryCode } from '@/lib/constants';
+import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -633,7 +633,7 @@ export default function InvoicesPage() {
                     type="tel"
                     value={customerPhone}
                     onChange={e => setCustomerPhone(e.target.value)}
-                    placeholder="+234..."
+                    placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
                     className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                   />
                 </div>

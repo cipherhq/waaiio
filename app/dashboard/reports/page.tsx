@@ -1,5 +1,5 @@
 'use client';
-import { getLocale, type CountryCode } from '@/lib/constants';
+import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -204,7 +204,7 @@ export default function DocumentSharePage() {
           <div>
             <label className="block text-xs font-medium text-gray-600">Customer Phone (WhatsApp) *</label>
             <input type="text" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)}
-              placeholder="e.g., +2348012345678"
+              placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
           </div>
           <div>
