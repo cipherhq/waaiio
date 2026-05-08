@@ -18,6 +18,7 @@ interface Appointment {
   staff_ids: string[];
   allow_staff_selection: boolean;
   is_active: boolean;
+  auto_approve: boolean;
   sort_order: number;
   image_url: string | null;
 }
@@ -56,6 +57,7 @@ export default function AppointmentsManagementPage() {
     staff_ids: [] as string[],
     allow_staff_selection: false,
     is_active: true,
+    auto_approve: true,
   });
 
   const loadData = useCallback(async () => {
@@ -75,7 +77,7 @@ export default function AppointmentsManagementPage() {
     setForm({
       id: '', name: '', description: '', price: 0, price_is_variable: false,
       duration_minutes: 30, deposit_amount: 0, max_capacity: 1,
-      requires_staff: false, staff_ids: [], allow_staff_selection: false, is_active: true,
+      requires_staff: false, staff_ids: [], allow_staff_selection: false, is_active: true, auto_approve: true,
     });
     setView('add');
   }
@@ -86,7 +88,7 @@ export default function AppointmentsManagementPage() {
       price_is_variable: a.price_is_variable, duration_minutes: a.duration_minutes,
       deposit_amount: a.deposit_amount, max_capacity: a.max_capacity,
       requires_staff: a.requires_staff, staff_ids: a.staff_ids || [],
-      allow_staff_selection: a.allow_staff_selection, is_active: a.is_active,
+      allow_staff_selection: a.allow_staff_selection, is_active: a.is_active, auto_approve: a.auto_approve !== false,
     });
     setView('edit');
   }
@@ -108,6 +110,7 @@ export default function AppointmentsManagementPage() {
       staff_ids: form.requires_staff ? form.staff_ids : [],
       allow_staff_selection: form.requires_staff ? form.allow_staff_selection : false,
       is_active: form.is_active,
+      auto_approve: form.auto_approve,
     };
 
     if (view === 'add') {
@@ -248,6 +251,17 @@ export default function AppointmentsManagementPage() {
               <button type="button" onClick={() => setForm({ ...form, is_active: !form.is_active })}
                 className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.is_active ? 'bg-brand' : 'bg-gray-200'}`}>
                 <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.is_active ? '22px' : '2px' }} />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+              <div className="mr-3">
+                <p className="text-sm font-medium text-gray-800">Auto-approve</p>
+                <p className="text-xs text-gray-400">Confirm bookings instantly</p>
+              </div>
+              <button type="button" onClick={() => setForm({ ...form, auto_approve: !form.auto_approve })}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.auto_approve ? 'bg-brand' : 'bg-gray-200'}`}>
+                <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.auto_approve ? '22px' : '2px' }} />
               </button>
             </div>
 

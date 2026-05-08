@@ -123,7 +123,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, max_capacity, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -217,6 +217,7 @@ export const schedulingFlow: FlowDefinition = {
             _service_available_from: (matched as Record<string, unknown>).available_from || null,
             _service_available_to: (matched as Record<string, unknown>).available_to || null,
             _service_max_capacity: (matched as Record<string, unknown>).max_capacity || 1,
+            _auto_approve: (matched as Record<string, unknown>).auto_approve !== false,
             _service_requires_staff: (matched as Record<string, unknown>).requires_staff || false,
             _service_staff_ids: (matched as Record<string, unknown>).staff_ids || [],
             _service_allow_staff_selection: (matched as Record<string, unknown>).allow_staff_selection || false,
@@ -230,7 +231,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -255,6 +256,7 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data._service_available_from = s.available_from || null;
           ctx.session.session_data._service_available_to = s.available_to || null;
           ctx.session.session_data._service_max_capacity = s.max_capacity || 1;
+          ctx.session.session_data._auto_approve = s.auto_approve !== false;
           ctx.session.session_data._service_requires_staff = s.requires_staff || false;
           ctx.session.session_data._service_staff_ids = s.staff_ids || [];
           ctx.session.session_data._service_allow_staff_selection = s.allow_staff_selection || false;
@@ -1380,7 +1382,7 @@ export const schedulingFlow: FlowDefinition = {
           channel: 'whatsapp',
           deposit_amount: totalDeposit,
           deposit_status: totalDeposit > 0 ? 'pending' : 'none',
-          status: totalDeposit > 0 ? 'pending' : 'confirmed',
+          status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
           special_requests: (d.special_requests as string) || null,
           venue_address: (d.venue_address as string) || null,
           end_date: (d.end_date as string) || null,
