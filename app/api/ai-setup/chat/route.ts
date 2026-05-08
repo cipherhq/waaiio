@@ -168,6 +168,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing business_id or message' }, { status: 400 });
   }
 
+  // Input validation: limit message size and conversation history
+  if (message.length > 5000) {
+    return NextResponse.json({ error: 'Message too long' }, { status: 400 });
+  }
+  const safeHistory = (conversation_history || [])
+    .slice(-20) // Max 20 messages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => ({ role: m.role, content: String(m.content).slice(0, 5000) }));
+
   // Rate limit: 20 messages per business per hour
   const rateLimited = rateLimitResponse(`ai-setup:${business_id}`, 20, 3600_000);
   if (rateLimited) return rateLimited;
@@ -201,8 +210,8 @@ export async function POST(request: NextRequest) {
     // Build message history
     const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
 
-    if (conversation_history?.length) {
-      for (const msg of conversation_history) {
+    if (safeHistory.length) {
+      for (const msg of safeHistory) {
         messages.push({ role: msg.role, content: msg.content });
       }
     }
@@ -211,7 +220,12 @@ export async function POST(request: NextRequest) {
 
     const categoryGuide = CATEGORY_CONTEXT[biz.category || ''] || `This is a "${biz.category || 'general'}" business. Ask what they offer (services, products, or both) and their prices.`;
 
-    const contextNote = `[Context: Business "${biz.name}", category: ${biz.category || 'general'}, location: ${biz.city || 'unknown'}, country: ${biz.country_code || 'NG'}, subscription tier: ${tier}]
+    // Sanitize business data to prevent prompt injection
+    const safeName = String(biz.name || '').replace(/[[\]{}"`]/g, '').slice(0, 100);
+    const safeCategory = String(biz.category || 'general').replace(/[^a-z_]/gi, '').slice(0, 30);
+    const safeCity = String(biz.city || 'unknown').replace(/[[\]{}"`]/g, '').slice(0, 50);
+
+    const contextNote = `[Context: Business ${JSON.stringify(safeName)}, category: ${safeCategory}, location: ${safeCity}, country: ${biz.country_code || 'NG'}, subscription tier: ${tier}]
 
 ## CATEGORY GUIDE FOR THIS BUSINESS:
 ${categoryGuide}

@@ -73,17 +73,19 @@ export async function POST(request: NextRequest) {
 
       let sortOrder = (lastService?.sort_order ?? -1) + 1;
 
-      const rows = services.map((s) => ({
-        business_id,
-        name: s.name,
-        price: s.price || 0,
-        duration_minutes: s.duration_minutes || 30,
-        deposit_amount: s.deposit_amount || 0,
-        description: s.description || null,
-        price_is_variable: false,
-        is_active: true,
-        sort_order: sortOrder++,
-      }));
+      const rows = services
+        .filter((s) => s.name && String(s.name).trim().length > 0 && String(s.name).length <= 200)
+        .map((s) => ({
+          business_id,
+          name: String(s.name).trim().slice(0, 200),
+          price: Math.max(0, Math.min(Number(s.price) || 0, 99999999)),
+          duration_minutes: Math.max(0, Math.min(Number(s.duration_minutes) || 30, 1440)),
+          deposit_amount: Math.max(0, Math.min(Number(s.deposit_amount) || 0, 99999999)),
+          description: s.description ? String(s.description).slice(0, 1000) : null,
+          price_is_variable: false,
+          is_active: true,
+          sort_order: sortOrder++,
+        }));
 
       const { data: created, error } = await service.from('services').insert(rows).select('id, name');
       if (error) logger.error('[AI-SETUP] Services insert error:', error.message);
