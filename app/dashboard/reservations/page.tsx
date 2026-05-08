@@ -37,6 +37,7 @@ interface Booking {
   staff_name: string | null;
   service_id: string | null;
   refund_amount: number | null;
+  _isReservation?: boolean;
 }
 
 const allStatuses = ['all', 'pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'no_show'];
@@ -148,8 +149,10 @@ export default function BookingsPage() {
   const fetchBookings = useCallback(async () => {
     const supabase = createClient();
 
+    let allBookings: Booking[] = [];
+
+    // Query reservations table if business has reservation capability
     if (showReservations) {
-      // Hotel/shortlet/car_rental — query reservations table
       let rQuery = supabase
         .from('reservations')
         .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, nightly_rate, created_at, confirmed_at, checked_in_at, checked_out_at, cancelled_at, payment_id, service_id, property_id, property:properties!property_id(name)')
@@ -162,7 +165,6 @@ export default function BookingsPage() {
       if (dateTo) rQuery = rQuery.lte('check_in', dateTo);
 
       const { data } = await rQuery;
-      // Map reservation fields to booking interface for display
       const mapped = (data || []).map(r => {
         const prop = r.property as unknown as { name: string } | null;
         return {
@@ -171,22 +173,28 @@ export default function BookingsPage() {
           time: r.check_out ? `${r.nights || '?'} night${r.nights !== 1 ? 's' : ''}` : '',
           party_size: r.guests || 1,
           staff_id: null,
-          staff_name: prop?.name || null,  // Reuse staff_name field for property name display
-          notes: null,
+          staff_name: prop?.name || null,
+          notes: `🏠 ${prop?.name || 'Property'}`,
           refund_amount: null,
           rescheduled_at: null,
           original_date: null,
           original_time: null,
           seated_at: r.checked_in_at,
           completed_at: r.checked_out_at,
+          _isReservation: true,
         };
       }) as Booking[];
-      setBookings(mapped);
-      setLoading(false);
-      return;
+      allBookings.push(...mapped);
+
+      // If ONLY reservation type (no scheduling), skip bookings query
+      if (isReservationType) {
+        setBookings(allBookings);
+        setLoading(false);
+        return;
+      }
     }
 
-    // Standard scheduling businesses — query bookings table
+    // Query bookings table (appointments + on-demand services)
     let query = supabase
       .from('bookings')
       .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, refund_amount')
@@ -213,9 +221,12 @@ export default function BookingsPage() {
       );
     }
 
-    setBookings(results as Booking[]);
+    // Merge with reservations (if any) and sort by date descending
+    allBookings.push(...(results as Booking[]));
+    allBookings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    setBookings(allBookings);
     setLoading(false);
-  }, [business.id, filter, dateFrom, dateTo, search]);
+  }, [business.id, filter, dateFrom, dateTo, search, showReservations, isReservationType]);
 
   useEffect(() => {
     fetchBookings();
@@ -243,17 +254,19 @@ export default function BookingsPage() {
       extra.cancelled_by = 'business';
     }
 
-    if (showReservations) {
-      // Reservation: use checked_in_at / checked_out_at
+    // Determine which table this record belongs to
+    const booking = bookings.find(b => b.id === id);
+    const isThisReservation = !!(booking as any)?._isReservation;
+
+    if (isThisReservation) {
       if (newStatus === 'in_progress') extra.checked_in_at = now;
       if (newStatus === 'completed') extra.checked_out_at = now;
     } else {
-      // Scheduling: use seated_at / completed_at
       if (newStatus === 'in_progress') extra.seated_at = now;
       if (newStatus === 'completed') extra.completed_at = now;
     }
 
-    const table = showReservations ? 'reservations' : 'bookings';
+    const table = isThisReservation ? 'reservations' : 'bookings';
     await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
 
     // Release booking slot on cancel/no_show so the time becomes available again
