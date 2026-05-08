@@ -72,15 +72,15 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       const time = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
       const receiptLines = [
-        `\u2705 *Payment Receipt*`,
+        `✅ *Payment Receipt*`,
         ``,
-        `\ud83c\udfe2 *${bizName}*`,
-        serviceName ? `\ud83d\udcce ${serviceName}` : null,
-        referenceCode ? `\ud83d\udd11 Ref: ${referenceCode}` : null,
-        `\ud83d\udcb0 Amount: *${formattedAmount}*`,
-        `\ud83d\udcc5 ${date} at ${time}`,
+        `🏢 *${bizName}*`,
+        serviceName ? `📎 ${serviceName}` : null,
+        referenceCode ? `🔑 Ref: ${referenceCode}` : null,
+        `💰 Amount: *${formattedAmount}*`,
+        `📅 ${date} at ${time}`,
         ``,
-        `Thank you for your payment, ${customerName || 'there'}! \ud83d\ude4f`,
+        `Thank you for your payment, ${customerName || 'there'}! 🙏`,
       ].filter(Boolean).join('\n');
 
       await sender.sendText({ to: phone, text: receiptLines });

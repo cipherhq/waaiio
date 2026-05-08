@@ -65,23 +65,23 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   if (isDedicated && ownerPhone) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
-      return `  \u2022 ${label} x${i.quantity}`;
+      return `  • ${label} x${i.quantity}`;
     }).join('\n');
 
     const lines = [
-      `\uD83D\uDCE6 *New Order!*`,
+      `📦 *New Order!*`,
       '',
-      `\uD83D\uDD11 Ref: *${referenceCode}*`,
-      `\uD83D\uDC64 Customer: ${customerName}`,
+      `🔑 Ref: *${referenceCode}*`,
+      `👤 Customer: ${customerName}`,
       '',
-      `\uD83D\uDCCB *Items:*`,
+      `📋 *Items:*`,
       itemLines,
       '',
-      `\uD83D\uDCB0 Total: *${formattedTotal}*`,
+      `💰 Total: *${formattedTotal}*`,
     ];
 
     if (deliveryAddress) {
-      lines.push(`\uD83D\uDCCD Delivery: ${deliveryAddress}`);
+      lines.push(`📍 Delivery: ${deliveryAddress}`);
     }
 
     lines.push('', `Open your dashboard to manage this order.`);
@@ -175,44 +175,44 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
   if (isDedicated && ownerPhone) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
-      return `  \u2022 ${label} x${i.quantity}`;
+      return `  • ${label} x${i.quantity}`;
     }).join('\n');
 
     const lines = [
-      `\uD83D\uDCCB *New Quote Request*`,
+      `📋 *New Quote Request*`,
       '',
-      `\uD83D\uDC64 ${customerName}`,
+      `👤 ${customerName}`,
       '',
-      `\uD83D\uDCE6 *Items:*`,
+      `📦 *Items:*`,
       itemLines,
     ];
 
     if (addons && addons.length > 0) {
-      lines.push('', '\uD83D\uDD27 *Add-ons:*');
+      lines.push('', '🔧 *Add-ons:*');
       for (const a of addons) {
         lines.push(`  + ${a.name}: ${formatCurrency(a.price * (a.quantity || 1), cc)}`);
       }
     }
 
     if (deliveryZoneName) {
-      lines.push(`\uD83D\uDE9A Zone: ${deliveryZoneName}`);
+      lines.push(`🚚 Zone: ${deliveryZoneName}`);
     }
 
     // Custom order details
     if (customOrderData) {
-      lines.push('', '\uD83C\uDFA8 *Custom Order Details:*');
-      if (customOrderData.style_photo_url) lines.push('\uD83D\uDCF8 Style photo attached');
+      lines.push('', '🎨 *Custom Order Details:*');
+      if (customOrderData.style_photo_url) lines.push('📸 Style photo attached');
       if (customOrderData.measurements && Object.keys(customOrderData.measurements).length > 0) {
-        lines.push('\uD83D\uDCCF Measurements:');
+        lines.push('📏 Measurements:');
         for (const [field, value] of Object.entries(customOrderData.measurements)) {
-          lines.push(`  \u2022 ${field}: ${value}`);
+          lines.push(`  • ${field}: ${value}`);
         }
       }
-      if (customOrderData.design_notes) lines.push(`\u270D\uFE0F Notes: ${customOrderData.design_notes}`);
-      if (customOrderData.deadline) lines.push(`\uD83D\uDCC5 Deadline: ${customOrderData.deadline}`);
+      if (customOrderData.design_notes) lines.push(`✍️ Notes: ${customOrderData.design_notes}`);
+      if (customOrderData.deadline) lines.push(`📅 Deadline: ${customOrderData.deadline}`);
     }
 
-    lines.push('', `\uD83D\uDCB0 Estimated: *${formattedTotal}*`);
+    lines.push('', `💰 Estimated: *${formattedTotal}*`);
     lines.push('', `Open your dashboard to respond with a price.`);
 
     const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
@@ -285,16 +285,16 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
   // Send WhatsApp only for businesses with their own number
   if (isDedicated && ownerPhone) {
     const lines = [
-      `\uD83D\uDCC5 *New Booking!*`,
+      `📅 *New Booking!*`,
       '',
-      `\uD83D\uDD11 Ref: *${referenceCode}*`,
-      `\uD83D\uDC64 Customer: ${customerName}`,
+      `🔑 Ref: *${referenceCode}*`,
+      `👤 Customer: ${customerName}`,
       `\uD83D\uDCC6 ${date} at ${time}`,
       `\uD83D\uDC65 ${quantity} ${quantityLabel}`,
     ];
 
     if (amount) {
-      lines.push(`\uD83D\uDCB0 Amount: *${formatCurrency(amount, cc)}*`);
+      lines.push(`💰 Amount: *${formatCurrency(amount, cc)}*`);
     }
 
     lines.push('', `Open your dashboard to manage this booking.`);

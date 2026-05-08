@@ -291,16 +291,16 @@ const donationPaymentStep: FlowStepConfig = {
       {
         type: 'text',
         text: [
-          `Thank you for your generosity! \ud83d\ude4f`,
+          `Thank you for your generosity! 🙏`,
           '',
           `*Campaign:* ${sd.campaign_title}`,
           `*Amount:* ${formatCurrency(amount, country)}`,
           `*Ref:* ${refCode}`,
           '',
-          `Pay here \ud83d\udc47`,
+          `Pay here 👇`,
           result.url,
           '',
-          `\u26a0\ufe0f After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+          `⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
         ].join('\n'),
       },
       {
@@ -371,13 +371,13 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         await ctx.sender.sendText({
           to: ctx.from,
           text: [
-            `\u2705 *Donation Confirmed!*`,
+            `✅ *Donation Confirmed!*`,
             '',
-            `\ud83d\ude4f Thank you for supporting *${sd.campaign_title}*`,
-            `\ud83d\udcb0 Amount: ${formatCurrency(amount, cc)}`,
-            `\ud83d\udd11 Ref: *${refCode}*`,
+            `🙏 Thank you for supporting *${sd.campaign_title}*`,
+            `💰 Amount: ${formatCurrency(amount, cc)}`,
+            `🔑 Ref: *${refCode}*`,
             '',
-            `Your generosity makes a difference! \u2764\ufe0f`,
+            `Your generosity makes a difference! ❤️`,
           ].join('\n'),
         });
 
