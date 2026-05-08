@@ -80,6 +80,7 @@ export default function FormsPage() {
   const [description, setDescription] = useState('');
   const [fields, setFields] = useState<FormField[]>([]);
   const [editId, setEditId] = useState('');
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
 
   // New field state
   const [newLabel, setNewLabel] = useState('');
@@ -146,8 +147,13 @@ export default function FormsPage() {
     setNewOptions('');
   }
 
+  function updateField(fieldId: string, updates: Partial<FormField>) {
+    setFields(fields.map(f => f.id === fieldId ? { ...f, ...updates } : f));
+  }
+
   function removeField(fieldId: string) {
     setFields(fields.filter(f => f.id !== fieldId));
+    if (editingFieldId === fieldId) setEditingFieldId(null);
   }
 
   function moveField(index: number, direction: 'up' | 'down') {
@@ -339,22 +345,61 @@ export default function FormsPage() {
             {fields.length > 0 && (
               <div className="mb-3 space-y-2">
                 {fields.map((f, i) => (
-                  <div key={f.id} className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
-                    <div className="flex flex-col gap-0.5">
-                      <button onClick={() => moveField(i, 'up')} disabled={i === 0} className="text-gray-300 hover:text-gray-500 disabled:invisible">
-                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                  <div key={f.id} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                    {/* Field header — click to expand/collapse edit */}
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <div className="flex flex-col gap-0.5">
+                        <button onClick={() => moveField(i, 'up')} disabled={i === 0} className="text-gray-300 hover:text-gray-500 disabled:invisible">
+                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                        </button>
+                        <button onClick={() => moveField(i, 'down')} disabled={i === fields.length - 1} className="text-gray-300 hover:text-gray-500 disabled:invisible">
+                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                        </button>
+                      </div>
+                      <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setEditingFieldId(editingFieldId === f.id ? null : f.id)}>
+                        <span className="text-sm font-medium text-gray-900">{f.label}</span>
+                        <span className="ml-2 text-xs text-gray-400">{f.type}</span>
+                        {f.required && <span className="ml-1 text-xs text-red-400">*</span>}
+                      </div>
+                      <button onClick={() => setEditingFieldId(editingFieldId === f.id ? null : f.id)}
+                        className="text-xs text-gray-400 hover:text-brand">
+                        {editingFieldId === f.id ? 'Done' : 'Edit'}
                       </button>
-                      <button onClick={() => moveField(i, 'down')} disabled={i === fields.length - 1} className="text-gray-300 hover:text-gray-500 disabled:invisible">
-                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                      </button>
+                      <button onClick={() => removeField(f.id)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm font-medium text-gray-900">{f.label}</span>
-                      <span className="ml-2 text-xs text-gray-400">{f.type}</span>
-                      {f.required && <span className="ml-1 text-xs text-red-400">*</span>}
-                      {f.options && <span className="ml-2 text-xs text-gray-400">({f.options.join(', ')})</span>}
-                    </div>
-                    <button onClick={() => removeField(f.id)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+
+                    {/* Inline edit panel */}
+                    {editingFieldId === f.id && (
+                      <div className="border-t border-gray-100 bg-gray-50 px-3 py-3 space-y-2">
+                        <div className="grid grid-cols-[1fr_auto] gap-2">
+                          <input type="text" value={f.label}
+                            onChange={e => updateField(f.id, { label: e.target.value })}
+                            placeholder="Field label"
+                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+                          <select value={f.type}
+                            onChange={e => updateField(f.id, { type: e.target.value as FormField['type'] })}
+                            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand">
+                            {FIELD_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                          </select>
+                        </div>
+                        {f.type === 'select' && (
+                          <input type="text" value={(f.options || []).join(', ')}
+                            onChange={e => updateField(f.id, { options: e.target.value.split(',').map(o => o.trim()).filter(Boolean) })}
+                            placeholder="Options (comma separated)"
+                            className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+                        )}
+                        <input type="text" value={f.placeholder || ''}
+                          onChange={e => updateField(f.id, { placeholder: e.target.value || undefined })}
+                          placeholder="Placeholder text (optional)"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+                        <label className="flex items-center gap-2 text-xs text-gray-600">
+                          <input type="checkbox" checked={f.required}
+                            onChange={e => updateField(f.id, { required: e.target.checked })}
+                            className="rounded" />
+                          Required field
+                        </label>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
