@@ -18,6 +18,7 @@ interface EventItem {
   max_per_order: number | null;
   status: 'draft' | 'published' | 'sold_out' | 'cancelled' | 'completed';
   image_url: string | null;
+  self_checkin_enabled: boolean;
   created_at: string;
 }
 
@@ -58,6 +59,7 @@ export default function EventsPage() {
     total_tickets: 100,
     max_per_order: 0,
     status: 'published' as EventItem['status'],
+    self_checkin_enabled: false,
   });
 
   const loadEvents = useCallback(async () => {
@@ -107,7 +109,7 @@ export default function EventsPage() {
   }
 
   function openAdd() {
-    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published' });
+    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false });
     setView('add');
   }
 
@@ -123,6 +125,7 @@ export default function EventsPage() {
       total_tickets: event.total_tickets,
       max_per_order: event.max_per_order || 0,
       status: event.status,
+      self_checkin_enabled: event.self_checkin_enabled || false,
     });
     setView('edit');
     loadTicketTypes(event.id);
@@ -143,6 +146,7 @@ export default function EventsPage() {
       total_tickets: form.total_tickets,
       max_per_order: form.max_per_order || null,
       status: form.status,
+      self_checkin_enabled: form.self_checkin_enabled,
     };
 
     if (view === 'add') {
@@ -309,6 +313,16 @@ export default function EventsPage() {
                 <option value="cancelled">Cancelled</option>
                 <option value="completed">Completed</option>
               </select>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+              <div className="mr-3">
+                <p className="text-sm font-medium text-gray-800">Self Check-in</p>
+                <p className="text-xs text-gray-400">Attendees can check in via QR code or WhatsApp</p>
+              </div>
+              <button type="button" onClick={() => setForm({ ...form, self_checkin_enabled: !form.self_checkin_enabled })}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.self_checkin_enabled ? 'bg-brand' : 'bg-gray-200'}`}>
+                <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.self_checkin_enabled ? '22px' : '2px' }} />
+              </button>
             </div>
             {view === 'edit' && (
               <div className="rounded-lg border border-gray-100 bg-white p-3">

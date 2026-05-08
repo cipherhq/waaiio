@@ -154,6 +154,7 @@ export default function TicketVerifyPage() {
   const isValid = ticket.status === 'valid';
   const isUsed = ticket.status === 'used';
   const isCancelled = ticket.status === 'cancelled';
+  const selfCheckin = (ticket as any).self_checkin_enabled;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -275,12 +276,24 @@ export default function TicketVerifyPage() {
               {state === 'marking' ? (
                 <span className="flex items-center justify-center gap-2">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  Verifying...
+                  Checking in...
                 </span>
               ) : (
-                'Mark as Used'
+                '✅ Check In'
               )}
             </button>
+          )}
+
+          {isUsed && state !== 'verified' && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-center">
+              <p className="text-sm font-bold text-amber-700">Already Checked In</p>
+              {ticket.scanned_at && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Checked in at {formatDateTime(ticket.scanned_at)}
+                  {ticket.scanned_by && ticket.scanned_by !== 'self' ? ` by ${ticket.scanned_by}` : ''}
+                </p>
+              )}
+            </div>
           )}
 
           {errorMsg && state === 'ready' && (
