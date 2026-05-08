@@ -131,6 +131,40 @@ export const reservationFlow: FlowDefinition = {
     {
       id: 'select_checkin',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const messages: PromptMessage[] = [];
+
+        // Send property photos if not already sent
+        if (!ctx.session.session_data._photos_sent) {
+          const propertyId = ctx.session.session_data.property_id as string | undefined;
+          if (propertyId) {
+            const { data: prop } = await ctx.supabase
+              .from('properties')
+              .select('photos, name, description, bedrooms, bathrooms, max_guests, amenities')
+              .eq('id', propertyId)
+              .maybeSingle();
+
+            if (prop) {
+              const photos = (prop.photos as string[]) || [];
+              for (const url of photos.slice(0, 3)) {
+                messages.push({ type: 'image' as const, imageUrl: url, caption: undefined });
+              }
+
+              // Send property details summary
+              const details: string[] = [`🏠 *${prop.name}*`];
+              if (prop.description) details.push(prop.description);
+              const specs: string[] = [];
+              if (prop.bedrooms > 0) specs.push(`${prop.bedrooms} bed`);
+              if (prop.bathrooms > 0) specs.push(`${prop.bathrooms} bath`);
+              if (prop.max_guests > 0) specs.push(`up to ${prop.max_guests} guests`);
+              if (specs.length > 0) details.push(specs.join(' · '));
+              const amenities = (prop.amenities as string[]) || [];
+              if (amenities.length > 0) details.push(`✨ ${amenities.slice(0, 6).join(', ')}`);
+              messages.push({ type: 'text', text: details.join('\n') });
+            }
+          }
+          ctx.session.session_data._photos_sent = true;
+        }
+
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const dates: Array<{ title: string; postbackText: string }> = [];
         for (let i = 1; i <= 30 && dates.length < 10; i++) {
@@ -139,13 +173,14 @@ export const reservationFlow: FlowDefinition = {
           const label = d.toLocaleDateString(getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' });
           dates.push({ title: label, postbackText: d.toISOString().split('T')[0] });
         }
-        return [{
+        messages.push({
           type: 'list',
           title: 'Check-in Date',
           body: 'When would you like to check in?',
           buttonLabel: 'Choose Date',
           items: dates,
-        }];
+        });
+        return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         let dateStr = input;
