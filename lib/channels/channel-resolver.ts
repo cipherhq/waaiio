@@ -157,6 +157,21 @@ export class ChannelResolver {
       }
     }
 
+    // Final fallback: any active shared channel (for countries without their own)
+    const { data: anyShared } = await this.supabase
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('channel_type', 'shared')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (anyShared) {
+      const record = anyShared as ChannelRecord;
+      this.cache.set(cacheKey, { data: record, ts: Date.now() });
+      return { channel: record, sender: this.buildSender(record) };
+    }
+
     this.cache.set(cacheKey, { data: null, ts: Date.now() });
     return null;
   }
