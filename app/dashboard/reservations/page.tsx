@@ -141,12 +141,14 @@ export default function BookingsPage() {
   }
 
   const isReservationType = business.flow_type === 'reservation';
-  const nextActions = isReservationType ? reservationActions : schedulingActions;
+  const hasReservationCapability = business.capabilities?.includes('reservation' as any);
+  const showReservations = isReservationType || hasReservationCapability;
+  const nextActions = showReservations ? reservationActions : schedulingActions;
 
   const fetchBookings = useCallback(async () => {
     const supabase = createClient();
 
-    if (isReservationType) {
+    if (showReservations) {
       // Hotel/shortlet/car_rental — query reservations table
       let rQuery = supabase
         .from('reservations')
@@ -241,7 +243,7 @@ export default function BookingsPage() {
       extra.cancelled_by = 'business';
     }
 
-    if (isReservationType) {
+    if (showReservations) {
       // Reservation: use checked_in_at / checked_out_at
       if (newStatus === 'in_progress') extra.checked_in_at = now;
       if (newStatus === 'completed') extra.checked_out_at = now;
@@ -251,7 +253,7 @@ export default function BookingsPage() {
       if (newStatus === 'completed') extra.completed_at = now;
     }
 
-    const table = isReservationType ? 'reservations' : 'bookings';
+    const table = showReservations ? 'reservations' : 'bookings';
     await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
 
     // Release booking slot on cancel/no_show so the time becomes available again
@@ -371,7 +373,7 @@ export default function BookingsPage() {
               <tr className="border-b border-gray-50 bg-gray-50/50">
                 <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">{isReservationType ? (labels.propertyName || 'Property') : 'Staff'}</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">{showReservations ? (labels.propertyName || 'Property') : 'Staff'}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
@@ -405,7 +407,7 @@ export default function BookingsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {(isReservationType && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
+                      {(showReservations && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
                     </span>
                     {r.rescheduled_at && (
                       <span className="ml-1 inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
@@ -518,7 +520,7 @@ export default function BookingsPage() {
               <div>
                 <p className="font-mono text-lg font-bold text-brand">{selected.reference_code}</p>
                 <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[selected.status] || 'bg-gray-100 text-gray-600'}`}>
-                  {(isReservationType && reservationStatusLabels[selected.status]) || selected.status.replace('_', ' ')}
+                  {(showReservations && reservationStatusLabels[selected.status]) || selected.status.replace('_', ' ')}
                 </span>
               </div>
               <button onClick={() => setSelectedId(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
@@ -532,7 +534,7 @@ export default function BookingsPage() {
                 {selected.guest_phone && <p className="text-sm text-gray-500">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-500">{selected.guest_email}</p>}
               </div>
-              {isReservationType && selected.staff_name && (
+              {showReservations && selected.staff_name && (
                 <div>
                   <h3 className="text-sm font-medium text-gray-500">{labels.propertyName || 'Property'}</h3>
                   <p className="mt-1 text-sm font-medium text-gray-900">{selected.staff_name}</p>
