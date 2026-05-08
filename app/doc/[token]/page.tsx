@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
+import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 export default function DocumentViewerPage() {
   const { token } = useParams<{ token: string }>();
@@ -59,6 +60,9 @@ export default function DocumentViewerPage() {
           </div>
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
             <iframe src={docUrl} className="h-[80vh] w-full" title={docTitle} />
+          </div>
+          <div className="mt-4 text-center">
+            <ReturnToWhatsApp />
           </div>
         </div>
       </div>

@@ -29,7 +29,7 @@ export async function GET(
   // Get business name + logo
   const { data: biz } = await supabase
     .from('businesses')
-    .select('name, logo_url')
+    .select('name, phone, logo_url')
     .eq('id', form.business_id)
     .single();
 
@@ -38,6 +38,7 @@ export async function GET(
     description: form.description,
     fields: form.fields,
     business_name: biz?.name || '',
+    business_phone: biz?.phone || null,
     business_logo: biz?.logo_url || null,
   });
 }

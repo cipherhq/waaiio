@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 interface Business {
   id: string;
@@ -145,6 +146,7 @@ export default function RecurringSetupPage() {
           <p className="mt-2 text-sm text-gray-500">
             Your {frequency} payment has been configured. You'll be charged automatically.
           </p>
+          <ReturnToWhatsApp />
         </div>
       </div>
     );

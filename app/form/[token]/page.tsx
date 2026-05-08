@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 interface FormField {
   id: string;
@@ -17,6 +18,7 @@ interface FormData {
   description: string | null;
   fields: FormField[];
   business_name: string;
+  business_phone: string | null;
   business_logo: string | null;
 }
 
@@ -140,6 +142,7 @@ export default function PublicFormPage() {
           </div>
           <h1 className="mt-4 text-xl font-bold text-gray-900">Thank You!</h1>
           <p className="mt-2 text-sm text-gray-500">Your response has been submitted successfully.</p>
+          <ReturnToWhatsApp phone={form?.business_phone || undefined} />
           <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
         </div>
       </div>

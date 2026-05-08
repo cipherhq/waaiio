@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 interface TicketData {
   ticket_code: string;
@@ -301,8 +302,12 @@ export default function TicketVerifyPage() {
           )}
         </div>
 
+        <div className="mt-6 text-center">
+          <ReturnToWhatsApp />
+        </div>
+
         {/* Footer */}
-        <p className="mt-8 text-center text-xs text-gray-400">
+        <p className="mt-4 text-center text-xs text-gray-400">
           Powered by Waaiio
         </p>
       </main>
