@@ -1069,7 +1069,7 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: '\uD83C\uDF81 Got a referral code from a friend?',
+          body: '🎁 Got a referral code from a friend?',
           buttons: [
             { id: 'enter_code', title: 'Enter Code' },
             { id: 'skip', title: 'Skip' },
@@ -1087,6 +1087,9 @@ export const schedulingFlow: FlowDefinition = {
       },
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
+        // Skip if service/appointment is free
+        const price = ctx.session.session_data.service_price as number || 0;
+        if (price <= 0) return true;
         // Skip if business doesn't have referral capability
         const caps = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
         if (!caps.includes('referral')) return true;
@@ -1109,7 +1112,7 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'enter_referral_code',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83C\uDF81 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
+        return [{ type: 'text', text: '🎁 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const code = input.trim();
