@@ -1002,8 +1002,9 @@ export class BotService {
     // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
+    const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking';
     const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
-    if (isEscapeHatch && session.business_id && !isChatMode) {
+    if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
       await this.sendText(from, 'Action cancelled. Send *Hi* to start fresh. 🙏');
@@ -1907,6 +1908,12 @@ export class BotService {
     }
 
     const response = input.toLowerCase();
+
+    if (response === 'cancel' || response === 'exit' || response === 'quit') {
+      await this.sendText(from, 'Action cancelled. Send *Hi* to start fresh. 🙏');
+      await this.deactivateSession(session.id);
+      return;
+    }
 
     if (response === 'back_bookings') {
       await this.supabase.from('bot_sessions').update({ current_step: 'my_bookings' }).eq('id', session.id);
