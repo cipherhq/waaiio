@@ -20,7 +20,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'whatsapp_sign', label: 'WhatsApp Sign', description: 'Send documents for e-signature via WhatsApp', icon: '✍️' },
   { id: 'reminders', label: 'Reminders', description: 'Automated appointment and payment reminders', icon: '🔔' },
   { id: 'crowdfunding', label: 'Crowdfunding', description: 'Run campaigns with goals and donor tracking', icon: '❤️' },
-  { id: 'reports', label: 'Reports', description: 'Upload and send PDF reports to customers via WhatsApp', icon: '📄' },
+  { id: 'reports', label: 'Document Share', description: 'Upload and share documents with customers via WhatsApp', icon: '📄' },
   { id: 'queue', label: 'Queue', description: 'Customer check-in, queue management, and turn notifications', icon: '📋' },
   { id: 'feedback', label: 'Feedback', description: 'Collect customer ratings and reviews after service', icon: '⭐' },
   { id: 'loyalty', label: 'Loyalty', description: 'Points-based loyalty program for repeat customers', icon: '🏆' },
