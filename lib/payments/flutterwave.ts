@@ -72,7 +72,7 @@ export class FlutterwaveGateway implements PaymentGateway {
           tx_ref: txRef,
           amount: opts.amount,
           currency: opts.currency,
-          redirect_url: `${callbackUrl}/api/webhooks/flutterwave/redirect?ref=${txRef}`,
+          redirect_url: `${callbackUrl}/payment-success?ref=${opts.referenceCode}`,
           ...splitParams,
           customer: {
             email,

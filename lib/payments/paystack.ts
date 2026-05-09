@@ -74,6 +74,7 @@ export class PaystackGateway implements PaymentGateway {
           email,
           amount: amountInKobo,
           currency: opts.currency,
+          callback_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/payment-success?ref=${opts.referenceCode}`,
           ...splitParams,
           metadata: {
             booking_id: opts.bookingId || null,
