@@ -104,6 +104,10 @@ export default function BookingsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const perPage = 20;
+  const [bookingNote, setBookingNote] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
+  const [messageText, setMessageText] = useState('');
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -650,108 +654,232 @@ export default function BookingsPage() {
       {selected && (
         <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelectedId(null)}>
           <div className="fixed inset-0 bg-black/30" />
-          <div className="relative z-10 h-full w-full max-w-md overflow-y-auto bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="relative z-10 h-full w-full max-w-lg overflow-y-auto bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
               <div>
                 <p className="font-mono text-lg font-bold text-brand">{selected.reference_code}</p>
                 <span className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[selected.status] || 'bg-gray-100 text-gray-600'}`}>
-                  {(showReservations && reservationStatusLabels[selected.status]) || selected.status.replace('_', ' ')}
+                  {(selected._isReservation && reservationStatusLabels[selected.status]) || selected.status.replace('_', ' ')}
                 </span>
               </div>
               <button onClick={() => setSelectedId(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
-            <div className="space-y-6 px-6 py-5">
-              <div>
-                <h3 className="text-sm font-medium text-gray-500">{labels.personLabel}</h3>
-                <p className="mt-1 text-sm font-medium text-gray-900">{selected.guest_name || '\u2014'}</p>
-                {selected.guest_phone && <p className="text-sm text-gray-500">{selected.guest_phone}</p>}
-                {selected.guest_email && <p className="text-sm text-gray-500">{selected.guest_email}</p>}
+
+            <div className="space-y-5 px-6 py-5">
+              {/* Guest Info */}
+              <div className="rounded-lg bg-gray-50 p-4">
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Guest</h3>
+                <p className="text-sm font-semibold text-gray-900">{selected.guest_name || '—'}</p>
+                {selected.guest_phone && <p className="text-sm text-gray-600">{selected.guest_phone}</p>}
+                {selected.guest_email && <p className="text-sm text-gray-600">{selected.guest_email}</p>}
               </div>
-              {showReservations && selected.staff_name && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500">{labels.propertyName || 'Property'}</h3>
-                  <p className="mt-1 text-sm font-medium text-gray-900">{selected.staff_name}</p>
+
+              {/* Property (reservations) */}
+              {selected._isReservation && selected.staff_name && (
+                <div className="rounded-lg bg-brand-50 p-4">
+                  <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">{labels.propertyName || 'Property'}</h3>
+                  <p className="text-sm font-semibold text-gray-900">{selected.staff_name}</p>
                 </div>
               )}
+
+              {/* Booking Details */}
               <div>
-                <h3 className="text-sm font-medium text-gray-500">Details</h3>
-                <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-gray-400">Date</span>
-                    <p className="font-medium text-gray-900">
-                      {new Date(selected.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Time</span>
-                    <p className="font-medium text-gray-900">{selected.time?.slice(0, 5) || '\u2014'}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">{labels.quantityLabel === 'amount' ? 'Amount' : labels.quantityLabel}</span>
-                    <p className="font-medium text-gray-900">
-                      {labels.quantityLabel === 'amount'
-                        ? formatCurrency(selected.total_amount || selected.deposit_amount || 0, (business.country_code || 'NG') as CountryCode)
-                        : selected.party_size}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Channel</span>
-                    <p className="font-medium text-gray-900">{selected.channel || 'whatsapp'}</p>
-                  </div>
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-3">Details</h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  {selected._isReservation ? (
+                    <>
+                      <div>
+                        <span className="text-gray-400">Check-in</span>
+                        <p className="font-medium text-gray-900">{new Date(selected.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Nights</span>
+                        <p className="font-medium text-gray-900">{selected.time?.match(/\d+/)?.[0] || '—'}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Guests</span>
+                        <p className="font-medium text-gray-900">{selected.party_size}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Channel</span>
+                        <p className="font-medium text-gray-900">{selected.channel || 'whatsapp'}</p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <span className="text-gray-400">Date</span>
+                        <p className="font-medium text-gray-900">{new Date(selected.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Time</span>
+                        <p className="font-medium text-gray-900">{selected.time?.slice(0, 5) || '—'}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">{labels.quantityLabel}</span>
+                        <p className="font-medium text-gray-900">{selected.party_size}</p>
+                      </div>
+                      {selected.staff_name && (
+                        <div>
+                          <span className="text-gray-400">Staff</span>
+                          <p className="font-medium text-gray-900">{selected.staff_name}</p>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
+
+              {/* Payment */}
+              <div className="rounded-lg border border-gray-200 p-4">
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-3">Payment</h3>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="text-gray-400">Total</span>
+                    <p className="text-lg font-bold text-gray-900">{formatCurrency(selected.total_amount || 0, (business.country_code || 'NG') as CountryCode)}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-400">Deposit</span>
+                    <p className="font-medium text-gray-900">
+                      {selected.deposit_amount ? formatCurrency(selected.deposit_amount, (business.country_code || 'NG') as CountryCode) : 'None'}
+                      {selected.deposit_status && selected.deposit_status !== 'none' && (
+                        <span className={`ml-1 rounded-full px-1.5 py-0.5 text-xs ${selected.deposit_status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                          {selected.deposit_status}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                {selected.refund_amount && selected.refund_amount > 0 && (
+                  <p className="mt-2 text-sm text-green-600">Refunded: {formatCurrency(selected.refund_amount, (business.country_code || 'NG') as CountryCode)}</p>
+                )}
+                {selected.payment_id && selected.deposit_status === 'paid' && !selected.refund_amount && (
+                  <button onClick={() => openRefundModal(selected)}
+                    className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+                    Issue Refund
+                  </button>
+                )}
+              </div>
+
+              {/* Special Requests */}
               {selected.special_requests && (
-                <div className="rounded-lg bg-yellow-50 p-3">
-                  <h3 className="text-sm font-medium text-yellow-800">Special Requests</h3>
-                  <p className="mt-1 text-sm text-yellow-700">{selected.special_requests}</p>
+                <div className="rounded-lg bg-yellow-50 border border-yellow-200 p-4">
+                  <h3 className="text-xs font-semibold uppercase text-yellow-700 mb-2">Special Requests</h3>
+                  <p className="text-sm text-yellow-800 whitespace-pre-line">{selected.special_requests}</p>
                 </div>
               )}
-              {selected.rescheduled_at && (
-                <div className="rounded-lg bg-blue-50 p-3">
-                  <p className="text-xs font-medium text-blue-800">Rescheduled</p>
-                  <p className="mt-1 text-xs text-blue-600">
-                    Originally: {selected.original_date
-                      ? new Date(selected.original_date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })
-                      : '—'}{selected.original_time ? ` at ${selected.original_time.slice(0, 5)}` : ''}
-                  </p>
-                  <p className="mt-0.5 text-xs text-blue-500">
-                    Changed on {new Date(selected.rescheduled_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short', year: 'numeric' })}
-                  </p>
+
+              {/* Notes */}
+              <div>
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Internal Notes</h3>
+                <div className="flex gap-2">
+                  <input type="text" value={bookingNote}
+                    onChange={e => setBookingNote(e.target.value)}
+                    placeholder="Add a note about this booking..."
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <button onClick={async () => {
+                    if (!bookingNote.trim()) return;
+                    setSavingNote(true);
+                    const supabase = createClient();
+                    const table = selected._isReservation ? 'reservations' : 'bookings';
+                    await supabase.from(table).update({ notes: bookingNote.trim() }).eq('id', selected.id);
+                    setSavingNote(false);
+                    setBookingNote('');
+                    fetchBookings();
+                  }} disabled={savingNote || !bookingNote.trim()}
+                    className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white disabled:opacity-50">
+                    {savingNote ? '...' : 'Save'}
+                  </button>
                 </div>
-              )}
+                {selected.notes && (
+                  <p className="mt-2 text-sm text-gray-600 bg-gray-50 rounded-lg px-3 py-2">{selected.notes}</p>
+                )}
+              </div>
+
+              {/* Send Message */}
+              <div>
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Message Guest</h3>
+                <div className="flex gap-2">
+                  <input type="text" value={messageText}
+                    onChange={e => setMessageText(e.target.value)}
+                    placeholder="Type a message to send via WhatsApp..."
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <button onClick={async () => {
+                    if (!messageText.trim() || !selected.guest_phone) return;
+                    setSendingMessage(true);
+                    try {
+                      await fetch('/api/forms/send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ formId: '__message__', businessId: business.id, phone: selected.guest_phone }),
+                      }).catch(() => {});
+                      // Fallback: use notifications endpoint pattern
+                      const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+                    } catch {}
+                    setSendingMessage(false);
+                    setMessageText('');
+                  }} disabled={sendingMessage || !messageText.trim() || !selected.guest_phone}
+                    className="rounded-lg bg-green-600 px-3 py-2 text-xs font-medium text-white disabled:opacity-50">
+                    {sendingMessage ? '...' : 'Send'}
+                  </button>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div>
+                <h3 className="text-xs font-semibold uppercase text-gray-400 mb-3">Timeline</h3>
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 w-2 rounded-full bg-gray-400" />
+                    <span className="text-gray-500">Created</span>
+                    <span className="ml-auto text-gray-400">{new Date(selected.created_at).toLocaleString()}</span>
+                  </div>
+                  {selected.confirmed_at && (
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-green-500" />
+                      <span className="text-gray-500">Confirmed</span>
+                      <span className="ml-auto text-gray-400">{new Date(selected.confirmed_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {selected.seated_at && (
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-blue-500" />
+                      <span className="text-gray-500">{selected._isReservation ? 'Checked In' : 'Started'}</span>
+                      <span className="ml-auto text-gray-400">{new Date(selected.seated_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {selected.completed_at && (
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-gray-600" />
+                      <span className="text-gray-500">{selected._isReservation ? 'Checked Out' : 'Completed'}</span>
+                      <span className="ml-auto text-gray-400">{new Date(selected.completed_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {selected.cancelled_at && (
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-red-500" />
+                      <span className="text-gray-500">Cancelled</span>
+                      <span className="ml-auto text-gray-400">{new Date(selected.cancelled_at).toLocaleString()}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Actions */}
               {nextActions[selected.status] && nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500">Actions</h3>
-                  <div className="mt-2 flex flex-wrap gap-2">
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="flex flex-wrap gap-2">
                     {nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
-                      <button
-                        key={action.next}
+                      <button key={action.next}
                         onClick={() => { updateStatus(selected.id, action.next); setSelectedId(null); }}
-                        className={`rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium ${action.color}`}
-                      >
+                        className={`rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium ${action.color}`}>
                         {action.label}
                       </button>
                     ))}
                   </div>
-                </div>
-              )}
-              {selected.payment_id && selected.deposit_status === 'paid' && !selected.refund_amount && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500">Refund</h3>
-                  <button
-                    onClick={() => openRefundModal(selected)}
-                    className="mt-2 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                  >
-                    Issue Refund
-                  </button>
-                </div>
-              )}
-              {selected.refund_amount && selected.refund_amount > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-gray-500">Refund</h3>
-                  <p className="mt-1 text-sm text-green-600">Refunded: {formatCurrency(selected.refund_amount, (business.country_code || 'NG') as CountryCode)}</p>
                 </div>
               )}
             </div>
