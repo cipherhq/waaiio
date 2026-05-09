@@ -38,7 +38,7 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'account'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'auto_reply' | 'account'>('profile');
 
   // Account tab state
   const searchParams = useSearchParams();
@@ -96,6 +96,20 @@ export default function SettingsPage() {
   const [requireTerms, setRequireTerms] = useState<boolean>(meta.require_terms_before_payment !== false);
   const [termsText, setTermsText] = useState<string>((meta.terms_text as string) || '');
   const [maxPaymentAmount, setMaxPaymentAmount] = useState<number>((meta.max_payment_amount as number) || 10_000_000);
+
+  // Auto-reply settings (from whatsapp_config)
+  const [arEnabled, setArEnabled] = useState(false);
+  const [arAwayMessage, setArAwayMessage] = useState('Thanks for your message! We\'re currently closed. We\'ll get back to you during business hours.');
+  const [arInstantEnabled, setArInstantEnabled] = useState(true);
+  const [arInstantMessage, setArInstantMessage] = useState('Hi! Thanks for reaching out. We\'ll be with you shortly.');
+  const [arTimezone, setArTimezone] = useState('Africa/Lagos');
+  type ArDaySchedule = { open: string; close: string; enabled: boolean };
+  const [arHours, setArHours] = useState<Record<string, ArDaySchedule>>(
+    Object.fromEntries(DAYS.map(d => [d, { open: '09:00', close: '17:00', enabled: d !== 'sunday' }]))
+  );
+  const [arLoading, setArLoading] = useState(true);
+  const [arSaving, setArSaving] = useState(false);
+  const [arSaved, setArSaved] = useState(false);
 
   // Booking settings from business.metadata
   const [slotInterval, setSlotInterval] = useState<number>((meta.slot_interval_minutes as number) || 60);
@@ -196,6 +210,41 @@ export default function SettingsPage() {
       setZonesLoading(false);
     }
     loadZones();
+  }, [business.id]);
+
+  // Load auto-reply config from whatsapp_config
+  useEffect(() => {
+    async function loadAutoReply() {
+      setArLoading(true);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('whatsapp_config')
+        .select('auto_reply_enabled, business_hours, away_message, instant_reply_enabled, instant_reply_message')
+        .eq('business_id', business.id)
+        .maybeSingle();
+      if (data) {
+        setArEnabled(data.auto_reply_enabled ?? false);
+        if (data.away_message) setArAwayMessage(data.away_message);
+        setArInstantEnabled(data.instant_reply_enabled ?? true);
+        if (data.instant_reply_message) setArInstantMessage(data.instant_reply_message);
+        const bh = data.business_hours as Record<string, unknown> | null;
+        if (bh && typeof bh === 'object') {
+          if (bh.timezone) setArTimezone(bh.timezone as string);
+          const loaded: Record<string, ArDaySchedule> = {};
+          for (const d of DAYS) {
+            const ds = bh[d] as ArDaySchedule | undefined;
+            if (ds) {
+              loaded[d] = { open: ds.open || '09:00', close: ds.close || '17:00', enabled: ds.enabled ?? true };
+            } else {
+              loaded[d] = { open: '09:00', close: '17:00', enabled: d !== 'sunday' };
+            }
+          }
+          setArHours(loaded);
+        }
+      }
+      setArLoading(false);
+    }
+    loadAutoReply();
   }, [business.id]);
 
   // Load WhatsApp channel info
@@ -584,6 +633,28 @@ export default function SettingsPage() {
     setTimeout(() => setSaved(false), 2000);
   }
 
+  async function handleSaveAutoReply() {
+    setArSaving(true);
+    const supabase = createClient();
+    const businessHours: Record<string, unknown> = { timezone: arTimezone };
+    for (const d of DAYS) {
+      businessHours[d] = arHours[d];
+    }
+    await supabase
+      .from('whatsapp_config')
+      .upsert({
+        business_id: business.id,
+        auto_reply_enabled: arEnabled,
+        business_hours: businessHours,
+        away_message: arAwayMessage,
+        instant_reply_enabled: arInstantEnabled,
+        instant_reply_message: arInstantMessage,
+      }, { onConflict: 'business_id' });
+    setArSaving(false);
+    setArSaved(true);
+    setTimeout(() => setArSaved(false), 2000);
+  }
+
   function updateDay(day: string, field: keyof DaySchedule, value: string | boolean) {
     setHours((prev) => ({
       ...prev,
@@ -682,6 +753,14 @@ export default function SettingsPage() {
               Ordering
             </button>
           )}
+          <button
+            onClick={() => setActiveTab('auto_reply')}
+            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'auto_reply' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Auto Reply
+          </button>
           <button
             onClick={() => setActiveTab('account')}
             className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
@@ -2400,6 +2479,161 @@ export default function SettingsPage() {
               )}
             </div>
           </div>
+        </div>
+      ) : activeTab === 'auto_reply' ? (
+        /* Auto Reply & Business Hours Tab */
+        <div className="mt-6 max-w-2xl space-y-6">
+          {arLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            </div>
+          ) : (
+            <>
+              {/* Auto-reply toggle */}
+              <div className="rounded-xl border border-gray-100 bg-white p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold text-gray-900">Auto-reply outside business hours</h2>
+                    <p className="mt-1 text-xs text-gray-500">
+                      When enabled, customers who message outside your business hours will receive an away message automatically.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setArEnabled(!arEnabled)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${arEnabled ? 'bg-brand' : 'bg-gray-200'}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${arEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+
+                {arEnabled && (
+                  <div className="mt-4">
+                    <label className="text-sm font-medium text-gray-700">Away message</label>
+                    <textarea
+                      value={arAwayMessage}
+                      onChange={(e) => setArAwayMessage(e.target.value)}
+                      rows={3}
+                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      placeholder="Thanks for your message! We're currently closed..."
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Business hours grid */}
+              {arEnabled && (
+                <div className="rounded-xl border border-gray-100 bg-white p-6">
+                  <h2 className="text-sm font-semibold text-gray-900">Business Hours</h2>
+                  <p className="mt-1 text-xs text-gray-500">Set the hours when your bot is active. Outside these hours, the away message will be sent.</p>
+
+                  {/* Timezone */}
+                  <div className="mt-4">
+                    <label className="text-sm font-medium text-gray-700">Timezone</label>
+                    <select
+                      value={arTimezone}
+                      onChange={(e) => setArTimezone(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    >
+                      <option value="Africa/Lagos">Africa/Lagos (WAT)</option>
+                      <option value="Africa/Johannesburg">Africa/Johannesburg (SAST)</option>
+                      <option value="Africa/Nairobi">Africa/Nairobi (EAT)</option>
+                      <option value="Africa/Cairo">Africa/Cairo (EET)</option>
+                      <option value="Africa/Accra">Africa/Accra (GMT)</option>
+                      <option value="Europe/London">Europe/London (GMT/BST)</option>
+                      <option value="Europe/Paris">Europe/Paris (CET)</option>
+                      <option value="America/New_York">America/New_York (EST)</option>
+                      <option value="America/Chicago">America/Chicago (CST)</option>
+                      <option value="America/Los_Angeles">America/Los_Angeles (PST)</option>
+                      <option value="Asia/Dubai">Asia/Dubai (GST)</option>
+                      <option value="Asia/Kolkata">Asia/Kolkata (IST)</option>
+                      <option value="Asia/Singapore">Asia/Singapore (SGT)</option>
+                      <option value="Pacific/Auckland">Pacific/Auckland (NZST)</option>
+                    </select>
+                  </div>
+
+                  {/* Days grid */}
+                  <div className="mt-4 space-y-2">
+                    {DAYS.map((day) => (
+                      <div key={day} className="flex items-center gap-3">
+                        <button
+                          onClick={() => setArHours(prev => ({ ...prev, [day]: { ...prev[day], enabled: !prev[day].enabled } }))}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${arHours[day]?.enabled ? 'bg-brand' : 'bg-gray-200'}`}
+                        >
+                          <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition-transform ${arHours[day]?.enabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </button>
+                        <span className="w-10 text-sm font-medium text-gray-700">{DAY_LABELS[day]}</span>
+                        {arHours[day]?.enabled ? (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="time"
+                              value={arHours[day]?.open || '09:00'}
+                              onChange={(e) => setArHours(prev => ({ ...prev, [day]: { ...prev[day], open: e.target.value } }))}
+                              className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                            />
+                            <span className="text-xs text-gray-400">to</span>
+                            <input
+                              type="time"
+                              value={arHours[day]?.close || '17:00'}
+                              onChange={(e) => setArHours(prev => ({ ...prev, [day]: { ...prev[day], close: e.target.value } }))}
+                              className="rounded-lg border border-gray-200 px-2 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                            />
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">Closed</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Instant reply */}
+              <div className="rounded-xl border border-gray-100 bg-white p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold text-gray-900">Instant reply during business hours</h2>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Send an automatic acknowledgment when a customer first messages you.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setArInstantEnabled(!arInstantEnabled)}
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${arInstantEnabled ? 'bg-brand' : 'bg-gray-200'}`}
+                  >
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition-transform ${arInstantEnabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                  </button>
+                </div>
+
+                {arInstantEnabled && (
+                  <div className="mt-4">
+                    <label className="text-sm font-medium text-gray-700">Instant reply message</label>
+                    <textarea
+                      value={arInstantMessage}
+                      onChange={(e) => setArInstantMessage(e.target.value)}
+                      rows={2}
+                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      placeholder="Hi! Thanks for reaching out. We'll be with you shortly."
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Save button */}
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleSaveAutoReply}
+                  disabled={arSaving}
+                  className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                >
+                  {arSaving ? 'Saving...' : 'Save Changes'}
+                </button>
+                {arSaved && <span className="text-sm text-green-600">Saved!</span>}
+              </div>
+            </>
+          )}
         </div>
       ) : activeTab === 'account' ? (
         /* Account Tab */

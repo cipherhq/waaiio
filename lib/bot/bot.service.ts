@@ -16,6 +16,7 @@ import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phon
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
+import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 
 // ── Escape hatches: always hardcoded, never overridable ──
 const ESCAPE_HATCH_PATTERNS = [
@@ -654,6 +655,21 @@ export class BotService {
         capabilities = caps;
         waConfig = config;
         tierInfo = tier;
+      }
+
+      // Auto-reply: if enabled and outside business hours, send away message and stop
+      if (business && waConfig?.auto_reply_enabled && waConfig.business_hours) {
+        const isOpen = isWithinBusinessHours(
+          waConfig.business_hours as BusinessHours,
+          (waConfig.business_hours as BusinessHours).timezone,
+        );
+        if (!isOpen) {
+          await this.sendText(
+            from,
+            waConfig.away_message || 'Thanks for your message! We\'re currently closed. We\'ll get back to you during business hours.',
+          );
+          return;
+        }
       }
 
       const firstStep = business

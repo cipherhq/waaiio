@@ -25,6 +25,11 @@ export interface WhatsAppConfigBundle {
   welcome_buttons: { label: string; action: string; payload?: string }[];
   quick_replies: { trigger: string; label: string; response: string }[];
   default_reply: string | null;
+  auto_reply_enabled: boolean;
+  business_hours: Record<string, unknown> | null;
+  away_message: string | null;
+  instant_reply_enabled: boolean;
+  instant_reply_message: string | null;
 }
 
 export class StandaloneService {
@@ -94,7 +99,7 @@ export class StandaloneService {
   async loadWhatsAppConfigBundle(businessId: string): Promise<WhatsAppConfigBundle> {
     const { data } = await this.supabase
       .from('whatsapp_config')
-      .select('bot_greeting, bot_confirmation_template, bot_reminder_template, bot_order_confirmation_template, bot_payment_receipt_template, bot_order_status_template, bot_alias, quick_replies, welcome_buttons, default_reply')
+      .select('bot_greeting, bot_confirmation_template, bot_reminder_template, bot_order_confirmation_template, bot_payment_receipt_template, bot_order_status_template, bot_alias, quick_replies, welcome_buttons, default_reply, auto_reply_enabled, business_hours, away_message, instant_reply_enabled, instant_reply_message')
       .eq('business_id', businessId)
       .maybeSingle();
 
@@ -116,6 +121,11 @@ export class StandaloneService {
       welcome_buttons: (data?.welcome_buttons as WhatsAppConfigBundle['welcome_buttons']) || [],
       quick_replies: (data?.quick_replies as WhatsAppConfigBundle['quick_replies']) || [],
       default_reply: data?.default_reply || null,
+      auto_reply_enabled: data?.auto_reply_enabled ?? false,
+      business_hours: (data?.business_hours as Record<string, unknown>) || null,
+      away_message: data?.away_message || null,
+      instant_reply_enabled: data?.instant_reply_enabled ?? true,
+      instant_reply_message: data?.instant_reply_message || null,
     };
   }
 
