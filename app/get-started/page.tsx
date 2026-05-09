@@ -30,12 +30,13 @@ declare global {
   }
 }
 
-const WHATSAPP_NUMBERS: Record<CountryCode, string> = {
-  NG: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER_NG || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER || '2349XXXXXXXXX',
-  US: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER_US || '12025551234',
-  GB: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GB || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER_GB || '447911123456',
-  CA: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_CA || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER_CA || '14165551234',
-  GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER_GH || '233241234567',
+// Fallback numbers — used only if DB lookup fails
+const FALLBACK_WHATSAPP_NUMBERS: Record<string, string> = {
+  NG: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '12029226251',
+  US: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '12029226251',
+  GB: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GB || '12029226251',
+  CA: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_CA || '12029226251',
+  GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || '12029226251',
 };
 
 /* ─── Category Grouping for Onboarding ─── */
@@ -256,6 +257,42 @@ function OnboardingWizard() {
   // Country
   const [selectedCountry, setSelectedCountry] = useState<CountryCode>('NG');
   const [countryList, setCountryList] = useState<CountryRow[]>(getCountryList());
+  const [sharedWhatsAppNumber, setSharedWhatsAppNumber] = useState<string>('');
+
+  // Load the correct shared WhatsApp number from DB
+  useEffect(() => {
+    async function loadSharedNumber() {
+      try {
+        const supabase = createClient();
+        // Try country-specific shared channel first
+        let { data } = await supabase
+          .from('whatsapp_channels')
+          .select('phone_number')
+          .eq('country_code', selectedCountry)
+          .eq('channel_type', 'shared')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+
+        if (!data) {
+          // Fallback: any active shared channel
+          const result = await supabase
+            .from('whatsapp_channels')
+            .select('phone_number')
+            .eq('channel_type', 'shared')
+            .eq('is_active', true)
+            .limit(1)
+            .maybeSingle();
+          data = result.data;
+        }
+
+        if (data?.phone_number) {
+          setSharedWhatsAppNumber(data.phone_number);
+        }
+      } catch { /* use fallback */ }
+    }
+    loadSharedNumber();
+  }, [selectedCountry]);
 
   useEffect(() => {
     loadCountries().then(() => setCountryList(getCountryList()));
@@ -981,7 +1018,7 @@ function OnboardingWizard() {
 
   // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
   // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)
-  const sharedNumber = WHATSAPP_NUMBERS[selectedCountry];
+  const sharedNumber = sharedWhatsAppNumber || FALLBACK_WHATSAPP_NUMBERS[selectedCountry] || '12029226251';
   const dedicatedNumber = fbConnectionData?.phone_number?.replace(/[^0-9]/g, '') || ownPhone.replace(/[^0-9]/g, '');
   const waNumber = waMethod !== 'shared' && dedicatedNumber ? dedicatedNumber : sharedNumber;
   const waLink = waMethod !== 'shared' && dedicatedNumber
