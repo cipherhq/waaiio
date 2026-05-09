@@ -127,18 +127,19 @@ export class ChannelResolver {
       return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
-    // 1. Check admin-assigned channel first
+    // 1. Check admin-assigned channel first (assigned_channel_id takes priority)
     const { data: bizData } = await this.supabase
       .from('businesses')
-      .select('country_code, assigned_channel_id')
+      .select('country_code, assigned_channel_id, whatsapp_channel_id')
       .eq('id', businessId)
       .single();
 
-    if (bizData?.assigned_channel_id) {
+    const channelId = bizData?.assigned_channel_id || bizData?.whatsapp_channel_id;
+    if (channelId) {
       const { data: assigned } = await this.supabase
         .from('whatsapp_channels')
         .select('*')
-        .eq('id', bizData.assigned_channel_id)
+        .eq('id', channelId)
         .eq('is_active', true)
         .maybeSingle();
 

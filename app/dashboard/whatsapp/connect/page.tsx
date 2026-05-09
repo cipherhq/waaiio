@@ -60,7 +60,7 @@ export default function ConnectWhatsAppPage() {
 
       if (channel) {
         setExistingChannel(channel);
-        if (channel.connection_status === 'pending_verification') {
+        if (channel.connection_status === 'verifying') {
           setStep('verify-otp');
           setPhone(channel.phone_number);
         } else if (channel.connection_status === 'active') {
@@ -200,7 +200,7 @@ export default function ConnectWhatsAppPage() {
           <div className="flex items-center gap-3 mb-4">
             <div className={`h-3 w-3 rounded-full ${isActive ? 'bg-green-500' : 'bg-amber-500'}`} />
             <span className={`text-xs font-medium ${isActive ? 'text-green-700' : 'text-amber-700'}`}>
-              {isActive ? 'Connected & Active' : existingChannel.connection_status === 'pending_verification' ? 'Pending Verification' : 'Inactive'}
+              {isActive ? 'Connected & Active' : existingChannel.connection_status === 'verifying' ? 'Pending Verification' : 'Inactive'}
             </span>
           </div>
 
@@ -221,7 +221,7 @@ export default function ConnectWhatsAppPage() {
             </div>
           </div>
 
-          {!isActive && existingChannel.connection_status === 'pending_verification' && (
+          {!isActive && existingChannel.connection_status === 'verifying' && (
             <div className="mt-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
               <p className="text-xs text-amber-700 dark:text-amber-400">
                 Your number is pending verification. Meta is reviewing your display name.

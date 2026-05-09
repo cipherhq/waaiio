@@ -143,7 +143,7 @@ export async function POST(request: NextRequest) {
         display_name: phone.verified_name || biz.name,
         quality_rating: phone.quality_rating || null,
         country_code: biz.country_code || 'US',
-        connection_method: 'embedded_signup',
+        connection_method: 'transfer',
         connection_status: 'active',
         is_active: true,
       })
@@ -158,7 +158,8 @@ export async function POST(request: NextRequest) {
     // 7. Update business — assign channel and set wa_method
     await service.from('businesses')
       .update({
-        wa_method: 'own_phone',
+        wa_method: 'transfer',
+        whatsapp_channel_id: channel.id,
         assigned_channel_id: channel.id,
       })
       .eq('id', business_id);

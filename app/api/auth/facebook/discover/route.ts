@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       const debugData = await debugRes.json();
       const scopes = debugData.data?.granular_scopes || [];
       const wabaScope = scopes.find(
-        (s: any) => s.scope === 'whatsapp_business_management' && s.target_ids?.length > 0
+        (s: any) => s.permission === 'whatsapp_business_management' && s.target_ids?.length > 0
       );
       if (wabaScope) {
         for (const wabaId of wabaScope.target_ids) {

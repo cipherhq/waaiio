@@ -82,12 +82,13 @@ export default function DashboardOverview() {
     async function loadWhatsAppLink() {
       const supabase = createClient();
 
-      // 1. Check assigned channel
-      if ((business as any).assigned_channel_id) {
+      // 1. Check assigned channel (assigned_channel_id takes priority, then whatsapp_channel_id)
+      const channelId = (business as any).assigned_channel_id || (business as any).whatsapp_channel_id;
+      if (channelId) {
         const { data: ch } = await supabase
           .from('whatsapp_channels')
           .select('phone_number')
-          .eq('id', (business as any).assigned_channel_id)
+          .eq('id', channelId)
           .maybeSingle();
         if (ch?.phone_number) {
           const num = ch.phone_number.replace(/[^0-9]/g, '');

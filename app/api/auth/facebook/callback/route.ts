@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
           const debugData = await debugRes.json();
           const scopes = debugData.data?.granular_scopes || [];
           const wabaScope = scopes.find(
-            (s: any) => s.scope === 'whatsapp_business_management' && s.target_ids?.length > 0
+            (s: any) => s.permission === 'whatsapp_business_management' && s.target_ids?.length > 0
           );
           if (wabaScope) {
             waba_id = waba_id || wabaScope.target_ids[wabaScope.target_ids.length - 1];
@@ -236,6 +236,7 @@ export async function POST(request: NextRequest) {
       .from('businesses')
       .update({
         whatsapp_channel_id: channelId,
+        assigned_channel_id: channelId,
         wa_method: connection_method || 'transfer',
       })
       .eq('id', business_id);

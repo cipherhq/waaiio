@@ -9,11 +9,11 @@ const API_VERSION = process.env.META_GRAPH_API_VERSION || 'v22.0';
  * POST /api/whatsapp/add-number
  *
  * Add a phone number to Waaiio's WABA and request OTP verification.
- * Body: { business_id, phone_number, country_code }
+ * Body: { business_id, phone_number, display_name }
  *
  * POST /api/whatsapp/add-number?action=verify
  * Verify the OTP and complete registration.
- * Body: { business_id, phone_number, otp }
+ * Body: { business_id, otp }
  */
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     // Verify ownership
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, name, owner_id')
+      .select('id, name, owner_id, country_code')
       .eq('id', business_id)
       .eq('owner_id', user.id)
       .single();
@@ -126,11 +126,18 @@ export async function POST(request: NextRequest) {
         : cleanPhone.startsWith('+1') ? 'US'
         : cleanPhone.startsWith('+44') ? 'GB'
         : cleanPhone.startsWith('+91') ? 'IN'
-        : (biz as any).country_code || 'US';
+        : biz.country_code || 'US';
 
-      // Store phone_number_id temporarily for verification step
+      // Store channel — check if one already exists for this business
       const service = createServiceClient();
-      await service.from('whatsapp_channels').upsert({
+      const { data: existing } = await service
+        .from('whatsapp_channels')
+        .select('id')
+        .eq('business_id', business_id)
+        .eq('channel_type', 'dedicated')
+        .maybeSingle();
+
+      const channelPayload = {
         business_id,
         provider: 'meta_cloud',
         channel_type: 'dedicated',
@@ -140,10 +147,19 @@ export async function POST(request: NextRequest) {
         phone_number: cleanPhone,
         display_name: display_name || biz.name,
         country_code: countryCode,
-        connection_method: 'waaiio_hosted',
-        connection_status: 'pending_verification',
+        connection_method: 'transfer' as const,
+        connection_status: 'verifying' as const,
         is_active: false, // Not active until verified
-      }, { onConflict: 'business_id,provider' });
+      };
+
+      if (existing) {
+        await service.from('whatsapp_channels')
+          .update(channelPayload)
+          .eq('id', existing.id);
+      } else {
+        await service.from('whatsapp_channels')
+          .insert(channelPayload);
+      }
 
       return NextResponse.json({
         success: true,
@@ -180,7 +196,7 @@ export async function POST(request: NextRequest) {
       .from('whatsapp_channels')
       .select('id, phone_number_id, phone_number, display_name')
       .eq('business_id', business_id)
-      .eq('connection_status', 'pending_verification')
+      .eq('connection_status', 'verifying')
       .maybeSingle();
 
     if (!channel) {
@@ -209,7 +225,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Register the number for Cloud API messaging
-      await fetch(
+      const regRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${channel.phone_number_id}/register`,
         {
           method: 'POST',
@@ -223,44 +239,38 @@ export async function POST(request: NextRequest) {
           }),
         }
       );
+      if (!regRes.ok) {
+        const regData = await regRes.json();
+        logger.error('[ADD-NUMBER] Phone registration failed:', regData);
+        // Non-fatal — may already be registered
+      }
 
       // Subscribe WABA to webhooks
-      await fetch(
+      const subRes = await fetch(
         `https://graph.facebook.com/${API_VERSION}/${wabaId}/subscribed_apps`,
         {
           method: 'POST',
           headers: { Authorization: `Bearer ${accessToken}` },
         }
       );
-
-      // Register the number for Cloud API messaging
-      await fetch(
-        `https://graph.facebook.com/${API_VERSION}/${channel.phone_number_id}/register`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ messaging_product: 'whatsapp', pin: '000000' }),
-        }
-      );
+      if (!subRes.ok) {
+        logger.error('[ADD-NUMBER] Webhook subscription failed');
+      }
 
       // Activate the channel
-      const { data: updatedChannel } = await service.from('whatsapp_channels')
+      await service.from('whatsapp_channels')
         .update({
           is_active: true,
           connection_status: 'active',
         })
-        .eq('id', channel.id)
-        .select('id')
-        .single();
+        .eq('id', channel.id);
 
-      // Update business — assign this channel and set wa_method
+      // Update business — assign this channel
       await service.from('businesses')
         .update({
-          wa_method: 'own_phone',
-          assigned_channel_id: updatedChannel?.id || channel.id,
+          wa_method: 'transfer',
+          whatsapp_channel_id: channel.id,
+          assigned_channel_id: channel.id,
         })
         .eq('id', business_id);
 

@@ -76,7 +76,7 @@ export async function DELETE(request: NextRequest) {
   // Revert business to shared
   await service
     .from('businesses')
-    .update({ wa_method: 'shared', whatsapp_channel_id: null })
+    .update({ wa_method: 'shared', whatsapp_channel_id: null, assigned_channel_id: null })
     .eq('id', businessId);
 
   return NextResponse.json({ message: 'Disconnected' });
