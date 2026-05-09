@@ -74,10 +74,62 @@ export default function DashboardOverview() {
   const country = (business.country_code || 'NG') as CountryCode;
   const categoryTemplate = getCategoryByKey(business.category);
 
-  const whatsappNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || process.env.NEXT_PUBLIC_GUPSHUP_WHATSAPP_NUMBER || '';
-  const whatsappLink = business.bot_code
-    ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(business.bot_code)}`
-    : '';
+  const [whatsappLink, setWhatsappLink] = useState('');
+  const [whatsappDisplayNumber, setWhatsappDisplayNumber] = useState('');
+
+  // Load the correct WhatsApp number for this business
+  useEffect(() => {
+    async function loadWhatsAppLink() {
+      const supabase = createClient();
+
+      // 1. Check assigned channel
+      if ((business as any).assigned_channel_id) {
+        const { data: ch } = await supabase
+          .from('whatsapp_channels')
+          .select('phone_number')
+          .eq('id', (business as any).assigned_channel_id)
+          .maybeSingle();
+        if (ch?.phone_number) {
+          const num = ch.phone_number.replace(/[^0-9]/g, '');
+          setWhatsappDisplayNumber(num);
+          setWhatsappLink(`https://wa.me/${num}`);
+          return;
+        }
+      }
+
+      // 2. Check dedicated channel
+      const { data: dedicated } = await supabase
+        .from('whatsapp_channels')
+        .select('phone_number')
+        .eq('business_id', business.id)
+        .eq('channel_type', 'dedicated')
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (dedicated?.phone_number) {
+        const num = dedicated.phone_number.replace(/[^0-9]/g, '');
+        setWhatsappDisplayNumber(num);
+        setWhatsappLink(`https://wa.me/${num}`);
+        return;
+      }
+
+      // 3. Shared channel — need bot code
+      const { data: shared } = await supabase
+        .from('whatsapp_channels')
+        .select('phone_number')
+        .eq('channel_type', 'shared')
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+
+      const num = shared?.phone_number?.replace(/[^0-9]/g, '') || '12029226251';
+      setWhatsappDisplayNumber(num);
+      setWhatsappLink(business.bot_code
+        ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
+        : `https://wa.me/${num}`);
+    }
+    loadWhatsAppLink();
+  }, [business.id]);
 
   useEffect(() => {
     async function load() {
