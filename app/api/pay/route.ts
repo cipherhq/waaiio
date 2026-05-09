@@ -45,8 +45,8 @@ export async function GET(request: NextRequest) {
     }
 
     if (payment.gateway === 'paystack') {
-      // Paystack checkout URLs follow a predictable pattern
-      return NextResponse.redirect(`https://checkout.paystack.com/${ref}`);
+      // Use the FULL gateway_reference, not the shortened ref from the URL
+      return NextResponse.redirect(`https://checkout.paystack.com/${payment.gateway_reference}`);
     }
   }
 
