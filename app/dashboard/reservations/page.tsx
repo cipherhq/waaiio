@@ -474,11 +474,24 @@ export default function BookingsPage() {
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
                 <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">{showReservations ? (labels.propertyName || 'Property') : 'Staff'}</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                {bookingType === 'reservations' || (bookingType === 'all' && showReservations) ? (
+                  <>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.propertyName || 'Property'}</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
+                    <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                  </>
+                ) : (
+                  <>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
+                  </>
+                )}
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
@@ -492,21 +505,41 @@ export default function BookingsPage() {
                     <p className="font-medium text-gray-900">{r.guest_name || '\u2014'}</p>
                     <p className="text-xs text-gray-400">{r.guest_phone}</p>
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '\u2014'}</td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
-                    {r.time && ` at ${r.time.slice(0, 5)}`}
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">
-                    {labels.quantityLabel === 'amount'
-                      ? formatCurrency(r.total_amount || r.deposit_amount || 0, (business.country_code || 'NG') as CountryCode)
-                      : r.party_size}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
-                      {r.channel || 'whatsapp'}
-                    </span>
-                  </td>
+                  {r._isReservation || bookingType === 'reservations' ? (
+                    <>
+                      <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' })}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                        {r.time ? r.time.replace(/\d+ night.*/, (m: string) => {
+                          const nights = parseInt(m);
+                          const checkIn = new Date(r.date + 'T00:00');
+                          checkIn.setDate(checkIn.getDate() + nights);
+                          return checkIn.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' });
+                        }) : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{r.time?.match(/\d+/)?.[0] || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{r.party_size}</td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900">
+                        {formatCurrency(r.total_amount || 0, (business.country_code || 'NG') as CountryCode)}
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">
+                        {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
+                        {r.time && !r.time.includes('night') && ` at ${r.time.slice(0, 5)}`}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">{r.party_size}</td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2.5 py-1 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {r.channel || 'whatsapp'}
+                        </span>
+                      </td>
+                    </>
+                  )}
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
                       {(showReservations && reservationStatusLabels[r.status]) || r.status.replace('_', ' ')}
