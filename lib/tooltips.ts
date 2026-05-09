@@ -17,6 +17,7 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   queue: 'Walk-in queue management. Customers check in via WhatsApp, see their position, and get notified when it\'s their turn.',
   waitlist: 'When you\'re fully booked, customers can join a waitlist and get notified when a slot opens.',
   loyalty: 'Points-based loyalty program. Customers earn points per booking/purchase and redeem for rewards.',
+  membership: 'Automatic membership tiers based on customer spending. Reward your best customers with discounts and bonus points.',
   referral: 'Referral program — customers share a link, and both referrer and new customer get rewards.',
   feedback: 'Customer ratings and reviews collected after service. Track your star rating and respond to feedback.',
   chat: 'Live two-way messaging with customers. The bot handles routine questions; you handle the rest.',
