@@ -108,6 +108,7 @@ export default function BookingsPage() {
   const [savingNote, setSavingNote] = useState(false);
   const [messageText, setMessageText] = useState('');
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [requestingBalance, setRequestingBalance] = useState(false);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -755,6 +756,30 @@ export default function BookingsPage() {
                 </div>
                 {selected.refund_amount && selected.refund_amount > 0 && (
                   <p className="mt-2 text-sm text-green-600">Refunded: {formatCurrency(selected.refund_amount, (business.country_code || 'NG') as CountryCode)}</p>
+                )}
+                {/* Balance request — show when deposit paid but total not fully covered */}
+                {selected.deposit_amount > 0 && selected.deposit_status === 'paid' && selected.total_amount > selected.deposit_amount && (
+                  <button onClick={async () => {
+                    setRequestingBalance(true);
+                    try {
+                      const res = await fetch('/api/bookings/request-balance', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          bookingId: selected.id,
+                          businessId: business.id,
+                          table: selected._isReservation ? 'reservations' : 'bookings',
+                        }),
+                      });
+                      const data = await res.json();
+                      if (!res.ok) alert(data.error || 'Failed to request balance');
+                      else alert(`Balance payment link sent to ${selected.guest_phone}!`);
+                    } catch { alert('Network error'); }
+                    setRequestingBalance(false);
+                  }} disabled={requestingBalance}
+                    className="mt-3 rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50">
+                    {requestingBalance ? 'Sending...' : `Request Balance (${formatCurrency((selected.total_amount || 0) - (selected.deposit_amount || 0), (business.country_code || 'NG') as CountryCode)})`}
+                  </button>
                 )}
                 {selected.payment_id && selected.deposit_status === 'paid' && !selected.refund_amount && (
                   <button onClick={() => openRefundModal(selected)}
