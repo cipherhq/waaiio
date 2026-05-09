@@ -1345,6 +1345,34 @@ function OnboardingWizard() {
                       tip: 'For freelancers, contractors, mechanics, and service providers. Create invoices with line items and payment links. Customer pays in one click.',
                       example: 'e.g. "Invoice #1042 — Plumbing repair: N15,000"',
                     },
+                    {
+                      id: 'recurring' as CapabilityId,
+                      title: 'Subscriptions & Recurring',
+                      desc: 'Automatically charge customers weekly, monthly, or yearly.',
+                      tip: 'Perfect for gym memberships, monthly subscriptions, weekly services, church monthly giving, and any recurring charge. Customers can manage their own subscriptions.',
+                      example: 'e.g. "Your N5,000/month gym membership renews tomorrow"',
+                    },
+                    {
+                      id: 'broadcast' as CapabilityId,
+                      title: 'Broadcast Messages',
+                      desc: 'Send promotions and announcements to all your customers at once.',
+                      tip: 'Announce sales, new products, schedule changes, events, or holiday hours. Message all customers or specific groups. Great for marketing and re-engagement.',
+                      example: 'e.g. "Flash Sale! 50% off all haircuts this Friday only"',
+                    },
+                    {
+                      id: 'auto_reply' as CapabilityId,
+                      title: 'Auto-Reply & Business Hours',
+                      desc: 'Automatically reply when you\'re closed or busy.',
+                      tip: 'Set your opening hours and a custom away message. Customers who message outside hours get an instant reply telling them when you\'re open. No messages go unanswered.',
+                      example: 'e.g. "Thanks for reaching out! We\'re open Mon-Sat 9am-6pm"',
+                    },
+                    {
+                      id: 'membership' as CapabilityId,
+                      title: 'Membership Tiers',
+                      desc: 'Reward your best customers with automatic VIP tiers.',
+                      tip: 'Create Bronze/Silver/Gold tiers based on customer spending. Members get automatic discounts and bonus loyalty points. Tiers upgrade automatically — no manual work.',
+                      example: 'e.g. "Congrats! You\'ve been upgraded to Gold Member — 10% off everything"',
+                    },
                   ] as const).map(feat => {
                     const isSelected = selectedCapabilities.includes(feat.id);
                     return (

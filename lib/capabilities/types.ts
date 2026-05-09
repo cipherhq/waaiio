@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving';
+export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -33,6 +33,10 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'survey', label: 'Surveys', description: 'Create and send customer surveys via WhatsApp', icon: '📊' },
   { id: 'poll', label: 'Polls', description: 'Quick polls and voting via WhatsApp', icon: '🗳️' },
   { id: 'giving', label: 'Giving', description: 'Collect tithes, offerings, and donations via WhatsApp', icon: '🙏' },
+  { id: 'broadcast', label: 'Broadcasts', description: 'Send promotional messages and announcements to all customers', icon: '📢' },
+  { id: 'recurring', label: 'Subscriptions', description: 'Recurring payments for memberships, plans, and subscriptions', icon: '🔄' },
+  { id: 'auto_reply', label: 'Auto-Reply', description: 'Automatic replies outside business hours and instant greetings', icon: '🤖' },
+  { id: 'membership', label: 'Membership', description: 'Customer membership tiers with automatic upgrades based on spending', icon: '🏅' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -67,6 +71,10 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   survey: 'growth',
   poll: 'growth',
   giving: 'free',
+  broadcast: 'growth',
+  recurring: 'growth',
+  auto_reply: 'free',
+  membership: 'growth',
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };
@@ -99,16 +107,16 @@ export const TIER_LABELS: Record<SubscriptionTier, string> = {
 
 /** Default capabilities for each business category */
 export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
-  restaurant: ['appointment', 'reservation', 'ordering', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
-  barber: ['appointment', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],
-  spa: ['appointment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff'],
-  salon: ['appointment', 'feedback', 'loyalty', 'chat', 'referral', 'staff'],
-  gym: ['appointment', 'feedback', 'loyalty', 'chat', 'referral'],
-  clinic: ['appointment', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff', 'survey'],
-  consultant: ['appointment', 'feedback', 'chat', 'referral', 'survey'],
-  church: ['giving', 'appointment', 'ticketing', 'feedback', 'chat'],
-  mosque: ['giving', 'appointment', 'ticketing', 'feedback', 'chat'],
-  school: ['payment', 'feedback', 'chat', 'survey'],
+  restaurant: ['appointment', 'reservation', 'ordering', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff', 'broadcast', 'auto_reply'],
+  barber: ['appointment', 'feedback', 'loyalty', 'chat', 'referral', 'staff', 'broadcast', 'auto_reply'],
+  spa: ['appointment', 'feedback', 'loyalty', 'chat', 'waitlist', 'referral', 'staff', 'broadcast', 'auto_reply', 'membership'],
+  salon: ['appointment', 'feedback', 'loyalty', 'chat', 'referral', 'staff', 'broadcast', 'auto_reply'],
+  gym: ['appointment', 'feedback', 'loyalty', 'chat', 'referral', 'recurring', 'membership', 'auto_reply'],
+  clinic: ['appointment', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff', 'survey', 'auto_reply'],
+  consultant: ['appointment', 'feedback', 'chat', 'referral', 'survey', 'recurring', 'auto_reply'],
+  church: ['giving', 'appointment', 'ticketing', 'feedback', 'chat', 'broadcast', 'recurring'],
+  mosque: ['giving', 'appointment', 'ticketing', 'feedback', 'chat', 'broadcast', 'recurring'],
+  school: ['payment', 'feedback', 'chat', 'survey', 'broadcast', 'recurring'],
   ngo: ['payment', 'feedback', 'chat', 'referral', 'survey'],
   shop: ['ordering', 'feedback', 'loyalty', 'chat', 'referral'],
   food_delivery: ['ordering', 'feedback', 'loyalty', 'referral'],
