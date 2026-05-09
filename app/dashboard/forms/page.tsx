@@ -275,62 +275,74 @@ export default function FormsPage() {
         {responses.length === 0 ? (
           <div className="mt-8 text-center text-sm text-gray-400">No responses yet. Send the form to customers to start collecting data.</div>
         ) : (
-          <div className="mt-6 space-y-4">
-            {responses.map(r => (
-              <div key={r.id} className={`rounded-xl border bg-white p-5 ${r.status === 'sent' ? 'border-yellow-200 bg-yellow-50/30' : 'border-gray-200'}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-gray-900">{r.customer_name || r.customer_phone || 'Anonymous'}</p>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                      r.status === 'submitted' ? 'bg-green-100 text-green-700' :
-                      r.status === 'sent' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>{r.status === 'sent' ? 'Awaiting response' : 'Responded'}</span>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-gray-400">{new Date(r.submitted_at).toLocaleString()}</p>
-                    {r.channel && <p className="text-xs text-gray-300">{r.channel}</p>}
-                  </div>
-                </div>
-                {r.status === 'sent' && Object.keys(r.answers).length === 0 ? (
-                  <p className="text-sm text-yellow-600">Form sent — waiting for customer to fill it out.</p>
-                ) : (
-                <div className="space-y-2">
-                  {selectedForm.fields.map(field => {
-                    const value = r.answers[field.id];
-                    if (value === undefined || value === null || value === '') return null;
-                    return (
-                      <div key={field.id} className="flex gap-2 text-sm">
-                        <span className="font-medium text-gray-600 min-w-[120px]">{field.label}:</span>
-                        <span className="text-gray-900">{typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                )}
+          <div className="mt-6 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="border-b border-gray-100 bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Respondent</th>
+                  {selectedForm.fields.slice(0, 5).map(f => (
+                    <th key={f.id} className="px-4 py-3 text-left font-medium text-gray-500">{f.label}</th>
+                  ))}
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Notes</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {responses.map(r => {
+                  const formatValue = (val: unknown) => {
+                    if (val === undefined || val === null || val === '') return '—';
+                    if (typeof val === 'boolean') return val ? 'Yes' : 'No';
+                    if (Array.isArray(val)) return val.join(', ');
+                    return String(val);
+                  };
 
-                {/* Business Notes */}
-                <div className="mt-3 border-t border-gray-100 pt-3">
-                  <label className="mb-1 block text-xs font-medium text-gray-500">Your Notes</label>
-                  <div className="flex gap-2">
-                    <textarea
-                      value={editingNotes[r.id] ?? r.business_notes ?? ''}
-                      onChange={e => setEditingNotes(prev => ({ ...prev, [r.id]: e.target.value }))}
-                      rows={2}
-                      placeholder="Add internal notes about this response..."
-                      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand resize-none"
-                    />
-                    <button
-                      onClick={() => saveNotes(r.id)}
-                      disabled={savingNotes === r.id || (editingNotes[r.id] ?? r.business_notes ?? '') === (r.business_notes ?? '')}
-                      className="self-end rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-brand-600 disabled:opacity-50"
-                    >
-                      {savingNotes === r.id ? '...' : 'Save'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+                  return (
+                    <tr key={r.id} className={`hover:bg-gray-50 ${r.status === 'sent' ? 'bg-yellow-50/30' : ''}`}>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-900">{r.customer_name || 'Anonymous'}</p>
+                        {r.customer_phone && <p className="text-xs text-gray-400">{r.customer_phone}</p>}
+                        {r.customer_email && <p className="text-xs text-gray-400">{r.customer_email}</p>}
+                      </td>
+                      {selectedForm.fields.slice(0, 5).map(f => (
+                        <td key={f.id} className="px-4 py-3 text-gray-700 max-w-[200px] truncate">
+                          {r.status === 'sent' && Object.keys(r.answers).length === 0 ? (
+                            <span className="text-yellow-500 text-xs">Pending</span>
+                          ) : formatValue(r.answers[f.id])}
+                        </td>
+                      ))}
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          r.status === 'submitted' ? 'bg-green-100 text-green-700' :
+                          r.status === 'sent' ? 'bg-yellow-100 text-yellow-700' :
+                          'bg-gray-100 text-gray-600'
+                        }`}>{r.status === 'sent' ? 'Awaiting' : 'Done'}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">
+                        {new Date(r.submitted_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={editingNotes[r.id] ?? r.business_notes ?? ''}
+                            onChange={e => setEditingNotes(prev => ({ ...prev, [r.id]: e.target.value }))}
+                            placeholder="Add note..."
+                            className="w-32 rounded border border-gray-200 px-2 py-1 text-xs outline-none focus:border-brand"
+                          />
+                          {(editingNotes[r.id] ?? r.business_notes ?? '') !== (r.business_notes ?? '') && (
+                            <button onClick={() => saveNotes(r.id)} disabled={savingNotes === r.id}
+                              className="rounded bg-brand px-2 py-1 text-xs text-white disabled:opacity-50">
+                              {savingNotes === r.id ? '...' : '✓'}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
