@@ -162,6 +162,18 @@ export default function WhatsAppChannels() {
         return;
       }
 
+      // Auto-subscribe the WABA to webhooks
+      const wabaId = addForm.waba_id.trim() || existingChannel?.waba_id;
+      const token = existingChannel?.meta_access_token;
+      if (wabaId && token) {
+        try {
+          await fetch(`https://graph.facebook.com/v22.0/${wabaId}/subscribed_apps`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+        } catch { /* non-critical */ }
+      }
+
       // If dedicated, also assign to the business
       if (addForm.channel_type === 'dedicated' && addForm.business_id) {
         const { data: newChannel } = await adminDb
