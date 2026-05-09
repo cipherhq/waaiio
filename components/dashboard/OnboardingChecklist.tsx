@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useBusiness, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import type { CapabilityId } from '@/lib/capabilities/types';
 
 interface ChecklistItem {
   key: string;
@@ -20,18 +21,90 @@ export function OnboardingChecklist() {
   const [loading, setLoading] = useState(true);
   const [dismissed, setDismissed] = useState(false);
 
-  const items: ChecklistItem[] = [
-    {
+  // Determine setup step based on enabled capabilities
+  const { hasCapability } = capabilities;
+  const setupStep = (): ChecklistItem => {
+    if (hasCapability('appointment')) {
+      return {
+        key: 'setup',
+        label: 'Add your appointments',
+        description: 'Add the services customers can book with date, time, and staff.',
+        href: '/dashboard/appointments-management',
+        check: async () => {
+          const supabase = createClient();
+          const { count } = await supabase.from('appointments').select('id', { count: 'exact', head: true }).eq('business_id', business.id);
+          return (count || 0) > 0;
+        },
+      };
+    }
+    if (hasCapability('ordering')) {
+      return {
+        key: 'setup',
+        label: 'Add your products',
+        description: 'Add products or menu items so customers can browse and order.',
+        href: '/dashboard/products',
+        check: async () => {
+          const supabase = createClient();
+          const { count } = await supabase.from('products').select('id', { count: 'exact', head: true }).eq('business_id', business.id);
+          return (count || 0) > 0;
+        },
+      };
+    }
+    if (hasCapability('reservation')) {
+      return {
+        key: 'setup',
+        label: 'Add your properties',
+        description: 'Add rooms, apartments, or vehicles that guests can book.',
+        href: '/dashboard/properties',
+        check: async () => {
+          const supabase = createClient();
+          const { count } = await supabase.from('properties').select('id', { count: 'exact', head: true }).eq('business_id', business.id);
+          return (count || 0) > 0;
+        },
+      };
+    }
+    if (hasCapability('ticketing')) {
+      return {
+        key: 'setup',
+        label: 'Create your first event',
+        description: 'Add an event so customers can buy tickets.',
+        href: '/dashboard/events',
+        check: async () => {
+          const supabase = createClient();
+          const { count } = await supabase.from('events').select('id', { count: 'exact', head: true }).eq('business_id', business.id);
+          return (count || 0) > 0;
+        },
+      };
+    }
+    if (hasCapability('giving')) {
+      return {
+        key: 'setup',
+        label: 'Set up giving categories',
+        description: 'Add offering, tithe, or donation categories for your community.',
+        href: '/dashboard/giving',
+        check: async () => {
+          const supabase = createClient();
+          const { count } = await supabase.from('services').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('service_type', 'giving');
+          return (count || 0) > 0;
+        },
+      };
+    }
+    // Default: services
+    return {
       key: 'setup',
-      label: 'Set up your business',
-      description: 'Add your services, prices, and operating hours so customers can book or order.',
+      label: 'Add your services',
+      description: 'Add the services you offer with prices so customers can get started.',
       href: '/dashboard/services',
       check: async () => {
         const supabase = createClient();
         const { count } = await supabase.from('services').select('id', { count: 'exact', head: true }).eq('business_id', business.id);
         return (count || 0) > 0;
       },
-    },
+    };
+  };
+
+  const items: ChecklistItem[] = [
+    setupStep(),
     {
       key: 'whatsapp',
       label: 'Connect your WhatsApp number',

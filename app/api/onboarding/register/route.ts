@@ -4,9 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import {
   generateSlug,
   generateBotCode,
-  getCitiesForCountry,
   CATEGORY_FLOW_MAP,
-  DEFAULT_SERVICES,
   type BusinessCategoryKey,
   type CountryCode,
 } from '@/lib/constants';
@@ -184,59 +182,11 @@ export async function POST(request: NextRequest) {
       welcome_buttons: getDefaultWelcomeButtons(category as BusinessCategoryKey),
     });
 
-    // Auto-create default services — prefer DB template, fall back to constants
-    const defaultServices = (template?.default_services as typeof DEFAULT_SERVICES[BusinessCategoryKey]) || DEFAULT_SERVICES[category as BusinessCategoryKey] || [];
-    if (defaultServices.length > 0) {
-      await service.from('services').insert(
-        defaultServices.map((s, i) => ({
-          business_id: business.id,
-          name: s.name,
-          price: s.price,
-          price_is_variable: s.price_is_variable,
-          duration_minutes: s.duration_minutes,
-          deposit_amount: s.deposit_amount,
-          sort_order: i,
-        })),
-      );
-    }
-
-    // Auto-create default appointments (calendar-based bookable items)
-    const { DEFAULT_APPOINTMENTS } = await import('@/lib/constants');
-    const defaultAppts = DEFAULT_APPOINTMENTS[category as BusinessCategoryKey] || [];
-    if (defaultAppts.length > 0) {
-      await service.from('appointments').insert(
-        defaultAppts.map((a, i) => ({
-          business_id: business.id,
-          name: a.name,
-          price: a.price,
-          price_is_variable: a.price_is_variable,
-          duration_minutes: a.duration_minutes,
-          deposit_amount: a.deposit_amount,
-          sort_order: i,
-        })),
-      );
-    }
-
-    // Auto-create default properties for reservation categories (shortlet, hotel, car_rental)
-    const { DEFAULT_PROPERTIES, RESERVATION_CATEGORIES } = await import('@/lib/constants');
-    if (RESERVATION_CATEGORIES.includes(category as BusinessCategoryKey)) {
-      const defaultProps = DEFAULT_PROPERTIES[category as BusinessCategoryKey] || [];
-      if (defaultProps.length > 0) {
-        await service.from('properties').insert(
-          defaultProps.map((p, i) => ({
-            business_id: business.id,
-            name: p.name,
-            price: p.price,
-            deposit_amount: p.deposit_amount,
-            property_type: p.property_type,
-            max_guests: p.max_guests,
-            bedrooms: p.bedrooms,
-            bathrooms: p.bathrooms,
-            sort_order: i,
-          })),
-        );
-      }
-    }
+    // NOTE: We intentionally do NOT auto-create sample services, appointments, or properties.
+    // The business owner should add their own from the dashboard.
+    // The bot automatically hides capabilities that have no backing data,
+    // so there's no risk of showing empty options to customers.
+    // The onboarding checklist guides the owner to "Set up your business" as step 1.
 
     // Auto-create capabilities
     // Priority: user-selected > template metadata > hardcoded defaults
