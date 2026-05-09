@@ -191,7 +191,7 @@ export default function WhatsAppChannels() {
   useEffect(() => { loadData(); }, []);
 
   // Stats
-  const activeChannels = channels.filter(c => c.status === 'active').length;
+  const activeChannels = channels.filter(c => (c as any).connection_status === 'active' || c.status === 'active').length;
   const totalChannels = channels.length;
   const activeConfigs = configs.filter(c => c.status === 'active').length;
   const totalConfigs = configs.length;
@@ -392,8 +392,9 @@ export default function WhatsAppChannels() {
                 <thead className="border-b border-gray-100 bg-gray-50">
                   <tr>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Country</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Provider</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
                   </tr>
@@ -405,11 +406,16 @@ export default function WhatsAppChannels() {
                       onClick={() => setSelectedChannel(ch)}
                       className="cursor-pointer transition hover:bg-gray-50"
                     >
-                      <td className="px-4 py-3 font-medium text-gray-900">{ch.phone || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{ch.country || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 capitalize">{ch.provider || '—'}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900">{(ch as any).phone_number || ch.phone || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{(ch as any).display_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{(ch as any).country_code || ch.country || '—'}</td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={ch.status} />
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${(ch as any).channel_type === 'shared' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                          {(ch as any).channel_type || '—'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={(ch as any).connection_status || ch.status || 'unknown'} />
                       </td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(ch.created_at)}</td>
                     </tr>
