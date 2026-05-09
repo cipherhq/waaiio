@@ -194,10 +194,22 @@ export async function initializePayment(
       });
     }
 
-    // Shorten the payment URL for WhatsApp
+    // Store original gateway URL in payment metadata, then shorten for WhatsApp
     if (result?.url && result.reference) {
+      // Save the real checkout URL before shortening
+      const { data: paymentRecord } = await supabase
+        .from('payments')
+        .select('id, metadata')
+        .eq('gateway_reference', result.reference)
+        .maybeSingle();
+
+      if (paymentRecord) {
+        const existingMeta = (paymentRecord.metadata || {}) as Record<string, unknown>;
+        existingMeta.checkout_url = result.url;
+        await supabase.from('payments').update({ metadata: existingMeta }).eq('id', paymentRecord.id);
+      }
+
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-      // Use last 8 chars of reference as short code
       const shortRef = result.reference.slice(-8);
       result.url = `${appUrl}/api/pay?ref=${shortRef}`;
     }

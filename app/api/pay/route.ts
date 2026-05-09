@@ -28,24 +28,31 @@ export async function GET(request: NextRequest) {
 
   if (payment) {
     const meta = (payment.metadata || {}) as Record<string, unknown>;
-    const stripeSessionId = meta.stripe_session_id as string;
 
-    if (payment.gateway === 'stripe' && stripeSessionId) {
-      // Retrieve Stripe checkout session URL
-      const key = process.env.STRIPE_SECRET_KEY || '';
-      if (key) {
-        const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${stripeSessionId}`, {
-          headers: { Authorization: `Bearer ${key}` },
-        });
-        const session = await res.json();
-        if (session.url) {
-          return NextResponse.redirect(session.url);
+    // Use stored checkout URL if available (works for all gateways)
+    const storedUrl = meta.checkout_url as string;
+    if (storedUrl) {
+      return NextResponse.redirect(storedUrl);
+    }
+
+    // Fallback: reconstruct gateway URL
+    if (payment.gateway === 'stripe') {
+      const stripeSessionId = meta.stripe_session_id as string;
+      if (stripeSessionId) {
+        const key = process.env.STRIPE_SECRET_KEY || '';
+        if (key) {
+          const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${stripeSessionId}`, {
+            headers: { Authorization: `Bearer ${key}` },
+          });
+          const session = await res.json();
+          if (session.url) {
+            return NextResponse.redirect(session.url);
+          }
         }
       }
     }
 
     if (payment.gateway === 'paystack') {
-      // Use the FULL gateway_reference, not the shortened ref from the URL
       return NextResponse.redirect(`https://checkout.paystack.com/${payment.gateway_reference}`);
     }
   }
