@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -12,13 +13,23 @@ declare global {
   }
 }
 
-type Step = 'choose' | 'enter-phone' | 'verify-otp' | 'success';
+type Step = 'loading' | 'existing' | 'choose' | 'enter-phone' | 'verify-otp' | 'pending-approval' | 'success';
+
+interface ExistingChannel {
+  id: string;
+  phone_number: string;
+  display_name: string;
+  connection_status: string;
+  channel_type: string;
+  connection_method: string;
+}
 
 export default function ConnectWhatsAppPage() {
   const business = useBusiness();
   const router = useRouter();
 
-  const [step, setStep] = useState<Step>('choose');
+  const [step, setStep] = useState<Step>('loading');
+  const [existingChannel, setExistingChannel] = useState<ExistingChannel | null>(null);
   const [phone, setPhone] = useState('');
   const [displayName, setDisplayName] = useState(business.name || '');
   const [otp, setOtp] = useState('');
@@ -26,14 +37,43 @@ export default function ConnectWhatsAppPage() {
   const [error, setError] = useState<string | null>(null);
   const [connectedNumber, setConnectedNumber] = useState('');
 
-  // FB SDK state (for advanced flow)
+  // FB SDK state
   const [fbSdkReady, setFbSdkReady] = useState(false);
   const fbSdkLoaded = useRef(false);
   const [fbConnecting, setFbConnecting] = useState(false);
 
   const appId = (process.env.NEXT_PUBLIC_META_APP_ID || '').trim();
   const configId = (process.env.NEXT_PUBLIC_META_EMBEDDED_SIGNUP_CONFIG_ID || '').trim();
-  const supportNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '12029226251';
+
+  // Check for existing channel on load
+  useEffect(() => {
+    async function checkExisting() {
+      const supabase = createClient();
+      const { data: channel } = await supabase
+        .from('whatsapp_channels')
+        .select('id, phone_number, display_name, connection_status, channel_type, connection_method')
+        .eq('business_id', business.id)
+        .eq('channel_type', 'dedicated')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (channel) {
+        setExistingChannel(channel);
+        if (channel.connection_status === 'pending_verification') {
+          setStep('verify-otp');
+          setPhone(channel.phone_number);
+        } else if (channel.connection_status === 'active') {
+          setStep('existing');
+        } else {
+          setStep('existing');
+        }
+      } else {
+        setStep('choose');
+      }
+    }
+    checkExisting();
+  }, [business.id]);
 
   // Load FB SDK (only when advanced flow is selected)
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -136,6 +176,79 @@ export default function ConnectWhatsAppPage() {
     );
   }
 
+  // ── Loading ──
+  if (step === 'loading') {
+    return (
+      <div className="max-w-lg mx-auto mt-12 text-center">
+        <div className="animate-spin h-8 w-8 border-2 border-brand border-t-transparent rounded-full mx-auto" />
+        <p className="text-sm text-gray-500 mt-3">Checking WhatsApp connection...</p>
+      </div>
+    );
+  }
+
+  // ── Existing Channel ──
+  if (step === 'existing' && existingChannel) {
+    const isActive = existingChannel.connection_status === 'active';
+    return (
+      <div className="max-w-lg mx-auto mt-8 space-y-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">WhatsApp Connection</h1>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Your business has a dedicated WhatsApp number.</p>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-5">
+          <div className="flex items-center gap-3 mb-4">
+            <div className={`h-3 w-3 rounded-full ${isActive ? 'bg-green-500' : 'bg-amber-500'}`} />
+            <span className={`text-xs font-medium ${isActive ? 'text-green-700' : 'text-amber-700'}`}>
+              {isActive ? 'Connected & Active' : existingChannel.connection_status === 'pending_verification' ? 'Pending Verification' : 'Inactive'}
+            </span>
+          </div>
+
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Phone Number</span>
+              <span className="font-medium text-gray-900 dark:text-gray-100">{existingChannel.phone_number}</span>
+            </div>
+            {existingChannel.display_name && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Display Name</span>
+                <span className="font-medium text-gray-900 dark:text-gray-100">{existingChannel.display_name}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-gray-500">Connection</span>
+              <span className="text-gray-700 dark:text-gray-300 capitalize">{existingChannel.connection_method?.replace(/_/g, ' ') || 'Direct'}</span>
+            </div>
+          </div>
+
+          {!isActive && existingChannel.connection_status === 'pending_verification' && (
+            <div className="mt-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
+              <p className="text-xs text-amber-700 dark:text-amber-400">
+                Your number is pending verification. Meta is reviewing your display name.
+                This typically takes a few minutes to 24 hours.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={() => { setExistingChannel(null); setStep('choose'); }}
+            className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            Connect a Different Number
+          </button>
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ── Success ──
   if (step === 'success') {
     return (
@@ -143,10 +256,19 @@ export default function ConnectWhatsAppPage() {
         <div className="text-5xl mb-4">✅</div>
         <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">WhatsApp Connected!</h2>
         <p className="text-gray-500 dark:text-gray-400 mb-1">Your bot is now running on <strong>{connectedNumber}</strong></p>
-        <p className="text-sm text-gray-400 mb-6">Customers can message this number to interact with your bot.</p>
-        <div className="flex gap-3 justify-center">
-          <button onClick={() => router.push('/dashboard/whatsapp')} className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">WhatsApp Settings</button>
-          <button onClick={() => router.push('/dashboard')} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300">Dashboard</button>
+        <p className="text-sm text-gray-400 mb-2">Customers can message this number to interact with your bot.</p>
+
+        <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-4 text-left">
+          <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-1">Display Name Review</h4>
+          <p className="text-xs text-blue-700 dark:text-blue-400">
+            Meta will review your display name. Until approved, your number will show as a phone number in chats.
+            This usually takes a few minutes but can take up to 24 hours.
+          </p>
+        </div>
+
+        <div className="flex gap-3 justify-center mt-6">
+          <button onClick={() => router.push('/dashboard')} className="px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">Go to Dashboard</button>
+          <button onClick={() => router.push('/dashboard/settings')} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300">WhatsApp Settings</button>
         </div>
       </div>
     );
@@ -159,20 +281,37 @@ export default function ConnectWhatsAppPage() {
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Get your own dedicated WhatsApp number for your business bot.</p>
       </div>
 
+      {/* How it works */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">How it works</h3>
+        <div className="space-y-3">
+          {[
+            { num: '1', text: 'Enter your business phone number and verify with a code' },
+            { num: '2', text: 'Your number gets connected to Waaiio\'s WhatsApp platform' },
+            { num: '3', text: 'Customers message your number directly — your bot handles everything' },
+          ].map(s => (
+            <div key={s.num} className="flex items-start gap-3">
+              <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand/10 text-xs font-bold text-brand">{s.num}</div>
+              <p className="text-sm text-gray-600 dark:text-gray-400">{s.text}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* Warning */}
       <div className="rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 p-4">
-        <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2">⚠️ Before You Connect</h3>
+        <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2">Important</h3>
         <ul className="text-xs text-amber-700 dark:text-amber-400 space-y-1.5">
-          <li><strong>Use a separate number</strong> — do NOT use your personal WhatsApp number. It will be disconnected from your phone.</li>
-          <li><strong>Get a second SIM</strong> or virtual number for your business bot.</li>
-          <li><strong>Landline numbers work too</strong> — we can verify via voice call.</li>
+          <li>&#8226; <strong>Use a separate number</strong> — do NOT use your personal WhatsApp. It will be disconnected from your phone.</li>
+          <li>&#8226; <strong>Get a second SIM</strong> or virtual number (e.g. Google Voice) for your business bot.</li>
+          <li>&#8226; <strong>Landline numbers work too</strong> — we can verify via voice call.</li>
+          <li>&#8226; <strong>Display name</strong> must match your business name. Meta reviews it (usually takes minutes).</li>
         </ul>
       </div>
 
       {/* ── Choose method ── */}
       {step === 'choose' && (
         <div className="space-y-3">
-          {/* Simple flow (recommended) */}
           <button
             onClick={() => setStep('enter-phone')}
             className="w-full rounded-lg border-2 border-brand bg-brand/5 p-4 text-left transition hover:bg-brand/10"
@@ -181,12 +320,11 @@ export default function ConnectWhatsAppPage() {
               <span className="text-2xl">📱</span>
               <div>
                 <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Enter Phone Number</p>
-                <p className="text-xs text-gray-500 mt-0.5">Recommended — just enter your number and verify with OTP. No Facebook needed.</p>
+                <p className="text-xs text-gray-500 mt-0.5">Recommended — just enter your number and verify with OTP. Your number joins Waaiio&apos;s platform.</p>
               </div>
             </div>
           </button>
 
-          {/* Advanced flow */}
           <button
             onClick={() => { setShowAdvanced(true); }}
             className="w-full rounded-lg border border-gray-200 dark:border-gray-700 p-4 text-left transition hover:bg-gray-50 dark:hover:bg-gray-700/50"
@@ -200,7 +338,6 @@ export default function ConnectWhatsAppPage() {
             </div>
           </button>
 
-          {/* Facebook connect (shown after clicking advanced) */}
           {showAdvanced && (
             <div className="rounded-lg border border-blue-200 bg-blue-50/50 dark:border-blue-900 dark:bg-blue-900/20 p-4 text-center">
               <button
@@ -238,7 +375,7 @@ export default function ConnectWhatsAppPage() {
           </div>
 
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Display Name (shown to customers)</label>
+            <label className="text-xs text-gray-500 mb-1 block">Display Name (shown to customers on WhatsApp)</label>
             <input
               type="text"
               value={displayName}
@@ -246,9 +383,10 @@ export default function ConnectWhatsAppPage() {
               placeholder="Your Business Name"
               className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
             />
+            <p className="text-xs text-gray-400 mt-1">Must match your real business name. Meta will review this.</p>
           </div>
 
-          <p className="text-xs text-gray-400">We&apos;ll send a 6-digit verification code to this number via SMS. Voice call available as fallback.</p>
+          <p className="text-xs text-gray-400">We&apos;ll send a 6-digit verification code via SMS. Voice call available as fallback.</p>
 
           <div className="flex gap-3">
             <button onClick={() => setStep('choose')} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">Back</button>
@@ -306,7 +444,7 @@ export default function ConnectWhatsAppPage() {
       <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 p-4 text-center">
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Need help connecting your number?</p>
         <a
-          href={`https://wa.me/${supportNumber}?text=Hi%2C%20I%20need%20help%20connecting%20my%20WhatsApp%20number%20to%20Waaiio`}
+          href="https://wa.me/12029226251?text=Hi%2C%20I%20need%20help%20connecting%20my%20WhatsApp%20number%20to%20Waaiio"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 text-sm font-medium text-white hover:bg-[#1ebe5d] transition"
@@ -316,8 +454,8 @@ export default function ConnectWhatsAppPage() {
         </a>
       </div>
 
-      <button onClick={() => router.push('/dashboard/whatsapp')} className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-        Back to WhatsApp Settings
+      <button onClick={() => router.push('/dashboard')} className="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+        Back to Dashboard
       </button>
     </div>
   );

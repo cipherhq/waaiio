@@ -121,16 +121,25 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Detect country code from phone number
+      const countryCode = cleanPhone.startsWith('+234') ? 'NG'
+        : cleanPhone.startsWith('+1') ? 'US'
+        : cleanPhone.startsWith('+44') ? 'GB'
+        : cleanPhone.startsWith('+91') ? 'IN'
+        : (biz as any).country_code || 'US';
+
       // Store phone_number_id temporarily for verification step
       const service = createServiceClient();
       await service.from('whatsapp_channels').upsert({
         business_id,
         provider: 'meta_cloud',
+        channel_type: 'dedicated',
         phone_number_id: phoneNumberId,
         waba_id: wabaId,
         meta_access_token: accessToken,
         phone_number: cleanPhone,
         display_name: display_name || biz.name,
+        country_code: countryCode,
         connection_method: 'waaiio_hosted',
         connection_status: 'pending_verification',
         is_active: false, // Not active until verified
@@ -224,18 +233,45 @@ export async function POST(request: NextRequest) {
         }
       );
 
+      // Register the number for Cloud API messaging
+      await fetch(
+        `https://graph.facebook.com/${API_VERSION}/${channel.phone_number_id}/register`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ messaging_product: 'whatsapp', pin: '000000' }),
+        }
+      );
+
       // Activate the channel
-      await service.from('whatsapp_channels')
+      const { data: updatedChannel } = await service.from('whatsapp_channels')
         .update({
           is_active: true,
           connection_status: 'active',
         })
-        .eq('id', channel.id);
+        .eq('id', channel.id)
+        .select('id')
+        .single();
 
-      // Update business
+      // Update business — assign this channel and set wa_method
       await service.from('businesses')
-        .update({ wa_method: 'own_phone' })
+        .update({
+          wa_method: 'own_phone',
+          assigned_channel_id: updatedChannel?.id || channel.id,
+        })
         .eq('id', business_id);
+
+      // Auto-provision message templates (non-fatal)
+      try {
+        const { provisionTemplates } = await import('@/lib/channels/provision-templates');
+        await provisionTemplates(wabaId, accessToken);
+        logger.debug('[ADD-NUMBER] Templates provisioned');
+      } catch (err) {
+        logger.error('[ADD-NUMBER] Template provisioning warning:', err);
+      }
 
       return NextResponse.json({
         success: true,

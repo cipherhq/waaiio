@@ -122,10 +122,11 @@ export async function POST(request: NextRequest) {
     // 6. Save channel in Waaiio
     const service = createServiceClient();
 
-    // Deactivate any existing channels for this business
+    // Deactivate any existing dedicated channels for this business
     await service.from('whatsapp_channels')
       .update({ is_active: false })
       .eq('business_id', business_id)
+      .eq('channel_type', 'dedicated')
       .eq('is_active', true);
 
     // Create new channel
@@ -134,6 +135,7 @@ export async function POST(request: NextRequest) {
       .insert({
         business_id,
         provider: 'meta_cloud',
+        channel_type: 'dedicated',
         phone_number_id: phoneNumberId,
         waba_id: wabaId,
         meta_access_token: accessToken,
@@ -142,6 +144,7 @@ export async function POST(request: NextRequest) {
         quality_rating: phone.quality_rating || null,
         country_code: biz.country_code || 'US',
         connection_method: 'embedded_signup',
+        connection_status: 'active',
         is_active: true,
       })
       .select()
@@ -152,10 +155,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to save channel' }, { status: 500 });
     }
 
-    // 7. Update business wa_method
+    // 7. Update business — assign channel and set wa_method
     await service.from('businesses')
-      .update({ wa_method: 'own_phone' })
+      .update({
+        wa_method: 'own_phone',
+        assigned_channel_id: channel.id,
+      })
       .eq('id', business_id);
+
+    // 8. Auto-provision message templates (non-fatal)
+    try {
+      const { provisionTemplates } = await import('@/lib/channels/provision-templates');
+      await provisionTemplates(wabaId, accessToken);
+      logger.debug('[EMBEDDED-SIGNUP] Templates provisioned');
+    } catch (err) {
+      logger.error('[EMBEDDED-SIGNUP] Template provisioning warning:', err);
+    }
 
     logger.debug('[EMBEDDED-SIGNUP] Success:', { businessId: business_id, wabaId, phoneNumberId, displayNumber });
 

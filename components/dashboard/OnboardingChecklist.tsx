@@ -33,6 +33,22 @@ export function OnboardingChecklist() {
       },
     },
     {
+      key: 'whatsapp',
+      label: 'Connect your WhatsApp number',
+      description: 'Get your own dedicated number so customers can message your business directly.',
+      href: '/dashboard/whatsapp/connect',
+      check: async () => {
+        const supabase = createClient();
+        const { count } = await supabase
+          .from('whatsapp_channels')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', business.id)
+          .eq('channel_type', 'dedicated')
+          .eq('is_active', true);
+        return (count || 0) > 0;
+      },
+    },
+    {
       key: 'test',
       label: 'Test your bot',
       description: 'Send a message to your WhatsApp number and see the bot respond.',
