@@ -127,7 +127,29 @@ export class ChannelResolver {
       return { channel: cached.data, sender: this.buildSender(cached.data) };
     }
 
-    // First try dedicated channel
+    // 1. Check admin-assigned channel first
+    const { data: bizData } = await this.supabase
+      .from('businesses')
+      .select('country_code, assigned_channel_id')
+      .eq('id', businessId)
+      .single();
+
+    if (bizData?.assigned_channel_id) {
+      const { data: assigned } = await this.supabase
+        .from('whatsapp_channels')
+        .select('*')
+        .eq('id', bizData.assigned_channel_id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (assigned) {
+        const record = assigned as ChannelRecord;
+        this.cache.set(cacheKey, { data: record, ts: Date.now() });
+        return { channel: record, sender: this.buildSender(record) };
+      }
+    }
+
+    // 2. Try dedicated channel
     const { data } = await this.supabase
       .from('whatsapp_channels')
       .select('*')
@@ -142,15 +164,9 @@ export class ChannelResolver {
       return { channel: record, sender: this.buildSender(record) };
     }
 
-    // Fallback: shared channel for the business's country
-    const { data: biz } = await this.supabase
-      .from('businesses')
-      .select('country_code')
-      .eq('id', businessId)
-      .single();
-
-    if (biz?.country_code) {
-      const shared = await this.getSharedChannelForCountry(biz.country_code as CountryCode);
+    // 3. Shared channel for the business's country
+    if (bizData?.country_code) {
+      const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode);
       if (shared) {
         this.cache.set(cacheKey, { data: shared.channel, ts: Date.now() });
         return shared;

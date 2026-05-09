@@ -67,6 +67,7 @@ interface Business {
   verification_level: string;
   verification_status: string;
   payout_limit_monthly: number;
+  assigned_channel_id: string | null;
 }
 
 interface PayoutAccount {
@@ -107,6 +108,9 @@ export default function Businesses() {
   const [tierSaving, setTierSaving] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState('');
   const [statusSaving, setStatusSaving] = useState(false);
+  // WhatsApp channel assignment
+  const [channels, setChannels] = useState<Array<{ id: string; phone_number: string; display_name: string; country_code: string }>>([]);
+  const [channelSaving, setChannelSaving] = useState(false);
   // Inline editing
   const [editField, setEditField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -117,10 +121,19 @@ export default function Businesses() {
     async function load() {
       const { data } = await adminDb
         .from('businesses')
-        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly')
+        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id')
         .order('created_at', { ascending: false });
 
       setBusinesses(data || []);
+
+      // Load available WhatsApp channels
+      const { data: chData } = await adminDb
+        .from('whatsapp_channels')
+        .select('id, phone_number, display_name, country_code')
+        .eq('is_active', true)
+        .order('country_code');
+      setChannels(chData || []);
+
       setLoading(false);
     }
     load();
@@ -576,6 +589,45 @@ export default function Businesses() {
                     </button>
                   </div>
                 </div>
+              </div>
+
+              {/* WhatsApp Channel Assignment */}
+              <div className="mt-3">
+                <label className="block text-xs font-medium text-gray-600 mb-1">WhatsApp Number</label>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selected.assigned_channel_id || ''}
+                    onChange={async (e) => {
+                      const val = e.target.value || null;
+                      setChannelSaving(true);
+                      await adminDb.from('businesses').update({ assigned_channel_id: val }).eq('id', selected.id);
+                      await logAudit({
+                        action: 'assign_whatsapp_channel',
+                        entity_type: 'business',
+                        entity_id: selected.id,
+                        details: { business_name: selected.name, channel_id: val },
+                      });
+                      setSelected({ ...selected, assigned_channel_id: val });
+                      setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, assigned_channel_id: val } : b));
+                      setChannelSaving(false);
+                    }}
+                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                    disabled={channelSaving}
+                  >
+                    <option value="">Auto (country default)</option>
+                    {channels.map(ch => (
+                      <option key={ch.id} value={ch.id}>
+                        {ch.display_name || ch.phone_number} ({ch.country_code}) — +{ch.phone_number}
+                      </option>
+                    ))}
+                  </select>
+                  {channelSaving && <span className="text-xs text-gray-400">Saving...</span>}
+                </div>
+                <p className="mt-1 text-xs text-gray-400">
+                  {selected.assigned_channel_id
+                    ? `Assigned: ${channels.find(c => c.id === selected.assigned_channel_id)?.display_name || 'Custom'}`
+                    : 'Using automatic country-based routing'}
+                </p>
               </div>
             </div>
 
