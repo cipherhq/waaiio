@@ -53,7 +53,7 @@ export default function ScanPage() {
         );
       } catch (err) {
         console.error('Camera init failed:', err);
-        setError('Camera access denied. Use manual entry below.');
+        setError('Camera access needed. Click "Allow" when your browser asks for permission, then tap "Try Again" below.');
       }
     }
 
@@ -230,7 +230,15 @@ export default function ScanPage() {
       )}
 
       {error && state === 'scanning' && (
-        <p className="text-sm text-red-600 text-center">{error}</p>
+        <div className="text-center space-y-2">
+          <p className="text-sm text-red-600">{error}</p>
+          <button
+            onClick={() => { setError(''); setState('scanning'); }}
+            className="px-4 py-2 bg-brand text-white rounded-lg text-sm font-medium hover:bg-brand-600"
+          >
+            Try Again
+          </button>
+        </div>
       )}
     </div>
   );

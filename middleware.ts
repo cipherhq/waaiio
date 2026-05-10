@@ -12,7 +12,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
   response.headers.set(
     'Permissions-Policy',
-    'camera=(), microphone=(self), geolocation=()',
+    'camera=(self), microphone=(self), geolocation=()',
   );
   response.headers.set(
     'Content-Security-Policy',
