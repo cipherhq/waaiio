@@ -2992,14 +2992,28 @@ export class BotService {
   // ── Helpers ──────────────────────────────────────────────
 
   private async getActiveSession(phone: string): Promise<BotSession | null> {
+    const now = new Date().toISOString();
     const { data } = await this.supabase
       .from('bot_sessions')
       .select('*')
       .eq('whatsapp_number', phone)
       .eq('is_active', true)
+      .gte('expires_at', now) // Only return non-expired sessions
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
+
+    if (!data) {
+      // Clean up any expired sessions for this phone
+      await this.supabase
+        .from('bot_sessions')
+        .update({ is_active: false })
+        .eq('whatsapp_number', phone)
+        .eq('is_active', true)
+        .lt('expires_at', now);
+      return null;
+    }
+
     return (data as BotSession) || null;
   }
 
