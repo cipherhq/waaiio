@@ -159,7 +159,7 @@ export default function ConversationUsage() {
         </table>
       </div>
 
-      <Pagination page={page} total={totalPages} onChange={setPage} />
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

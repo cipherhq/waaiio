@@ -29,6 +29,7 @@ interface Booking {
   updated_at: string | null;
   // enriched
   business_name?: string;
+  service_name?: string;
 }
 
 // Categories handled by the Giving page — excluded here
@@ -102,6 +103,14 @@ export default function Bookings() {
         (profileData || []).map(p => [p.id, { name: [p.first_name, p.last_name].filter(Boolean).join(' ') || '—', email: p.email || '—' }])
       );
 
+      // Load service names
+      const serviceIds = [...new Set(rows.map(b => b.service_id).filter(Boolean))];
+      const { data: serviceData } = serviceIds.length > 0
+        ? await adminDb.from('services').select('id, name').in('id', serviceIds)
+        : { data: [] };
+
+      const serviceMap = new Map((serviceData || []).map(s => [s.id, s.name]));
+
       // Filter out giving-category bookings, then enrich
       const enriched: Booking[] = rows
         .filter(b => !givingBizIds.has(b.business_id))
@@ -109,6 +118,7 @@ export default function Bookings() {
           ...b,
           business_name: bizMap.get(b.business_id) || 'Unknown',
           guest_name: b.guest_name || profileMap.get(b.user_id)?.name || '—',
+          service_name: b.service_id ? serviceMap.get(b.service_id) || '—' : '—',
         }));
 
       setBookings(enriched);

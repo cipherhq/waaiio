@@ -116,8 +116,21 @@ export default function Verification() {
   const pageItems = filteredRequests.slice((page - 1) * perPage, page * perPage);
 
   async function approveVerification() {
-    if (!selected) return;
+    if (!selected || processing) return;
     setProcessing(true);
+
+    // Idempotency check — verify the request is still pending
+    const { data: current } = await adminDb
+      .from('verification_requests')
+      .select('status')
+      .eq('id', selected.id)
+      .single();
+
+    if (current?.status !== 'pending') {
+      alert('This request has already been processed');
+      setProcessing(false);
+      return;
+    }
 
     const level = selected.requested_level as VerificationLevel;
     const cc = (selected.businesses?.country_code || 'NG') as CountryCode;
@@ -190,8 +203,21 @@ export default function Verification() {
   }
 
   async function rejectVerification() {
-    if (!selected || !rejectionReason.trim()) return;
+    if (!selected || !rejectionReason.trim() || processing) return;
     setProcessing(true);
+
+    // Idempotency check — verify the request is still pending
+    const { data: current } = await adminDb
+      .from('verification_requests')
+      .select('status')
+      .eq('id', selected.id)
+      .single();
+
+    if (current?.status !== 'pending') {
+      alert('This request has already been processed');
+      setProcessing(false);
+      return;
+    }
 
     await adminDb
       .from('businesses')

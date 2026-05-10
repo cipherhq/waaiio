@@ -202,7 +202,11 @@ export default function ImpersonationMode() {
         return;
       }
 
-      window.open(data.url, '_blank');
+      if (data.url && (data.url.startsWith('https://waaiio.com') || data.url.startsWith(window.location.origin))) {
+        window.open(data.url, '_blank');
+      } else {
+        alert('Invalid redirect URL');
+      }
     } catch (error) {
       console.error('View dashboard error:', error);
       alert('Failed to launch dashboard');

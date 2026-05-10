@@ -122,7 +122,7 @@ export default function AIUsage() {
         </table>
       </div>
 
-      <Pagination page={page} total={totalPages} onChange={setPage} />
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

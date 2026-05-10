@@ -125,8 +125,10 @@ export default function Payments() {
     if (dateFrom && p.created_at < dateFrom) return false;
     if (dateTo) {
       // Include the entire "dateTo" day by comparing against start of next day
-      const endOfDay = dateTo + 'T23:59:59.999Z';
-      if (p.created_at > endOfDay) return false;
+      const nextDay = new Date(dateTo + 'T00:00:00Z');
+      nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+      const nextDayISO = nextDay.toISOString();
+      if (p.created_at >= nextDayISO) return false;
     }
     return true;
   });
