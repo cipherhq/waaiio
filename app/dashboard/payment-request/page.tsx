@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -19,6 +19,11 @@ interface PaymentRequestRow {
   payments: { status: string }[] | null;
 }
 
+interface CustomerSuggestion {
+  phone: string;
+  name: string | null;
+}
+
 export default function PaymentRequestPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
@@ -32,6 +37,27 @@ export default function PaymentRequestPage() {
   const [description, setDescription] = useState('');
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+
+  // Customer autocomplete
+  const [customers, setCustomers] = useState<CustomerSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<CustomerSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const phoneInputRef = useRef<HTMLInputElement>(null);
+
+  // Load existing customers for autocomplete
+  useEffect(() => {
+    async function loadCustomers() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('customer_profiles')
+        .select('phone, name')
+        .eq('business_id', business.id)
+        .order('last_seen_at', { ascending: false })
+        .limit(100);
+      setCustomers((data || []) as CustomerSuggestion[]);
+    }
+    loadCustomers();
+  }, [business.id]);
 
   const loadRequests = useCallback(async () => {
     const supabase = createClient();
@@ -151,15 +177,66 @@ export default function PaymentRequestPage() {
       <div className="mt-6 rounded-xl border border-gray-100 bg-white p-6">
         <h3 className="text-sm font-semibold text-gray-900">Send Payment Request</h3>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div>
+          <div className="relative">
             <label className="mb-1 block text-sm font-medium text-gray-700">Customer Phone <span className="text-red-400">*</span></label>
             <input
+              ref={phoneInputRef}
               type="tel"
               value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="e.g. 2348012345678"
+              onChange={e => {
+                const val = e.target.value;
+                setPhone(val);
+                const q = val.toLowerCase();
+                if (q.length > 0) {
+                  setSuggestions(
+                    customers.filter(c =>
+                      c.phone.includes(q) || c.name?.toLowerCase().includes(q)
+                    ).slice(0, 5)
+                  );
+                  setShowSuggestions(true);
+                } else {
+                  setSuggestions(customers.slice(0, 5));
+                  setShowSuggestions(true);
+                }
+              }}
+              onFocus={() => {
+                if (!phone) {
+                  setSuggestions(customers.slice(0, 5));
+                } else {
+                  const q = phone.toLowerCase();
+                  setSuggestions(
+                    customers.filter(c =>
+                      c.phone.includes(q) || c.name?.toLowerCase().includes(q)
+                    ).slice(0, 5)
+                  );
+                }
+                setShowSuggestions(true);
+              }}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              placeholder="Enter phone or search customer"
               className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
             />
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                {suggestions.map(c => (
+                  <button
+                    key={c.phone}
+                    type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => {
+                      setPhone(c.phone);
+                      setName(c.name || '');
+                      setShowSuggestions(false);
+                      setSuggestions([]);
+                    }}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
+                  >
+                    <span className="font-medium text-gray-900">{c.name || 'Unknown'}</span>
+                    <span className="font-mono text-xs text-gray-400">{c.phone}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Customer Name</label>
