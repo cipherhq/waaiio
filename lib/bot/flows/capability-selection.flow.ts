@@ -1,4 +1,4 @@
-import type { FlowDefinition, FlowStepConfig, FlowContext } from './types';
+import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
 /** Generic labels for capability selection buttons */
@@ -137,30 +137,58 @@ const selectCapabilityStep: FlowStepConfig = {
     const userFacing = (ctx.session.session_data._filtered_capabilities as CapabilityId[]) || [];
     const category = ctx.business?.category || 'other';
 
-    // WhatsApp buttons max 3 — use a list for more options
-    if (userFacing.length <= 3) {
-      const buttons = userFacing.map(cap => ({
-        id: `cap_${cap}`,
-        title: getCapabilityLabel(cap, category),
-      }));
-      return [{
-        type: 'buttons' as const,
-        body: 'What would you like to do?',
-        buttons,
-      }];
+    // Check if returning customer has past bookings/orders — show "My Account" option
+    let hasHistory = false;
+    if (ctx.business) {
+      const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+      const { data: profile } = await ctx.supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', phone)
+        .maybeSingle();
+      if (profile?.id) {
+        const { count: bookingCount } = await ctx.supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', profile.id)
+          .limit(1);
+        const { count: orderCount } = await ctx.supabase
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', profile.id)
+          .limit(1);
+        hasHistory = (bookingCount || 0) > 0 || (orderCount || 0) > 0;
+      }
     }
 
-    // List message for 4+ capabilities
-    const items = userFacing.map(cap => ({
+    // Build capability items
+    const capItems = userFacing.map(cap => ({
+      id: `cap_${cap}`,
       title: getCapabilityLabel(cap, category),
       postbackText: `cap_${cap}`,
     }));
+
+    // Add "My Account" for returning customers
+    if (hasHistory) {
+      capItems.push({ id: 'cap_my_account', title: 'My Account', postbackText: 'cap_my_account' });
+    }
+
+    // WhatsApp buttons max 3 — use a list for more options
+    if (capItems.length <= 3) {
+      return [{
+        type: 'buttons' as const,
+        body: 'What would you like to do?',
+        buttons: capItems.map(i => ({ id: i.id, title: i.title })),
+      }];
+    }
+
+    // List message for 4+ items
     return [{
       type: 'list' as const,
       title: 'Services',
       body: 'What would you like to do?',
       buttonLabel: 'View Options',
-      items,
+      items: capItems.map(i => ({ title: i.title, postbackText: i.postbackText })),
     }];
   },
 
@@ -172,6 +200,12 @@ const selectCapabilityStep: FlowStepConfig = {
     const userFacing = capabilities.filter(c => !nonUF.has(c));
 
     let capId: CapabilityId | null = null;
+
+    // Handle "My Account" selection
+    if (input === 'cap_my_account' || /^(my account|manage|my stuff)$/i.test(input.trim())) {
+      ctx.session.session_data.active_capability = 'my_account';
+      return { valid: true, data: { active_capability: 'my_account' } };
+    }
 
     if (input.startsWith('cap_')) {
       capId = input.replace('cap_', '') as CapabilityId;
@@ -221,14 +255,81 @@ const selectCapabilityStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
-    const cap = ctx.session.session_data.active_capability as CapabilityId;
-    return getFirstStepForCapability(cap);
+    const cap = ctx.session.session_data.active_capability as string;
+    if (cap === 'my_account') return 'my_account_menu';
+    return getFirstStepForCapability(cap as CapabilityId);
+  },
+};
+
+// ── My Account Menu ──
+// Shows self-service options for returning customers
+
+const myAccountMenuStep: FlowStepConfig = {
+  id: 'my_account_menu',
+
+  async prompt(): Promise<PromptMessage[]> {
+    return [{
+      type: 'list' as const,
+      title: 'My Account',
+      body: 'Manage your bookings, orders, and more:',
+      buttonLabel: 'My Account',
+      items: [
+        { title: 'My Bookings', description: 'View, reschedule, or cancel', postbackText: 'acct_bookings' },
+        { title: 'My Orders', description: 'Track order status', postbackText: 'acct_orders' },
+        { title: 'My Points', description: 'Check loyalty balance', postbackText: 'acct_loyalty' },
+        { title: 'My Invoices', description: 'View and pay invoices', postbackText: 'acct_invoices' },
+        { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt' },
+      ],
+    }];
+  },
+
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    const action = input.toLowerCase().trim();
+
+    // Map selections to built-in bot.service.ts handlers via session step
+    const routeMap: Record<string, string> = {
+      'acct_bookings': 'my_bookings',
+      'acct_orders': 'my_orders',
+      'acct_loyalty': 'loyalty_menu',
+      'acct_invoices': 'invoice_list',
+      'acct_receipt': 'receipt_request',
+      // Natural language fallbacks
+      'my bookings': 'my_bookings',
+      'bookings': 'my_bookings',
+      'my orders': 'my_orders',
+      'orders': 'my_orders',
+      'track': 'my_orders',
+      'my points': 'loyalty_menu',
+      'points': 'loyalty_menu',
+      'loyalty': 'loyalty_menu',
+      'my invoices': 'my_invoices',
+      'invoices': 'my_invoices',
+      'receipt': 'receipt_request',
+      'my receipt': 'receipt_request',
+    };
+
+    const targetStep = routeMap[action];
+    if (targetStep) {
+      // Route to the built-in handler by updating the session step directly
+      await ctx.supabase.from('bot_sessions')
+        .update({ current_step: targetStep })
+        .eq('id', ctx.session.id);
+      ctx.session.session_data._my_account_route = targetStep;
+      return { valid: true, data: { _my_account_route: targetStep } };
+    }
+
+    return { valid: false, errorMessage: 'Please pick an option from the list.' };
+  },
+
+  async next(ctx: FlowContext) {
+    // The session step was already updated in validate — return null to let the executor re-route
+    return ctx.session.session_data._my_account_route as string || 'select_capability';
   },
 };
 
 export const capabilitySelectionFlow: FlowDefinition = {
   type: 'scheduling', // placeholder — this is a pseudo-flow
-  steps: [selectCapabilityStep],
+  steps: [selectCapabilityStep, myAccountMenuStep],
 };
 
 export { getFirstStepForCapability };

@@ -782,6 +782,12 @@ export const reservationFlow: FlowDefinition = {
             `🔑 Ref: *${reservation.reference_code}*`,
             '',
             'See you soon! 🎉',
+            '',
+            '💡 *What you can do:*',
+            '• Type *my bookings* to view your reservations',
+            '• Type *reschedule* to change dates',
+            '• Type *cancel* to cancel this reservation',
+            '• Type *receipt* to get your receipt',
           ].join('\n'),
         }];
       },
