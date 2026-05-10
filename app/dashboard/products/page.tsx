@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import Link from 'next/link';
+import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -181,6 +182,7 @@ function mapCSVRow(row: Record<string, string>) {
 
 export default function ProductsPage() {
   const business = useBusiness();
+  const { capabilities } = useCapabilities();
   const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
   const curr = formatCurrency(0, country).charAt(0);
@@ -1800,6 +1802,18 @@ export default function ProductsPage() {
         title="Your Products"
         description="This is your product catalog. Customers browse these items and add them to their cart on WhatsApp. Add photos, prices, and descriptions to help customers choose."
       />
+
+      {/* Shipping config link */}
+      {capabilities.includes('ordering') && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-4 py-2.5">
+          <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <p className="text-xs text-blue-700 dark:text-blue-400">
+            Set up <Link href="/dashboard/settings" className="font-semibold underline">shipping rates and delivery zones</Link> in Settings to charge customers for delivery.
+          </p>
+        </div>
+      )}
 
       {/* Filters */}
       {products.length > 3 && (

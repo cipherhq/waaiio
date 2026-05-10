@@ -113,6 +113,14 @@ export async function POST(request: NextRequest) {
       (item: { name?: string; price?: number }) => item.name && typeof item.price === 'number'
     ) : [];
 
+    if (items.length === 0) {
+      return NextResponse.json({
+        items: [],
+        type: itemType,
+        message: 'Could not read the image clearly. Try uploading a clearer photo with visible text and prices, or add items manually.',
+      });
+    }
+
     return NextResponse.json({ items, type: itemType });
   } catch (error) {
     logger.error('[AI-SETUP] Image parse error:', (error as Error).message);

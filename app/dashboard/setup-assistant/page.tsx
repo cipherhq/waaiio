@@ -188,7 +188,9 @@ export default function SetupAssistantPage() {
       if (res.ok) {
         const data = await res.json();
         const items = data.items || [];
-        if (data.type === 'products' || businessType === 'products') {
+        if (items.length === 0) {
+          alert(data.message || 'Could not read the image clearly. Try uploading a clearer photo with visible text and prices, or add items manually.');
+        } else if (data.type === 'products' || businessType === 'products') {
           setProducts(prev => [...prev, ...items.map((item: Record<string, unknown>) => ({
             name: (item.name as string) || '', price: (item.price as number) || 0,
             description: (item.description as string) || '', category: (item.category as string) || '',

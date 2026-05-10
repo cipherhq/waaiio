@@ -651,6 +651,14 @@ export default function SettingsPage() {
   }
 
   async function handleSaveHours() {
+    // Validate hours: close must be after open
+    for (const day of DAYS) {
+      const schedule = hours[day];
+      if (schedule && !schedule.closed && schedule.open && schedule.close && schedule.open >= schedule.close) {
+        alert(`${DAY_LABELS[day] || day}: closing time must be after opening time`);
+        return;
+      }
+    }
     setSaving(true);
     const supabase = createClient();
     await supabase

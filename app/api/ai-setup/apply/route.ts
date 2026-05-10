@@ -60,22 +60,33 @@ export async function POST(request: NextRequest) {
   const results: Record<string, unknown> = {};
 
   try {
-    // 1. Create services
+    // 1. Create services (with duplicate detection)
     if (services?.length) {
-      // Get current max sort_order
-      const { data: lastService } = await service
+      // Check for existing services with same names
+      const validServices = services.filter((s) => s.name && String(s.name).trim().length > 0 && String(s.name).length <= 200);
+      const { data: existingServices } = await service
         .from('services')
-        .select('sort_order')
+        .select('name')
         .eq('business_id', business_id)
-        .order('sort_order', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .in('name', validServices.map(s => String(s.name).trim()));
 
-      let sortOrder = (lastService?.sort_order ?? -1) + 1;
+      const existingServiceNames = new Set((existingServices || []).map(s => s.name.toLowerCase()));
+      const newServices = validServices.filter(s => !existingServiceNames.has(String(s.name).trim().toLowerCase()));
+      const skippedServices = validServices.length - newServices.length;
 
-      const rows = services
-        .filter((s) => s.name && String(s.name).trim().length > 0 && String(s.name).length <= 200)
-        .map((s) => ({
+      if (newServices.length > 0) {
+        // Get current max sort_order
+        const { data: lastService } = await service
+          .from('services')
+          .select('sort_order')
+          .eq('business_id', business_id)
+          .order('sort_order', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        let sortOrder = (lastService?.sort_order ?? -1) + 1;
+
+        const rows = newServices.map((s) => ({
           business_id,
           name: String(s.name).trim().slice(0, 200),
           price: Math.max(0, Math.min(Number(s.price) || 0, 99999999)),
@@ -87,36 +98,54 @@ export async function POST(request: NextRequest) {
           sort_order: sortOrder++,
         }));
 
-      const { data: created, error } = await service.from('services').insert(rows).select('id, name');
-      if (error) logger.error('[AI-SETUP] Services insert error:', error.message);
-      results.services = { created: created?.length || 0, error: error?.message };
+        const { data: created, error } = await service.from('services').insert(rows).select('id, name');
+        if (error) logger.error('[AI-SETUP] Services insert error:', error.message);
+        results.services = { created: created?.length || 0, skipped: skippedServices, error: error?.message };
+      } else {
+        results.services = { created: 0, skipped: skippedServices };
+      }
     }
 
-    // 2. Create products
+    // 2. Create products (with duplicate detection)
     if (products?.length) {
-      const { data: lastProduct } = await service
+      const validProducts = products.filter(p => p.name && String(p.name).trim().length > 0);
+      const { data: existingProducts } = await service
         .from('products')
-        .select('sort_order')
+        .select('name')
         .eq('business_id', business_id)
-        .order('sort_order', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .in('name', validProducts.map(p => String(p.name).trim()));
 
-      let sortOrder = (lastProduct?.sort_order ?? -1) + 1;
+      const existingProductNames = new Set((existingProducts || []).map(p => p.name.toLowerCase()));
+      const newProducts = validProducts.filter(p => !existingProductNames.has(String(p.name).trim().toLowerCase()));
+      const skippedProducts = validProducts.length - newProducts.length;
 
-      const rows = products.map((p) => ({
-        business_id,
-        name: p.name,
-        price: p.price || 0,
-        description: p.description || null,
-        category: p.category || null,
-        is_active: true,
-        sort_order: sortOrder++,
-      }));
+      if (newProducts.length > 0) {
+        const { data: lastProduct } = await service
+          .from('products')
+          .select('sort_order')
+          .eq('business_id', business_id)
+          .order('sort_order', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      const { data: created, error } = await service.from('products').insert(rows).select('id, name');
-      if (error) logger.error('[AI-SETUP] Products insert error:', error.message);
-      results.products = { created: created?.length || 0, error: error?.message };
+        let sortOrder = (lastProduct?.sort_order ?? -1) + 1;
+
+        const rows = newProducts.map((p) => ({
+          business_id,
+          name: String(p.name).trim(),
+          price: p.price || 0,
+          description: p.description || null,
+          category: p.category || null,
+          is_active: true,
+          sort_order: sortOrder++,
+        }));
+
+        const { data: created, error } = await service.from('products').insert(rows).select('id, name');
+        if (error) logger.error('[AI-SETUP] Products insert error:', error.message);
+        results.products = { created: created?.length || 0, skipped: skippedProducts, error: error?.message };
+      } else {
+        results.products = { created: 0, skipped: skippedProducts };
+      }
     }
 
     // 3. Update operating hours
