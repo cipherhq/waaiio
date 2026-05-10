@@ -2485,21 +2485,30 @@ export const orderingFlow: FlowDefinition = {
 
         const orderTips = '\n\n💡 *What you can do:*\n• Type *my orders* to track your order status\n• Type *receipt* to get your receipt\n• Type *Hi* to place another order';
 
-        return [{
-          type: 'text',
-          text: getOrderConfirmationMessage({
-            businessName: ctx.business?.name || 'Shop',
-            items: cart,
-            totalAmount: total,
-            referenceCode: order.reference_code,
-            deliveryAddress: d.delivery_address as string | undefined,
-            shippingCost: zoneName ? undefined : (shippingCost || undefined),
-            deliveryZoneName: zoneName,
-            deliveryZonePrice: zoneName ? zonePrice : undefined,
-            addonsTotal: addonsTotal || undefined,
-            volumeDiscountAmount: volumeDiscountTotal || undefined,
-          }) + orderTips,
-        }];
+        return [
+          {
+            type: 'text',
+            text: getOrderConfirmationMessage({
+              businessName: ctx.business?.name || 'Shop',
+              items: cart,
+              totalAmount: total,
+              referenceCode: order.reference_code,
+              deliveryAddress: d.delivery_address as string | undefined,
+              shippingCost: zoneName ? undefined : (shippingCost || undefined),
+              deliveryZoneName: zoneName,
+              deliveryZonePrice: zoneName ? zonePrice : undefined,
+              addonsTotal: addonsTotal || undefined,
+              volumeDiscountAmount: volumeDiscountTotal || undefined,
+            }) + orderTips,
+          },
+          {
+            type: 'buttons',
+            body: 'Want to keep tabs on your order?',
+            buttons: [
+              { id: 'track_my_order', title: 'Track My Order' },
+            ],
+          },
+        ];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input === 'accept_terms') {
@@ -2513,6 +2522,9 @@ export const orderingFlow: FlowDefinition = {
         }
         if (input === 'chat_with_biz') {
           return { valid: true, data: { _chat_with_biz: true } };
+        }
+        if (input === 'track_my_order') {
+          return { valid: true, data: { _track_my_order: true } };
         }
         return { valid: true };
       },
@@ -2530,6 +2542,13 @@ export const orderingFlow: FlowDefinition = {
             .update({ current_step: 'chat_start', session_data: { ...d, active_capability: 'chat' } })
             .eq('id', ctx.session.id);
           return 'chat_start';
+        }
+        if (d._track_my_order) {
+          // Route to my_orders built-in step
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'my_orders', session_data: { selected_order_id: d.order_id } })
+            .eq('id', ctx.session.id);
+          return 'my_orders';
         }
         return null;
       },

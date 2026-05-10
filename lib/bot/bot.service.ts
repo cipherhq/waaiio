@@ -5,7 +5,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
-import { getLocale, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
+import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
@@ -173,9 +173,19 @@ export class BotService {
       return _cachedProfile;
     };
 
-    // Detect "my bookings" keyword — covers industry-specific terminology
-    const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|sessions?|upcoming|schedule)$/i.test(text)
-      || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|orders?|schedule)$/i.test(text);
+    // Detect "my orders" / tracking keywords — must check BEFORE bookings so "orders" routes correctly
+    const isOrdersQuery = /^(my\s+)?orders?$/i.test(text)
+      || /^(check|view|show|list|see)\s+(my\s+)?orders?$/i.test(text)
+      || /^(order\s+status|track\s+(my\s+)?order|where'?s?\s+(is\s+)?(my\s+)?order|delivery\s+status|order\s+history)$/i.test(text)
+      || /^track\s+my\s+order$/i.test(text)
+      || /^where\s+is\s+my\s+(order|delivery|package)$/i.test(text);
+
+    // Detect reference code pattern (e.g. BW-O1234, AB-1234)
+    const referenceCodeMatch = text.match(/^([A-Z]{2,}-[A-Z]?\d{3,})$/i);
+
+    // Detect "my bookings" keyword — covers industry-specific terminology (orders removed — handled above)
+    const isBookingsQuery = /^(my\s+)?(bookings?|reservations?|appointments?|appts?|sessions?|upcoming|schedule)$/i.test(text)
+      || /^(check|view|show|list|see)\s+(my\s+)?(bookings?|reservations?|appointments?|appts?|schedule)$/i.test(text);
 
     // Detect reschedule intent — shortcut to my_bookings flow
     const isRescheduleQuery = /^(reschedule|change\s+(my\s+)?(time|date|appointment|booking)|move\s+(my\s+)?(appointment|booking))$/i.test(text);
@@ -236,6 +246,94 @@ export class BotService {
         await this.sendText(from, 'Sorry, no address is available for this business.');
       }
       return;
+    }
+
+    // ── My Orders / Order Tracking ──
+    if (isOrdersQuery) {
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+      const profile = await getProfile();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        return;
+      }
+      await this.supabase.from('bot_sessions')
+        .delete()
+        .eq('whatsapp_number', from)
+        .is('business_id', null)
+        .eq('is_active', false);
+      const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+        whatsapp_number: from, user_id: profile.id, business_id: null,
+        current_step: 'my_orders', session_data: {}, is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+      if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
+      session = newSession as BotSession;
+      await this.handleMyOrders(session, from, '');
+      return;
+    }
+
+    // ── Reference code lookup (e.g. BW-O1234) ──
+    if (referenceCodeMatch && !session?.business_id) {
+      const refCode = referenceCodeMatch[1].toUpperCase();
+      const profile = await getProfile();
+      if (profile?.id) {
+        const { data: order } = await this.supabase
+          .from('orders')
+          .select('id, reference_code, status, total_amount, created_at, businesses (name, country_code)')
+          .eq('reference_code', refCode)
+          .eq('user_id', profile.id)
+          .maybeSingle();
+        if (order) {
+          if (session) {
+            await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          }
+          await this.supabase.from('bot_sessions')
+            .delete()
+            .eq('whatsapp_number', from)
+            .is('business_id', null)
+            .eq('is_active', false);
+          const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+            whatsapp_number: from, user_id: profile.id, business_id: null,
+            current_step: 'my_orders', session_data: { selected_order_id: order.id }, is_active: true,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          }).select().single();
+          if (newSession) {
+            await this.handleOrderDetail(newSession as BotSession, from, order.id);
+            return;
+          }
+        }
+        // Try bookings
+        const { data: booking } = await this.supabase
+          .from('bookings')
+          .select('id')
+          .eq('reference_code', refCode)
+          .eq('user_id', profile.id)
+          .maybeSingle();
+        if (booking) {
+          // Route to bookings
+          if (session) {
+            await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          }
+          await this.supabase.from('bot_sessions')
+            .delete()
+            .eq('whatsapp_number', from)
+            .is('business_id', null)
+            .eq('is_active', false);
+          const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+            whatsapp_number: from, user_id: profile.id, business_id: null,
+            current_step: 'my_bookings', session_data: { selected_booking_id: booking.id }, is_active: true,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          }).select().single();
+          if (newSession) {
+            session = newSession as BotSession;
+            await this.handleMyBookings(session, from, `booking_${booking.id}`);
+            return;
+          }
+        }
+        // Not found — fall through to normal flow (don't interrupt)
+      }
     }
 
     if (isBookingsQuery || isRescheduleQuery) {
@@ -1097,13 +1195,21 @@ export class BotService {
       }
     }
 
-    // Handle built-in steps (my_bookings, modify_booking)
+    // Handle built-in steps (my_bookings, modify_booking, my_orders, order_detail)
     if (step === 'my_bookings') {
       await this.handleMyBookings(session, from, text);
       return;
     }
     if (step === 'modify_booking') {
       await this.handleModifyBooking(session, from, text);
+      return;
+    }
+    if (step === 'my_orders') {
+      await this.handleMyOrders(session, from, text);
+      return;
+    }
+    if (step === 'order_detail') {
+      await this.handleOrderDetailAction(session, from, text);
       return;
     }
 
@@ -2003,6 +2109,247 @@ export class BotService {
 
       await this.sendText(from, "Let's pick a new date and time for your booking.");
       await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
+      return;
+    }
+
+    await this.sendText(from, 'Please tap one of the options above.');
+  }
+
+  // ── My Orders ──────────────────────────────────────
+
+  private formatOrderStatus(status: string): { emoji: string; label: string } {
+    const map: Record<string, { emoji: string; label: string }> = {
+      pending: { emoji: '🕐', label: 'Pending' },
+      confirmed: { emoji: '✅', label: 'Confirmed' },
+      processing: { emoji: '🔄', label: 'Processing' },
+      ready: { emoji: '📦', label: 'Ready for pickup' },
+      shipped: { emoji: '🚚', label: 'Shipped' },
+      delivered: { emoji: '✅', label: 'Delivered' },
+      cancelled: { emoji: '❌', label: 'Cancelled' },
+    };
+    return map[status] || { emoji: '📋', label: status };
+  }
+
+  private buildOrderProgressBar(status: string): string {
+    const stages = ['confirmed', 'processing', 'ready', 'delivered'];
+    const stageLabels: Record<string, string> = {
+      confirmed: 'Confirmed',
+      processing: 'Processing',
+      ready: 'Ready for pickup',
+      delivered: 'Delivered',
+    };
+    const stageEmojis: Record<string, { done: string; current: string; pending: string }> = {
+      confirmed: { done: '✅', current: '✅', pending: '⬜' },
+      processing: { done: '✅', current: '🔄', pending: '⬜' },
+      ready: { done: '✅', current: '📦', pending: '⬜' },
+      delivered: { done: '✅', current: '✅', pending: '⬜' },
+    };
+
+    // If pending, nothing is done yet
+    const normalizedStatus = status === 'pending' ? 'pending' : status;
+    const currentIndex = stages.indexOf(normalizedStatus);
+
+    const lines: string[] = [];
+    for (let i = 0; i < stages.length; i++) {
+      const stage = stages[i];
+      const emojis = stageEmojis[stage];
+      let icon: string;
+      let marker = '';
+      if (currentIndex < 0) {
+        // pending — nothing started
+        icon = emojis.pending;
+      } else if (i < currentIndex) {
+        icon = emojis.done;
+      } else if (i === currentIndex) {
+        icon = emojis.current;
+        marker = '  ← You are here';
+      } else {
+        icon = emojis.pending;
+      }
+      lines.push(`${icon} ${stageLabels[stage]}${marker}`);
+    }
+    return lines.join('\n');
+  }
+
+  private async handleMyOrders(session: BotSession, from: string, input: string): Promise<void> {
+    if (!input) {
+      const { data: orders } = await this.supabase
+        .from('orders')
+        .select('id, reference_code, status, total_amount, created_at, businesses (name, country_code)')
+        .eq('user_id', session.user_id!)
+        .in('status', ['pending', 'confirmed', 'processing', 'ready', 'shipped'])
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (!orders || orders.length === 0) {
+        await this.sendText(from, "You don't have any active orders. Send *Hi* to place an order!");
+        await this.deactivateSession(session.id);
+        return;
+      }
+
+      if (orders.length <= 3) {
+        // Show as buttons
+        const firstOrder = orders[0];
+        const biz = firstOrder.businesses as unknown as { name: string; country_code?: CountryCode } | null;
+        const cc = (biz?.country_code as CountryCode) || 'NG';
+        const { emoji } = this.formatOrderStatus(firstOrder.status);
+
+        const lines = orders.map((o) => {
+          const b = o.businesses as unknown as { name: string; country_code?: CountryCode } | null;
+          const occ = (b?.country_code as CountryCode) || 'NG';
+          const { emoji: e, label } = this.formatOrderStatus(o.status);
+          const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+          return `${e} *${o.reference_code}* — ${label}\n   ${b?.name || 'Order'} • ${dateLabel} • ${formatCurrency(o.total_amount || 0, occ)}`;
+        });
+
+        await this.sendText(from, `📦 *Your Orders*\n\n${lines.join('\n\n')}`);
+
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'Select an order to view details:',
+          buttons: orders.slice(0, 3).map((o, i) => ({
+            id: `order_${o.id}`,
+            title: `${o.reference_code}`.slice(0, 20),
+          })),
+        });
+      } else {
+        // Show as list
+        const items = orders.map((o) => {
+          const b = o.businesses as unknown as { name: string; country_code?: CountryCode } | null;
+          const occ = (b?.country_code as CountryCode) || 'NG';
+          const { label } = this.formatOrderStatus(o.status);
+          const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+          return {
+            title: `${o.reference_code}`.slice(0, 24),
+            description: `${label} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, occ)}`.slice(0, 72),
+            postbackText: `order_${o.id}`,
+          };
+        });
+
+        await this.messageSender.sendList({
+          to: from,
+          title: 'Your Orders',
+          body: '📦 Select an order to view details:',
+          buttonLabel: 'View Orders',
+          items,
+        });
+      }
+      return;
+    }
+
+    // Handle order selection
+    if (input.startsWith('order_')) {
+      const orderId = input.replace('order_', '');
+      session.session_data.selected_order_id = orderId;
+      await this.supabase.from('bot_sessions').update({
+        current_step: 'order_detail',
+        session_data: session.session_data,
+      }).eq('id', session.id);
+      await this.handleOrderDetail(session, from, orderId);
+      return;
+    }
+
+    // Handle "track_my_order" postback from ordering flow
+    if (input === 'track_my_order') {
+      // Re-show the orders list
+      await this.handleMyOrders(session, from, '');
+      return;
+    }
+  }
+
+  private async handleOrderDetail(session: BotSession, from: string, orderId: string): Promise<void> {
+    const { data: order } = await this.supabase
+      .from('orders')
+      .select('id, reference_code, status, total_amount, created_at, shipping_cost, delivery_address, tracking_number, carrier, updated_at, businesses (name, country_code)')
+      .eq('id', orderId)
+      .single();
+
+    if (!order) {
+      await this.sendText(from, 'Order not found. Type *my orders* to see your orders.');
+      await this.deactivateSession(session.id);
+      return;
+    }
+
+    const biz = order.businesses as unknown as { name: string; country_code?: CountryCode } | null;
+    const cc = (biz?.country_code as CountryCode) || 'NG';
+    const { emoji, label } = this.formatOrderStatus(order.status);
+    const dateLabel = new Date(order.created_at).toLocaleDateString('en-US', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
+
+    const progressBar = this.buildOrderProgressBar(order.status);
+
+    const lines: string[] = [
+      `📦 *Order #${order.reference_code}*`,
+      `🏪 ${biz?.name || 'Business'}`,
+      `📅 ${dateLabel}`,
+      '',
+      `Status: ${emoji} *${label}*`,
+      '━━━━━━━━━━━━━━━━━',
+      progressBar,
+      '',
+      `Total: ${formatCurrency(order.total_amount || 0, cc)}`,
+    ];
+
+    if (order.delivery_address) {
+      lines.push(`📍 ${order.delivery_address}`);
+    }
+
+    // Show tracking info if available
+    if (order.tracking_number || order.carrier) {
+      lines.push('');
+      lines.push('🚚 *Tracking Info*');
+      if (order.carrier) lines.push(`Carrier: ${order.carrier}`);
+      if (order.tracking_number) lines.push(`Tracking #: ${order.tracking_number}`);
+    }
+
+    if (order.updated_at) {
+      const updatedLabel = new Date(order.updated_at).toLocaleDateString('en-US', {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      });
+      lines.push(`\n_Last updated: ${updatedLabel}_`);
+    }
+
+    await this.sendText(from, lines.join('\n'));
+
+    const buttons: Array<{ id: string; title: string }> = [];
+    if (['pending', 'confirmed', 'processing', 'ready', 'shipped'].includes(order.status)) {
+      buttons.push({ id: 'refresh_order', title: 'Refresh Status' });
+    }
+    buttons.push({ id: 'back_orders', title: 'Back to Orders' });
+
+    await this.messageSender.sendButtons({
+      to: from,
+      body: 'What would you like to do?',
+      buttons,
+    });
+  }
+
+  private async handleOrderDetailAction(session: BotSession, from: string, input: string): Promise<void> {
+    const orderId = session.session_data.selected_order_id as string;
+
+    if (!orderId) {
+      await this.sendText(from, 'Something went wrong. Type *my orders* to try again.');
+      await this.deactivateSession(session.id);
+      return;
+    }
+
+    const response = input.toLowerCase();
+
+    if (response === 'cancel' || response === 'exit' || response === 'quit') {
+      await this.sendText(from, 'Action cancelled. Send *Hi* to start fresh. 🙏');
+      await this.deactivateSession(session.id);
+      return;
+    }
+
+    if (response === 'back_orders') {
+      await this.supabase.from('bot_sessions').update({ current_step: 'my_orders' }).eq('id', session.id);
+      await this.handleMyOrders(session, from, '');
+      return;
+    }
+
+    if (response === 'refresh_order') {
+      await this.handleOrderDetail(session, from, orderId);
       return;
     }
 
