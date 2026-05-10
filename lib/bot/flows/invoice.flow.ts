@@ -1,5 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { initializePayment } from './shared/payment';
+import { notifyOwnerNewInvoicePayment } from './shared/notify-owner';
+import { createNotification } from './shared/notifications';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -208,6 +210,37 @@ const invoicePayStep: FlowStepConfig = {
         .update({ status: 'viewed' })
         .eq('id', invoiceId)
         .in('status', ['sent']); // Only update if still 'sent'
+
+      // Notify owner that invoice payment link was sent (non-blocking)
+      // The customer name comes from the invoice record
+      const { data: customerProfile } = await ctx.supabase
+        .from('profiles')
+        .select('first_name, last_name')
+        .eq('id', userId!)
+        .maybeSingle();
+      const custName = customerProfile
+        ? `${customerProfile.first_name || ''} ${customerProfile.last_name || ''}`.trim() || 'Customer'
+        : 'Customer';
+
+      notifyOwnerNewInvoicePayment({
+        supabase: ctx.supabase,
+        sender: ctx.sender,
+        businessId: invoice.business_id,
+        businessName: biz?.name || 'Business',
+        countryCode: cc,
+        referenceCode: invoice.invoice_number,
+        customerName: custName,
+        amount: invoice.total_amount,
+        invoiceNumber: invoice.invoice_number,
+      }).catch(err => logger.error('[INVOICE] Notify error:', err));
+
+      // In-app notification
+      createNotification(ctx.supabase, {
+        businessId: invoice.business_id,
+        type: 'invoice_payment',
+        channel: 'whatsapp',
+        body: `${custName} opened payment link for Invoice ${invoice.invoice_number} (${formatCurrency(invoice.total_amount, cc)}).`,
+      }).catch(err => logger.error('[INVOICE] Notification error:', err));
 
       // End session
       await ctx.supabase.from('bot_sessions').update({

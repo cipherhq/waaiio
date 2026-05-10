@@ -6,6 +6,8 @@ import { initializePayment, verifyPayment, recordPlatformFee } from './shared/pa
 import { getPaymentReceiptMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
+import { notifyOwnerNewPayment } from './shared/notify-owner';
+import { createNotification } from './shared/notifications';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getAuthorization, createPlan, createSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
@@ -440,6 +442,28 @@ export const paymentFlow: FlowDefinition = {
                 serviceName: d.service_name as string,
                 referenceCode: d.reference_code as string,
               }).catch(err => console.error('[PAYMENT] Post-completion error:', err));
+
+              // Notify owner: email + WhatsApp
+              notifyOwnerNewPayment({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business.id,
+                businessName: ctx.business.name,
+                countryCode: cc,
+                referenceCode: d.reference_code as string,
+                customerName: custName || 'Customer',
+                amount: d.amount as number,
+                categoryName: d.service_name as string,
+              }).catch(err => console.error('[PAYMENT] Notify error:', err));
+
+              // In-app notification
+              createNotification(ctx.supabase, {
+                businessId: ctx.business.id,
+                bookingId: d.booking_id as string,
+                type: 'payment_received',
+                channel: 'whatsapp',
+                body: `New payment of ${formatCurrency(d.amount as number, cc)} for ${d.service_name} from ${custName || 'Customer'}. Ref: ${d.reference_code}`,
+              }).catch(err => console.error('[PAYMENT] Notification error:', err));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

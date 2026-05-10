@@ -1,4 +1,6 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage } from './types';
+import { notifyOwnerNewQueueCheckin } from './shared/notify-owner';
+import { createNotification } from './shared/notifications';
 
 const DEFAULT_AVG_SERVICE_MINUTES = 10;
 
@@ -140,6 +142,26 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     if (error) {
       console.error('[QUEUE] Insert error:', error);
       return [{ type: 'text', text: 'Sorry, there was an error joining the queue. Please try again.' }];
+    }
+
+    // Notify owner: email + WhatsApp
+    if (ctx.business) {
+      notifyOwnerNewQueueCheckin({
+        supabase: ctx.supabase,
+        sender: ctx.sender,
+        businessId: ctx.business.id,
+        businessName: ctx.business.name,
+        customerName,
+        queueNumber,
+      }).catch(err => console.error('[QUEUE] Notify error:', err));
+
+      // In-app notification
+      createNotification(ctx.supabase, {
+        businessId: ctx.business.id,
+        type: 'queue_checkin',
+        channel: 'whatsapp',
+        body: `${customerName} checked in to the queue (#${queueNumber}).`,
+      }).catch(err => console.error('[QUEUE] Notification error:', err));
     }
 
     const waitText = estimatedWait > 0

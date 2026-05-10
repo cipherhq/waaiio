@@ -5,6 +5,24 @@ import { newOrderEmail, newBookingOwnerEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
+// ── Helper: fetch owner info from business ──
+async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string) {
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('phone, owner_id, wa_method, profiles:owner_id (email, phone)')
+    .eq('id', businessId)
+    .single();
+
+  if (!biz) return null;
+
+  const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
+  const ownerEmail = profile?.email;
+  const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
+
+  return { ownerEmail, ownerPhone, isDedicated };
+}
+
 interface CartItem {
   name: string;
   quantity: number;
@@ -302,6 +320,302 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
     const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
     sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
       logger.error('[NOTIFY-OWNER] Booking WhatsApp error:', err),
+    );
+  }
+}
+
+// ── Ticket Sale ──
+
+interface NotifyTicketSaleOpts {
+  supabase: SupabaseClient;
+  sender: MessageSender;
+  businessId: string;
+  businessName: string;
+  countryCode: CountryCode;
+  referenceCode: string;
+  customerName: string;
+  eventName: string;
+  quantity: number;
+  ticketTypeName?: string;
+  totalAmount: number;
+}
+
+export async function notifyOwnerNewTicketSale(opts: NotifyTicketSaleOpts): Promise<void> {
+  const { supabase, sender, businessId, businessName, countryCode, referenceCode, customerName, eventName, quantity, ticketTypeName, totalAmount } = opts;
+
+  const ownerInfo = await fetchOwnerInfo(supabase, businessId);
+  if (!ownerInfo) return;
+
+  const { ownerEmail, ownerPhone, isDedicated } = ownerInfo;
+  const cc = countryCode || 'NG';
+  const formattedTotal = formatCurrency(totalAmount, cc);
+  const dashboardUrl = `https://app.waaiio.com/dashboard/tickets`;
+  const ticketLabel = ticketTypeName ? `${quantity}x ${ticketTypeName}` : `${quantity} ticket${quantity > 1 ? 's' : ''}`;
+
+  // Always send email
+  if (ownerEmail) {
+    sendEmail({
+      to: ownerEmail,
+      subject: `New Ticket Sale - ${eventName} - ${businessName}`,
+      html: `
+        <h2>New Ticket Sale!</h2>
+        <p><strong>Event:</strong> ${eventName}</p>
+        <p><strong>Customer:</strong> ${customerName}</p>
+        <p><strong>Tickets:</strong> ${ticketLabel}</p>
+        <p><strong>Total:</strong> ${formattedTotal}</p>
+        <p><strong>Reference:</strong> ${referenceCode}</p>
+        <p><a href="${dashboardUrl}">View ticket sales in your dashboard</a></p>
+      `,
+    }).catch(err => logger.error('[NOTIFY-OWNER] Ticket sale email error:', err));
+  }
+
+  // Send WhatsApp only for dedicated numbers
+  if (isDedicated && ownerPhone) {
+    const lines = [
+      `🎫 *New Ticket Sale!*`,
+      '',
+      `🔑 Ref: *${referenceCode}*`,
+      `🎪 Event: ${eventName}`,
+      `👤 Customer: ${customerName}`,
+      `🎟️ ${ticketLabel}`,
+      `💰 Total: *${formattedTotal}*`,
+      '',
+      `Open your dashboard to view ticket sales.`,
+    ];
+
+    const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Ticket sale WhatsApp error:', err),
+    );
+  }
+}
+
+// ── Donation ──
+
+interface NotifyDonationOpts {
+  supabase: SupabaseClient;
+  sender: MessageSender;
+  businessId: string;
+  businessName: string;
+  countryCode: CountryCode;
+  referenceCode: string;
+  donorName: string | null;
+  amount: number;
+  campaignTitle?: string;
+}
+
+export async function notifyOwnerNewDonation(opts: NotifyDonationOpts): Promise<void> {
+  const { supabase, sender, businessId, businessName, countryCode, referenceCode, donorName, amount, campaignTitle } = opts;
+
+  const ownerInfo = await fetchOwnerInfo(supabase, businessId);
+  if (!ownerInfo) return;
+
+  const { ownerEmail, ownerPhone, isDedicated } = ownerInfo;
+  const cc = countryCode || 'NG';
+  const formattedAmount = formatCurrency(amount, cc);
+  const displayName = donorName || 'Anonymous';
+  const dashboardUrl = `https://app.waaiio.com/dashboard/giving`;
+
+  // Always send email
+  if (ownerEmail) {
+    sendEmail({
+      to: ownerEmail,
+      subject: `New Donation from ${displayName} - ${businessName}`,
+      html: `
+        <h2>New Donation!</h2>
+        <p><strong>Donor:</strong> ${displayName}</p>
+        <p><strong>Amount:</strong> ${formattedAmount}</p>
+        ${campaignTitle ? `<p><strong>Campaign:</strong> ${campaignTitle}</p>` : ''}
+        <p><strong>Reference:</strong> ${referenceCode}</p>
+        <p><a href="${dashboardUrl}">View donations in your dashboard</a></p>
+      `,
+    }).catch(err => logger.error('[NOTIFY-OWNER] Donation email error:', err));
+  }
+
+  // Send WhatsApp only for dedicated numbers
+  if (isDedicated && ownerPhone) {
+    const lines = [
+      `🙏 *New Donation!*`,
+      '',
+      `👤 Donor: ${displayName}`,
+      `💰 Amount: *${formattedAmount}*`,
+      campaignTitle ? `📋 Campaign: ${campaignTitle}` : '',
+      `🔑 Ref: *${referenceCode}*`,
+    ].filter(Boolean);
+
+    const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Donation WhatsApp error:', err),
+    );
+  }
+}
+
+// ── Payment (tithes, fees, general) ──
+
+interface NotifyPaymentOpts {
+  supabase: SupabaseClient;
+  sender: MessageSender;
+  businessId: string;
+  businessName: string;
+  countryCode: CountryCode;
+  referenceCode: string;
+  customerName: string;
+  amount: number;
+  categoryName: string;
+}
+
+export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<void> {
+  const { supabase, sender, businessId, businessName, countryCode, referenceCode, customerName, amount, categoryName } = opts;
+
+  const ownerInfo = await fetchOwnerInfo(supabase, businessId);
+  if (!ownerInfo) return;
+
+  const { ownerEmail, ownerPhone, isDedicated } = ownerInfo;
+  const cc = countryCode || 'NG';
+  const formattedAmount = formatCurrency(amount, cc);
+  const dashboardUrl = `https://app.waaiio.com/dashboard/payments`;
+
+  // Always send email
+  if (ownerEmail) {
+    sendEmail({
+      to: ownerEmail,
+      subject: `New Payment from ${customerName} - ${businessName}`,
+      html: `
+        <h2>New Payment!</h2>
+        <p><strong>Customer:</strong> ${customerName}</p>
+        <p><strong>Amount:</strong> ${formattedAmount}</p>
+        <p><strong>Category:</strong> ${categoryName}</p>
+        <p><strong>Reference:</strong> ${referenceCode}</p>
+        <p><a href="${dashboardUrl}">View payments in your dashboard</a></p>
+      `,
+    }).catch(err => logger.error('[NOTIFY-OWNER] Payment email error:', err));
+  }
+
+  // Send WhatsApp only for dedicated numbers
+  if (isDedicated && ownerPhone) {
+    const lines = [
+      `💳 *New Payment!*`,
+      '',
+      `👤 Customer: ${customerName}`,
+      `💰 Amount: *${formattedAmount}*`,
+      `📋 Category: ${categoryName}`,
+      `🔑 Ref: *${referenceCode}*`,
+    ];
+
+    const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Payment WhatsApp error:', err),
+    );
+  }
+}
+
+// ── Invoice Payment ──
+
+interface NotifyInvoicePaymentOpts {
+  supabase: SupabaseClient;
+  sender: MessageSender;
+  businessId: string;
+  businessName: string;
+  countryCode: CountryCode;
+  referenceCode: string;
+  customerName: string;
+  amount: number;
+  invoiceNumber: string;
+}
+
+export async function notifyOwnerNewInvoicePayment(opts: NotifyInvoicePaymentOpts): Promise<void> {
+  const { supabase, sender, businessId, businessName, countryCode, referenceCode, customerName, amount, invoiceNumber } = opts;
+
+  const ownerInfo = await fetchOwnerInfo(supabase, businessId);
+  if (!ownerInfo) return;
+
+  const { ownerEmail, ownerPhone, isDedicated } = ownerInfo;
+  const cc = countryCode || 'NG';
+  const formattedAmount = formatCurrency(amount, cc);
+  const dashboardUrl = `https://app.waaiio.com/dashboard/invoices`;
+
+  // Always send email
+  if (ownerEmail) {
+    sendEmail({
+      to: ownerEmail,
+      subject: `Invoice ${invoiceNumber} Paid - ${businessName}`,
+      html: `
+        <h2>Invoice Paid!</h2>
+        <p><strong>Customer:</strong> ${customerName}</p>
+        <p><strong>Amount:</strong> ${formattedAmount}</p>
+        <p><strong>Invoice:</strong> ${invoiceNumber}</p>
+        <p><strong>Reference:</strong> ${referenceCode}</p>
+        <p><a href="${dashboardUrl}">View invoices in your dashboard</a></p>
+      `,
+    }).catch(err => logger.error('[NOTIFY-OWNER] Invoice payment email error:', err));
+  }
+
+  // Send WhatsApp only for dedicated numbers
+  if (isDedicated && ownerPhone) {
+    const lines = [
+      `🧾 *Invoice Paid!*`,
+      '',
+      `👤 Customer: ${customerName}`,
+      `💰 Amount: *${formattedAmount}*`,
+      `📋 Invoice: ${invoiceNumber}`,
+      `🔑 Ref: *${referenceCode}*`,
+    ];
+
+    const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Invoice payment WhatsApp error:', err),
+    );
+  }
+}
+
+// ── Queue Check-in ──
+
+interface NotifyQueueCheckinOpts {
+  supabase: SupabaseClient;
+  sender: MessageSender;
+  businessId: string;
+  businessName: string;
+  customerName: string;
+  queueNumber: number;
+}
+
+export async function notifyOwnerNewQueueCheckin(opts: NotifyQueueCheckinOpts): Promise<void> {
+  const { supabase, sender, businessId, businessName, customerName, queueNumber } = opts;
+
+  const ownerInfo = await fetchOwnerInfo(supabase, businessId);
+  if (!ownerInfo) return;
+
+  const { ownerEmail, ownerPhone, isDedicated } = ownerInfo;
+  const dashboardUrl = `https://app.waaiio.com/dashboard/queue`;
+
+  // Always send email
+  if (ownerEmail) {
+    sendEmail({
+      to: ownerEmail,
+      subject: `New Queue Check-in #${queueNumber} - ${businessName}`,
+      html: `
+        <h2>New Queue Check-in!</h2>
+        <p><strong>Customer:</strong> ${customerName}</p>
+        <p><strong>Queue Number:</strong> #${queueNumber}</p>
+        <p><a href="${dashboardUrl}">Manage queue in your dashboard</a></p>
+      `,
+    }).catch(err => logger.error('[NOTIFY-OWNER] Queue checkin email error:', err));
+  }
+
+  // Send WhatsApp only for dedicated numbers
+  if (isDedicated && ownerPhone) {
+    const lines = [
+      `📋 *New Queue Check-in!*`,
+      '',
+      `👤 Customer: ${customerName}`,
+      `🔢 Queue #${queueNumber}`,
+      '',
+      `Open your dashboard to manage the queue.`,
+    ];
+
+    const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+    sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
+      logger.error('[NOTIFY-OWNER] Queue checkin WhatsApp error:', err),
     );
   }
 }

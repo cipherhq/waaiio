@@ -3,6 +3,7 @@ import { formatCurrency, getLocale, getMaxQuantity, type CountryCode } from '@/l
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { createNotification } from './shared/notifications';
+import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { getReservationConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
@@ -749,7 +750,7 @@ export const reservationFlow: FlowDefinition = {
           .update({ current_step: 'complete', is_active: false })
           .eq('id', ctx.session.id);
 
-        // Create notification
+        // Create notification + notify owner via email/WhatsApp
         if (ctx.business) {
           await createNotification(ctx.supabase, {
             businessId: ctx.business.id,
@@ -758,6 +759,21 @@ export const reservationFlow: FlowDefinition = {
             channel: 'whatsapp',
             body: `Reservation at ${ctx.business.name}: ${d.service_name} from ${checkInLabel} to ${checkOutLabel} (${nights} nights). Ref: ${reservation.reference_code}`,
           });
+
+          notifyOwnerNewBooking({
+            supabase: ctx.supabase,
+            sender: ctx.sender,
+            businessId: ctx.business.id,
+            businessName: ctx.business.name,
+            countryCode: cc,
+            referenceCode: reservation.reference_code,
+            customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+            date: checkInLabel,
+            time: `→ ${checkOutLabel}`,
+            quantity: (d.guests as number) || 1,
+            quantityLabel: 'guest(s)',
+            amount: payableAmount > 0 ? payableAmount : undefined,
+          }).catch(err => console.error('[RESERVATION] Notify error:', err));
 
           handlePostCompletion({
             supabase: ctx.supabase,
@@ -876,6 +892,30 @@ export const reservationFlow: FlowDefinition = {
                 referenceId: d.reservation_id as string,
                 sender: ctx.sender,
               }).catch(err => console.error('[RESERVATION] Post-completion error:', err));
+
+              // Notify owner: email + WhatsApp + in-app notification
+              notifyOwnerNewBooking({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business.id,
+                businessName: ctx.business.name,
+                countryCode: (ctx.business.country_code || 'NG') as CountryCode,
+                referenceCode: d.reference_code as string,
+                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                date: checkInLabel,
+                time: `→ ${checkOutLabel}`,
+                quantity: (d.guests as number) || 1,
+                quantityLabel: 'guest(s)',
+                amount: d.payable_amount as number,
+              }).catch(err => console.error('[RESERVATION] Notify error:', err));
+
+              createNotification(ctx.supabase, {
+                businessId: ctx.business.id,
+                bookingId: d.reservation_id as string,
+                type: 'booking_confirmation',
+                channel: 'whatsapp',
+                body: `Reservation confirmed (paid): ${d.service_name} from ${checkInLabel} to ${checkOutLabel} (${d.nights} nights). Ref: ${d.reference_code}`,
+              }).catch(err => console.error('[RESERVATION] Notification error:', err));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };

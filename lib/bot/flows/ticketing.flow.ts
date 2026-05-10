@@ -4,6 +4,8 @@ import { initializePayment, verifyPayment, recordPlatformFee } from './shared/pa
 import { getTicketConfirmationMessage } from './shared/templates';
 import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
+import { notifyOwnerNewTicketSale } from './shared/notify-owner';
+import { createNotification } from './shared/notifications';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
 
@@ -419,6 +421,30 @@ export const ticketingFlow: FlowDefinition = {
           console.error('[TICKETING] Ticket PDF send error:', err);
         }
 
+        // Notify owner: email + WhatsApp
+        notifyOwnerNewTicketSale({
+          supabase: ctx.supabase,
+          sender: ctx.sender,
+          businessId: ctx.business!.id,
+          businessName: ctx.business!.name,
+          countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+          referenceCode: booking.reference_code,
+          customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+          eventName: d.event_name as string,
+          quantity: qty,
+          ticketTypeName: d.ticket_type_name as string | undefined,
+          totalAmount: total,
+        }).catch(err => console.error('[TICKETING] Notify error:', err));
+
+        // In-app notification
+        createNotification(ctx.supabase, {
+          businessId: ctx.business!.id,
+          bookingId: booking.id,
+          type: 'ticket_sale',
+          channel: 'whatsapp',
+          body: `New ticket sale: ${qty} ticket${qty > 1 ? 's' : ''} for ${d.event_name}. Ref: ${booking.reference_code}`,
+        }).catch(err => console.error('[TICKETING] Notification error:', err));
+
         await ctx.supabase
           .from('bot_sessions')
           .update({ current_step: 'complete', is_active: false })
@@ -520,6 +546,30 @@ export const ticketingFlow: FlowDefinition = {
               referenceCode: d.reference_code as string,
               quantity: d.ticket_quantity as number,
             }).catch(err => console.error('[TICKETING] Ticket PDF send error:', err));
+
+            // Notify owner: email + WhatsApp
+            notifyOwnerNewTicketSale({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business!.id,
+              businessName: ctx.business!.name,
+              countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+              referenceCode: d.reference_code as string,
+              customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              eventName: d.event_name as string,
+              quantity: d.ticket_quantity as number,
+              ticketTypeName: d.ticket_type_name as string | undefined,
+              totalAmount: d.total_amount as number,
+            }).catch(err => console.error('[TICKETING] Notify error:', err));
+
+            // In-app notification
+            createNotification(ctx.supabase, {
+              businessId: ctx.business!.id,
+              bookingId: d.booking_id as string,
+              type: 'ticket_sale',
+              channel: 'whatsapp',
+              body: `New ticket sale: ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''} for ${d.event_name}. Amount: ${formatCurrency(d.total_amount as number, (ctx.business?.country_code || 'NG') as CountryCode)}. Ref: ${d.reference_code}`,
+            }).catch(err => console.error('[TICKETING] Notification error:', err));
 
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }

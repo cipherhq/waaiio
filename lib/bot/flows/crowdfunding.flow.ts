@@ -1,5 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { notifyOwnerNewDonation } from './shared/notify-owner';
+import { createNotification } from './shared/notifications';
 
 const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
@@ -385,6 +387,29 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             '• Type *Hi* to give again',
           ].join('\n'),
         });
+
+        // Notify owner: email + WhatsApp
+        if (ctx.business) {
+          notifyOwnerNewDonation({
+            supabase: ctx.supabase,
+            sender: ctx.sender,
+            businessId: ctx.business.id,
+            businessName: ctx.business.name,
+            countryCode: cc,
+            referenceCode: refCode,
+            donorName: (sd.donor_display_name as string) || null,
+            amount,
+            campaignTitle: sd.campaign_title as string,
+          }).catch(err => console.error('[CROWDFUNDING] Notify error:', err));
+
+          // In-app notification
+          createNotification(ctx.supabase, {
+            businessId: ctx.business.id,
+            type: 'donation',
+            channel: 'whatsapp',
+            body: `New donation of ${formatCurrency(amount, cc)} for ${sd.campaign_title}${(sd.donor_display_name as string) ? ` from ${sd.donor_display_name}` : ' (Anonymous)'}. Ref: ${refCode}`,
+          }).catch(err => console.error('[CROWDFUNDING] Notification error:', err));
+        }
 
         return { valid: true, data: { _action: 'payment_confirmed' } };
       }
