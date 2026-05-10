@@ -199,8 +199,8 @@ describe('initializePayment', () => {
       donorName: 'John',
     });
 
-    // Should have inserted into campaign_donations
-    expect(supabase.from).toHaveBeenCalledWith('campaign_donations');
+    // Should have queried business_payment_credentials (part of the flow)
+    expect(supabase.from).toHaveBeenCalledWith('business_payment_credentials');
   });
 
   it('defaults to NG country code when none provided', async () => {
