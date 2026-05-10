@@ -53,10 +53,7 @@ const FIELD_TYPES: Array<{ value: FormField['type']; label: string }> = [
 ];
 
 function generateToken(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let token = '';
-  for (let i = 0; i < 12; i++) token += chars[Math.floor(Math.random() * chars.length)];
-  return token;
+  return crypto.randomUUID().replace(/-/g, '').slice(0, 24);
 }
 
 function generateFieldId(): string {

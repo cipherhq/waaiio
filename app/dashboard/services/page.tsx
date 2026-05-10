@@ -201,7 +201,7 @@ export default function ServicesPage() {
   useEffect(() => { fetchServices(); fetchStaff(); }, [business.id]);
 
   function openAdd() {
-    setForm({ ...emptyForm, sort_order: services.length, duration_minutes: null });
+    setForm({ ...emptyForm, sort_order: services.length, duration_minutes: isScheduling ? 30 : null });
     setShowPrice(labels.defaultHasPrice);
     setShowDuration(false);
     setShowSchedule(false);

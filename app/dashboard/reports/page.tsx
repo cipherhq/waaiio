@@ -214,8 +214,8 @@ export default function DocumentSharePage() {
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600">PDF File * (max 10MB)</label>
-            <input type="file" accept="application/pdf" onChange={e => { setFile(e.target.files?.[0] || null); setUploadError(''); }}
+            <label className="block text-xs font-medium text-gray-600">File * (PDF, PNG, JPG — max 10MB)</label>
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={e => { setFile(e.target.files?.[0] || null); setUploadError(''); }}
               className="mt-1 w-full text-sm text-gray-500 file:mr-3 file:rounded-lg file:border-0 file:bg-brand-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-brand hover:file:bg-brand-100" />
           </div>
         </div>

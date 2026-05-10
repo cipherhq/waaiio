@@ -47,6 +47,7 @@ export default function QuotesPage() {
   const [respondAmount, setRespondAmount] = useState('');
   const [respondNotes, setRespondNotes] = useState('');
   const [responding, setResponding] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
 
   const fetchQuotes = useCallback(async () => {
     const supabase = createClient();
@@ -93,6 +94,34 @@ export default function QuotesPage() {
       // error handled silently
     }
     setResponding(false);
+  }
+
+  async function handleReject() {
+    if (!selectedQuote) return;
+    if (!confirm('Reject this price request? The customer will be notified.')) return;
+    setRejecting(true);
+
+    try {
+      const res = await fetch('/api/orders/quote-reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quote_id: selectedQuote.id,
+          business_id: business.id,
+          quote_notes: respondNotes.trim() || null,
+        }),
+      });
+
+      if (res.ok) {
+        setSelectedQuote(null);
+        setRespondAmount('');
+        setRespondNotes('');
+        fetchQuotes();
+      }
+    } catch {
+      // error handled silently
+    }
+    setRejecting(false);
   }
 
   if (loading) {
@@ -326,13 +355,22 @@ export default function QuotesPage() {
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
                   </div>
-                  <button
-                    onClick={handleRespond}
-                    disabled={responding || !respondAmount}
-                    className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-                  >
-                    {responding ? 'Sending...' : 'Send Price to Customer'}
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleRespond}
+                      disabled={responding || rejecting || !respondAmount}
+                      className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {responding ? 'Sending...' : 'Send Price to Customer'}
+                    </button>
+                    <button
+                      onClick={handleReject}
+                      disabled={responding || rejecting}
+                      className="rounded-lg border border-red-200 bg-white px-6 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {rejecting ? 'Rejecting...' : 'Reject'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
