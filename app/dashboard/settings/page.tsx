@@ -966,7 +966,7 @@ export default function SettingsPage() {
                   <input
                     type="number"
                     min={0}
-                    value={form.deposit_per_guest}
+                    value={form.deposit_per_guest || ''}
                     onChange={(e) => setForm({ ...form, deposit_per_guest: Number(e.target.value) })}
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
@@ -1170,7 +1170,8 @@ export default function SettingsPage() {
                   ))}
                   <input
                     type="number"
-                    value={slotInterval}
+                    value={slotInterval || ''}
+                    onFocus={e => e.target.select()}
                     onChange={e => setSlotInterval(Number(e.target.value) || 60)}
                     min={5}
                     max={240}
@@ -1191,7 +1192,8 @@ export default function SettingsPage() {
                 <div className="mt-1.5 flex items-center gap-2">
                   <input
                     type="number"
-                    value={maxAdvanceDays}
+                    value={maxAdvanceDays || ''}
+                    onFocus={e => e.target.select()}
                     onChange={e => setMaxAdvanceDays(Number(e.target.value) || 30)}
                     min={1}
                     max={365}
@@ -1213,7 +1215,8 @@ export default function SettingsPage() {
                 <div className="mt-1.5 flex items-center gap-2">
                   <input
                     type="number"
-                    value={dateRangeDays}
+                    value={dateRangeDays || ''}
+                    onFocus={e => e.target.select()}
                     onChange={e => setDateRangeDays(Math.min(10, Number(e.target.value) || 7))}
                     min={3}
                     max={10}
@@ -1235,7 +1238,8 @@ export default function SettingsPage() {
                 <div className="mt-1.5 flex items-center gap-2">
                   <input
                     type="number"
-                    value={maxPartySize}
+                    value={maxPartySize || ''}
+                    onFocus={e => e.target.select()}
                     onChange={e => setMaxPartySize(Number(e.target.value) || 20)}
                     min={1}
                     max={500}
@@ -1264,7 +1268,8 @@ export default function SettingsPage() {
                 <div className="mt-1.5 flex items-center gap-2">
                   <input
                     type="number"
-                    value={maxTicketQuantity}
+                    value={maxTicketQuantity || ''}
+                    onFocus={e => e.target.select()}
                     onChange={e => setMaxTicketQuantity(Number(e.target.value) || 10)}
                     min={1}
                     max={100}
@@ -1767,7 +1772,8 @@ export default function SettingsPage() {
               <div className="mt-1.5 flex items-center gap-2">
                 <input
                   type="number"
-                  value={maxPaymentAmount}
+                  value={maxPaymentAmount || ''}
+                  onFocus={e => e.target.select()}
                   onChange={e => setMaxPaymentAmount(Number(e.target.value) || 10_000_000)}
                   min={1000}
                   className="w-40 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand"
@@ -1893,7 +1899,8 @@ export default function SettingsPage() {
                   type="number"
                   min={1}
                   max={120}
-                  value={queueAvgMinutes}
+                  value={queueAvgMinutes || ''}
+                  onFocus={e => e.target.select()}
                   onChange={(e) => setQueueAvgMinutes(Math.max(1, Math.min(120, Number(e.target.value))))}
                   className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                 />
@@ -2459,7 +2466,8 @@ export default function SettingsPage() {
                         type="number"
                         min={0}
                         max={100}
-                        value={customDepositPct}
+                        value={customDepositPct || ''}
+                        onFocus={e => e.target.select()}
                         onChange={(e) => setCustomDepositPct(Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
                         className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                       />

@@ -681,6 +681,7 @@ export default function InvoicesPage() {
                         type="number"
                         min="1"
                         value={item.quantity}
+                        onFocus={e => e.target.select()}
                         onChange={e => setItems(prev => prev.map((x, j) => j === i ? { ...x, quantity: parseFloat(e.target.value) || 1 } : x))}
                         className="w-16 rounded-lg border border-gray-300 px-2 py-2 text-center text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                         placeholder="Qty"

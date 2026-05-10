@@ -296,7 +296,7 @@ export default function MembershipPage() {
                     <input
                       type="number"
                       min={0}
-                      value={form.min_spend}
+                      value={form.min_spend || ''}
                       onChange={(e) => setForm((f) => ({ ...f, min_spend: parseFloat(e.target.value) || 0 }))}
                       className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
@@ -309,7 +309,7 @@ export default function MembershipPage() {
                       type="number"
                       min={0}
                       max={100}
-                      value={form.discount_percent}
+                      value={form.discount_percent || ''}
                       onChange={(e) => setForm((f) => ({ ...f, discount_percent: parseFloat(e.target.value) || 0 }))}
                       className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
@@ -322,7 +322,8 @@ export default function MembershipPage() {
                       type="number"
                       min={1}
                       step={0.5}
-                      value={form.points_multiplier}
+                      value={form.points_multiplier || ''}
+                      onFocus={e => e.target.select()}
                       onChange={(e) => setForm((f) => ({ ...f, points_multiplier: parseFloat(e.target.value) || 1 }))}
                       className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />

@@ -338,7 +338,7 @@ export default function QuotesPage() {
                       <input
                         type="number"
                         min={0}
-                        value={respondAmount}
+                        value={respondAmount || ''}
                         onChange={(e) => setRespondAmount(e.target.value)}
                         placeholder={String(selectedQuote.estimated_subtotal)}
                         className="w-full rounded-lg border border-gray-200 py-2 pl-7 pr-3 text-sm outline-none focus:border-brand"

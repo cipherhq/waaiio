@@ -212,7 +212,8 @@ export default function VolumeDiscountsPage() {
                 <input
                   type="number"
                   min={1}
-                  value={rule.min_quantity}
+                  value={rule.min_quantity || ''}
+                  onFocus={e => e.target.select()}
                   onChange={(e) => {
                     const updated = [...rules];
                     updated[idx] = { ...updated[idx], min_quantity: Number(e.target.value) || 1 };

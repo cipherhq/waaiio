@@ -174,7 +174,8 @@ export default function LoyaltyPage() {
             <input
               type="number"
               min={1}
-              value={config.loyalty_points_per_visit}
+              value={config.loyalty_points_per_visit || ''}
+              onFocus={e => e.target.select()}
               onChange={(e) =>
                 setConfig((c) => ({
                   ...c,
@@ -191,7 +192,8 @@ export default function LoyaltyPage() {
             <input
               type="number"
               min={1}
-              value={config.loyalty_reward_threshold}
+              value={config.loyalty_reward_threshold || ''}
+              onFocus={e => e.target.select()}
               onChange={(e) =>
                 setConfig((c) => ({
                   ...c,

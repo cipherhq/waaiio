@@ -1179,7 +1179,8 @@ export default function ProductsPage() {
                             <input
                               type="number"
                               min={1}
-                              value={rule.min_quantity}
+                              value={rule.min_quantity || ''}
+                              onFocus={e => e.target.select()}
                               onChange={(e) => {
                                 const updated = [...volumeDiscounts];
                                 updated[idx] = { ...updated[idx], min_quantity: Number(e.target.value) || 1 };
@@ -1392,7 +1393,7 @@ export default function ProductsPage() {
                             <input
                               type="number"
                               min={0}
-                              value={bulkPrice}
+                              value={bulkPrice || ''}
                               onChange={(e) => setBulkPrice(e.target.value)}
                               placeholder="0"
                               className="w-full rounded border border-gray-200 py-1.5 pl-5 pr-1 text-sm outline-none focus:border-brand"
@@ -1590,7 +1591,8 @@ export default function ProductsPage() {
                 <input
                   type="number"
                   min={1}
-                  value={form.low_stock_threshold}
+                  value={form.low_stock_threshold || ''}
+                  onFocus={e => e.target.select()}
                   onChange={(e) => setForm({ ...form, low_stock_threshold: Number(e.target.value) || 5 })}
                   className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand"
                 />
@@ -1612,7 +1614,8 @@ export default function ProductsPage() {
               <input
                 type="number"
                 min={1}
-                value={form.min_order_qty || 1}
+                value={form.min_order_qty || ''}
+                onFocus={e => e.target.select()}
                 onChange={(e) => setForm({ ...form, min_order_qty: Number(e.target.value) || 1 })}
                 placeholder="1"
                 className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand"

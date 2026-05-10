@@ -154,7 +154,7 @@ export default function ReferralsPage() {
               <input
                 type="number"
                 min={0}
-                value={rewardAmount}
+                value={rewardAmount || ''}
                 onChange={(e) => setRewardAmount(Number(e.target.value))}
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
               />

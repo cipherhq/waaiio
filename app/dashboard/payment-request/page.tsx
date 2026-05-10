@@ -178,7 +178,7 @@ export default function PaymentRequestPage() {
               <input
                 type="number"
                 min={1}
-                value={amount}
+                value={amount || ''}
                 onChange={e => setAmount(e.target.value)}
                 placeholder="5000"
                 className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"

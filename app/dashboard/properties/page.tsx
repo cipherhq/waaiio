@@ -324,7 +324,7 @@ export default function PropertiesPage() {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max Guests</label>
-                <input type="number" min={1} value={form.max_guests} onChange={e => setForm({ ...form, max_guests: Number(e.target.value) })}
+                <input type="number" min={1} value={form.max_guests} onFocus={e => e.target.select()} onChange={e => setForm({ ...form, max_guests: Number(e.target.value) })}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
             </div>

@@ -556,7 +556,8 @@ export default function RulesPage() {
                 <input
                   type="number"
                   min={0}
-                  value={form.priority}
+                  value={form.priority || ''}
+                  onFocus={e => e.target.select()}
                   onChange={(e) => setForm({ ...form, priority: Number(e.target.value) || 0 })}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                 />

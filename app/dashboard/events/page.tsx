@@ -309,7 +309,7 @@ export default function EventsPage() {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Total Tickets</label>
-                <input type="number" min={1} value={form.total_tickets} onChange={e => setForm({ ...form, total_tickets: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                <input type="number" min={1} value={form.total_tickets || ''} onChange={e => setForm({ ...form, total_tickets: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max per Order</label>
@@ -362,8 +362,9 @@ export default function EventsPage() {
                     <input
                       type="number"
                       min={1}
-                      value={newTypeTotal}
+                      value={newTypeTotal || ''}
                       onChange={e => setNewTypeTotal(Number(e.target.value))}
+                      onFocus={e => e.target.select()}
                       placeholder="Qty"
                       className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />

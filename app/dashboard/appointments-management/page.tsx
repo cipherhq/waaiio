@@ -191,7 +191,7 @@ export default function AppointmentsManagementPage() {
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Duration (min)</label>
-                <input type="number" min={5} step={5} value={form.duration_minutes} onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })}
+                <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })}
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
               <div>
