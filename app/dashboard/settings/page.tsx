@@ -38,7 +38,16 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'auto_reply' | 'account'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'auto_reply' | 'notifications' | 'account'>('profile');
+
+  // Notification preferences state
+  const [notifEmailEnabled, setNotifEmailEnabled] = useState(true);
+  const [notifSoundEnabled, setNotifSoundEnabled] = useState(true);
+  const [notifWhatsAppEnabled, setNotifWhatsAppEnabled] = useState(false);
+  const [notifWhatsAppPhone, setNotifWhatsAppPhone] = useState('');
+  const [notifMonthlyCount, setNotifMonthlyCount] = useState(0);
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifSaved, setNotifSaved] = useState(false);
 
   // Account tab state
   const searchParams = useSearchParams();
@@ -245,6 +254,26 @@ export default function SettingsPage() {
       setArLoading(false);
     }
     loadAutoReply();
+  }, [business.id]);
+
+  // Load notification preferences
+  useEffect(() => {
+    async function loadNotifPrefs() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('whatsapp_config')
+        .select('notify_email_enabled, notify_sound_enabled, notify_whatsapp_enabled, notify_whatsapp_phone, notify_monthly_count')
+        .eq('business_id', business.id)
+        .maybeSingle();
+      if (data) {
+        setNotifEmailEnabled(data.notify_email_enabled !== false);
+        setNotifSoundEnabled(data.notify_sound_enabled !== false);
+        setNotifWhatsAppEnabled(data.notify_whatsapp_enabled ?? false);
+        setNotifWhatsAppPhone(data.notify_whatsapp_phone || '');
+        setNotifMonthlyCount(data.notify_monthly_count || 0);
+      }
+    }
+    loadNotifPrefs();
   }, [business.id]);
 
   // Load WhatsApp channel info
@@ -760,6 +789,14 @@ export default function SettingsPage() {
             }`}
           >
             Auto Reply
+          </button>
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'notifications' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Notifications
           </button>
           <button
             onClick={() => setActiveTab('account')}
@@ -2634,6 +2671,120 @@ export default function SettingsPage() {
               </div>
             </>
           )}
+        </div>
+      ) : activeTab === 'notifications' ? (
+        /* Notification Preferences Tab */
+        <div className="mt-6 max-w-xl space-y-6">
+          <div className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+            <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">How do you want to be notified?</h3>
+            <p className="mt-1 text-sm text-gray-500">Choose how you&apos;ll hear about new sales, bookings, and orders.</p>
+
+            <div className="mt-6 space-y-5">
+              {/* Email */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Email notifications</p>
+                  <p className="text-xs text-gray-500">Get an email every time a customer makes a purchase or booking. Free.</p>
+                </div>
+                <button
+                  onClick={() => setNotifEmailEnabled(!notifEmailEnabled)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${notifEmailEnabled ? 'bg-brand' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${notifEmailEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {/* Dashboard Sound */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Dashboard sound alert</p>
+                  <p className="text-xs text-gray-500">Play a sound when a new sale comes in (while dashboard is open). Free.</p>
+                </div>
+                <button
+                  onClick={() => setNotifSoundEnabled(!notifSoundEnabled)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${notifSoundEnabled ? 'bg-brand' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${notifSoundEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {/* WhatsApp */}
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-700/30">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">WhatsApp notifications</p>
+                    <p className="text-xs text-gray-500">
+                      Get a WhatsApp message on your personal phone for every sale.
+                      {business.subscription_tier === 'free' ? ' Free tier: 50/month.' : ' Unlimited on your plan.'}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setNotifWhatsAppEnabled(!notifWhatsAppEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${notifWhatsAppEnabled ? 'bg-[#25D366]' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${notifWhatsAppEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                {notifWhatsAppEnabled && (
+                  <div className="mt-4 space-y-3">
+                    <div>
+                      <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Your personal WhatsApp number</label>
+                      <p className="text-[11px] text-gray-400 mb-1">This must be different from your bot number. We&apos;ll send sale alerts here.</p>
+                      <input
+                        type="tel"
+                        value={notifWhatsAppPhone}
+                        onChange={e => setNotifWhatsAppPhone(e.target.value)}
+                        placeholder="+234 801 234 5678"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                      />
+                    </div>
+                    {business.subscription_tier === 'free' && (
+                      <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          {notifMonthlyCount}/50 WhatsApp notifications used this month.
+                          {notifMonthlyCount >= 45 && ' Running low — upgrade for unlimited.'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <div className="mt-6 flex items-center gap-3">
+              <button
+                onClick={async () => {
+                  setNotifSaving(true);
+                  const supabase = createClient();
+                  await supabase.from('whatsapp_config').upsert({
+                    business_id: business.id,
+                    notify_email_enabled: notifEmailEnabled,
+                    notify_sound_enabled: notifSoundEnabled,
+                    notify_whatsapp_enabled: notifWhatsAppEnabled,
+                    notify_whatsapp_phone: notifWhatsAppPhone.trim() || null,
+                  }, { onConflict: 'business_id' });
+                  setNotifSaving(false);
+                  setNotifSaved(true);
+                  setTimeout(() => setNotifSaved(false), 3000);
+                }}
+                disabled={notifSaving}
+                className="rounded-lg bg-brand px-5 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+              >
+                {notifSaving ? 'Saving...' : 'Save Preferences'}
+              </button>
+              {notifSaved && <span className="text-sm text-green-600">Saved!</span>}
+            </div>
+          </div>
+
+          {/* Info box */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-4">
+            <p className="text-xs text-blue-700 dark:text-blue-400">
+              Dashboard notifications (the bell icon) are always on and free. Email and sound are also free.
+              WhatsApp notifications use your plan&apos;s message quota — Free plan gets 50/month, Growth and Business plans get unlimited.
+            </p>
+          </div>
         </div>
       ) : activeTab === 'account' ? (
         /* Account Tab */
