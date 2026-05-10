@@ -219,5 +219,10 @@ export function getTicketConfirmationMessage(opts: {
     `🔑 Ref: *${opts.referenceCode}*`,
     '',
     'See you there! 🎉',
+    '',
+    `💡 *What you can do:*`,
+    `• Type *my bookings* to view your tickets`,
+    `• Type *receipt* to get your purchase receipt`,
+    `• Type *Hi* to buy more tickets`,
   ].join('\n');
 }

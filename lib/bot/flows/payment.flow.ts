@@ -408,6 +408,11 @@ export const paymentFlow: FlowDefinition = {
             }
 
             const labels = getCategoryLabels(ctx.business?.category || 'church');
+            const isGivingFlow = d.active_capability === 'giving';
+            const tipsText = isGivingFlow
+              ? `\n\n💡 *What you can do:*\n• Type *my giving* to see your giving history\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`
+              : `\n\n💡 *What you can do:*\n• Type *my bookings* to view your bookings\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`;
+
             await ctx.sender.sendText({
               to: ctx.from,
               text: getPaymentReceiptMessage({
@@ -417,7 +422,7 @@ export const paymentFlow: FlowDefinition = {
                 amount: d.amount as number,
                 referenceCode: d.reference_code as string,
                 countryCode: cc,
-              }),
+              }) + tipsText,
             });
 
             // Post-completion: auto-receipt, loyalty, feedback, referral
@@ -777,6 +782,21 @@ export const paymentFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const labels = getCategoryLabels(ctx.business?.category || 'church');
 
+        const isGivingFlow = d.active_capability === 'giving';
+        const tips = isGivingFlow
+          ? [
+              `💡 *What you can do:*`,
+              `• Type *my giving* to see your giving history`,
+              `• Type *receipt* to get your payment receipt`,
+              `• Type *Hi* to make another payment`,
+            ]
+          : [
+              `💡 *What you can do:*`,
+              `• Type *my bookings* to view your bookings`,
+              `• Type *receipt* to get your payment receipt`,
+              `• Type *Hi* to make another payment`,
+            ];
+
         return [{
           type: 'text',
           text: [
@@ -788,6 +808,8 @@ export const paymentFlow: FlowDefinition = {
             `🔑 Ref: *${d.reference_code as string}*`,
             '',
             `We appreciate your support. 🙏`,
+            '',
+            ...tips,
             '',
             `_Powered by *Waaiio*_`,
           ].join('\n'),

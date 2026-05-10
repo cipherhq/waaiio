@@ -148,7 +148,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     return [{
       type: 'text',
-      text: `You're checked in, ${customerName}!\n\nYou're *#${queueNumber}* in the queue. ${waitText}\n\nWe'll message you when it's your turn!`,
+      text: `You're checked in, ${customerName}!\n\nYou're *#${queueNumber}* in the queue. ${waitText}\n\nWe'll message you when it's your turn!\n\n💡 *What you can do:*\n• Type *my bookings* to manage your booking\n• Type *receipt* to get your receipt`,
     }];
   },
 
