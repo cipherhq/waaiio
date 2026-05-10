@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
@@ -45,8 +46,15 @@ const PROPERTY_TYPES: Record<string, string[]> = {
   car_rental: ['sedan', 'suv', 'van', 'bus', 'pickup', 'luxury'],
 };
 
+interface PropertyBookingInfo {
+  count: number;
+  currentStatus: 'vacant' | 'occupied' | 'blocked';
+  nextCheckIn: string | null;
+}
+
 export default function PropertiesPage() {
   const business = useBusiness();
+  const router = useRouter();
   const country = (business.country_code || 'NG') as CountryCode;
   const labels = CATEGORY_LABELS[business.category as keyof typeof CATEGORY_LABELS];
   const propertyLabel = labels?.propertyName || 'Property';
@@ -55,6 +63,7 @@ export default function PropertiesPage() {
 
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
+  const [bookingInfo, setBookingInfo] = useState<Record<string, PropertyBookingInfo>>({});
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -89,6 +98,42 @@ export default function PropertiesPage() {
       .order('sort_order');
     setProperties((data || []) as Property[]);
     setLoading(false);
+
+    // Load booking info for each property
+    const today = new Date().toISOString().split('T')[0];
+
+    const { data: reservations } = await supabase
+      .from('reservations')
+      .select('id, property_id, status, check_in, check_out')
+      .eq('business_id', business.id)
+      .in('status', ['pending', 'confirmed', 'in_progress', 'completed']);
+
+    const { data: blocked } = await supabase
+      .from('property_blocked_dates')
+      .select('property_id, date_from, date_to')
+      .eq('business_id', business.id);
+
+    const info: Record<string, PropertyBookingInfo> = {};
+    for (const p of (data || [])) {
+      const propReservations = (reservations || []).filter(r => r.property_id === p.id);
+      const propBlocked = (blocked || []).filter(b => b.property_id === p.id);
+
+      // Current status
+      const isOccupied = propReservations.some(r => r.status === 'in_progress');
+      const isBlocked = propBlocked.some(b => b.date_from <= today && b.date_to >= today);
+
+      // Next check-in
+      const upcoming = propReservations
+        .filter(r => r.check_in >= today && ['pending', 'confirmed'].includes(r.status))
+        .sort((a, b) => a.check_in.localeCompare(b.check_in));
+
+      info[p.id] = {
+        count: propReservations.length,
+        currentStatus: isOccupied ? 'occupied' : isBlocked ? 'blocked' : 'vacant',
+        nextCheckIn: upcoming.length > 0 ? upcoming[0].check_in : null,
+      };
+    }
+    setBookingInfo(info);
   }, [business.id]);
 
   useEffect(() => { loadProperties(); }, [loadProperties]);
@@ -484,13 +529,15 @@ export default function PropertiesPage() {
         />
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {properties.map(p => (
-            <div key={p.id} onClick={() => openEdit(p)}
-              className={`cursor-pointer rounded-xl border bg-white overflow-hidden transition hover:shadow-sm ${
+          {properties.map(p => {
+            const info = bookingInfo[p.id];
+            return (
+            <div key={p.id}
+              className={`rounded-xl border bg-white overflow-hidden transition hover:shadow-sm ${
                 p.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
               }`}>
               {p.photos && p.photos.length > 0 && (
-                <div className="h-32 w-full overflow-hidden">
+                <div className="h-32 w-full overflow-hidden cursor-pointer" onClick={() => router.push(`/dashboard/properties/${p.id}`)}>
                   <img src={p.photos[0]} alt={p.name} className="h-full w-full object-cover" />
                 </div>
               )}
@@ -509,6 +556,28 @@ export default function PropertiesPage() {
                 {p.bathrooms > 0 && <span>· {p.bathrooms} bath</span>}
                 {p.deposit_amount > 0 && <span>· {formatCurrency(p.deposit_amount, country)} deposit</span>}
               </div>
+
+              {/* Booking info */}
+              {info && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                    info.currentStatus === 'occupied' ? 'bg-blue-100 text-blue-700' :
+                    info.currentStatus === 'blocked' ? 'bg-gray-200 text-gray-600' :
+                    'bg-green-100 text-green-700'
+                  }`}>
+                    {info.currentStatus === 'occupied' ? 'Occupied' : info.currentStatus === 'blocked' ? 'Blocked' : 'Vacant'}
+                  </span>
+                  {info.count > 0 && (
+                    <span className="text-xs text-gray-400">{info.count} booking{info.count !== 1 ? 's' : ''}</span>
+                  )}
+                  {info.nextCheckIn && (
+                    <span className="text-xs text-gray-400">
+                      Next: {new Date(info.nextCheckIn + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' })}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {p.amenities.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1">
                   {p.amenities.slice(0, 4).map(a => (
@@ -522,9 +591,22 @@ export default function PropertiesPage() {
               {!p.is_active && (
                 <span className="mt-2 inline-block rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-500">Inactive</span>
               )}
+
+              {/* Action buttons */}
+              <div className="mt-3 flex gap-2 border-t border-gray-50 pt-3">
+                <button onClick={() => router.push(`/dashboard/properties/${p.id}`)}
+                  className="flex-1 rounded-lg border border-brand/20 bg-brand-50 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand-100 transition">
+                  View Bookings
+                </button>
+                <button onClick={() => openEdit(p)}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition">
+                  Edit
+                </button>
+              </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
