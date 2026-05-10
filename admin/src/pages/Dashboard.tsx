@@ -44,7 +44,7 @@ export default function Dashboard() {
         const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
         const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes, overridesRes, newBizRes, newUsersRes, churnedRes] = await Promise.all([
           adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'active' }], count: 'exact' }),
-          adminQuery('platform_fees', { select: 'fee_total, business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }, { column: 'waived', op: 'eq', value: false }] }),
+          adminQuery('platform_fees', { select: 'fee_total, business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }, { column: 'waived', op: 'eq', value: false }, { column: 'refunded_at', op: 'is', value: null }] }),
           adminQuery('business_payouts', { select: 'net_amount, status', filters: [{ column: 'status', op: 'eq', value: 'pending' }] }),
           adminQuery('business_payouts', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'held' }], count: 'exact' }),
           adminQuery('profiles', { select: 'id', count: 'exact' }),

@@ -77,7 +77,8 @@ export default function FinancialsPage() {
           .from('platform_fees')
           .select('fee_total')
           .eq('business_id', business.id)
-          .eq('waived', false),
+          .eq('waived', false)
+          .is('refunded_at', null),
         supabase
           .from('business_payouts')
           .select('net_amount')

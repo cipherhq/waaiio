@@ -109,11 +109,11 @@ export async function POST(request: NextRequest) {
             if (booking?.business_id) {
               const { data: business } = await supabase
                 .from('businesses')
-                .select('subscription_tier, trial_ends_at')
+                .select('subscription_tier, trial_ends_at, payout_mode')
                 .eq('id', booking.business_id)
                 .single();
 
-              if (business) {
+              if (business && business.payout_mode !== 'direct_split') {
                 const isInTrial = new Date(business.trial_ends_at) > new Date();
                 const tier = (business.subscription_tier || 'free') as SubscriptionTier;
                 const amount = booking.total_amount || payment.amount;
@@ -158,11 +158,11 @@ export async function POST(request: NextRequest) {
             if (invoice?.business_id) {
               const { data: invBusiness } = await supabase
                 .from('businesses')
-                .select('subscription_tier, trial_ends_at')
+                .select('subscription_tier, trial_ends_at, payout_mode')
                 .eq('id', invoice.business_id)
                 .single();
 
-              if (invBusiness) {
+              if (invBusiness && invBusiness.payout_mode !== 'direct_split') {
                 const invIsInTrial = new Date(invBusiness.trial_ends_at) > new Date();
                 const invTier = (invBusiness.subscription_tier || 'free') as SubscriptionTier;
                 const invAmount = invoice.total_amount || payment.amount;
@@ -332,11 +332,11 @@ export async function POST(request: NextRequest) {
           if (booking?.id) {
             const { data: recBusiness } = await supabase
               .from('businesses')
-              .select('subscription_tier, trial_ends_at')
+              .select('subscription_tier, trial_ends_at, payout_mode')
               .eq('id', sub.business_id)
               .single();
 
-            if (recBusiness) {
+            if (recBusiness && recBusiness.payout_mode !== 'direct_split') {
               const recIsInTrial = new Date(recBusiness.trial_ends_at) > new Date();
               const recTier = (recBusiness.subscription_tier || 'free') as SubscriptionTier;
               const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(amountPaid, recTier, recIsInTrial);

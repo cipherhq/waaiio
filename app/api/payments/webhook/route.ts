@@ -4,6 +4,8 @@ import { createHmac } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
 import { createAlert } from '@/lib/alerts/create-alert';
+import { getPlatformFees } from '@/lib/getPlatformFees';
+import type { SubscriptionTier } from '@/lib/constants';
 
 export async function POST(request: NextRequest) {
   try {
@@ -199,6 +201,31 @@ export async function POST(request: NextRequest) {
             booking_id: booking?.id || null,
             charged_at: now,
           });
+
+          // Record platform fee for recurring payment (non-blocking)
+          if (booking?.id) {
+            const { data: recBusiness } = await supabase
+              .from('businesses')
+              .select('subscription_tier, trial_ends_at, payout_mode')
+              .eq('id', sub.business_id)
+              .single();
+
+            if (recBusiness && recBusiness.payout_mode !== 'direct_split') {
+              const recIsInTrial = new Date(recBusiness.trial_ends_at) > new Date();
+              const recTier = (recBusiness.subscription_tier || 'free') as SubscriptionTier;
+              const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(chargeAmount, recTier, recIsInTrial);
+
+              await supabase.from('platform_fees').insert({
+                business_id: sub.business_id,
+                booking_id: booking.id,
+                transaction_amount: chargeAmount,
+                fee_percentage: feePercentage,
+                fee_flat: feeFlat,
+                fee_total: feeTotal,
+                tier: recTier,
+              });
+            }
+          }
 
           // Update subscription totals and next charge date
           const nextCharge = new Date();

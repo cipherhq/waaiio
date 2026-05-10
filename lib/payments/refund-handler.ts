@@ -157,6 +157,15 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       .eq('id', payment.booking_id);
   }
 
+  // 9. Reverse platform fee on full refund
+  if (isFullyRefunded && payment.booking_id) {
+    await supabase
+      .from('platform_fees')
+      .update({ refunded_at: new Date().toISOString() })
+      .eq('booking_id', payment.booking_id)
+      .is('refunded_at', null);
+  }
+
   return {
     success: true,
     refundId: refundRecord.id,

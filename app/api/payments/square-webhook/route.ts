@@ -114,11 +114,11 @@ export async function POST(request: NextRequest) {
           if (booking?.business_id) {
             const { data: business } = await supabase
               .from('businesses')
-              .select('subscription_tier, trial_ends_at')
+              .select('subscription_tier, trial_ends_at, payout_mode')
               .eq('id', booking.business_id)
               .single();
 
-            if (business) {
+            if (business && business.payout_mode !== 'direct_split') {
               const isInTrial = new Date(business.trial_ends_at) > new Date();
               const tier = (business.subscription_tier || 'free') as SubscriptionTier;
               const amount = booking.total_amount || matchedPayment.amount;

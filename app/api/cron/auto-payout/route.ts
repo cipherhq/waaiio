@@ -78,6 +78,7 @@ export async function GET(request: NextRequest) {
         .from('platform_fees')
         .select('transaction_amount, fee_total')
         .eq('business_id', biz.id)
+        .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 

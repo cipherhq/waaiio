@@ -15,6 +15,7 @@ interface Payment {
 interface PlatformFee {
   fee_total: number;
   waived: boolean;
+  refunded_at: string | null;
   business_id: string;
   created_at: string;
 }
@@ -68,7 +69,7 @@ export default function Finance() {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
         adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
-        adminDb.from('platform_fees').select('fee_total, waived, business_id, created_at'),
+        adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at').is('refunded_at', null),
         adminDb.from('business_payouts').select('net_amount, platform_fee, currency, status, created_at'),
         adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
         adminDb.from('businesses').select('id, category, country_code, subscription_tier'),

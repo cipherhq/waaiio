@@ -86,6 +86,7 @@ export async function POST(request: NextRequest) {
         .select('fee_total')
         .eq('business_id', biz.id)
         .eq('waived', false)
+        .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 

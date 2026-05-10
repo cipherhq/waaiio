@@ -79,7 +79,8 @@ export async function GET(request: NextRequest) {
         .from('platform_fees')
         .select('fee_total')
         .eq('business_id', businessId)
-        .eq('waived', false);
+        .eq('waived', false)
+        .is('refunded_at', null);
 
       totalFees = (fees || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0);
     }

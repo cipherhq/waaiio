@@ -145,7 +145,7 @@ export async function processPaystackChargeSuccess(
     // Increment campaign raised_amount and donor_count atomically
     const { data: campaign } = await supabase
       .from('campaigns')
-      .select('raised_amount, donor_count')
+      .select('raised_amount, donor_count, business_id')
       .eq('id', existingPayment.campaign_id)
       .single();
 
@@ -157,6 +157,11 @@ export async function processPaystackChargeSuccess(
           donor_count: (campaign.donor_count || 0) + 1,
         })
         .eq('id', existingPayment.campaign_id);
+
+      // Record platform fee for campaign donation (non-blocking)
+      if (campaign.business_id) {
+        recordPlatformFeeForCampaign(supabase, existingPayment.campaign_id, campaign.business_id, existingPayment.amount).catch(() => {});
+      }
     }
   }
 }
@@ -215,11 +220,14 @@ async function recordPlatformFeeForBooking(
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('subscription_tier, trial_ends_at')
+    .select('subscription_tier, trial_ends_at, payout_mode')
     .eq('id', booking.business_id)
     .single();
 
   if (!business) return;
+
+  // Don't record fee for direct_split — gateway already collected it
+  if (business.payout_mode === 'direct_split') return;
 
   const isInTrial = new Date(business.trial_ends_at) > new Date();
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
@@ -253,11 +261,14 @@ async function recordPlatformFeeForInvoice(
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('subscription_tier, trial_ends_at')
+    .select('subscription_tier, trial_ends_at, payout_mode')
     .eq('id', invoice.business_id)
     .single();
 
   if (!business) return;
+
+  // Don't record fee for direct_split — gateway already collected it
+  if (business.payout_mode === 'direct_split') return;
 
   const isInTrial = new Date(business.trial_ends_at) > new Date();
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
@@ -269,6 +280,39 @@ async function recordPlatformFeeForInvoice(
     business_id: invoice.business_id,
     invoice_id: invoiceId,
     transaction_amount: amount,
+    fee_percentage: feePercentage,
+    fee_flat: feeFlat,
+    fee_total: feeTotal,
+    tier,
+  });
+}
+
+async function recordPlatformFeeForCampaign(
+  supabase: SupabaseClient,
+  campaignId: string,
+  businessId: string,
+  paymentAmount: number,
+): Promise<void> {
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('subscription_tier, trial_ends_at, payout_mode')
+    .eq('id', businessId)
+    .single();
+
+  if (!business) return;
+
+  // Don't record fee for direct_split — gateway already collected it
+  if (business.payout_mode === 'direct_split') return;
+
+  const isInTrial = new Date(business.trial_ends_at) > new Date();
+  const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+
+  const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(paymentAmount, tier, isInTrial);
+
+  await supabase.from('platform_fees').insert({
+    business_id: businessId,
+    campaign_id: campaignId,
+    transaction_amount: paymentAmount,
     fee_percentage: feePercentage,
     fee_flat: feeFlat,
     fee_total: feeTotal,

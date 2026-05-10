@@ -79,7 +79,8 @@ export async function GET(request: NextRequest) {
       const { data: fees } = await supabase
         .from('platform_fees')
         .select('transaction_amount, fee_total')
-        .eq('business_id', biz.id);
+        .eq('business_id', biz.id)
+        .is('refunded_at', null);
 
       const totalGross = (fees || []).reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
