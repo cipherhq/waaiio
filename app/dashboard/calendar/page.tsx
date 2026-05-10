@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getLocale, type CountryCode } from '@/lib/constants';
 
@@ -27,7 +27,55 @@ interface Booking {
   payment_id: string | null;
 }
 
+interface Reservation {
+  id: string;
+  reference_code: string;
+  check_in: string;
+  check_out: string;
+  guests: number;
+  status: string;
+  guest_name: string;
+  guest_phone: string;
+  total_amount: number;
+  deposit_amount: number;
+  deposit_status: string;
+  special_requests: string | null;
+  property_id: string;
+  property: { name: string } | null;
+}
+
+interface EventItem {
+  id: string;
+  name: string;
+  date: string;
+  time: string | null;
+  venue: string | null;
+  status: string;
+}
+
+interface BlockedDate {
+  id: string;
+  date_from: string;
+  date_to: string;
+  reason: string | null;
+  property: { name: string } | null;
+}
+
+type EntryType = 'booking' | 'reservation' | 'event' | 'blocked';
+
+interface CalendarEntry {
+  id: string;
+  type: EntryType;
+  title: string;
+  date: string;         // YYYY-MM-DD
+  time?: string;        // HH:MM for bookings
+  status: string;
+  color: string;
+  details: Record<string, unknown>;
+}
+
 type ViewMode = 'month' | 'week' | 'day';
+type FilterMode = 'all' | 'booking' | 'reservation' | 'event';
 
 const statusColors: Record<string, string> = {
   confirmed: 'bg-green-100 border-green-300 text-green-800',
@@ -45,6 +93,20 @@ const statusBadge: Record<string, string> = {
   completed: 'bg-gray-100 text-gray-700',
   cancelled: 'bg-red-100 text-red-700',
   no_show: 'bg-red-100 text-red-700',
+};
+
+const entryTypeColors: Record<EntryType, string> = {
+  booking: '', // uses statusColors
+  reservation: 'bg-indigo-100 border-indigo-300 text-indigo-800',
+  event: 'bg-rose-100 border-rose-300 text-rose-800',
+  blocked: 'bg-gray-200 border-gray-300 text-gray-600',
+};
+
+const entryTypeDotColors: Record<EntryType, string> = {
+  booking: 'bg-green-500',
+  reservation: 'bg-indigo-500',
+  event: 'bg-rose-500',
+  blocked: 'bg-gray-400',
 };
 
 const nextActions: Record<string, { label: string; next: string; color: string }[]> = {
@@ -93,23 +155,49 @@ function startOfWeek(d: Date): Date {
   return result;
 }
 
+/** Generate all dates between two YYYY-MM-DD strings inclusive */
+function dateRange(from: string, to: string): string[] {
+  const dates: string[] = [];
+  const d = new Date(from + 'T00:00');
+  const end = new Date(to + 'T00:00');
+  while (d <= end) {
+    dates.push(formatDateKey(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}
+
+function formatCurrency(amount: number, countryCode: string): string {
+  const locale = getLocale((countryCode || 'NG') as CountryCode);
+  const currencyMap: Record<string, string> = { NG: 'NGN', GH: 'GHS', US: 'USD', GB: 'GBP', CA: 'CAD' };
+  const currency = currencyMap[countryCode] || 'NGN';
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 0 }).format(amount);
+}
+
 export default function CalendarPage() {
   const business = useBusiness();
+  const { hasCapability } = useCapabilities();
   const [view, setView] = useState<ViewMode>('month');
+  const [filter, setFilter] = useState<FilterMode>('all');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [blockedDates, setBlockedDates] = useState<BlockedDate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [selectedEntry, setSelectedEntry] = useState<CalendarEntry | null>(null);
+
+  const hasReservations = hasCapability('reservation');
+  const hasEvents = hasCapability('ticketing');
 
   // Compute date range based on view
-  const dateRange = useMemo(() => {
+  const viewDateRange = useMemo(() => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
     if (view === 'month') {
       const first = new Date(year, month, 1);
       const last = new Date(year, month + 1, 0);
-      // Extend to full weeks
       const start = new Date(first);
       start.setDate(start.getDate() - start.getDay());
       const end = new Date(last);
@@ -124,17 +212,17 @@ export default function CalendarPage() {
       return { start, end };
     }
 
-    // day
     return { start: new Date(currentDate), end: new Date(currentDate) };
   }, [view, currentDate]);
 
-  const fetchBookings = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const startStr = formatDateKey(dateRange.start);
-    const endStr = formatDateKey(dateRange.end);
+    const startStr = formatDateKey(viewDateRange.start);
+    const endStr = formatDateKey(viewDateRange.end);
 
-    const { data } = await supabase
+    // Fetch bookings
+    const { data: bookingData } = await supabase
       .from('bookings')
       .select('id, reference_code, date, time, party_size, status, flow_type, guest_name, guest_phone, guest_email, special_requests, staff_id, staff_name, deposit_amount, deposit_status, total_amount, channel, notes, payment_id')
       .eq('business_id', business.id)
@@ -143,27 +231,189 @@ export default function CalendarPage() {
       .lte('date', endStr)
       .order('time', { ascending: true });
 
-    setBookings((data || []) as Booking[]);
+    setBookings((bookingData || []) as Booking[]);
+
+    // Fetch reservations if capability exists
+    if (hasReservations) {
+      const { data: reservationData } = await supabase
+        .from('reservations')
+        .select('id, reference_code, check_in, check_out, guests, status, guest_name, guest_phone, total_amount, deposit_amount, deposit_status, special_requests, property_id, property:properties!property_id(name)')
+        .eq('business_id', business.id)
+        .lte('check_in', endStr)
+        .gte('check_out', startStr)
+        .in('status', ['pending', 'confirmed', 'in_progress', 'completed']);
+
+      setReservations(
+        ((reservationData || []) as Array<Omit<Reservation, 'property'> & { property: { name: string }[] }>).map((r) => ({
+          ...r,
+          property: r.property?.[0] || null,
+        })),
+      );
+
+      // Fetch blocked dates
+      const { data: blockedData } = await supabase
+        .from('property_blocked_dates')
+        .select('id, date_from, date_to, reason, property:properties!property_id(name)')
+        .eq('business_id', business.id)
+        .lte('date_from', endStr)
+        .gte('date_to', startStr);
+
+      setBlockedDates(
+        ((blockedData || []) as Array<Omit<BlockedDate, 'property'> & { property: { name: string }[] }>).map((bd) => ({
+          ...bd,
+          property: bd.property?.[0] || null,
+        })),
+      );
+    }
+
+    // Fetch events if capability exists
+    if (hasEvents) {
+      const { data: eventData } = await supabase
+        .from('events')
+        .select('id, name, date, time, venue, status')
+        .eq('business_id', business.id)
+        .gte('date', startStr)
+        .lte('date', endStr)
+        .in('status', ['published', 'sold_out']);
+
+      setEvents((eventData || []) as EventItem[]);
+    }
+
     setLoading(false);
-  }, [business.id, dateRange.start, dateRange.end]);
+  }, [business.id, viewDateRange.start, viewDateRange.end, hasReservations, hasEvents]);
 
   useEffect(() => {
-    fetchBookings();
+    fetchData();
 
     const supabase = createClient();
-    const channel = supabase
+    const channels: ReturnType<typeof supabase.channel>[] = [];
+
+    // Realtime for bookings
+    const bookingChannel = supabase
       .channel('calendar-bookings')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'bookings', filter: `business_id=eq.${business.id}` },
-        () => fetchBookings(),
+        () => fetchData(),
       )
       .subscribe();
+    channels.push(bookingChannel);
 
-    return () => { supabase.removeChannel(channel); };
-  }, [fetchBookings, business.id]);
+    // Realtime for reservations
+    if (hasReservations) {
+      const reservationChannel = supabase
+        .channel('calendar-reservations')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'reservations', filter: `business_id=eq.${business.id}` },
+          () => fetchData(),
+        )
+        .subscribe();
+      channels.push(reservationChannel);
+    }
 
-  // Group bookings by date
+    return () => {
+      for (const ch of channels) {
+        supabase.removeChannel(ch);
+      }
+    };
+  }, [fetchData, business.id, hasReservations]);
+
+  // Convert all data into CalendarEntry[]
+  const allEntries = useMemo(() => {
+    const entries: CalendarEntry[] = [];
+
+    // Bookings
+    for (const b of bookings) {
+      entries.push({
+        id: b.id,
+        type: 'booking',
+        title: b.guest_name || '\u2014',
+        date: b.date,
+        time: b.time?.slice(0, 5),
+        status: b.status,
+        color: statusColors[b.status] || 'bg-gray-100 border-gray-300 text-gray-700',
+        details: b as unknown as Record<string, unknown>,
+      });
+    }
+
+    // Reservations — span multiple days
+    for (const r of reservations) {
+      const days = dateRange(r.check_in, r.check_out);
+      const propertyName = r.property?.name || '';
+      for (let i = 0; i < days.length; i++) {
+        entries.push({
+          id: `${r.id}-${days[i]}`,
+          type: 'reservation',
+          title: `${r.guest_name || '\u2014'}${propertyName ? ` - ${propertyName}` : ''} (${i + 1}/${days.length})`,
+          date: days[i],
+          status: r.status,
+          color: entryTypeColors.reservation,
+          details: r as unknown as Record<string, unknown>,
+        });
+      }
+    }
+
+    // Events
+    for (const e of events) {
+      entries.push({
+        id: e.id,
+        type: 'event',
+        title: e.name,
+        date: e.date,
+        time: e.time?.slice(0, 5) || undefined,
+        status: e.status,
+        color: entryTypeColors.event,
+        details: e as unknown as Record<string, unknown>,
+      });
+    }
+
+    // Blocked dates — span multiple days
+    for (const bd of blockedDates) {
+      const days = dateRange(bd.date_from, bd.date_to);
+      const propertyName = bd.property?.name || 'Property';
+      for (let i = 0; i < days.length; i++) {
+        entries.push({
+          id: `${bd.id}-${days[i]}`,
+          type: 'blocked',
+          title: `${propertyName} - Blocked${bd.reason ? `: ${bd.reason}` : ''} (${i + 1}/${days.length})`,
+          date: days[i],
+          status: 'blocked',
+          color: entryTypeColors.blocked,
+          details: bd as unknown as Record<string, unknown>,
+        });
+      }
+    }
+
+    return entries;
+  }, [bookings, reservations, events, blockedDates]);
+
+  // Apply filter
+  const filteredEntries = useMemo(() => {
+    if (filter === 'all') return allEntries;
+    return allEntries.filter((e) => e.type === filter);
+  }, [allEntries, filter]);
+
+  // Group entries by date
+  const entriesByDate = useMemo(() => {
+    const map: Record<string, CalendarEntry[]> = {};
+    for (const entry of filteredEntries) {
+      if (!map[entry.date]) map[entry.date] = [];
+      map[entry.date].push(entry);
+    }
+    // Sort entries within each date: bookings with time first, then others
+    for (const key of Object.keys(map)) {
+      map[key].sort((a, b) => {
+        if (a.time && b.time) return a.time.localeCompare(b.time);
+        if (a.time) return -1;
+        if (b.time) return 1;
+        return 0;
+      });
+    }
+    return map;
+  }, [filteredEntries]);
+
+  // Keep bookingsByDate for the updateStatus function
   const bookingsByDate = useMemo(() => {
     const map: Record<string, Booking[]> = {};
     for (const b of bookings) {
@@ -186,9 +436,14 @@ export default function CalendarPage() {
 
     await supabase.from('bookings').update({ status: newStatus, ...extra }).eq('id', id);
 
-    // Release slot + notify customer on cancel/no_show (same as reservations page)
+    // Release slot + notify customer on cancel/no_show
     if (newStatus === 'cancelled' || newStatus === 'no_show') {
-      const booking = bookings.find(b => b.id === id);
+      // Find booking from all dates
+      let booking: Booking | undefined;
+      for (const arr of Object.values(bookingsByDate)) {
+        booking = arr.find(b => b.id === id);
+        if (booking) break;
+      }
       if (booking) {
         try {
           await supabase.rpc('release_booking_slot', {
@@ -213,8 +468,8 @@ export default function CalendarPage() {
       }
     }
 
-    setSelectedBooking(null);
-    fetchBookings();
+    setSelectedEntry(null);
+    fetchData();
   }
 
   function navigate(direction: -1 | 1) {
@@ -233,7 +488,6 @@ export default function CalendarPage() {
     setCurrentDate(new Date());
   }
 
-  // Period label
   const periodLabel = useMemo(() => {
     if (view === 'month') {
       return `${MONTH_NAMES[currentDate.getMonth()]} ${currentDate.getFullYear()}`;
@@ -248,19 +502,17 @@ export default function CalendarPage() {
     return currentDate.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   }, [view, currentDate]);
 
-  // Build month grid
   const monthGrid = useMemo(() => {
     if (view !== 'month') return [];
     const cells: Date[] = [];
-    const d = new Date(dateRange.start);
-    while (d <= dateRange.end) {
+    const d = new Date(viewDateRange.start);
+    while (d <= viewDateRange.end) {
       cells.push(new Date(d));
       d.setDate(d.getDate() + 1);
     }
     return cells;
-  }, [view, dateRange]);
+  }, [view, viewDateRange]);
 
-  // Build week days
   const weekDays = useMemo(() => {
     if (view !== 'week') return [];
     const ws = startOfWeek(currentDate);
@@ -273,6 +525,324 @@ export default function CalendarPage() {
 
   const today = formatDateKey(new Date());
   const currentMonth = currentDate.getMonth();
+
+  // Determine which filter options to show
+  const filterOptions: { key: FilterMode; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'booking', label: 'Bookings' },
+  ];
+  if (hasReservations) filterOptions.push({ key: 'reservation', label: 'Reservations' });
+  if (hasEvents) filterOptions.push({ key: 'event', label: 'Events' });
+
+  // Legend items
+  const legendItems: { label: string; dotColor: string }[] = [
+    { label: 'Booking', dotColor: entryTypeDotColors.booking },
+  ];
+  if (hasReservations) {
+    legendItems.push({ label: 'Reservation', dotColor: entryTypeDotColors.reservation });
+    legendItems.push({ label: 'Blocked', dotColor: entryTypeDotColors.blocked });
+  }
+  if (hasEvents) legendItems.push({ label: 'Event', dotColor: entryTypeDotColors.event });
+
+  function renderEntryPill(entry: CalendarEntry, compact = false) {
+    return (
+      <button
+        key={entry.id}
+        onClick={() => setSelectedEntry(entry)}
+        className={`w-full truncate rounded border px-1 py-0.5 text-left text-[10px] leading-tight ${entry.color}`}
+      >
+        <span className={`mr-0.5 inline-block h-1.5 w-1.5 rounded-full ${entryTypeDotColors[entry.type]}`} />
+        {!compact && entry.time && <span className="font-medium">{entry.time}</span>}{' '}
+        {entry.title}
+      </button>
+    );
+  }
+
+  function renderDetailModal() {
+    if (!selectedEntry) return null;
+
+    const d = selectedEntry.details;
+    const entryType = selectedEntry.type;
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setSelectedEntry(null)}>
+        <div className="fixed inset-0 bg-black/30" />
+        <div
+          className="relative z-10 w-full max-w-md rounded-xl bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Modal header */}
+          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+            <div>
+              {entryType === 'booking' && (
+                <p className="font-mono text-lg font-bold text-brand">
+                  {String((d as unknown as Booking).reference_code)}
+                </p>
+              )}
+              {entryType === 'reservation' && (
+                <p className="font-mono text-lg font-bold text-indigo-700">
+                  {String((d as unknown as Reservation).reference_code)}
+                </p>
+              )}
+              {entryType === 'event' && (
+                <p className="text-lg font-bold text-rose-700">
+                  {String((d as unknown as EventItem).name)}
+                </p>
+              )}
+              {entryType === 'blocked' && (
+                <p className="text-lg font-bold text-gray-700">
+                  Blocked Dates
+                </p>
+              )}
+              <div className="mt-1 flex items-center gap-2">
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
+                  entryType === 'booking'
+                    ? (statusBadge[selectedEntry.status] || 'bg-gray-100 text-gray-600')
+                    : entryType === 'reservation'
+                    ? 'bg-indigo-100 text-indigo-700'
+                    : entryType === 'event'
+                    ? 'bg-rose-100 text-rose-700'
+                    : 'bg-gray-200 text-gray-600'
+                }`}>
+                  {selectedEntry.status.replace('_', ' ')}
+                </span>
+                <span className="text-xs text-gray-400 capitalize">{entryType}</span>
+              </div>
+            </div>
+            <button
+              onClick={() => setSelectedEntry(null)}
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100"
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Modal body */}
+          <div className="space-y-5 px-6 py-5">
+            {/* === BOOKING DETAIL === */}
+            {entryType === 'booking' && (() => {
+              const b = d as unknown as Booking;
+              return (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Guest</h3>
+                    <p className="mt-1 text-sm font-medium text-gray-900">
+                      {b.guest_name || '\u2014'}
+                    </p>
+                    {b.guest_phone && (
+                      <p className="text-sm text-gray-500">{b.guest_phone}</p>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-gray-400">Date</span>
+                        <p className="font-medium text-gray-900">
+                          {new Date(b.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
+                            weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+                          })}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Time</span>
+                        <p className="font-medium text-gray-900">
+                          {b.time ? formatTime(b.time) : '\u2014'}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Party Size</span>
+                        <p className="font-medium text-gray-900">{b.party_size}</p>
+                      </div>
+                      {b.staff_name && (
+                        <div>
+                          <span className="text-gray-400">Staff</span>
+                          <p className="font-medium text-gray-900">{b.staff_name}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {b.special_requests && (
+                    <div className="rounded-lg bg-yellow-50 p-3">
+                      <h3 className="text-sm font-medium text-yellow-800">Special Requests</h3>
+                      <p className="mt-1 text-sm text-yellow-700">{b.special_requests}</p>
+                    </div>
+                  )}
+                  {nextActions[selectedEntry.status] && nextActions[selectedEntry.status].length > 0 && (
+                    <div>
+                      <h3 className="text-sm font-medium text-gray-500">Actions</h3>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {nextActions[selectedEntry.status].map((action) => (
+                          <button
+                            key={action.next}
+                            onClick={() => updateStatus(b.id, action.next)}
+                            className={`rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium ${action.color}`}
+                          >
+                            {action.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* === RESERVATION DETAIL === */}
+            {entryType === 'reservation' && (() => {
+              const r = d as unknown as Reservation;
+              return (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Guest</h3>
+                    <p className="mt-1 text-sm font-medium text-gray-900">
+                      {r.guest_name || '\u2014'}
+                    </p>
+                    {r.guest_phone && (
+                      <p className="text-sm text-gray-500">{r.guest_phone}</p>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      {r.property?.name && (
+                        <div className="col-span-2">
+                          <span className="text-gray-400">Property</span>
+                          <p className="font-medium text-gray-900">{r.property.name}</p>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-gray-400">Check-in</span>
+                        <p className="font-medium text-gray-900">
+                          {new Date(r.check_in + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
+                            weekday: 'short', day: 'numeric', month: 'short',
+                          })}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Check-out</span>
+                        <p className="font-medium text-gray-900">
+                          {new Date(r.check_out + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
+                            weekday: 'short', day: 'numeric', month: 'short',
+                          })}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Guests</span>
+                        <p className="font-medium text-gray-900">{r.guests}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">Amount</span>
+                        <p className="font-medium text-gray-900">
+                          {formatCurrency(r.total_amount, business.country_code || 'NG')}
+                        </p>
+                      </div>
+                      {r.deposit_amount > 0 && (
+                        <div>
+                          <span className="text-gray-400">Deposit</span>
+                          <p className="font-medium text-gray-900">
+                            {formatCurrency(r.deposit_amount, business.country_code || 'NG')}
+                            <span className="ml-1 text-xs text-gray-400 capitalize">({r.deposit_status})</span>
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {r.special_requests && (
+                    <div className="rounded-lg bg-indigo-50 p-3">
+                      <h3 className="text-sm font-medium text-indigo-800">Special Requests</h3>
+                      <p className="mt-1 text-sm text-indigo-700">{r.special_requests}</p>
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-400">Manage reservation status on the Reservations page.</p>
+                </>
+              );
+            })()}
+
+            {/* === EVENT DETAIL === */}
+            {entryType === 'event' && (() => {
+              const ev = d as unknown as EventItem;
+              return (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="text-gray-400">Date</span>
+                        <p className="font-medium text-gray-900">
+                          {new Date(ev.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
+                            weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+                          })}
+                        </p>
+                      </div>
+                      {ev.time && (
+                        <div>
+                          <span className="text-gray-400">Time</span>
+                          <p className="font-medium text-gray-900">{formatTime(ev.time)}</p>
+                        </div>
+                      )}
+                      {ev.venue && (
+                        <div className="col-span-2">
+                          <span className="text-gray-400">Venue</span>
+                          <p className="font-medium text-gray-900">{ev.venue}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400">Manage event details on the Events page.</p>
+                </>
+              );
+            })()}
+
+            {/* === BLOCKED DATE DETAIL === */}
+            {entryType === 'blocked' && (() => {
+              const bd = d as unknown as BlockedDate;
+              return (
+                <>
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
+                      {bd.property?.name && (
+                        <div className="col-span-2">
+                          <span className="text-gray-400">Property</span>
+                          <p className="font-medium text-gray-900">{bd.property.name}</p>
+                        </div>
+                      )}
+                      <div>
+                        <span className="text-gray-400">From</span>
+                        <p className="font-medium text-gray-900">
+                          {new Date(bd.date_from + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
+                            weekday: 'short', day: 'numeric', month: 'short',
+                          })}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-gray-400">To</span>
+                        <p className="font-medium text-gray-900">
+                          {new Date(bd.date_to + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
+                            weekday: 'short', day: 'numeric', month: 'short',
+                          })}
+                        </p>
+                      </div>
+                      {bd.reason && (
+                        <div className="col-span-2">
+                          <span className="text-gray-400">Reason</span>
+                          <p className="font-medium text-gray-900">{bd.reason}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400">Manage blocked dates on the Properties page.</p>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -294,8 +864,40 @@ export default function CalendarPage() {
         </div>
       </div>
 
+      {/* Filter + Legend row */}
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        {/* Filter tabs */}
+        {filterOptions.length > 2 && (
+          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1">
+            {filterOptions.map((f) => (
+              <button
+                key={f.key}
+                onClick={() => setFilter(f.key)}
+                className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                  filter === f.key ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Legend */}
+        {legendItems.length > 1 && (
+          <div className="flex items-center gap-3">
+            {legendItems.map((item) => (
+              <div key={item.label} className="flex items-center gap-1">
+                <span className={`inline-block h-2.5 w-2.5 rounded-full ${item.dotColor}`} />
+                <span className="text-xs text-gray-500">{item.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Navigation */}
-      <div className="mt-4 flex items-center gap-3">
+      <div className="mt-3 flex items-center gap-3">
         <button
           onClick={() => navigate(-1)}
           className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
@@ -331,7 +933,6 @@ export default function CalendarPage() {
           {/* Month View */}
           {view === 'month' && (
             <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
-              {/* Day names header */}
               <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/50">
                 {DAY_NAMES.map((d) => (
                   <div key={d} className="px-2 py-2 text-center text-xs font-medium text-gray-500">
@@ -339,16 +940,15 @@ export default function CalendarPage() {
                   </div>
                 ))}
               </div>
-              {/* Day cells */}
               <div className="grid grid-cols-7">
                 {monthGrid.map((date) => {
                   const key = formatDateKey(date);
-                  const dayBookings = bookingsByDate[key] || [];
+                  const dayEntries = entriesByDate[key] || [];
                   const isToday = key === today;
                   const isOtherMonth = date.getMonth() !== currentMonth;
                   const maxPills = 3;
-                  const visible = dayBookings.slice(0, maxPills);
-                  const extra = dayBookings.length - maxPills;
+                  const visible = dayEntries.slice(0, maxPills);
+                  const extra = dayEntries.length - maxPills;
 
                   return (
                     <div
@@ -369,23 +969,12 @@ export default function CalendarPage() {
                         >
                           {date.getDate()}
                         </span>
-                        {dayBookings.length > 0 && (
-                          <span className="text-[10px] text-gray-400">{dayBookings.length}</span>
+                        {dayEntries.length > 0 && (
+                          <span className="text-[10px] text-gray-400">{dayEntries.length}</span>
                         )}
                       </div>
                       <div className="flex flex-col gap-0.5">
-                        {visible.map((b) => (
-                          <button
-                            key={b.id}
-                            onClick={() => setSelectedBooking(b)}
-                            className={`w-full truncate rounded border px-1 py-0.5 text-left text-[10px] leading-tight ${
-                              statusColors[b.status] || 'bg-gray-100 border-gray-300 text-gray-700'
-                            }`}
-                          >
-                            <span className="font-medium">{b.time?.slice(0, 5)}</span>{' '}
-                            {b.guest_name || '\u2014'}{b.staff_name ? ` · ${b.staff_name}` : ''}
-                          </button>
-                        ))}
+                        {visible.map((entry) => renderEntryPill(entry))}
                         {extra > 0 && (
                           <span className="px-1 text-[10px] text-gray-400">+{extra} more</span>
                         )}
@@ -400,6 +989,30 @@ export default function CalendarPage() {
           {/* Week View */}
           {view === 'week' && (
             <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+              {/* All-day / multi-day entries row */}
+              {(() => {
+                const allDayEntries = weekDays.map((d) => {
+                  const key = formatDateKey(d);
+                  return (entriesByDate[key] || []).filter((e) => !e.time);
+                });
+                const hasAllDay = allDayEntries.some((arr) => arr.length > 0);
+                if (!hasAllDay) return null;
+                return (
+                  <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-200 bg-gray-50/30">
+                    <div className="flex items-start justify-end border-r border-gray-100 px-2 py-1">
+                      <span className="text-[10px] text-gray-400">All day</span>
+                    </div>
+                    {weekDays.map((d, i) => {
+                      const entries = allDayEntries[i];
+                      return (
+                        <div key={formatDateKey(d)} className="min-h-[32px] border-r border-gray-50 p-0.5 last:border-r-0">
+                          {entries.map((entry) => renderEntryPill(entry, true))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               {/* Header row with day names */}
               <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-100 bg-gray-50/50">
                 <div className="border-r border-gray-100 px-2 py-2" />
@@ -431,26 +1044,15 @@ export default function CalendarPage() {
                     </div>
                     {weekDays.map((d) => {
                       const key = formatDateKey(d);
-                      const dayBookings = bookingsByDate[key] || [];
-                      const hourBookings = dayBookings.filter((b) => {
-                        if (!b.time) return false;
-                        const bHour = parseInt(b.time.slice(0, 2), 10);
-                        return bHour === hour;
+                      const dayEntries = entriesByDate[key] || [];
+                      const hourEntries = dayEntries.filter((e) => {
+                        if (!e.time) return false;
+                        const eHour = parseInt(e.time.slice(0, 2), 10);
+                        return eHour === hour;
                       });
                       return (
                         <div key={`${key}-${hour}`} className="min-h-[48px] border-r border-gray-50 p-0.5 last:border-r-0">
-                          {hourBookings.map((b) => (
-                            <button
-                              key={b.id}
-                              onClick={() => setSelectedBooking(b)}
-                              className={`mb-0.5 w-full truncate rounded border px-1 py-0.5 text-left text-[10px] leading-tight ${
-                                statusColors[b.status] || 'bg-gray-100 border-gray-300 text-gray-700'
-                              }`}
-                            >
-                              <span className="font-medium">{b.time?.slice(0, 5)}</span>{' '}
-                              {b.guest_name || '\u2014'}{b.staff_name ? ` · ${b.staff_name}` : ''}
-                            </button>
-                          ))}
+                          {hourEntries.map((entry) => renderEntryPill(entry))}
                         </div>
                       );
                     })}
@@ -463,14 +1065,50 @@ export default function CalendarPage() {
           {/* Day View */}
           {view === 'day' && (
             <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+              {/* All-day entries */}
+              {(() => {
+                const key = formatDateKey(currentDate);
+                const allDayEntries = (entriesByDate[key] || []).filter((e) => !e.time);
+                if (allDayEntries.length === 0) return null;
+                return (
+                  <div className="border-b border-gray-200 bg-gray-50/30 p-3">
+                    <p className="mb-1 text-xs font-medium text-gray-400">All Day</p>
+                    <div className="flex flex-col gap-1">
+                      {allDayEntries.map((entry) => (
+                        <button
+                          key={entry.id}
+                          onClick={() => setSelectedEntry(entry)}
+                          className={`w-full rounded-lg border p-3 text-left ${entry.color}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-block h-2 w-2 rounded-full ${entryTypeDotColors[entry.type]}`} />
+                            <span className="text-sm font-semibold">{entry.title}</span>
+                            <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${
+                              entry.type === 'booking'
+                                ? (statusBadge[entry.status] || 'bg-gray-100 text-gray-600')
+                                : entry.type === 'reservation'
+                                ? 'bg-indigo-100 text-indigo-700'
+                                : entry.type === 'event'
+                                ? 'bg-rose-100 text-rose-700'
+                                : 'bg-gray-200 text-gray-600'
+                            }`}>
+                              {entry.status.replace('_', ' ')}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="max-h-[700px] overflow-y-auto">
                 {HOURS.map((hour) => {
                   const key = formatDateKey(currentDate);
-                  const dayBookings = bookingsByDate[key] || [];
-                  const hourBookings = dayBookings.filter((b) => {
-                    if (!b.time) return false;
-                    const bHour = parseInt(b.time.slice(0, 2), 10);
-                    return bHour === hour;
+                  const dayEntries = entriesByDate[key] || [];
+                  const hourEntries = dayEntries.filter((e) => {
+                    if (!e.time) return false;
+                    const eHour = parseInt(e.time.slice(0, 2), 10);
+                    return eHour === hour;
                   });
                   return (
                     <div
@@ -483,46 +1121,38 @@ export default function CalendarPage() {
                         </span>
                       </div>
                       <div className="min-h-[56px] p-2">
-                        {hourBookings.length === 0 ? (
+                        {hourEntries.length === 0 ? (
                           <div className="h-full" />
                         ) : (
                           <div className="flex flex-col gap-2">
-                            {hourBookings.map((b) => (
+                            {hourEntries.map((entry) => (
                               <button
-                                key={b.id}
-                                onClick={() => setSelectedBooking(b)}
-                                className={`w-full rounded-lg border p-3 text-left ${
-                                  statusColors[b.status] || 'bg-gray-100 border-gray-300 text-gray-700'
-                                }`}
+                                key={entry.id}
+                                onClick={() => setSelectedEntry(entry)}
+                                className={`w-full rounded-lg border p-3 text-left ${entry.color}`}
                               >
                                 <div className="flex items-center justify-between">
-                                  <span className="text-sm font-semibold">
-                                    {b.guest_name || '\u2014'}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`inline-block h-2 w-2 rounded-full ${entryTypeDotColors[entry.type]}`} />
+                                    <span className="text-sm font-semibold">{entry.title}</span>
+                                  </div>
                                   <span
-                                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                                      statusBadge[b.status] || 'bg-gray-100 text-gray-600'
+                                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium capitalize ${
+                                      entry.type === 'booking'
+                                        ? (statusBadge[entry.status] || 'bg-gray-100 text-gray-600')
+                                        : entry.type === 'reservation'
+                                        ? 'bg-indigo-100 text-indigo-700'
+                                        : entry.type === 'event'
+                                        ? 'bg-rose-100 text-rose-700'
+                                        : 'bg-gray-200 text-gray-600'
                                     }`}
                                   >
-                                    {b.status.replace('_', ' ')}
+                                    {entry.status.replace('_', ' ')}
                                   </span>
                                 </div>
                                 <div className="mt-1 flex items-center gap-3 text-xs">
-                                  <span>{b.time ? formatTime(b.time) : '\u2014'}</span>
-                                  {b.staff_name && (
-                                    <span className="text-gray-500">
-                                      Staff: {b.staff_name}
-                                    </span>
-                                  )}
-                                  <span className="text-gray-500">
-                                    Party: {b.party_size}
-                                  </span>
+                                  {entry.time && <span>{formatTime(entry.time)}</span>}
                                 </div>
-                                {b.special_requests && (
-                                  <p className="mt-1 truncate text-[11px] text-gray-500">
-                                    {b.special_requests}
-                                  </p>
-                                )}
                               </button>
                             ))}
                           </div>
@@ -535,124 +1165,19 @@ export default function CalendarPage() {
             </div>
           )}
 
-          {/* Empty state for day/week when no bookings */}
-          {(view === 'day' || view === 'week') && bookings.length === 0 && (
+          {/* Empty state */}
+          {filteredEntries.length === 0 && (
             <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-12 text-center">
-              <p className="text-sm text-gray-400">No bookings for this period</p>
+              <p className="text-sm text-gray-400">
+                {filter === 'all' ? 'No entries for this period' : `No ${filter}s for this period`}
+              </p>
             </div>
           )}
         </>
       )}
 
       {/* Detail Modal */}
-      {selectedBooking && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setSelectedBooking(null)}>
-          <div className="fixed inset-0 bg-black/30" />
-          <div
-            className="relative z-10 w-full max-w-md rounded-xl bg-white shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Modal header */}
-            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-              <div>
-                <p className="font-mono text-lg font-bold text-brand">
-                  {selectedBooking.reference_code}
-                </p>
-                <span
-                  className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
-                    statusBadge[selectedBooking.status] || 'bg-gray-100 text-gray-600'
-                  }`}
-                >
-                  {selectedBooking.status.replace('_', ' ')}
-                </span>
-              </div>
-              <button
-                onClick={() => setSelectedBooking(null)}
-                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Modal body */}
-            <div className="space-y-5 px-6 py-5">
-              {/* Guest info */}
-              <div>
-                <h3 className="text-sm font-medium text-gray-500">Guest</h3>
-                <p className="mt-1 text-sm font-medium text-gray-900">
-                  {selectedBooking.guest_name || '\u2014'}
-                </p>
-                {selectedBooking.guest_phone && (
-                  <p className="text-sm text-gray-500">{selectedBooking.guest_phone}</p>
-                )}
-              </div>
-
-              {/* Details grid */}
-              <div>
-                <h3 className="text-sm font-medium text-gray-500">Details</h3>
-                <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <span className="text-gray-400">Date</span>
-                    <p className="font-medium text-gray-900">
-                      {new Date(selectedBooking.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
-                        weekday: 'short',
-                        day: 'numeric',
-                        month: 'short',
-                        year: 'numeric',
-                      })}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Time</span>
-                    <p className="font-medium text-gray-900">
-                      {selectedBooking.time ? formatTime(selectedBooking.time) : '\u2014'}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Party Size</span>
-                    <p className="font-medium text-gray-900">{selectedBooking.party_size}</p>
-                  </div>
-                  {selectedBooking.staff_name && (
-                    <div>
-                      <span className="text-gray-400">Staff</span>
-                      <p className="font-medium text-gray-900">{selectedBooking.staff_name}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Special requests */}
-              {selectedBooking.special_requests && (
-                <div className="rounded-lg bg-yellow-50 p-3">
-                  <h3 className="text-sm font-medium text-yellow-800">Special Requests</h3>
-                  <p className="mt-1 text-sm text-yellow-700">{selectedBooking.special_requests}</p>
-                </div>
-              )}
-
-              {/* Actions */}
-              {nextActions[selectedBooking.status] &&
-                nextActions[selectedBooking.status].length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-500">Actions</h3>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {nextActions[selectedBooking.status].map((action) => (
-                        <button
-                          key={action.next}
-                          onClick={() => updateStatus(selectedBooking.id, action.next)}
-                          className={`rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium ${action.color}`}
-                        >
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-            </div>
-          </div>
-        </div>
-      )}
+      {renderDetailModal()}
     </div>
   );
 }
