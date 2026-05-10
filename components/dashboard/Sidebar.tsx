@@ -348,11 +348,17 @@ export function Sidebar() {
       if (catLabels?.propertyNamePlural) return catLabels.propertyNamePlural;
     }
     if (item.label === 'Services') {
-      if (catLabels?.serviceNamePlural) return catLabels.serviceNamePlural;
+      if (catLabels?.serviceNamePlural) {
+        const renamed = catLabels.serviceNamePlural;
+        // Don't rename to "Appointments" if there's already an Appointments item
+        if (renamed === 'Appointments' && capabilities.includes('appointment')) return 'Services';
+        return renamed;
+      }
     }
-    if (item.label === 'Customers') {
-      if (catLabels?.personLabelPlural) return catLabels.personLabelPlural;
-    }
+    // Always keep "Customers" — don't rename to "Members" etc as it's confusing
+    // if (item.label === 'Customers') {
+    //   if (catLabels?.personLabelPlural) return catLabels.personLabelPlural;
+    // }
     return item.label;
   };
 
