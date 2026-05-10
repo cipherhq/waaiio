@@ -2338,10 +2338,37 @@ export class BotService {
     }
 
     if (response === 'cancel_booking') {
+      // Fetch booking details before cancelling (for staff notification)
+      const { data: cancelledBooking } = await this.supabase
+        .from('bookings')
+        .select('id, staff_id, guest_name, date, time, reference_code, business_id, service_id, services:service_id(name)')
+        .eq('id', bookingId)
+        .single();
+
       await this.supabase
         .from('bookings')
         .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
         .eq('id', bookingId);
+
+      // Notify assigned staff member about cancellation
+      if (cancelledBooking?.staff_id && cancelledBooking.business_id) {
+        import('./flows/shared/notify-staff').then(({ notifyStaffBookingCancelled }) => {
+          const dateLabel = new Date(cancelledBooking.date + 'T00:00').toLocaleDateString('en-US', {
+            weekday: 'long', day: 'numeric', month: 'long',
+          });
+          notifyStaffBookingCancelled({
+            supabase: this.supabase,
+            sender: this.messageSender,
+            businessId: cancelledBooking.business_id,
+            staffId: cancelledBooking.staff_id!,
+            customerName: cancelledBooking.guest_name || 'Customer',
+            serviceName: ((cancelledBooking as any).services as { name: string } | null)?.name || '',
+            date: dateLabel,
+            time: cancelledBooking.time || '',
+            referenceCode: cancelledBooking.reference_code || '',
+          }).catch(err => console.error('[BOT] Staff cancel notify error:', err));
+        }).catch(() => {});
+      }
 
       await this.sendText(from, '✓ Cancelled.\n\nSend *Hi* to start fresh or *my bookings* to manage others.');
       await this.deactivateSession(session.id);

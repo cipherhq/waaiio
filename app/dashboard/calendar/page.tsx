@@ -186,9 +186,26 @@ export default function CalendarPage() {
   const [blockedDates, setBlockedDates] = useState<BlockedDate[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEntry, setSelectedEntry] = useState<CalendarEntry | null>(null);
+  const [staffList, setStaffList] = useState<Array<{id: string; name: string; color: string}>>([]);
+  const [staffFilter, setStaffFilter] = useState<string>('all');
 
   const hasReservations = hasCapability('reservation');
   const hasEvents = hasCapability('ticketing');
+
+  // Load staff list for filter
+  useEffect(() => {
+    async function loadStaff() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('business_staff')
+        .select('id, name, color')
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .order('name');
+      setStaffList(data || []);
+    }
+    loadStaff();
+  }, [business.id]);
 
   // Compute date range based on view
   const viewDateRange = useMemo(() => {
@@ -388,11 +405,20 @@ export default function CalendarPage() {
     return entries;
   }, [bookings, reservations, events, blockedDates]);
 
-  // Apply filter
+  // Apply type + staff filters
   const filteredEntries = useMemo(() => {
-    if (filter === 'all') return allEntries;
-    return allEntries.filter((e) => e.type === filter);
-  }, [allEntries, filter]);
+    let entries = allEntries;
+    if (filter !== 'all') {
+      entries = entries.filter((e) => e.type === filter);
+    }
+    if (staffFilter !== 'all') {
+      entries = entries.filter((e) => {
+        if (e.type === 'booking') return (e.details as unknown as Booking).staff_id === staffFilter;
+        return true; // Show non-booking entries regardless
+      });
+    }
+    return entries;
+  }, [allEntries, filter, staffFilter]);
 
   // Group entries by date
   const entriesByDate = useMemo(() => {
@@ -462,6 +488,18 @@ export default function CalendarPage() {
               business_id: business.id,
               phone: booking.guest_phone,
               message: `Your booking at ${business.name} on ${booking.date} has been cancelled. Contact us if you have questions.`,
+            }),
+          }).catch(() => {});
+        }
+
+        // Notify assigned staff member about cancellation (non-blocking)
+        if (newStatus === 'cancelled' && booking.staff_id) {
+          fetch('/api/bookings/notify-staff-cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bookingId: booking.id,
+              businessId: business.id,
             }),
           }).catch(() => {});
         }
@@ -656,12 +694,38 @@ export default function CalendarPage() {
                         <span className="text-gray-400">Party Size</span>
                         <p className="font-medium text-gray-900">{b.party_size}</p>
                       </div>
-                      {b.staff_name && (
+                      {staffList.length > 0 ? (
+                        <div>
+                          <span className="text-gray-400">Staff</span>
+                          <select
+                            value={b.staff_id || ''}
+                            onChange={async (e) => {
+                              const newStaffId = e.target.value || null;
+                              const staffMember = staffList.find(s => s.id === newStaffId);
+                              const supabase = createClient();
+                              await supabase.from('bookings')
+                                .update({
+                                  staff_id: newStaffId,
+                                  staff_name: staffMember?.name || null,
+                                })
+                                .eq('id', b.id);
+                              setSelectedEntry(null);
+                              fetchData();
+                            }}
+                            className="mt-0.5 block w-full text-sm font-medium border border-gray-200 rounded-lg px-2 py-1"
+                          >
+                            <option value="">Unassigned</option>
+                            {staffList.map(s => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : b.staff_name ? (
                         <div>
                           <span className="text-gray-400">Staff</span>
                           <p className="font-medium text-gray-900">{b.staff_name}</p>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   </div>
                   {b.special_requests && (
@@ -881,6 +945,20 @@ export default function CalendarPage() {
               </button>
             ))}
           </div>
+        )}
+
+        {/* Staff filter */}
+        {staffList.length > 0 && (
+          <select
+            value={staffFilter}
+            onChange={e => setStaffFilter(e.target.value)}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs"
+          >
+            <option value="all">All Staff</option>
+            {staffList.map(s => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
         )}
 
         {/* Legend */}

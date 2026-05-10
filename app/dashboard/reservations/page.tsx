@@ -119,6 +119,7 @@ export default function BookingsPage() {
 
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
+  const [staffList, setStaffList] = useState<Array<{id: string; name: string}>>([]);
 
   const selected = bookings.find((b) => b.id === selectedId) || null;
 
@@ -243,6 +244,19 @@ export default function BookingsPage() {
   useEffect(() => {
     fetchBookings();
 
+    // Load staff list for reassignment
+    async function loadStaff() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('business_staff')
+        .select('id, name')
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .order('name');
+      setStaffList(data || []);
+    }
+    loadStaff();
+
     const supabase = createClient();
     const channel = supabase
       .channel('bookings-list')
@@ -303,6 +317,18 @@ export default function BookingsPage() {
               business_id: business.id,
               phone: booking.guest_phone,
               message: `Your booking at ${business.name} on ${booking.date} has been cancelled. Contact us if you have questions.`,
+            }),
+          }).catch(() => {});
+        }
+
+        // Notify assigned staff member about cancellation (non-blocking)
+        if (newStatus === 'cancelled' && booking.staff_id && !booking._isReservation) {
+          fetch('/api/bookings/notify-staff-cancel', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              bookingId: booking.id,
+              businessId: business.id,
             }),
           }).catch(() => {});
         }
@@ -730,12 +756,37 @@ export default function BookingsPage() {
                         <span className="text-gray-400">{labels.quantityLabel}</span>
                         <p className="font-medium text-gray-900">{selected.party_size}</p>
                       </div>
-                      {selected.staff_name && (
+                      {staffList.length > 0 ? (
+                        <div>
+                          <span className="text-gray-400">Staff</span>
+                          <select
+                            value={selected.staff_id || ''}
+                            onChange={async (e) => {
+                              const newStaffId = e.target.value || null;
+                              const staffMember = staffList.find(s => s.id === newStaffId);
+                              const supabase = createClient();
+                              await supabase.from('bookings')
+                                .update({
+                                  staff_id: newStaffId,
+                                  staff_name: staffMember?.name || null,
+                                })
+                                .eq('id', selected.id);
+                              setBookings(prev => prev.map(b => b.id === selected.id ? { ...b, staff_id: newStaffId, staff_name: staffMember?.name || null } : b));
+                            }}
+                            className="mt-0.5 block w-full text-sm font-medium border border-gray-200 rounded-lg px-2 py-1"
+                          >
+                            <option value="">Unassigned</option>
+                            {staffList.map(s => (
+                              <option key={s.id} value={s.id}>{s.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : selected.staff_name ? (
                         <div>
                           <span className="text-gray-400">Staff</span>
                           <p className="font-medium text-gray-900">{selected.staff_name}</p>
                         </div>
-                      )}
+                      ) : null}
                     </>
                   )}
                 </div>

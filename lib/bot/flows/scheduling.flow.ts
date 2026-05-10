@@ -1675,6 +1675,26 @@ export const schedulingFlow: FlowDefinition = {
             amount: totalDeposit > 0 ? totalDeposit : undefined,
           }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
 
+          // Notify assigned staff member
+          if (d.staff_id) {
+            import('./shared/notify-staff').then(({ notifyStaffNewBooking }) => {
+              notifyStaffNewBooking({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business!.id,
+                businessName: ctx.business!.name,
+                staffId: d.staff_id as string,
+                customerName,
+                serviceName: (d.service_name as string) || '',
+                date: dateLabel,
+                time: (d.time as string) || '',
+                referenceCode: booking.reference_code,
+                countryCode: (ctx.business!.country_code || 'NG') as CountryCode,
+                amount: totalDeposit > 0 ? totalDeposit : undefined,
+              }).catch(err => console.error('[SCHEDULING] Staff notify error:', err));
+            }).catch(err => console.error('[SCHEDULING] Staff notify import error:', err));
+          }
+
           // Post-completion: loyalty, feedback, referral, auto-receipt
           handlePostCompletion({
             supabase: ctx.supabase,
@@ -1902,6 +1922,26 @@ export const schedulingFlow: FlowDefinition = {
                 quantityLabel: labels.quantityLabel,
                 amount: paidAmount || undefined,
               }).catch(err => console.error('[SCHEDULING] Owner notification error:', err));
+
+              // Notify assigned staff member
+              if (d.staff_id) {
+                import('./shared/notify-staff').then(({ notifyStaffNewBooking }) => {
+                  notifyStaffNewBooking({
+                    supabase: ctx.supabase,
+                    sender: ctx.sender,
+                    businessId: ctx.business!.id,
+                    businessName: ctx.business!.name,
+                    staffId: d.staff_id as string,
+                    customerName: custName,
+                    serviceName: (d.service_name as string) || '',
+                    date: dateLabel,
+                    time: (d.time as string) || '',
+                    referenceCode: d.reference_code as string,
+                    countryCode: (ctx.business!.country_code || 'NG') as CountryCode,
+                    amount: paidAmount || undefined,
+                  }).catch(err => console.error('[SCHEDULING] Staff notify error:', err));
+                }).catch(err => console.error('[SCHEDULING] Staff notify import error:', err));
+              }
 
               // Post-completion: loyalty, feedback, referral, auto-receipt
               handlePostCompletion({
