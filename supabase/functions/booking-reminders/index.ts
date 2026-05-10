@@ -144,6 +144,78 @@ Deno.serve(async () => {
     }
   }
 
+  // ── Reservation check-in reminders (day before check-in) ──
+  let sentReservationReminders = 0;
+  const tomorrowDate = new Date(now);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const tomorrowStr = tomorrowDate.toISOString().split('T')[0];
+
+  const { data: tomorrowCheckins } = await supabase
+    .from('reservations')
+    .select('id, guest_phone, guest_name, check_in, check_out, nights, business_id, property_id, properties!property_id(name, address)')
+    .eq('check_in', tomorrowStr)
+    .eq('status', 'confirmed')
+    .limit(100);
+
+  for (const res of tomorrowCheckins || []) {
+    if (!res.guest_phone) continue;
+    const bizInfo = bizMap.get(res.business_id);
+    if (!bizInfo) continue;
+
+    const prop = res.properties as unknown as { name: string; address: string | null } | null;
+    const propertyName = prop?.name || '';
+    const address = prop?.address || '';
+
+    const lines = [
+      `🏠 *Your stay at ${bizInfo.name} begins tomorrow!*`,
+      '',
+      propertyName ? `📍 ${propertyName}` : '',
+      address ? `📌 ${address}` : '',
+      `📅 Check-in: ${tomorrowStr}`,
+      `🌙 ${res.nights || '?'} night${(res.nights || 0) !== 1 ? 's' : ''}`,
+      '',
+      `We look forward to welcoming you, ${res.guest_name || 'there'}! 🙌`,
+    ].filter(Boolean).join('\n');
+
+    const sent = await sendWhatsApp(res.guest_phone, lines);
+    if (sent) sentReservationReminders++;
+  }
+
+  // ── Reservation check-out reminders (morning of check-out day) ──
+  let sentCheckoutReminders = 0;
+  const todayStr = now.toISOString().split('T')[0];
+  const currentHour = now.getUTCHours();
+
+  // Only send checkout reminders in the morning window (7-9 AM UTC-ish, runs every 30min)
+  if (currentHour >= 6 && currentHour <= 10) {
+    const { data: todayCheckouts } = await supabase
+      .from('reservations')
+      .select('id, guest_phone, guest_name, check_out, business_id, property_id, properties!property_id(name)')
+      .eq('check_out', todayStr)
+      .in('status', ['checked_in', 'in_progress'])
+      .limit(100);
+
+    for (const res of todayCheckouts || []) {
+      if (!res.guest_phone) continue;
+      const bizInfo = bizMap.get(res.business_id);
+      if (!bizInfo) continue;
+
+      const prop = res.properties as unknown as { name: string } | null;
+
+      const msg = [
+        `🏠 *Your stay at ${bizInfo.name} ends today*`,
+        '',
+        prop?.name ? `📍 ${prop.name}` : '',
+        `📅 Check-out: today`,
+        '',
+        `Thank you for staying with us, ${res.guest_name || 'there'}! We hope you enjoyed your stay. 🙏`,
+      ].filter(Boolean).join('\n');
+
+      const sent = await sendWhatsApp(res.guest_phone, msg);
+      if (sent) sentCheckoutReminders++;
+    }
+  }
+
   // ── Post-service follow-ups (24h after completion) ──
   const yesterdayDate = new Date(now);
   yesterdayDate.setDate(yesterdayDate.getDate() - 1);
@@ -172,7 +244,7 @@ Deno.serve(async () => {
     }
   }
 
-  const summary = `Reminders sent: ${sentReminders}, follow-ups=${sentFollowUp}`;
+  const summary = `Reminders sent: ${sentReminders}, reservation-checkin=${sentReservationReminders}, checkout=${sentCheckoutReminders}, follow-ups=${sentFollowUp}`;
   log.debug(summary);
 
   return new Response(JSON.stringify({ success: true, summary }), {

@@ -64,14 +64,37 @@ const statusColors: Record<string, string> = {
   confirmed: 'bg-green-100 text-green-800',
   pending: 'bg-yellow-100 text-yellow-800',
   in_progress: 'bg-blue-100 text-blue-800',
+  checked_in: 'bg-blue-100 text-blue-800',
   completed: 'bg-gray-100 text-gray-700',
+  checked_out: 'bg-gray-100 text-gray-700',
   cancelled: 'bg-red-100 text-red-700',
   no_show: 'bg-red-100 text-red-700',
 };
 
 const statusLabels: Record<string, string> = {
   in_progress: 'Checked In',
+  checked_in: 'Checked In',
   completed: 'Checked Out',
+  checked_out: 'Checked Out',
+};
+
+// Actions available per reservation status
+const reservationActions: Record<string, { label: string; next: string; color: string }[]> = {
+  pending: [
+    { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
+    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
+  ],
+  confirmed: [
+    { label: 'Check In', next: 'checked_in', color: 'text-blue-600 hover:bg-blue-50' },
+    { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
+    { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
+  ],
+  checked_in: [
+    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
+  ],
+  in_progress: [
+    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
+  ],
 };
 
 export default function PropertyDetailPage() {
@@ -138,6 +161,50 @@ export default function PropertyDetailPage() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
+  // Update reservation status
+  async function updateReservationStatus(id: string, newStatus: string) {
+    const supabase = createClient();
+    const extra: Record<string, unknown> = {};
+    const now = new Date().toISOString();
+
+    if (newStatus === 'confirmed') extra.confirmed_at = now;
+    if (newStatus === 'cancelled') {
+      extra.cancelled_at = now;
+      extra.cancelled_by = 'business';
+    }
+    if (newStatus === 'checked_in') {
+      // Date-gate: only allow if today >= check_in date
+      const todayStr = new Date().toISOString().split('T')[0];
+      const reservation = reservations.find(r => r.id === id);
+      if (reservation && reservation.check_in > todayStr) {
+        alert(`Check-in is not available until ${new Date(reservation.check_in + 'T00:00').toLocaleDateString()}`);
+        return;
+      }
+      extra.checked_in_at = now;
+      extra.checked_in_by = 'business';
+    }
+    if (newStatus === 'checked_out') extra.checked_out_at = now;
+
+    await supabase.from('reservations').update({ status: newStatus, ...extra }).eq('id', id);
+
+    // Notify guest on check-in
+    if (newStatus === 'checked_in') {
+      const reservation = reservations.find(r => r.id === id);
+      if (reservation?.guest_phone) {
+        fetch('/api/reservations/notify-checkin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reservationId: id,
+            businessId: business.id,
+          }),
+        }).catch(() => {});
+      }
+    }
+
+    loadData();
+  }
+
   // Filtered reservations
   const filteredReservations = useMemo(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -147,9 +214,9 @@ export default function PropertyDetailPage() {
     if (statusFilter === 'upcoming') {
       filtered = filtered.filter(r => r.check_in >= today && ['pending', 'confirmed'].includes(r.status));
     } else if (statusFilter === 'current') {
-      filtered = filtered.filter(r => r.status === 'in_progress');
+      filtered = filtered.filter(r => ['checked_in', 'in_progress'].includes(r.status));
     } else if (statusFilter === 'past') {
-      filtered = filtered.filter(r => r.status === 'completed');
+      filtered = filtered.filter(r => ['checked_out', 'completed'].includes(r.status));
     } else if (statusFilter === 'cancelled') {
       filtered = filtered.filter(r => ['cancelled', 'no_show'].includes(r.status));
     }
@@ -407,6 +474,7 @@ export default function PropertyDetailPage() {
                     <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                     <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                    <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -416,6 +484,10 @@ export default function PropertyDetailPage() {
                       d.setDate(d.getDate() + (r.nights || 1));
                       return d.toISOString().split('T')[0];
                     })();
+                    // Contextual badges
+                    const isArrivingToday = r.check_in === today && ['pending', 'confirmed'].includes(r.status);
+                    const isCheckingOutToday = checkOutDate === today && ['checked_in', 'in_progress'].includes(r.status);
+                    const isCurrentlyStaying = ['checked_in', 'in_progress'].includes(r.status);
                     return (
                       <tr key={r.id} className="cursor-pointer hover:bg-gray-50/50" onClick={() => setSelectedReservation(r)}>
                         <td className="px-4 py-3">
@@ -437,8 +509,30 @@ export default function PropertyDetailPage() {
                           <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[r.status] || 'bg-gray-100 text-gray-600'}`}>
                             {statusLabels[r.status] || r.status.replace('_', ' ')}
                           </span>
+                          {isArrivingToday && (
+                            <span className="ml-1 rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-medium text-orange-700">Arriving Today</span>
+                          )}
+                          {isCurrentlyStaying && !isCheckingOutToday && (
+                            <span className="ml-1 rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">Currently Staying</span>
+                          )}
+                          {isCheckingOutToday && (
+                            <span className="ml-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">Checking Out Today</span>
+                          )}
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.reference_code}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                            {(reservationActions[r.status] || []).map(action => (
+                              <button
+                                key={action.next}
+                                onClick={() => updateReservationStatus(r.id, action.next)}
+                                className={`rounded px-3 py-1.5 text-xs font-medium ${action.color}`}
+                              >
+                                {action.label}
+                              </button>
+                            ))}
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -730,6 +824,21 @@ export default function PropertyDetailPage() {
                   )}
                 </div>
               </div>
+
+              {/* Actions */}
+              {reservationActions[selectedReservation.status] && reservationActions[selectedReservation.status].length > 0 && (
+                <div className="border-t border-gray-100 pt-4">
+                  <div className="flex flex-wrap gap-2">
+                    {reservationActions[selectedReservation.status].map(action => (
+                      <button key={action.next}
+                        onClick={() => { updateReservationStatus(selectedReservation.id, action.next); setSelectedReservation(null); }}
+                        className={`rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium ${action.color}`}>
+                        {action.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -48,7 +48,9 @@ const statusColors: Record<string, string> = {
   pending: 'bg-yellow-100 text-yellow-800',
   in_progress: 'bg-blue-100 text-blue-800',
   seated: 'bg-blue-100 text-blue-800',
+  checked_in: 'bg-blue-100 text-blue-800',
   completed: 'bg-gray-100 text-gray-700',
+  checked_out: 'bg-gray-100 text-gray-700',
   cancelled: 'bg-red-100 text-red-700',
   no_show: 'bg-red-100 text-red-700',
 };
@@ -56,7 +58,9 @@ const statusColors: Record<string, string> = {
 // Reservation-specific status labels
 const reservationStatusLabels: Record<string, string> = {
   in_progress: 'Checked In',
+  checked_in: 'Checked In',
   completed: 'Checked Out',
+  checked_out: 'Checked Out',
 };
 
 // Actions for scheduling businesses (appointments, bookings)
@@ -82,12 +86,16 @@ const reservationActions: Record<string, { label: string; next: string; color: s
     { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
   ],
   confirmed: [
-    { label: 'Check In', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
+    { label: 'Check In', next: 'checked_in', color: 'text-blue-600 hover:bg-blue-50' },
     { label: 'No Show', next: 'no_show', color: 'text-red-600 hover:bg-red-50' },
     { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
   ],
+  checked_in: [
+    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
+  ],
+  // Legacy status support (in_progress maps to checked_in)
   in_progress: [
-    { label: 'Check Out', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
+    { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
   ],
 };
 
@@ -173,7 +181,16 @@ export default function BookingsPage() {
         .order('check_in', { ascending: false })
         .limit(100);
 
-      if (filter !== 'all') rQuery = rQuery.eq('status', filter);
+      if (filter !== 'all') {
+        // Map dashboard filter values to reservation-specific statuses
+        if (filter === 'in_progress') {
+          rQuery = rQuery.in('status', ['checked_in', 'in_progress']);
+        } else if (filter === 'completed') {
+          rQuery = rQuery.in('status', ['checked_out', 'completed']);
+        } else {
+          rQuery = rQuery.eq('status', filter);
+        }
+      }
       if (dateFrom) rQuery = rQuery.gte('check_in', dateFrom);
       if (dateTo) rQuery = rQuery.lte('check_in', dateTo);
 
@@ -285,8 +302,17 @@ export default function BookingsPage() {
     const isThisReservation = !!(booking as any)?._isReservation;
 
     if (isThisReservation) {
-      if (newStatus === 'in_progress') extra.checked_in_at = now;
-      if (newStatus === 'completed') extra.checked_out_at = now;
+      // Date-gate check-in: only allow if today >= check_in date
+      if (newStatus === 'checked_in') {
+        const today = new Date().toISOString().split('T')[0];
+        if (booking && booking.date > today) {
+          alert(`Check-in is not available until ${new Date(booking.date + 'T00:00').toLocaleDateString()}`);
+          return;
+        }
+        extra.checked_in_at = now;
+        extra.checked_in_by = 'business';
+      }
+      if (newStatus === 'checked_out') extra.checked_out_at = now;
     } else {
       if (newStatus === 'in_progress') extra.seated_at = now;
       if (newStatus === 'completed') extra.completed_at = now;
@@ -294,6 +320,18 @@ export default function BookingsPage() {
 
     const table = isThisReservation ? 'reservations' : 'bookings';
     await supabase.from(table).update({ status: newStatus, ...extra }).eq('id', id);
+
+    // Notify guest on check-in (reservation only)
+    if (isThisReservation && newStatus === 'checked_in' && booking?.guest_phone) {
+      fetch('/api/reservations/notify-checkin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reservationId: id,
+          businessId: business.id,
+        }),
+      }).catch(() => {});
+    }
 
     // Release booking slot on cancel/no_show so the time becomes available again
     if (newStatus === 'cancelled' || newStatus === 'no_show') {
@@ -396,7 +434,7 @@ export default function BookingsPage() {
       {/* Today's upcoming */}
       {(() => {
         const today = new Date().toISOString().split('T')[0];
-        const todayItems = bookings.filter(b => b.date === today && !['cancelled', 'no_show', 'completed'].includes(b.status));
+        const todayItems = bookings.filter(b => b.date === today && !['cancelled', 'no_show', 'completed', 'checked_out'].includes(b.status));
         if (todayItems.length === 0) return null;
 
         return (
@@ -413,9 +451,9 @@ export default function BookingsPage() {
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                     b.status === 'confirmed' ? 'bg-green-100 text-green-700' :
                     b.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                    b.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
+                    ['in_progress', 'checked_in'].includes(b.status) ? 'bg-blue-100 text-blue-700' :
                     'bg-gray-100 text-gray-600'
-                  }`}>{b.status === 'in_progress' ? (b._isReservation ? 'Checked In' : 'In Progress') : b.status}</span>
+                  }`}>{['in_progress', 'checked_in'].includes(b.status) ? (b._isReservation ? 'Checked In' : 'In Progress') : b.status}</span>
                 </div>
               ))}
               {todayItems.length > 5 && <p className="text-xs text-blue-600">+{todayItems.length - 5} more</p>}
