@@ -117,26 +117,27 @@ export default function Businesses() {
   const [editSaving, setEditSaving] = useState(false);
   const perPage = 20;
 
+  async function loadData() {
+    const { data } = await adminDb
+      .from('businesses')
+      .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id')
+      .order('created_at', { ascending: false });
+
+    setBusinesses(data || []);
+
+    // Load available WhatsApp channels
+    const { data: chData } = await adminDb
+      .from('whatsapp_channels')
+      .select('id, phone_number, display_name, country_code')
+      .eq('is_active', true)
+      .order('country_code');
+    setChannels(chData || []);
+
+    setLoading(false);
+  }
+
   useEffect(() => {
-    async function load() {
-      const { data } = await adminDb
-        .from('businesses')
-        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id')
-        .order('created_at', { ascending: false });
-
-      setBusinesses(data || []);
-
-      // Load available WhatsApp channels
-      const { data: chData } = await adminDb
-        .from('whatsapp_channels')
-        .select('id, phone_number, display_name, country_code')
-        .eq('is_active', true)
-        .order('country_code');
-      setChannels(chData || []);
-
-      setLoading(false);
-    }
-    load();
+    loadData();
   }, []);
 
   // Load payout account and service stats when business is selected

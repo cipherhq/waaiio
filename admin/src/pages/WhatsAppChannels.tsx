@@ -11,10 +11,13 @@ import { Phone, Globe, Settings, Radio } from 'lucide-react';
 
 interface WhatsAppChannel {
   id: string;
-  phone: string | null;
-  country: string | null;
+  phone_number: string | null;
+  country_code: string | null;
+  display_name: string | null;
+  channel_type: string | null;
+  connection_status: string | null;
   provider: string | null;
-  status: string;
+  is_active: boolean;
   created_at: string;
   updated_at: string | null;
   [key: string]: unknown;
@@ -203,7 +206,7 @@ export default function WhatsAppChannels() {
   useEffect(() => { loadData(); }, []);
 
   // Stats
-  const activeChannels = channels.filter(c => (c as any).connection_status === 'active' || c.status === 'active').length;
+  const activeChannels = channels.filter(c => c.connection_status === 'active').length;
   const totalChannels = channels.length;
   const activeConfigs = configs.filter(c => c.status === 'active').length;
   const totalConfigs = configs.length;
@@ -418,16 +421,16 @@ export default function WhatsAppChannels() {
                       onClick={() => setSelectedChannel(ch)}
                       className="cursor-pointer transition hover:bg-gray-50"
                     >
-                      <td className="px-4 py-3 font-medium text-gray-900">{(ch as any).phone_number || ch.phone || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{(ch as any).display_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{(ch as any).country_code || ch.country || '—'}</td>
+                      <td className="px-4 py-3 font-medium text-gray-900">{ch.phone_number || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{ch.display_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600">{ch.country_code || '—'}</td>
                       <td className="px-4 py-3">
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${(ch as any).channel_type === 'shared' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                          {(ch as any).channel_type || '—'}
+                        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${ch.channel_type === 'shared' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                          {ch.channel_type || '—'}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={(ch as any).connection_status || ch.status || 'unknown'} />
+                        <StatusBadge status={ch.connection_status || 'unknown'} />
                       </td>
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(ch.created_at)}</td>
                     </tr>
@@ -496,10 +499,12 @@ export default function WhatsAppChannels() {
         {selectedChannel && (
           <div className="space-y-3 text-sm">
             <DetailRow label="Channel ID" value={selectedChannel.id} />
-            <DetailRow label="Phone" value={selectedChannel.phone} />
-            <DetailRow label="Country" value={selectedChannel.country} />
+            <DetailRow label="Phone" value={selectedChannel.phone_number} />
+            <DetailRow label="Display Name" value={selectedChannel.display_name} />
+            <DetailRow label="Country" value={selectedChannel.country_code} />
+            <DetailRow label="Type" value={selectedChannel.channel_type} />
             <DetailRow label="Provider" value={selectedChannel.provider} />
-            <DetailRow label="Status" value={selectedChannel.status} />
+            <DetailRow label="Status" value={selectedChannel.connection_status} />
 
             <div className="my-3 border-t border-gray-100" />
 
@@ -508,7 +513,7 @@ export default function WhatsAppChannels() {
 
             {/* Render any extra fields from the row */}
             {(() => {
-              const knownKeys = new Set(['id', 'phone', 'country', 'provider', 'status', 'created_at', 'updated_at']);
+              const knownKeys = new Set(['id', 'phone_number', 'country_code', 'display_name', 'channel_type', 'connection_status', 'provider', 'is_active', 'created_at', 'updated_at']);
               const extras = Object.entries(selectedChannel).filter(([k]) => !knownKeys.has(k));
               if (extras.length === 0) return null;
               return (
