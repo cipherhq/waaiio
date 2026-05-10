@@ -105,7 +105,7 @@ Deno.serve(async () => {
       (new Date(contract.token_expires_at).getTime() - now.getTime()) / (1000 * 60 * 60)
     );
 
-    const appUrl = Deno.env.get('NEXT_PUBLIC_APP_URL') || 'https://app.waaiio.com';
+    const appUrl = Deno.env.get('NEXT_PUBLIC_APP_URL') || 'https://waaiio.com';
     const signUrl = `${appUrl}/sign/${contract.token}`;
 
     const msg = [
@@ -156,7 +156,7 @@ Deno.serve(async () => {
       (new Date(contract.token_expires_at).getTime() - now.getTime()) / (1000 * 60 * 60)
     );
 
-    const appUrl = Deno.env.get('NEXT_PUBLIC_APP_URL') || 'https://app.waaiio.com';
+    const appUrl = Deno.env.get('NEXT_PUBLIC_APP_URL') || 'https://waaiio.com';
     const signUrl = `${appUrl}/sign/${contract.token}`;
 
     const msg = [

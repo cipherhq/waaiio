@@ -115,7 +115,7 @@ export class CatalogService {
               price: product.price,
               currency: product.currency,
               image_url: product.image_url || undefined,
-              url: product.url || `https://waaiio.com`,
+              url: product.url || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com',
               availability: product.availability || 'in stock',
               category: product.category || undefined,
             }),

@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
     const { getCountry } = await import('@/lib/countries');
     const countryCode = biz.country_code || 'NG';
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
     // Calculate balance (partial payments supported)
     const balance = invoice.total_amount - (invoice.amount_paid || 0);

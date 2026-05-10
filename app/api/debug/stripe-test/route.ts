@@ -69,8 +69,8 @@ export async function GET() {
         'line_items[0][price_data][unit_amount]': '1000',
         'line_items[0][quantity]': '1',
         mode: 'payment',
-        success_url: 'https://waaiio.com/success',
-        cancel_url: 'https://waaiio.com',
+        success_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/success`,
+        cancel_url: process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com',
       }).toString(),
     });
     const rawData = await rawRes.json();

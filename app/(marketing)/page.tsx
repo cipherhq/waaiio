@@ -41,12 +41,14 @@ const FAQ_DATA = [
   },
 ];
 
+const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+
 const JSON_LD_ORG = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
   name: 'Waaiio',
-  url: 'https://waaiio.com',
-  logo: 'https://waaiio.com/logo.png',
+  url: baseUrl,
+  logo: `${baseUrl}/logo.png`,
   description: 'AI-Powered WhatsApp Automation for Every Business',
   award: 'Meta Verified Tech Provider',
   memberOf: {
@@ -57,7 +59,7 @@ const JSON_LD_ORG = {
   contactPoint: {
     '@type': 'ContactPoint',
     contactType: 'customer support',
-    url: 'https://waaiio.com/contact',
+    url: `${baseUrl}/contact`,
     email: 'hello@waaiio.com',
   },
 };
@@ -68,7 +70,7 @@ const JSON_LD_APP = {
   name: 'Waaiio',
   applicationCategory: 'BusinessApplication',
   operatingSystem: 'Web',
-  url: 'https://waaiio.com',
+  url: baseUrl,
   description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries',
   offers: {
     '@type': 'Offer',

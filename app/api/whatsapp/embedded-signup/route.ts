@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
           client_id: appId,
           client_secret: appSecret,
           code,
-          redirect_uri: `https://waaiio.com/dashboard/whatsapp/connect`,
+          redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/whatsapp/connect`,
         }).toString(),
       }
     );

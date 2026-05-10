@@ -1,3 +1,7 @@
+// ─── App URL ──────────────────────────────────────────────────────
+
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+
 // ─── HTML escape ──────────────────────────────────────────────────
 
 function esc(str: string): string {
@@ -96,7 +100,7 @@ export function welcomeEmail(name: string) {
         <li>Customize your bot greeting</li>
         <li>Share your WhatsApp link</li>
       </ul>
-      ${btn('Go to Dashboard', 'https://app.waaiio.com/dashboard')}
+      ${btn('Go to Dashboard', '${appUrl}/dashboard')}
       ${p("If you have any questions, reply to this email. We're happy to help!")}
     `),
   };
@@ -113,7 +117,7 @@ export function businessRegisteredEmail(businessName: string, botCode: string, c
         kv('Category', esc(category.replace(/_/g, ' '))) +
         kv('Bot Code', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(botCode)}</code>`)
       )}
-      ${btn('Set Up Your Bot', 'https://app.waaiio.com/dashboard/whatsapp')}
+      ${btn('Set Up Your Bot', '${appUrl}/dashboard/whatsapp')}
       ${p('Share your bot code with customers so they can start interacting with your business on WhatsApp.')}
     `),
   };
@@ -131,7 +135,7 @@ export function payoutApprovedEmail(businessName: string, amount: string, method
         kv('Method', esc(method))
       )}
       ${p('Funds will arrive in your account within 1-3 business days depending on your bank.')}
-      ${btn('View Payouts', 'https://app.waaiio.com/dashboard/payouts')}
+      ${btn('View Payouts', '${appUrl}/dashboard/payouts')}
     `),
   };
 }
@@ -148,7 +152,7 @@ export function payoutPaidEmail(businessName: string, amount: string, reference:
         kv('Reference', esc(reference || '—'))
       )}
       ${p('The funds should reflect in your account shortly.')}
-      ${btn('View Payouts', 'https://app.waaiio.com/dashboard/payouts')}
+      ${btn('View Payouts', '${appUrl}/dashboard/payouts')}
     `),
   };
 }
@@ -165,7 +169,7 @@ export function payoutRejectedEmail(businessName: string, amount: string, reason
         kv('Reason', esc(reason))
       )}
       ${p('If you believe this is a mistake, please contact support or reply to this email.')}
-      ${btn('View Payouts', 'https://app.waaiio.com/dashboard/payouts')}
+      ${btn('View Payouts', '${appUrl}/dashboard/payouts')}
     `),
   };
 }
@@ -182,7 +186,7 @@ export function kycRequestedEmail(businessName: string, level: string, documents
       <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
         ${docList}
       </ul>
-      ${btn('Upload Documents', 'https://app.waaiio.com/dashboard/verification')}
+      ${btn('Upload Documents', '${appUrl}/dashboard/verification')}
       ${p('Verification typically takes 1-2 business days after submission.')}
     `),
   };
@@ -199,7 +203,7 @@ export function kycApprovedEmail(businessName: string, level: string, newLimit: 
         kv('Monthly Payout Limit', esc(newLimit))
       )}
       ${p('You can now receive payouts up to your new limit.')}
-      ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
+      ${btn('View Dashboard', '${appUrl}/dashboard')}
     `),
   };
 }
@@ -212,7 +216,7 @@ export function kycRejectedEmail(businessName: string, reason: string) {
       ${p(`We were unable to verify <strong>${esc(businessName)}</strong> at this time.`)}
       ${table(kv('Reason', esc(reason)))}
       ${p('Please review the feedback, update your documents, and resubmit.')}
-      ${btn('Resubmit Documents', 'https://app.waaiio.com/dashboard/verification')}
+      ${btn('Resubmit Documents', '${appUrl}/dashboard/verification')}
     `),
   };
 }
@@ -282,7 +286,7 @@ export function paymentReceivedEmail(businessName: string, amount: string, servi
         kv('Service', esc(service)) +
         kv('Amount', esc(amount))
       )}
-      ${btn('View Payments', 'https://app.waaiio.com/dashboard/payments')}
+      ${btn('View Payments', '${appUrl}/dashboard/payments')}
     `),
   };
 }
@@ -298,7 +302,7 @@ export function subscriptionActivatedEmail(businessName: string, tier: string, t
         kv('Trial Ends', esc(trialEnds))
       )}
       ${p('Enjoy all the features of your new plan!')}
-      ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
+      ${btn('View Dashboard', '${appUrl}/dashboard')}
     `),
   };
 }
@@ -383,7 +387,7 @@ export function trialExpiringEmail(businessName: string, daysLeft: number) {
         kv('Growth Plan', '1.5% + flat fee — lower fees, more features') +
         kv('Business Plan', '1.0% + flat fee — lowest fees, all features')
       )}
-      ${btn('Upgrade Now', 'https://app.waaiio.com/dashboard/settings')}
+      ${btn('Upgrade Now', '${appUrl}/dashboard/settings')}
       ${p('Your bot will continue working on the Free plan — nothing breaks. You just start paying per-transaction fees.')}
     `),
   };
@@ -397,7 +401,7 @@ export function trialEndedEmail(businessName: string) {
       ${p(`The 7-day free trial for <strong>${esc(businessName)}</strong> has ended.`)}
       ${p('Your bot is still active on the <strong>Free plan</strong>. A 2.5% + flat fee now applies to each transaction.')}
       ${p('Upgrade to reduce your fees and unlock premium features like loyalty programs, broadcasts, e-signatures, and more.')}
-      ${btn('Upgrade Plan', 'https://app.waaiio.com/dashboard/settings')}
+      ${btn('Upgrade Plan', '${appUrl}/dashboard/settings')}
     `),
   };
 }
@@ -413,7 +417,7 @@ export function paymentFailedEmail(businessName: string, amount: string, reason:
         kv('Reason', esc(reason || 'Payment was declined'))
       )}
       ${p('The customer may need to retry with a different payment method. No action is required from you — the customer has been notified.')}
-      ${btn('View Dashboard', 'https://app.waaiio.com/dashboard')}
+      ${btn('View Dashboard', '${appUrl}/dashboard')}
     `),
   };
 }
@@ -435,7 +439,7 @@ export function weeklyDigestEmail(businessName: string, stats: {
         kv('New Customers', String(stats.newCustomers)) +
         kv('Top Service', esc(stats.topService))
       )}
-      ${btn('View Full Analytics', 'https://app.waaiio.com/dashboard/analytics')}
+      ${btn('View Full Analytics', '${appUrl}/dashboard/analytics')}
       ${p('Keep up the great work!')}
     `),
   };

@@ -2,7 +2,7 @@ import type { ShortestConfig } from "@antiwork/shortest";
 
 export default {
   headless: true,
-  baseUrl: "https://waaiio.com",
+  baseUrl: process.env.NEXT_PUBLIC_APP_URL || "https://waaiio.com",
   testPattern: "**/__shortest__/**/*.test.ts",
   ai: {
     provider: "anthropic",

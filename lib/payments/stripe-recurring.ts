@@ -43,7 +43,7 @@ export async function createRecurringCheckout(opts: {
       throw new Error('Payment gateway not configured: missing Stripe secret key');
     }
     const mockId = `mock_stripe_sub_${Date.now()}`;
-    return { sessionId: mockId, url: `https://waaiio.com/pay?ref=${mockId}` };
+    return { sessionId: mockId, url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/pay?ref=${mockId}` };
   }
 
   const amountInCents = Math.round(opts.amount * 100);

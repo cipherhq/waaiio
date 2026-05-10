@@ -151,7 +151,7 @@ export async function POST(request: NextRequest) {
       subject: `You're invited to join ${biz.name} on Waaiio`,
       html: `
         <div style="max-width:480px;margin:0 auto;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:#1a1a1a">
-          <div style="text-align:center;padding:32px 0 24px"><img src="https://waaiio.com/logo.png" alt="Waaiio" height="32"/></div>
+          <div style="text-align:center;padding:32px 0 24px"><img src="${appUrl}/logo.png" alt="Waaiio" height="32"/></div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:32px">
             <h1 style="font-size:20px;font-weight:700;margin:0 0 8px">You're invited!</h1>
             <p style="font-size:14px;color:#6b7280;margin:0 0 24px;line-height:1.5">

@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
   if (authError) return authError;
 
   const supabase = createServiceClient();
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
   try {
     // Find businesses with no active payout account
@@ -106,13 +107,13 @@ export async function GET(request: NextRequest) {
 
       if (paymentCount === 1) {
         subject = `${biz.name}: You have ${formattedBalance} waiting!`;
-        message = `Congratulations! You just received your first payment through Waaiio.\n\n${formattedBalance} is waiting for you. Connect your bank account to receive your money.\n\nGo to your dashboard → Payouts → Set up your bank details.\n\nhttps://waaiio.com/dashboard/payouts`;
+        message = `Congratulations! You just received your first payment through Waaiio.\n\n${formattedBalance} is waiting for you. Connect your bank account to receive your money.\n\nGo to your dashboard → Payouts → Set up your bank details.\n\n${appUrl}/dashboard/payouts`;
       } else if (paymentCount <= 5) {
         subject = `${biz.name}: ${formattedBalance} is accumulating — set up payouts`;
-        message = `You've received ${paymentCount} payments totaling ${formattedBalance} through Waaiio.\n\nThis money is waiting for you! Connect your bank account to get paid automatically every week.\n\nIt takes less than 30 seconds:\nhttps://waaiio.com/dashboard/payouts`;
+        message = `You've received ${paymentCount} payments totaling ${formattedBalance} through Waaiio.\n\nThis money is waiting for you! Connect your bank account to get paid automatically every week.\n\nIt takes less than 30 seconds:\n${appUrl}/dashboard/payouts`;
       } else {
         subject = `${biz.name}: Don't leave ${formattedBalance} on the table`;
-        message = `You have ${formattedBalance} from ${paymentCount} payments sitting in your Waaiio account.\n\nConnect your bank details now and we'll send your money automatically every Monday.\n\nSet up now (30 seconds):\nhttps://waaiio.com/dashboard/payouts`;
+        message = `You have ${formattedBalance} from ${paymentCount} payments sitting in your Waaiio account.\n\nConnect your bank details now and we'll send your money automatically every Monday.\n\nSet up now (30 seconds):\n${appUrl}/dashboard/payouts`;
       }
 
       // Send email
@@ -123,7 +124,7 @@ export async function GET(request: NextRequest) {
           html: `<div style="font-family:system-ui,sans-serif;max-width:500px;margin:0 auto">
             <h2 style="color:#6C2BD9">${subject}</h2>
             <p style="color:#374151;line-height:1.6">${message.replace(/\n/g, '<br>')}</p>
-            <a href="https://waaiio.com/dashboard/payouts" style="display:inline-block;background:#6C2BD9;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;margin-top:16px">Set Up Payouts →</a>
+            <a href="${appUrl}/dashboard/payouts" style="display:inline-block;background:#6C2BD9;color:white;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold;margin-top:16px">Set Up Payouts →</a>
             <p style="color:#9CA3AF;font-size:12px;margin-top:24px">You're receiving this because you have unclaimed payments on Waaiio.</p>
           </div>`,
         });
@@ -147,7 +148,7 @@ export async function GET(request: NextRequest) {
                 messaging_product: 'whatsapp',
                 to: profile.phone.replace('+', ''),
                 type: 'text',
-                text: { body: `💰 ${biz.name}: You have ${formattedBalance} from ${paymentCount} payments waiting!\n\nSet up your bank account to get paid automatically:\nhttps://waaiio.com/dashboard/payouts` },
+                text: { body: `💰 ${biz.name}: You have ${formattedBalance} from ${paymentCount} payments waiting!\n\nSet up your bank account to get paid automatically:\n${appUrl}/dashboard/payouts` },
               }),
             });
           }

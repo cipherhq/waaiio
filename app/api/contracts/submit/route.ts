@@ -275,7 +275,7 @@ export async function POST(request: NextRequest) {
             .eq('id', nextSigner.id);
 
           // Send WhatsApp to next signer
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
           const nextSignUrl = `${appUrl}/sign/${nextSigner.token}`;
           const nextMsg = [
             `\ud83d\udcdd *Document for Signature*`,
@@ -295,7 +295,7 @@ export async function POST(request: NextRequest) {
       // Send confirmation to this signer
       if (signerPhone) {
         try {
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://app.waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
           const confirmMsg = [
             `\u2705 *Document Signed Successfully*`,
             '',
@@ -391,7 +391,7 @@ export async function POST(request: NextRequest) {
     // Send WhatsApp confirmation to signer
     if (signerPhone) {
       try {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || 'https://waaiio.com';
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
         // Link to PDF download if available, otherwise to the signed view page
         const downloadUrl = pdfPath

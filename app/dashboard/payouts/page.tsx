@@ -350,7 +350,7 @@ export default function PayoutsPage() {
           body: JSON.stringify({
             to: user.email,
             subject: `⚠️ Payout account change requested — ${business.name}`,
-            html: `<p>Someone requested to change the payout account for <strong>${business.name}</strong>.</p><p>If this wasn't you, please contact support immediately at <a href="https://waaiio.com/dashboard/support">waaiio.com/dashboard/support</a>.</p><p>Time: ${new Date().toLocaleString()}</p>`,
+            html: `<p>Someone requested to change the payout account for <strong>${business.name}</strong>.</p><p>If this wasn't you, please contact support immediately at <a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/support">waaiio.com/dashboard/support</a>.</p><p>Time: ${new Date().toLocaleString()}</p>`,
           }),
         });
       } catch {}
