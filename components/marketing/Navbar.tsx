@@ -13,6 +13,7 @@ const NAV_LINKS = [
   { href: '/pricing', label: 'Pricing' },
   { href: '/directory', label: 'Directory' },
   { href: '/about', label: 'About' },
+  { href: '/help', label: 'Help' },
 ];
 
 export default function Navbar() {

@@ -37,7 +37,7 @@ export default async function ContactPage() {
             For general enquiries, support, or partnership requests.
           </p>
           <a
-            href="mailto:${generalEmail}"
+            href={`mailto:${generalEmail}`}
             className="mt-4 inline-block text-sm font-medium text-brand hover:underline"
           >
             {generalEmail}
@@ -72,15 +72,15 @@ export default async function ContactPage() {
         <ul className="mt-3 space-y-2 text-sm text-gray-600">
           <li>
             <strong>Data protection:</strong>{' '}
-            <a href="mailto:${dpoEmail}" className="text-brand hover:underline">{dpoEmail}</a>
+            <a href={`mailto:${dpoEmail}`} className="text-brand hover:underline">{dpoEmail}</a>
           </li>
           <li>
             <strong>Abuse reports:</strong>{' '}
-            <a href="mailto:${abuseEmail}" className="text-brand hover:underline">{abuseEmail}</a>
+            <a href={`mailto:${abuseEmail}`} className="text-brand hover:underline">{abuseEmail}</a>
           </li>
           <li>
             <strong>Partnerships:</strong>{' '}
-            <a href="mailto:${generalEmail}" className="text-brand hover:underline">{generalEmail}</a>
+            <a href={`mailto:${generalEmail}`} className="text-brand hover:underline">{generalEmail}</a>
           </li>
         </ul>
       </div>

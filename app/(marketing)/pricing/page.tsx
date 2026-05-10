@@ -369,7 +369,7 @@ export default function PricingPage() {
               />
               <PricingFaqItem
                 question="What happens after my 30-day trial?"
-                answer="After 30 days, the Starter plan's per-transaction fees kick in (2.5% + flat fee). Your bot keeps working — there's no interruption."
+                answer="After 30 days, the Starter plan's per-transaction fees kick in (2% + flat fee). Your bot keeps working — there's no interruption."
               />
               <PricingFaqItem
                 question="Are there any hidden fees?"

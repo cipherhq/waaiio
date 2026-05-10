@@ -343,7 +343,7 @@ export default function AboutPage() {
             <div className="text-center">
               <p className="text-xs font-bold uppercase tracking-widest text-brand">Global Reach</p>
               <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
-                Live in 5 countries and growing
+                Live in 6 countries and growing
               </h2>
               <p className="mx-auto mt-4 max-w-2xl text-gray-600">
                 Localized payment gateways, currencies, and language support for every market we serve.
@@ -352,13 +352,14 @@ export default function AboutPage() {
           </AnimatedSection>
 
           <AnimatedSection delay={0.15}>
-          <div className="mt-14 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="mt-14 grid gap-4 sm:grid-cols-3 lg:grid-cols-6">
             {[
               { flag: '\ud83c\uddf3\ud83c\uddec', name: 'Nigeria', gateway: 'Paystack', currency: 'NGN', status: 'Live' },
               { flag: '\ud83c\uddfa\ud83c\uddf8', name: 'United States', gateway: 'Square', currency: 'USD', status: 'Live' },
               { flag: '\ud83c\uddec\ud83c\udde7', name: 'United Kingdom', gateway: 'Stripe', currency: 'GBP', status: 'Live' },
               { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada', gateway: 'Stripe', currency: 'CAD', status: 'Live' },
               { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana', gateway: 'Paystack', currency: 'GHS', status: 'Live' },
+              { flag: '\ud83c\uddee\ud83c\uddf3', name: 'India', gateway: 'Razorpay', currency: 'INR', status: 'Live' },
             ].map((country) => (
               <div
                 key={country.name}
@@ -391,11 +392,11 @@ export default function AboutPage() {
         <AnimatedSection>
           <div className="mx-auto grid max-w-6xl grid-cols-2 gap-8 px-4 text-center md:grid-cols-5">
             <div>
-              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={38} suffix="+" /></p>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={50} suffix="+" /></p>
               <p className="mt-1 text-sm text-gray-400">Business Categories</p>
             </div>
             <div>
-              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={5} /></p>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={6} /></p>
               <p className="mt-1 text-sm text-gray-400">Countries Supported</p>
             </div>
             <div>
@@ -423,7 +424,7 @@ export default function AboutPage() {
                 Ready to automate your business on WhatsApp?
               </h2>
               <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-                Join businesses across 5 countries already saving time and growing revenue with waaiio.
+                Join businesses across 6 countries already saving time and growing revenue with waaiio.
               </p>
               <div className="mt-8 flex flex-wrap justify-center gap-3">
                 <Link
