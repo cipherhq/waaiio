@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { exportToCsv } from '@/lib/utils/csv-export';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { getLocale, type CountryCode } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -351,6 +352,12 @@ export default function CustomersPage() {
           </button>
         )}
       </div>
+
+      <PageHelp
+        pageKey="customers"
+        title="Your Customers"
+        description="Everyone who has interacted with your WhatsApp bot. See their booking history, total spending, and loyalty status. You can tag customers and send them broadcasts."
+      />
 
       {/* Metrics Row */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

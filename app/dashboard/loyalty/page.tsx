@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface LoyaltyMember {
   id: string;
@@ -151,6 +152,12 @@ export default function LoyaltyPage() {
       <p className="mt-1 text-sm text-gray-500">
         Reward your customers for repeat visits
       </p>
+
+      <PageHelp
+        pageKey="loyalty"
+        title="Loyalty Program"
+        description="Reward repeat customers with points. Customers earn points with every booking or purchase, and can redeem them for discounts. Set how many points per visit."
+      />
 
       {/* Config Section */}
       <div className="mt-6 rounded-xl border border-gray-100 bg-white p-6">

@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface BookingRow {
   id: string;
@@ -207,6 +208,12 @@ export default function FinancialsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Financials</h1>
       <p className="mt-1 text-sm text-gray-500">Transaction tracking and revenue analytics</p>
+
+      <PageHelp
+        pageKey="financials"
+        title="Financial Overview"
+        description="See how much money your business has made through Waaiio. Track revenue by service type, view platform fees, and monitor your payout history."
+      />
 
       {/* Metric Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">

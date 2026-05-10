@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { type CountryCode, formatCurrency } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import Link from 'next/link';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Bank {
   code: string;
@@ -819,6 +820,12 @@ export default function PayoutsPage() {
       <p className="mt-1 text-sm text-gray-500">
         Set up your bank account to receive {isFaith ? 'member giving' : 'customer payments'}
       </p>
+
+      <PageHelp
+        pageKey="payouts"
+        title="Payouts"
+        description="Connect your bank account to receive payments from customers. All payments collected through your WhatsApp bot are deposited here after processing."
+      />
 
       <div className="mt-8 max-w-lg">
         {/* Earnings Overview */}

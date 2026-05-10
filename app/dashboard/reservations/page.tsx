@@ -7,6 +7,7 @@ import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Booking {
   id: string;
@@ -328,6 +329,12 @@ export default function BookingsPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+
+      <PageHelp
+        pageKey="reservations"
+        title="Customer Bookings"
+        description="All bookings from your WhatsApp bot appear here. You can confirm, reschedule, or cancel bookings. Customers get automatic notifications."
+      />
 
       {/* Summary Cards */}
       {(() => {

@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface ChatMessage {
   id: string;
@@ -776,6 +777,11 @@ export default function ChatPage() {
         <p className="mt-1 text-sm text-gray-500">
           Manage customer conversations
         </p>
+        <PageHelp
+          pageKey="chat"
+          title="Live Chat"
+          description="Reply to customers directly. When a customer types 'chat' or asks a question the bot can't answer, the conversation appears here for your team to handle."
+        />
       </div>
 
       {/* Two-panel layout */}

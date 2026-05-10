@@ -5,6 +5,7 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface BroadcastContact {
   phone: string;
@@ -238,6 +239,12 @@ export default function BroadcastsPage() {
       <p className="mt-1 text-sm text-gray-500">
         Send messages to all your WhatsApp customers at once
       </p>
+
+      <PageHelp
+        pageKey="broadcasts"
+        title="Broadcast Messages"
+        description="Send promotions, updates, or announcements to all your customers at once. Messages go directly to their WhatsApp — no app downloads or email opens needed."
+      />
 
       {/* Usage Quota Display */}
       {usage && !isUnlimited && (
