@@ -5,6 +5,7 @@ import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -16,10 +17,22 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { businessId, customerPhone, customerName, amount, description } = await request.json();
+    const { businessId, customerPhone, customerName, customerEmail, amount, description, sendVia = 'whatsapp' } = await request.json();
 
-    if (!businessId || !customerPhone || !amount) {
-      return NextResponse.json({ error: 'businessId, customerPhone, and amount are required' }, { status: 400 });
+    // Validate based on delivery method
+    if (!businessId || !amount) {
+      return NextResponse.json({ error: 'businessId and amount are required' }, { status: 400 });
+    }
+
+    const effectiveSendVia: string = sendVia === 'auto'
+      ? (customerEmail && customerEmail.includes('@') ? 'email' : 'whatsapp')
+      : sendVia;
+
+    if ((effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') && !customerPhone) {
+      return NextResponse.json({ error: 'Phone number is required for WhatsApp delivery' }, { status: 400 });
+    }
+    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && !customerEmail) {
+      return NextResponse.json({ error: 'Email is required for email delivery' }, { status: 400 });
     }
 
     if (typeof amount !== 'number' || amount <= 0) {
@@ -37,9 +50,13 @@ export async function POST(request: NextRequest) {
     if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     const cc = (biz.country_code || 'NG') as CountryCode;
-    const phone = customerPhone.replace(/\D/g, '');
-    if (!phone || phone.length < 7) {
+    const phone = customerPhone ? customerPhone.replace(/\D/g, '') : '';
+    if ((effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') && (!phone || phone.length < 7)) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+    }
+    const email = customerEmail?.trim() || '';
+    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
     }
 
     const serviceClient = createServiceClient();
@@ -54,7 +71,7 @@ export async function POST(request: NextRequest) {
         business_id: businessId,
         user_id: user.id,
         guest_name: customerName || 'Customer',
-        guest_phone: phone,
+        guest_phone: phone || email,
         total_amount: amount,
         status: 'confirmed',
         flow_type: 'payment',
@@ -118,27 +135,49 @@ export async function POST(request: NextRequest) {
     }
 
     // Send WhatsApp message
-    const resolver = new ChannelResolver(serviceClient);
-    const resolved = await resolver.resolveByBusinessId(businessId);
+    if (effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') {
+      const resolver = new ChannelResolver(serviceClient);
+      const resolved = await resolver.resolveByBusinessId(businessId);
 
-    if (resolved) {
-      const toPhone = phone.startsWith('+') ? phone.slice(1) : phone;
-      const message = [
-        `💳 *Payment Request*`,
-        '',
-        `from *${biz.name}*`,
-        `💰 Amount: *${formatCurrency(amount, cc)}*`,
-        description ? `📝 ${description}` : '',
-        '',
-        `Pay here 👇`,
-        paymentUrl,
-      ].filter(Boolean).join('\n');
+      if (resolved) {
+        const toPhone = phone.startsWith('+') ? phone.slice(1) : phone;
+        const message = [
+          `💳 *Payment Request*`,
+          '',
+          `from *${biz.name}*`,
+          `💰 Amount: *${formatCurrency(amount, cc)}*`,
+          description ? `📝 ${description}` : '',
+          '',
+          `Pay here 👇`,
+          paymentUrl,
+        ].filter(Boolean).join('\n');
 
-      try {
-        await resolved.sender.sendText({ to: toPhone, text: message });
-      } catch (sendErr) {
-        logger.error('[PAYMENT-REQUEST] WhatsApp send failed:', sendErr);
+        try {
+          await resolved.sender.sendText({ to: toPhone, text: message });
+        } catch (sendErr) {
+          logger.error('[PAYMENT-REQUEST] WhatsApp send failed:', sendErr);
+        }
       }
+    }
+
+    // Send email
+    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && email) {
+      await sendEmail({
+        to: email,
+        subject: `Payment Request from ${biz.name} — ${formatCurrency(amount, cc)}`,
+        html: `
+          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+            <h2 style="color: #333;">Payment Request</h2>
+            <p>from <strong>${biz.name}</strong></p>
+            <div style="background: #f9f9f9; border-radius: 8px; padding: 20px; margin: 20px 0;">
+              <p style="font-size: 24px; font-weight: bold; color: #333; margin: 0;">${formatCurrency(amount, cc)}</p>
+              ${description ? `<p style="color: #666; margin-top: 8px;">${description}</p>` : ''}
+            </div>
+            <a href="${paymentUrl}" style="display: inline-block; background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Pay Now</a>
+            <p style="color: #999; font-size: 12px; margin-top: 24px;">Powered by Waaiio</p>
+          </div>
+        `,
+      }).catch(err => console.error('[PAYMENT-REQUEST] Email error:', err));
     }
 
     return NextResponse.json({

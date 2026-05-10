@@ -24,19 +24,45 @@ interface CustomerSuggestion {
   name: string | null;
 }
 
+type SendVia = 'whatsapp' | 'email' | 'both';
+type RequestMode = 'single' | 'bulk';
+
+function parseBulkRecipients(text: string): { phones: string[]; emails: string[] } {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const phones: string[] = [];
+  const emails: string[] = [];
+  for (const line of lines) {
+    if (line.includes('@')) {
+      emails.push(line);
+    } else {
+      phones.push(line);
+    }
+  }
+  return { phones, emails };
+}
+
 export default function PaymentRequestPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
   const [requests, setRequests] = useState<PaymentRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Form
+  // Mode
+  const [mode, setMode] = useState<RequestMode>('single');
+
+  // Single form
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [sendVia, setSendVia] = useState<SendVia>('whatsapp');
   const [sending, setSending] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
+
+  // Bulk form
+  const [bulkRecipients, setBulkRecipients] = useState('');
+  const [bulkProgress, setBulkProgress] = useState('');
 
   // Customer autocomplete
   const [customers, setCustomers] = useState<CustomerSuggestion[]>([]);
@@ -92,8 +118,24 @@ export default function PaymentRequestPage() {
     return () => { supabase.removeChannel(channel); };
   }, [business.id, loadRequests]);
 
+  // Validation for single mode
+  function isSingleFormValid(): boolean {
+    if (!amount) return false;
+    if (sendVia === 'whatsapp' && !phone.trim()) return false;
+    if (sendVia === 'email' && !email.trim()) return false;
+    if (sendVia === 'both' && (!phone.trim() || !email.trim())) return false;
+    return true;
+  }
+
+  // Validation for bulk mode
+  function isBulkFormValid(): boolean {
+    if (!amount) return false;
+    const { phones, emails } = parseBulkRecipients(bulkRecipients);
+    return phones.length + emails.length > 0;
+  }
+
   async function handleSubmit() {
-    if (!phone.trim() || !amount) return;
+    if (!isSingleFormValid()) return;
     const amountNum = parseFloat(amount);
     if (isNaN(amountNum) || amountNum <= 0) {
       setStatusMessage('Please enter a valid amount');
@@ -109,10 +151,12 @@ export default function PaymentRequestPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           businessId: business.id,
-          customerPhone: phone.trim(),
+          customerPhone: phone.trim() || undefined,
           customerName: name.trim() || undefined,
+          customerEmail: email.trim() || undefined,
           amount: amountNum,
           description: description.trim() || undefined,
+          sendVia,
         }),
       });
       const data = await res.json();
@@ -120,6 +164,7 @@ export default function PaymentRequestPage() {
         setStatusMessage('Payment request sent!');
         setPhone('');
         setName('');
+        setEmail('');
         setAmount('');
         setDescription('');
         loadRequests();
@@ -128,6 +173,68 @@ export default function PaymentRequestPage() {
       }
     } catch {
       setStatusMessage('Failed to send payment request');
+    }
+    setSending(false);
+  }
+
+  async function handleBulkSubmit() {
+    if (!isBulkFormValid()) return;
+    const amountNum = parseFloat(amount);
+    if (isNaN(amountNum) || amountNum <= 0) {
+      setStatusMessage('Please enter a valid amount');
+      return;
+    }
+
+    const { phones, emails } = parseBulkRecipients(bulkRecipients);
+    const recipients = [
+      ...phones.map(p => ({ phone: p, email: '', sendVia: 'whatsapp' as const })),
+      ...emails.map(e => ({ phone: '', email: e, sendVia: 'email' as const })),
+    ];
+
+    setSending(true);
+    setStatusMessage('');
+    let sent = 0;
+    let failed = 0;
+
+    for (let i = 0; i < recipients.length; i++) {
+      const r = recipients[i];
+      setBulkProgress(`Sending ${i + 1} of ${recipients.length}...`);
+
+      try {
+        const res = await fetch('/api/payment-request/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            businessId: business.id,
+            customerPhone: r.phone || undefined,
+            customerEmail: r.email || undefined,
+            amount: amountNum,
+            description: description.trim() || undefined,
+            sendVia: 'auto',
+          }),
+        });
+        if (res.ok) {
+          sent++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+
+      // Small delay to avoid rate limits
+      if (i < recipients.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    setBulkProgress('');
+    setStatusMessage(`${sent} sent, ${failed} failed`);
+    if (sent > 0) {
+      setBulkRecipients('');
+      setAmount('');
+      setDescription('');
+      loadRequests();
     }
     setSending(false);
   }
@@ -157,138 +264,279 @@ export default function PaymentRequestPage() {
   }
 
   const curr = formatCurrency(0, country).charAt(0);
+  const bulkParsed = parseBulkRecipients(bulkRecipients);
+  const bulkPhoneCount = bulkParsed.phones.length;
+  const bulkEmailCount = bulkParsed.emails.length;
 
   return (
     <div>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Request Payment</h1>
-          <p className="mt-1 text-sm text-gray-500">Send payment links to customers via WhatsApp</p>
+          <p className="mt-1 text-sm text-gray-500">Send payment links to customers via WhatsApp or email</p>
         </div>
       </div>
 
       <PageHelp
         pageKey="payment-request"
         title="Payment Requests"
-        description="Send payment links to customers via WhatsApp. They click and pay instantly."
+        description="Send payment links to customers via WhatsApp or email. They click and pay instantly."
       />
 
       {/* Send form */}
       <div className="mt-6 rounded-xl border border-gray-100 bg-white p-6">
-        <h3 className="text-sm font-semibold text-gray-900">Send Payment Request</h3>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div className="relative">
-            <label className="mb-1 block text-sm font-medium text-gray-700">Customer Phone <span className="text-red-400">*</span></label>
-            <input
-              ref={phoneInputRef}
-              type="tel"
-              value={phone}
-              onChange={e => {
-                const val = e.target.value;
-                setPhone(val);
-                const q = val.toLowerCase();
-                if (q.length > 0) {
-                  setSuggestions(
-                    customers.filter(c =>
-                      c.phone.includes(q) || c.name?.toLowerCase().includes(q)
-                    ).slice(0, 5)
-                  );
-                  setShowSuggestions(true);
-                } else {
-                  setSuggestions(customers.slice(0, 5));
-                  setShowSuggestions(true);
-                }
-              }}
-              onFocus={() => {
-                if (!phone) {
-                  setSuggestions(customers.slice(0, 5));
-                } else {
-                  const q = phone.toLowerCase();
-                  setSuggestions(
-                    customers.filter(c =>
-                      c.phone.includes(q) || c.name?.toLowerCase().includes(q)
-                    ).slice(0, 5)
-                  );
-                }
-                setShowSuggestions(true);
-              }}
-              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-              placeholder="Enter phone or search customer"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-            />
-            {showSuggestions && suggestions.length > 0 && (
-              <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
-                {suggestions.map(c => (
-                  <button
-                    key={c.phone}
-                    type="button"
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={() => {
-                      setPhone(c.phone);
-                      setName(c.name || '');
-                      setShowSuggestions(false);
-                      setSuggestions([]);
-                    }}
-                    className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
-                  >
-                    <span className="font-medium text-gray-900">{c.name || 'Unknown'}</span>
-                    <span className="font-mono text-xs text-gray-400">{c.phone}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Customer Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="Optional"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Amount ({curr}) <span className="text-red-400">*</span></label>
-            <div className="relative">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
-              <input
-                type="number"
-                min={1}
-                value={amount || ''}
-                onChange={e => setAmount(e.target.value)}
-                placeholder="5000"
-                className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
-            <input
-              type="text"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="e.g. Balance for catering order"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
-            />
-          </div>
-        </div>
-
-        {statusMessage && (
-          <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusMessage.includes('sent') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
-            {statusMessage}
-          </div>
-        )}
-
-        <div className="mt-4">
+        {/* Mode tabs */}
+        <div className="flex gap-2 mb-4">
           <button
-            onClick={handleSubmit}
-            disabled={sending || !phone.trim() || !amount}
-            className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            onClick={() => setMode('single')}
+            className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${mode === 'single' ? 'border-brand bg-brand/10 text-brand' : 'border-gray-200 text-gray-500 hover:text-gray-700'}`}
           >
-            {sending ? 'Sending...' : 'Send Payment Request'}
+            Single Request
+          </button>
+          <button
+            onClick={() => setMode('bulk')}
+            className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${mode === 'bulk' ? 'border-brand bg-brand/10 text-brand' : 'border-gray-200 text-gray-500 hover:text-gray-700'}`}
+          >
+            Bulk Request
           </button>
         </div>
+
+        <h3 className="text-sm font-semibold text-gray-900">
+          {mode === 'single' ? 'Send Payment Request' : 'Send Bulk Payment Request'}
+        </h3>
+
+        {mode === 'single' ? (
+          <>
+            {/* Delivery method toggle */}
+            <div className="mt-4">
+              <label className="mb-1 block text-xs font-medium text-gray-700">Send via</label>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setSendVia('whatsapp')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'whatsapp' ? 'border-[#25D366] bg-[#25D366]/10 text-[#25D366]' : 'border-gray-200 text-gray-500'}`}
+                >
+                  WhatsApp
+                </button>
+                <button
+                  onClick={() => setSendVia('email')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'email' ? 'border-brand bg-brand/10 text-brand' : 'border-gray-200 text-gray-500'}`}
+                >
+                  Email
+                </button>
+                <button
+                  onClick={() => setSendVia('both')}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'both' ? 'border-brand bg-brand/10 text-brand' : 'border-gray-200 text-gray-500'}`}
+                >
+                  Both
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {/* Phone field — shown for whatsapp and both */}
+              {(sendVia === 'whatsapp' || sendVia === 'both') && (
+                <div className="relative">
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Customer Phone <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    ref={phoneInputRef}
+                    type="tel"
+                    value={phone}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setPhone(val);
+                      const q = val.toLowerCase();
+                      if (q.length > 0) {
+                        setSuggestions(
+                          customers.filter(c =>
+                            c.phone.includes(q) || c.name?.toLowerCase().includes(q)
+                          ).slice(0, 5)
+                        );
+                        setShowSuggestions(true);
+                      } else {
+                        setSuggestions(customers.slice(0, 5));
+                        setShowSuggestions(true);
+                      }
+                    }}
+                    onFocus={() => {
+                      if (!phone) {
+                        setSuggestions(customers.slice(0, 5));
+                      } else {
+                        const q = phone.toLowerCase();
+                        setSuggestions(
+                          customers.filter(c =>
+                            c.phone.includes(q) || c.name?.toLowerCase().includes(q)
+                          ).slice(0, 5)
+                        );
+                      }
+                      setShowSuggestions(true);
+                    }}
+                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                    placeholder="Enter phone or search customer"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  />
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                      {suggestions.map(c => (
+                        <button
+                          key={c.phone}
+                          type="button"
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            setPhone(c.phone);
+                            setName(c.name || '');
+                            setShowSuggestions(false);
+                            setSuggestions([]);
+                          }}
+                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
+                        >
+                          <span className="font-medium text-gray-900">{c.name || 'Unknown'}</span>
+                          <span className="font-mono text-xs text-gray-400">{c.phone}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Email field — shown for email and both */}
+              {(sendVia === 'email' || sendVia === 'both') && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Customer Email <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    placeholder="customer@example.com"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Customer Name</label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={e => setName(e.target.value)}
+                  placeholder="Optional"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Amount ({curr}) <span className="text-red-400">*</span></label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={amount || ''}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="5000"
+                    className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  placeholder="e.g. Balance for catering order"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            </div>
+
+            {statusMessage && (
+              <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusMessage.includes('sent') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+                {statusMessage}
+              </div>
+            )}
+
+            <div className="mt-4">
+              <button
+                onClick={handleSubmit}
+                disabled={sending || !isSingleFormValid()}
+                className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+              >
+                {sending ? 'Sending...' : 'Send Payment Request'}
+              </button>
+            </div>
+          </>
+        ) : (
+          /* Bulk mode */
+          <>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-gray-700">Recipients</label>
+                <textarea
+                  value={bulkRecipients}
+                  onChange={e => setBulkRecipients(e.target.value)}
+                  placeholder={'One per line: phone number or email\ne.g.\n+2348012345678\ncustomer@email.com\n+1234567890'}
+                  rows={5}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+                <p className="text-xs text-gray-400 mt-1">Enter phone numbers or emails, one per line</p>
+                {(bulkPhoneCount > 0 || bulkEmailCount > 0) && (
+                  <p className="text-xs text-brand mt-1 font-medium">
+                    Sending to: {bulkPhoneCount > 0 && `${bulkPhoneCount} WhatsApp`}{bulkPhoneCount > 0 && bulkEmailCount > 0 && ', '}{bulkEmailCount > 0 && `${bulkEmailCount} Email`}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Amount ({curr}) <span className="text-red-400">*</span></label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    value={amount || ''}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="5000"
+                    className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
+                <input
+                  type="text"
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  placeholder="e.g. Balance for catering order"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            </div>
+
+            {bulkProgress && (
+              <div className="mt-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                {bulkProgress}
+              </div>
+            )}
+
+            {statusMessage && (
+              <div className={`mt-4 rounded-lg px-4 py-3 text-sm ${statusMessage.includes('failed') && !statusMessage.includes('0 failed') ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                {statusMessage}
+              </div>
+            )}
+
+            <div className="mt-4">
+              <button
+                onClick={handleBulkSubmit}
+                disabled={sending || !isBulkFormValid()}
+                className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+              >
+                {sending ? 'Sending...' : `Send to ${bulkPhoneCount + bulkEmailCount} recipient${bulkPhoneCount + bulkEmailCount !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Recent requests */}
@@ -296,7 +544,7 @@ export default function PaymentRequestPage() {
         <EmptyState
           icon="💳"
           title="No payment requests yet"
-          description="Request a payment from any customer — just enter their phone number and amount."
+          description="Request a payment from any customer — just enter their phone number or email and amount."
         />
       ) : (
         <div className="mt-8">
@@ -306,7 +554,7 @@ export default function PaymentRequestPage() {
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
                   <th className="pb-3 pr-4">Customer</th>
-                  <th className="pb-3 pr-4">Phone</th>
+                  <th className="pb-3 pr-4">Contact</th>
                   <th className="pb-3 pr-4">Amount</th>
                   <th className="pb-3 pr-4">Note</th>
                   <th className="pb-3 pr-4">Status</th>
