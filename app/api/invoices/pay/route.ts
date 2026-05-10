@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 /** Fetch the direct gateway checkout URL from the payments table */
 async function getDirectGatewayUrl(supabase: SupabaseClient, reference: string): Promise<string | null> {
@@ -37,6 +38,9 @@ async function getDirectGatewayUrl(supabase: SupabaseClient, reference: string):
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'invoice-pay'), 10, 60_000);
+  if (rateLimit) return rateLimit;
+
   try {
     const body = await request.json();
     const { token } = body;

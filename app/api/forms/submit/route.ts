@@ -10,8 +10,26 @@ export async function POST(request: NextRequest) {
 
     const { token, answers, customer_name, customer_phone, customer_email } = await request.json();
 
-    if (!token || !answers) {
+    if (!token || !answers || typeof answers !== 'object') {
       return NextResponse.json({ error: 'Token and answers required' }, { status: 400 });
+    }
+
+    // Validate input lengths and formats
+    if (customer_email && (typeof customer_email !== 'string' || customer_email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customer_email))) {
+      return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
+    }
+    if (customer_phone && (typeof customer_phone !== 'string' || customer_phone.length > 20 || !/^[+\d\s()-]+$/.test(customer_phone))) {
+      return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+    }
+    if (customer_name && (typeof customer_name !== 'string' || customer_name.length > 200)) {
+      return NextResponse.json({ error: 'Name is too long (max 200 characters)' }, { status: 400 });
+    }
+
+    // Validate individual answer lengths
+    for (const [key, value] of Object.entries(answers)) {
+      if (typeof value === 'string' && value.length > 5000) {
+        return NextResponse.json({ error: `Answer for "${key}" is too long (max 5000 characters)` }, { status: 400 });
+      }
     }
 
     const supabase = createServiceClient();

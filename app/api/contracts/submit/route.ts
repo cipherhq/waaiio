@@ -4,6 +4,7 @@ import { generateSignedContractPdf } from '@/lib/pdf/contract-pdf-generator';
 import { appendSignatureToUploadedPdf } from '@/lib/pdf/append-signature';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 async function sendWhatsApp(
   supabase: ReturnType<typeof createServiceClient>,
@@ -37,6 +38,9 @@ async function sendWhatsApp(
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'contract-sign'), 10, 60_000);
+  if (rateLimit) return rateLimit;
+
   try {
     const body = await request.json();
     const { token, signature_data } = body;

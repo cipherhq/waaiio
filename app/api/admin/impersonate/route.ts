@@ -3,9 +3,14 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { randomBytes } from 'crypto';
 import { logger } from '@/lib/logger';
 
-function corsHeaders() {
+function corsHeaders(origin?: string | null) {
+  const allowedOrigins = [
+    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+    'http://localhost:8083',
+  ];
+  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
   return {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': allowed,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };

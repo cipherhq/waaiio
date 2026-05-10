@@ -37,10 +37,18 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
 export async function middleware(request: NextRequest) {
   // Handle CORS preflight for admin API routes (called from admin.waaiio.com)
   if (request.method === 'OPTIONS' && request.nextUrl.pathname.startsWith('/api/admin/')) {
+    const origin = request.headers.get('origin') || '';
+    const allowedOrigins = [
+      process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+      'http://localhost:8083', // dev
+    ];
+    if (!allowedOrigins.includes(origin)) {
+      return new NextResponse(null, { status: 403 });
+    }
     return new NextResponse(null, {
       status: 204,
       headers: {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Max-Age': '86400',
@@ -99,9 +107,16 @@ export async function middleware(request: NextRequest) {
 
   // Add CORS headers for admin API routes (cross-origin from admin.waaiio.com)
   if (request.nextUrl.pathname.startsWith('/api/admin/')) {
-    supabaseResponse.headers.set('Access-Control-Allow-Origin', '*');
-    supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    const origin = request.headers.get('origin') || '';
+    const allowedOrigins = [
+      process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+      'http://localhost:8083', // dev
+    ];
+    if (allowedOrigins.includes(origin)) {
+      supabaseResponse.headers.set('Access-Control-Allow-Origin', origin);
+      supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
   }
 
   return applySecurityHeaders(supabaseResponse);

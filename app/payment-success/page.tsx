@@ -21,7 +21,7 @@ export default async function PaymentSuccessPage({
       const { data: payment } = await supabase
         .from('payments')
         .select('business_id, businesses(phone)')
-        .like('gateway_reference', `%${params.ref}`)
+        .eq('gateway_reference', params.ref)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();

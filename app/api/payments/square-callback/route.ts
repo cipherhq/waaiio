@@ -19,11 +19,18 @@ export async function GET(request: NextRequest) {
     const supabase = createServiceClient();
 
     // Look up the payment by the idempotency key (stored as gateway_reference or in metadata)
-    const { data: payment } = await supabase
+    // Use two separate queries to avoid SQL injection via .or() string interpolation
+    const { data: byRef } = await supabase
       .from('payments')
       .select('id, booking_id, invoice_id, status, metadata')
-      .or(`gateway_reference.eq.${ref},metadata->>square_payment_link_id.eq.${ref}`)
+      .eq('gateway_reference', ref)
       .maybeSingle();
+
+    const payment = byRef || (await supabase
+      .from('payments')
+      .select('id, booking_id, invoice_id, status, metadata')
+      .eq('metadata->>square_payment_link_id', ref)
+      .maybeSingle()).data;
 
     if (!payment) {
       // Payment not found — redirect to homepage

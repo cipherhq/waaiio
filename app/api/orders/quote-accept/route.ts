@@ -104,12 +104,20 @@ export async function POST(request: NextRequest) {
     if (!userId && quote.customer_phone) {
       const phoneP = quote.customer_phone.startsWith('+') ? quote.customer_phone : `+${quote.customer_phone}`;
       const phoneN = quote.customer_phone.startsWith('+') ? quote.customer_phone.slice(1) : quote.customer_phone;
-      const { data: profile } = await supabase
+      // Use two separate queries to avoid SQL injection via .or() string interpolation
+      const { data: profileByPlus } = await supabase
         .from('profiles')
         .select('id')
-        .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+        .eq('phone', phoneP)
         .limit(1)
         .maybeSingle();
+
+      const profile = profileByPlus || (await supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', phoneN)
+        .limit(1)
+        .maybeSingle()).data;
       userId = profile?.id || null;
     }
 

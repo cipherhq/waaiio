@@ -36,9 +36,14 @@ export async function POST(request: NextRequest) {
     // Read raw body for signature verification
     const rawBody = await request.text();
 
-    // X-Hub-Signature-256 verification (verify when configured)
+    // X-Hub-Signature-256 verification (mandatory in production)
     const signature = request.headers.get('x-hub-signature-256');
     const appSecret = process.env.META_APP_SECRET;
+
+    if (!appSecret) {
+      logger.error('[META-WEBHOOK] META_APP_SECRET not configured — rejecting webhook');
+      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+    }
 
     if (appSecret && signature) {
       const expectedSignature = 'sha256=' + createHmac('sha256', appSecret)
