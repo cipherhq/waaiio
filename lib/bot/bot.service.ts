@@ -121,28 +121,86 @@ export class BotService {
       const phoneP2 = from.startsWith('+') ? from : `+${from}`;
       const phoneN2 = from.startsWith('+') ? from.slice(1) : from;
 
-      let inviteQuery = this.supabase
+      // Try event-linked invites first, then party-linked invites
+      let pendingInvite: Record<string, unknown> | null = null;
+      let inviteSource: 'event' | 'party' = 'event';
+
+      // Query for event-linked invites
+      let eventInviteQuery = this.supabase
         .from('event_invites')
-        .select('id, event_id, guest_name, invite_token, status, events!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
+        .select('id, event_id, party_id, guest_name, invite_token, status, events!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
         .or(`guest_phone.eq.${phoneP2},guest_phone.eq.${phoneN2}`)
+        .not('event_id', 'is', null)
         .in('status', ['pending', 'maybe']);
 
       if (rsvpTokenMatch) {
-        inviteQuery = inviteQuery.eq('invite_token', rsvpTokenMatch[1]);
+        eventInviteQuery = eventInviteQuery.eq('invite_token', rsvpTokenMatch[1]);
       }
 
-      const { data: pendingInvite } = await inviteQuery
+      const { data: eventInvite } = await eventInviteQuery
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      if (eventInvite) {
+        pendingInvite = eventInvite as unknown as Record<string, unknown>;
+        inviteSource = 'event';
+      } else {
+        // Try party-linked invites
+        let partyInviteQuery = this.supabase
+          .from('event_invites')
+          .select('id, event_id, party_id, guest_name, invite_token, status, parties!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
+          .or(`guest_phone.eq.${phoneP2},guest_phone.eq.${phoneN2}`)
+          .not('party_id', 'is', null)
+          .in('status', ['pending', 'maybe']);
+
+        if (rsvpTokenMatch) {
+          partyInviteQuery = partyInviteQuery.eq('invite_token', rsvpTokenMatch[1]);
+        }
+
+        const { data: partyInvite } = await partyInviteQuery
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (partyInvite) {
+          pendingInvite = partyInvite as unknown as Record<string, unknown>;
+          inviteSource = 'party';
+        }
+      }
 
       if (pendingInvite) {
         // Deactivate any existing session
         const existingSession2 = await this.getActiveSession(from);
         if (existingSession2) await this.deactivateSession(existingSession2.id);
 
-        const ev = (Array.isArray(pendingInvite.events) ? pendingInvite.events[0] : pendingInvite.events) as unknown as Record<string, unknown>;
+        const sourceData = inviteSource === 'event' ? pendingInvite.events : pendingInvite.parties;
+        const ev = (Array.isArray(sourceData) ? (sourceData as unknown[])[0] : sourceData) as unknown as Record<string, unknown>;
         const biz = (Array.isArray(ev.businesses) ? (ev.businesses as unknown[])[0] : ev.businesses) as Record<string, unknown>;
+
+        // Build session data — use party_ prefix for party invites, event_ prefix for event invites
+        const sessionData: Record<string, unknown> = {
+          rsvp_invite_id: pendingInvite.id,
+          rsvp_invite_message: ev.invite_message,
+          rsvp_allow_plus_ones: ev.allow_plus_ones,
+          rsvp_max_plus_ones: ev.max_plus_ones,
+          rsvp_ask_dietary: ev.ask_dietary,
+        };
+
+        if (inviteSource === 'party') {
+          sessionData.rsvp_party_id = pendingInvite.party_id;
+          sessionData.rsvp_party_name = ev.name;
+          sessionData.rsvp_party_date = ev.date;
+          sessionData.rsvp_party_time = ev.time;
+          sessionData.rsvp_party_venue = ev.venue;
+          sessionData.rsvp_dress_code = ev.dress_code;
+        } else {
+          sessionData.rsvp_event_id = pendingInvite.event_id;
+          sessionData.rsvp_event_name = ev.name;
+          sessionData.rsvp_event_date = ev.date;
+          sessionData.rsvp_event_time = ev.time;
+          sessionData.rsvp_event_venue = ev.venue;
+        }
 
         // Create a new session with the rsvp flow
         const { data: newSession } = await this.supabase.from('bot_sessions').insert({
@@ -150,18 +208,7 @@ export class BotService {
           user_id: null,
           business_id: biz.id as string,
           current_step: 'rsvp_welcome',
-          session_data: {
-            rsvp_invite_id: pendingInvite.id,
-            rsvp_event_id: pendingInvite.event_id,
-            rsvp_event_name: ev.name,
-            rsvp_event_date: ev.date,
-            rsvp_event_time: ev.time,
-            rsvp_event_venue: ev.venue,
-            rsvp_invite_message: ev.invite_message,
-            rsvp_allow_plus_ones: ev.allow_plus_ones,
-            rsvp_max_plus_ones: ev.max_plus_ones,
-            rsvp_ask_dietary: ev.ask_dietary,
-          },
+          session_data: sessionData,
           is_active: true,
           expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
         }).select().single();

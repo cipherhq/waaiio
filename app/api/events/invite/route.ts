@@ -20,14 +20,15 @@ function checkRateLimit(userId: string): boolean {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { eventId, phones, businessId } = body as {
-    eventId: string;
+  const { eventId, partyId, phones, businessId } = body as {
+    eventId?: string;
+    partyId?: string;
     phones: string[];
     businessId: string;
   };
 
-  if (!eventId || !phones?.length || !businessId) {
-    return NextResponse.json({ error: 'eventId, phones, and businessId are required' }, { status: 400 });
+  if ((!eventId && !partyId) || !phones?.length || !businessId) {
+    return NextResponse.json({ error: 'eventId or partyId, phones, and businessId are required' }, { status: 400 });
   }
 
   const auth = await authenticateRequest(request, {
@@ -41,16 +42,47 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Rate limit exceeded. Max 50 invites per minute.' }, { status: 429 });
   }
 
-  // Get event details
-  const { data: event, error: eventError } = await service
-    .from('events')
-    .select('id, name, date, time, venue, description, invite_message, allow_plus_ones, max_plus_ones, ask_dietary')
-    .eq('id', eventId)
-    .eq('business_id', businessId)
-    .single();
+  // Get event or party details
+  let inviteTarget: {
+    name: string;
+    date: string;
+    time: string | null;
+    venue: string | null;
+    invite_message: string | null;
+    allow_plus_ones: boolean;
+    max_plus_ones: number | null;
+    ask_dietary: boolean;
+    dress_code?: string | null;
+  } | null = null;
 
-  if (eventError || !event) {
-    return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+  if (partyId) {
+    const { data: party, error: partyError } = await service
+      .from('parties')
+      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code')
+      .eq('id', partyId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (partyError || !party) {
+      return NextResponse.json({ error: 'Party not found' }, { status: 404 });
+    }
+    inviteTarget = party;
+  } else if (eventId) {
+    const { data: event, error: eventError } = await service
+      .from('events')
+      .select('id, name, date, time, venue, description, invite_message, allow_plus_ones, max_plus_ones, ask_dietary')
+      .eq('id', eventId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (eventError || !event) {
+      return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+    }
+    inviteTarget = event;
+  }
+
+  if (!inviteTarget) {
+    return NextResponse.json({ error: 'Event or party not found' }, { status: 404 });
   }
 
   // Get business details for the message
@@ -75,58 +107,103 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      // Upsert invite record
+      // Build upsert payload — either event_id or party_id
+      const upsertPayload: Record<string, unknown> = {
+        business_id: businessId,
+        guest_phone: phone,
+      };
+      if (partyId) {
+        upsertPayload.party_id = partyId;
+        upsertPayload.event_id = null;
+      } else {
+        upsertPayload.event_id = eventId;
+        upsertPayload.party_id = null;
+      }
+
+      // Insert invite record (use insert + on conflict ignore for the new unique index)
       const { data: invite, error: upsertError } = await service
         .from('event_invites')
         .upsert(
-          {
-            business_id: businessId,
-            event_id: eventId,
-            guest_phone: phone,
-          },
-          { onConflict: 'event_id,guest_phone' }
+          upsertPayload,
+          { onConflict: partyId ? 'party_id,guest_phone' : 'event_id,guest_phone', ignoreDuplicates: false }
         )
         .select('id, invite_token, status')
         .single();
 
       if (upsertError || !invite) {
-        results.push({ phone, status: 'error', error: upsertError?.message || 'Failed to create invite' });
+        // Fallback: try to find existing invite
+        const findQuery = service
+          .from('event_invites')
+          .select('id, invite_token, status')
+          .eq('guest_phone', phone)
+          .eq('business_id', businessId);
+        if (partyId) findQuery.eq('party_id', partyId);
+        else findQuery.eq('event_id', eventId!);
+        const { data: existing } = await findQuery.single();
+
+        if (!existing) {
+          results.push({ phone, status: 'error', error: upsertError?.message || 'Failed to create invite' });
+          continue;
+        }
+        // Use existing invite
+        Object.assign(upsertPayload, existing);
+
+        // Format and send message using existing invite
+        const inviteLink = `${appUrl}/rsvp/${existing.invite_token}`;
+        const dateStr = formatInviteDate(inviteTarget.date);
+        const timeStr = formatInviteTime(inviteTarget.time);
+
+        const messageParts = [
+          `🎉 *You're Invited!*`,
+          '',
+          `*${inviteTarget.name}*`,
+          inviteTarget.date ? `📅 ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : '',
+          inviteTarget.venue ? `📍 ${inviteTarget.venue}` : '',
+          inviteTarget.dress_code ? `👔 Dress code: ${inviteTarget.dress_code}` : '',
+          inviteTarget.invite_message ? `\n${inviteTarget.invite_message}` : '',
+          '',
+          `RSVP here 👇`,
+          inviteLink,
+          '',
+          `Or reply: *yes*, *no*, or *maybe*`,
+        ];
+        const message = messageParts.filter(Boolean).join('\n');
+
+        if (resolved) {
+          try {
+            await resolved.sender.sendText({ to: phone, text: message });
+            results.push({ phone, status: 'sent' });
+          } catch (sendErr) {
+            console.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
+            results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
+          }
+        } else {
+          results.push({ phone, status: 'created', error: 'No WhatsApp channel configured' });
+        }
         continue;
       }
 
       // Format the date
-      let dateStr = event.date || '';
-      try {
-        dateStr = new Date(event.date + 'T00:00').toLocaleDateString('en-GB', {
-          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-        });
-      } catch { /* keep raw */ }
-
-      let timeStr = event.time || '';
-      if (timeStr) {
-        try {
-          const [h, m] = timeStr.split(':');
-          const dt = new Date();
-          dt.setHours(parseInt(h, 10), parseInt(m, 10));
-          timeStr = dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
-        } catch { /* keep raw */ }
-      }
+      const dateStr = formatInviteDate(inviteTarget.date);
+      const timeStr = formatInviteTime(inviteTarget.time);
 
       const inviteLink = `${appUrl}/rsvp/${invite.invite_token}`;
 
-      const message = [
+      const messageParts = [
         `🎉 *You're Invited!*`,
         '',
-        `*${event.name}*`,
-        dateStr ? `📅 ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : '',
-        event.venue ? `📍 ${event.venue}` : '',
-        event.invite_message ? `\n${event.invite_message}` : '',
+        `*${inviteTarget.name}*`,
+        inviteTarget.date ? `📅 ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : '',
+        inviteTarget.venue ? `📍 ${inviteTarget.venue}` : '',
+        inviteTarget.dress_code ? `👔 Dress code: ${inviteTarget.dress_code}` : '',
+        inviteTarget.invite_message ? `\n${inviteTarget.invite_message}` : '',
         '',
         `RSVP here 👇`,
         inviteLink,
         '',
         `Or reply: *yes*, *no*, or *maybe*`,
-      ].filter(Boolean).join('\n');
+      ];
+      const message = messageParts.filter(Boolean).join('\n');
 
       // Send WhatsApp message
       if (resolved) {
@@ -149,13 +226,32 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ success: true, results });
 }
 
+function formatInviteDate(dateStr: string | null): string {
+  if (!dateStr) return '';
+  try {
+    return new Date(dateStr + 'T00:00').toLocaleDateString('en-GB', {
+      weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    });
+  } catch { return dateStr; }
+}
+
+function formatInviteTime(timeStr: string | null): string {
+  if (!timeStr) return '';
+  try {
+    const [h, m] = timeStr.split(':');
+    const dt = new Date();
+    dt.setHours(parseInt(h, 10), parseInt(m, 10));
+    return dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' });
+  } catch { return timeStr; }
+}
+
 // Send reminders to pending/maybe guests
 export async function PUT(request: NextRequest) {
   const body = await request.json();
-  const { eventId, businessId } = body as { eventId: string; businessId: string };
+  const { eventId, partyId, businessId } = body as { eventId?: string; partyId?: string; businessId: string };
 
-  if (!eventId || !businessId) {
-    return NextResponse.json({ error: 'eventId and businessId are required' }, { status: 400 });
+  if ((!eventId && !partyId) || !businessId) {
+    return NextResponse.json({ error: 'eventId or partyId, and businessId are required' }, { status: 400 });
   }
 
   const auth = await authenticateRequest(request, {
@@ -165,24 +261,51 @@ export async function PUT(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
   const { service } = auth;
 
-  // Get event details
-  const { data: event } = await service
-    .from('events')
-    .select('id, name, date, time, venue')
-    .eq('id', eventId)
-    .eq('business_id', businessId)
-    .single();
+  // Get event or party details
+  let targetName = '';
+  let targetDate = '';
+  let targetVenue = '';
 
-  if (!event) {
-    return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+  if (partyId) {
+    const { data: party } = await service
+      .from('parties')
+      .select('id, name, date, time, venue')
+      .eq('id', partyId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (!party) {
+      return NextResponse.json({ error: 'Party not found' }, { status: 404 });
+    }
+    targetName = party.name;
+    targetDate = party.date;
+    targetVenue = party.venue || '';
+  } else if (eventId) {
+    const { data: event } = await service
+      .from('events')
+      .select('id, name, date, time, venue')
+      .eq('id', eventId)
+      .eq('business_id', businessId)
+      .single();
+
+    if (!event) {
+      return NextResponse.json({ error: 'Event not found' }, { status: 404 });
+    }
+    targetName = event.name;
+    targetDate = event.date;
+    targetVenue = event.venue || '';
   }
 
   // Get pending + maybe invites
-  const { data: invites } = await service
+  const inviteQuery = service
     .from('event_invites')
     .select('id, guest_phone, guest_name, status, invite_token')
-    .eq('event_id', eventId)
     .in('status', ['pending', 'maybe']);
+
+  if (partyId) inviteQuery.eq('party_id', partyId);
+  else inviteQuery.eq('event_id', eventId!);
+
+  const { data: invites } = await inviteQuery;
 
   if (!invites || invites.length === 0) {
     return NextResponse.json({ success: true, sent: 0, message: 'No pending guests to remind' });
@@ -195,9 +318,9 @@ export async function PUT(request: NextRequest) {
   let sent = 0;
 
   // Format the date
-  let dateStr = event.date || '';
+  let dateStr = targetDate || '';
   try {
-    dateStr = new Date(event.date + 'T00:00').toLocaleDateString('en-GB', {
+    dateStr = new Date(targetDate + 'T00:00').toLocaleDateString('en-GB', {
       weekday: 'long', day: 'numeric', month: 'long',
     });
   } catch { /* keep raw */ }
@@ -206,8 +329,8 @@ export async function PUT(request: NextRequest) {
     const link = `${appUrl}/rsvp/${invite.invite_token}`;
     const greeting = invite.guest_name ? `Hi ${invite.guest_name}! ` : '';
     const statusNote = invite.status === 'maybe'
-      ? `You said *maybe* to *${event.name}*. Have you decided?`
-      : `You haven't responded to the invite for *${event.name}* yet.`;
+      ? `You said *maybe* to *${targetName}*. Have you decided?`
+      : `You haven't responded to the invite for *${targetName}* yet.`;
 
     const message = [
       `⏰ *Reminder*`,
@@ -215,7 +338,7 @@ export async function PUT(request: NextRequest) {
       `${greeting}${statusNote}`,
       '',
       dateStr ? `📅 ${dateStr}` : '',
-      event.venue ? `📍 ${event.venue}` : '',
+      targetVenue ? `📍 ${targetVenue}` : '',
       '',
       `RSVP here 👇`,
       link,

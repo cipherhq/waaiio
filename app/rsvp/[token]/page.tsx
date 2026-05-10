@@ -4,6 +4,25 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 
+interface EventOrPartyDetails {
+  id: string;
+  name: string;
+  description: string | null;
+  date: string;
+  time: string | null;
+  venue: string | null;
+  image_url: string | null;
+  allow_plus_ones: boolean;
+  max_plus_ones: number | null;
+  ask_dietary: boolean;
+  invite_message: string | null;
+  dress_code?: string | null;
+  businesses: {
+    name: string;
+    slug: string;
+  };
+}
+
 interface InviteData {
   id: string;
   invite_token: string;
@@ -12,23 +31,8 @@ interface InviteData {
   status: 'pending' | 'accepted' | 'maybe' | 'declined';
   plus_ones: number;
   dietary_notes: string | null;
-  events: {
-    id: string;
-    name: string;
-    description: string | null;
-    date: string;
-    time: string | null;
-    venue: string | null;
-    image_url: string | null;
-    allow_plus_ones: boolean;
-    max_plus_ones: number | null;
-    ask_dietary: boolean;
-    invite_message: string | null;
-    businesses: {
-      name: string;
-      slug: string;
-    };
-  };
+  events: EventOrPartyDetails | null;
+  parties: EventOrPartyDetails | null;
 }
 
 type PageState = 'loading' | 'not_found' | 'rsvp_form' | 'already_responded' | 'submitting' | 'done';
@@ -46,25 +50,39 @@ export default function RSVPPage() {
   useEffect(() => {
     async function load() {
       const supabase = createClient();
-      const { data, error } = await supabase
+
+      // First try with event join (existing behavior)
+      const { data: dataWithEvent } = await supabase
         .from('event_invites')
         .select(`
           id, invite_token, guest_phone, guest_name, status, plus_ones, dietary_notes,
-          events!inner (
+          events (
             id, name, description, date, time, venue, image_url,
             allow_plus_ones, max_plus_ones, ask_dietary, invite_message,
+            businesses!inner ( name, slug )
+          ),
+          parties (
+            id, name, description, date, time, venue, image_url,
+            allow_plus_ones, max_plus_ones, ask_dietary, invite_message, dress_code,
             businesses!inner ( name, slug )
           )
         `)
         .eq('invite_token', token as string)
         .single();
 
-      if (error || !data) {
+      if (!dataWithEvent) {
         setState('not_found');
         return;
       }
 
-      const inviteData = data as unknown as InviteData;
+      const inviteData = dataWithEvent as unknown as InviteData;
+
+      // Must have either event or party data
+      if (!inviteData.events && !inviteData.parties) {
+        setState('not_found');
+        return;
+      }
+
       setInvite(inviteData);
 
       if (inviteData.status !== 'pending') {
@@ -151,10 +169,12 @@ export default function RSVPPage() {
 
   if (!invite) return null;
 
-  const event = invite.events;
+  // Use party details if available, otherwise event details
+  const event = invite.parties || invite.events!;
   const businessName = event.businesses.name;
   const businessSlug = event.businesses.slug;
   const dateLabel = formatDate(event.date, event.time);
+  const dressCode = ('dress_code' in event) ? (event as EventOrPartyDetails).dress_code : null;
 
   // Already responded
   if (state === 'already_responded') {
@@ -283,6 +303,12 @@ export default function RSVPPage() {
                 <div className="flex items-center gap-3 text-sm text-gray-600">
                   <span className="text-lg">📍</span>
                   <span>{event.venue}</span>
+                </div>
+              )}
+              {dressCode && (
+                <div className="flex items-center gap-3 text-sm text-gray-600">
+                  <span className="text-lg">👔</span>
+                  <span>Dress code: {dressCode}</span>
                 </div>
               )}
             </div>

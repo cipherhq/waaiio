@@ -9,11 +9,13 @@ export const rsvpFlow: FlowDefinition = {
       id: 'rsvp_welcome',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const eventName = d.rsvp_event_name as string || 'Event';
-        const eventDate = d.rsvp_event_date as string || '';
-        const eventTime = d.rsvp_event_time as string || '';
-        const eventVenue = d.rsvp_event_venue as string || '';
+        // Support both event and party invites
+        const eventName = d.rsvp_event_name as string || d.rsvp_party_name as string || 'Event';
+        const eventDate = d.rsvp_event_date as string || d.rsvp_party_date as string || '';
+        const eventTime = d.rsvp_event_time as string || d.rsvp_party_time as string || '';
+        const eventVenue = d.rsvp_event_venue as string || d.rsvp_party_venue as string || '';
         const inviteMessage = d.rsvp_invite_message as string || '';
+        const dressCode = d.rsvp_dress_code as string || '';
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
         let dateLabel = eventDate;
@@ -41,6 +43,7 @@ export const rsvpFlow: FlowDefinition = {
           `🎪 *${eventName}*`,
           eventDate ? `📅 ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '',
           eventVenue ? `📍 ${eventVenue}` : '',
+          dressCode ? `👔 Dress code: ${dressCode}` : '',
           inviteMessage ? `\n${inviteMessage}` : '',
           '',
           'Will you be attending?',
@@ -148,10 +151,10 @@ export const rsvpFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const response = d.rsvp_response as string;
         const inviteId = d.rsvp_invite_id as string;
-        const eventName = d.rsvp_event_name as string || 'Event';
-        const eventDate = d.rsvp_event_date as string || '';
-        const eventTime = d.rsvp_event_time as string || '';
-        const eventVenue = d.rsvp_event_venue as string || '';
+        const eventName = d.rsvp_event_name as string || d.rsvp_party_name as string || 'Event';
+        const eventDate = d.rsvp_event_date as string || d.rsvp_party_date as string || '';
+        const eventTime = d.rsvp_event_time as string || d.rsvp_party_time as string || '';
+        const eventVenue = d.rsvp_event_venue as string || d.rsvp_party_venue as string || '';
         const plusOnes = (d.rsvp_plus_ones as number) || 0;
         const dietaryNotes = d.rsvp_dietary_notes as string | null;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
