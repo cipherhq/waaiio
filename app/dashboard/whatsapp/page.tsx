@@ -38,6 +38,9 @@ export default function WhatsAppPage() {
   const [config, setConfig] = useState<WhatsAppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [buttonsError, setButtonsError] = useState<string | null>(null);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [form, setForm] = useState({
     bot_greeting: '',
     bot_alias: '',
@@ -94,8 +97,9 @@ export default function WhatsAppPage() {
 
   async function handleSave() {
     setSaving(true);
+    setSaveError(null);
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('whatsapp_config')
       .update({
         bot_greeting: form.bot_greeting,
@@ -104,23 +108,27 @@ export default function WhatsAppPage() {
         default_reply: form.default_reply || null,
       })
       .eq('business_id', business.id);
+    if (error) setSaveError('Failed to save settings. Please try again.');
     setSaving(false);
   }
 
   async function handleSaveButtons() {
     setSavingButtons(true);
+    setButtonsError(null);
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('whatsapp_config')
       .update({ welcome_buttons: welcomeButtons })
       .eq('business_id', business.id);
+    if (error) setButtonsError('Failed to save buttons. Please try again.');
     setSavingButtons(false);
   }
 
   async function handleSaveTemplates() {
     setSavingTemplates(true);
+    setTemplatesError(null);
     const supabase = createClient();
-    await supabase
+    const { error } = await supabase
       .from('whatsapp_config')
       .update({
         bot_confirmation_template: templates.bot_confirmation_template || null,
@@ -130,6 +138,7 @@ export default function WhatsAppPage() {
         bot_order_status_template: templates.bot_order_status_template || null,
       })
       .eq('business_id', business.id);
+    if (error) setTemplatesError('Failed to save templates. Please try again.');
     setSavingTemplates(false);
   }
 
@@ -233,6 +242,9 @@ export default function WhatsAppPage() {
                   <p className="mt-1 text-xs text-gray-400">Sent when the bot doesn&apos;t understand a message</p>
                 </div>
 
+                {saveError && (
+                  <p className="text-sm text-red-600">{saveError}</p>
+                )}
                 <button
                   onClick={handleSave}
                   disabled={saving}
@@ -371,6 +383,25 @@ export default function WhatsAppPage() {
             </div>
           )}
 
+          {welcomeButtons.length > 0 && (
+            <div className="mt-4 rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-medium text-gray-500 mb-2">Preview</p>
+              <div className="bg-white rounded-lg p-3 shadow-sm border max-w-xs">
+                <p className="text-sm text-gray-700 mb-2">{form.bot_greeting || `Welcome to ${business.name}! How can I help you today?`}</p>
+                <div className="space-y-1.5">
+                  {welcomeButtons.map((btn, i) => (
+                    <div key={i} className="text-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm text-blue-600 font-medium">
+                      {btn.label || 'Untitled'}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {buttonsError && (
+            <p className="mt-2 text-sm text-red-600">{buttonsError}</p>
+          )}
           <button
             onClick={handleSaveButtons}
             disabled={savingButtons}
@@ -459,6 +490,9 @@ export default function WhatsAppPage() {
             ))}
           </div>
 
+          {templatesError && (
+            <p className="mt-2 text-sm text-red-600">{templatesError}</p>
+          )}
           <button
             onClick={handleSaveTemplates}
             disabled={savingTemplates}

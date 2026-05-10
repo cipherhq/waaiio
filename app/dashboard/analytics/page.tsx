@@ -61,7 +61,7 @@ export default function AnalyticsPage() {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - days);
       const startStr = customDateFrom || startDate.toISOString().split('T')[0];
-      const endStr = customDateTo || undefined;
+      const endStr = customDateTo || new Date().toISOString().split('T')[0];
 
       let bookingsQuery = supabase
         .from('bookings')

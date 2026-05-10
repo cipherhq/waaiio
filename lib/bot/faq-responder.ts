@@ -66,8 +66,12 @@ export async function tryFaqResponse(
 
   if (faqs && faqs.length > 0) {
     for (const faq of faqs as FaqEntry[]) {
-      // Check keyword match
-      const hasKeyword = faq.keywords.some(kw => lower.includes(kw.toLowerCase()));
+      // Check keyword match using word boundaries to avoid partial matches
+      // (e.g. "book" inside "facebook", "cancel" inside "balance")
+      const hasKeyword = faq.keywords.some(kw => {
+        const escaped = kw.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`\\b${escaped}\\b`, 'i').test(lower);
+      });
       // Check question similarity (simple word overlap)
       const qWords = faq.question.toLowerCase().split(/\s+/);
       const inputWords = lower.split(/\s+/);

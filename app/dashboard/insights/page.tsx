@@ -208,10 +208,16 @@ export default function InsightsPage() {
       const atRiskCust = profiles.filter(p => p.last_seen_at && p.last_seen_at >= d60Iso && p.last_seen_at < d30Iso2).length;
       const churnedCust = profiles.filter(p => !p.last_seen_at || p.last_seen_at < d60Iso).length;
 
-      // Revenue Forecast
+      // Monthly Run Rate — based on last 30 days of revenue
       const last30 = bookings.filter(b => b.date >= new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]);
       const last30Rev = last30.reduce((s, b) => s + (b.total_amount || 0), 0);
-      const revenueForecast = Math.round((last30Rev / 30) * 30);
+      const daysElapsedThisMonth = new Date().getDate();
+      const dailyAvg = last30Rev / 30;
+      const daysRemaining = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate() - daysElapsedThisMonth;
+      const earnedThisMonth = bookings
+        .filter(b => b.date >= new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0])
+        .reduce((s, b) => s + (b.total_amount || 0), 0);
+      const revenueForecast = Math.round(earnedThisMonth + dailyAvg * daysRemaining);
 
       // Bot Flow Completion
       const totalBot = botSessions.length;
@@ -398,7 +404,7 @@ export default function InsightsPage() {
             <StatCard
               label="Revenue Forecast"
               value={intelligence ? formatCurrency(intelligence.revenueForecast, country) : '—'}
-              sub="Projected next 30 days"
+              sub="Projected for this month"
             />
             <StatCard
               label="Bot Completion"
