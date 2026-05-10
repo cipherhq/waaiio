@@ -430,7 +430,7 @@ export default function BroadcastsPage() {
                     Announcement
                   </button>
                   <button
-                    onClick={() => setMessage(`Special offer from ${business.name}!\n\n[Your offer here]\n\nBook now: ${process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || ''}`)}
+                    onClick={() => setMessage(`Special offer from ${business.name}!\n\n[Your offer here]\n\nMessage us to book!`)}
                     className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
                   >
                     Promotion
