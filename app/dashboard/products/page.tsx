@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface OptionGroup {
   name: string;
@@ -1790,6 +1792,12 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      <PageHelp
+        pageKey="products"
+        title="Your Products"
+        description="This is your product catalog. Customers browse these items and add them to their cart on WhatsApp. Add photos, prices, and descriptions to help customers choose."
+      />
+
       {/* Filters */}
       {products.length > 3 && (
         <div className="mt-4 flex gap-2">
@@ -1870,25 +1878,14 @@ export default function ProductsPage() {
 
       {/* Empty state */}
       {products.length === 0 ? (
-        <div className="mt-12 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-            </svg>
-          </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No products yet</h3>
-          <p className="mx-auto mt-1 max-w-xs text-sm text-gray-500">
-            Add your products so {labels.personLabelPlural.toLowerCase()} can browse and order through WhatsApp.
-          </p>
-          <div className="mt-4 flex justify-center gap-3">
-            <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">
-              + Add Product
-            </button>
-            <button onClick={() => setView('bulk')} className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
-              Bulk Upload
-            </button>
-          </div>
-        </div>
+        <EmptyState
+          icon="🛒"
+          title="No products yet"
+          description="Add your menu items or products. Customers can browse and order directly on WhatsApp."
+          actionLabel="Add your first product"
+          onAction={openAdd}
+          tip="Add a photo to get 3x more orders."
+        />
       ) : (
         /* Product grid */
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

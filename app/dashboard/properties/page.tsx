@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Property {
   id: string;
@@ -465,19 +467,21 @@ export default function PropertiesPage() {
         </button>
       </div>
 
+      <PageHelp
+        pageKey="properties"
+        title="Your Properties"
+        description="These are the spaces or vehicles customers can book. Add photos, pricing, amenities, and blocked dates. Guests will see availability and book directly on WhatsApp."
+      />
+
       {properties.length === 0 ? (
-        <div className="mt-12 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
-          </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No {propertyLabelPlural.toLowerCase()} yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Add your first {propertyLabel.toLowerCase()} to start accepting reservations</p>
-          <button onClick={openAdd} className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">
-            + Add {propertyLabel}
-          </button>
-        </div>
+        <EmptyState
+          icon="🏠"
+          title="No properties yet"
+          description="Add your rooms, apartments, or vehicles. Guests can check availability and book on WhatsApp."
+          actionLabel="Add your first property"
+          onAction={openAdd}
+          tip="Add photos and amenities to attract more bookings."
+        />
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {properties.map(p => (

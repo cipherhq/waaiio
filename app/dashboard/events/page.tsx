@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface EventItem {
   id: string;
@@ -360,17 +362,21 @@ export default function EventsPage() {
         <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">+ New Event</button>
       </div>
 
+      <PageHelp
+        pageKey="events"
+        title="Your Events"
+        description="Create events and sell tickets through WhatsApp. Customers get QR code tickets they can use for check-in. You can create different ticket types (Regular, VIP, etc.)."
+      />
+
       {events.length === 0 ? (
-        <div className="mt-12 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
-            </svg>
-          </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No events yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Create your first event to start selling tickets</p>
-          <button onClick={openAdd} className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">+ New Event</button>
-        </div>
+        <EmptyState
+          icon="🎫"
+          title="No events yet"
+          description="Create an event with ticket types. Customers can buy tickets and get QR codes for check-in."
+          actionLabel="Create your first event"
+          onAction={openAdd}
+          tip="You can create multiple ticket types per event (e.g., Regular, VIP)."
+        />
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {events.map(event => {

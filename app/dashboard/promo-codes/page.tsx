@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { exportToCsv } from '@/lib/utils/csv-export';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface PromoCode {
   id: string;
@@ -280,6 +282,12 @@ export default function PromoCodesPage() {
         </div>
       </div>
 
+      <PageHelp
+        pageKey="promo-codes"
+        title="Promo Codes"
+        description="Create discount codes your customers can use when booking or ordering. Set percentage or fixed discounts, usage limits, and expiry dates."
+      />
+
       {/* Metrics */}
       <div className="mt-6 grid grid-cols-3 gap-4">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
@@ -297,10 +305,13 @@ export default function PromoCodesPage() {
       </div>
 
       {codes.length === 0 ? (
-        <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">
-          <p className="text-sm text-gray-500">No promo codes yet. Create your first promo code to get started.</p>
-          <button onClick={openAdd} className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">+ Create Code</button>
-        </div>
+        <EmptyState
+          icon="🏷️"
+          title="No promo codes yet"
+          description="Create discount codes to share with customers. They can apply these when booking or ordering."
+          actionLabel="Create a promo code"
+          onAction={openAdd}
+        />
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {codes.map(promo => {

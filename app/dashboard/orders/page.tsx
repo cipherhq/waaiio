@@ -7,6 +7,8 @@ import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface OrderItem {
   id: string;
@@ -577,6 +579,12 @@ export default function OrdersPage() {
         Manage orders from your WhatsApp {labels.personLabelPlural.toLowerCase()}
       </p>
 
+      <PageHelp
+        pageKey="orders"
+        title="Customer Orders"
+        description="Orders placed by customers through your WhatsApp bot appear here. You can update the status, add tracking info, and manage delivery."
+      />
+
       {/* Quick Stats */}
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-gray-100 bg-white p-4">
@@ -642,17 +650,12 @@ export default function OrdersPage() {
 
       {/* Orders List */}
       {orders.length === 0 ? (
-        <div className="mt-12 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
-          </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No orders yet</h3>
-          <p className="mt-1 text-sm text-gray-500">
-            Orders from WhatsApp {labels.personLabelPlural.toLowerCase()} will appear here.
-          </p>
-        </div>
+        <EmptyState
+          icon="📦"
+          title="No orders yet"
+          description="Orders will appear here when customers place them through your WhatsApp bot."
+          tip="Make sure you've added products first — customers can't order without a menu."
+        />
       ) : filtered.length === 0 ? (
         <div className="mt-12 text-center">
           <p className="text-sm text-gray-500">No orders match your filters</p>

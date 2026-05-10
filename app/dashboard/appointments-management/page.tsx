@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Appointment {
   id: string;
@@ -304,19 +306,21 @@ export default function AppointmentsManagementPage() {
         </button>
       </div>
 
+      <PageHelp
+        pageKey="appointments"
+        title="Your Appointments"
+        description="These are the bookable time slots your customers see on WhatsApp. Set the duration, price, and available days. Customers pick a date, time, and staff member to book."
+      />
+
       {appointments.length === 0 ? (
-        <div className="mt-12 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No {apptLabelPlural.toLowerCase()} yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Add your first {apptLabel.toLowerCase()} to start accepting bookings</p>
-          <button onClick={openAdd} className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600">
-            + Add {apptLabel}
-          </button>
-        </div>
+        <EmptyState
+          icon="📅"
+          title="No appointments yet"
+          description="Add bookable appointments with date, time, and staff options. Customers will see these when they message your WhatsApp number."
+          actionLabel="Add your first appointment"
+          onAction={openAdd}
+          tip="Include the duration and price — customers will see this when booking."
+        />
       ) : (
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {appointments.map(a => (

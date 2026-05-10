@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
+import EmptyState from '@/components/dashboard/EmptyState';
 
 interface InvoiceItem {
   id: string;
@@ -429,10 +430,13 @@ export default function InvoicesPage() {
       {loading ? (
         <div className="py-20 text-center text-gray-400">Loading invoices...</div>
       ) : invoices.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 py-20 text-center">
-          <p className="text-gray-500">No invoices yet</p>
-          <p className="mt-1 text-sm text-gray-400">Create your first invoice to get started</p>
-        </div>
+        <EmptyState
+          icon="🧾"
+          title="No invoices yet"
+          description="Create and send professional invoices via WhatsApp. Customers can pay with one click."
+          actionLabel="Create your first invoice"
+          onAction={openCreate}
+        />
       ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-gray-200 py-12 text-center">
           <p className="text-gray-500">No invoices match your filters</p>

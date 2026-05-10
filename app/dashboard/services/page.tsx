@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Service {
   id: string;
@@ -899,22 +901,21 @@ export default function ServicesPage() {
         </button>
       </div>
 
+      <PageHelp
+        pageKey="services"
+        title="Your Services"
+        description="These are the services your customers can request through WhatsApp. Add your prices, descriptions, and any deposit requirements. The bot will show these options to customers automatically."
+      />
+
       {services.length === 0 ? (
-        <div className="mt-12 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-            </svg>
-          </div>
-          <h3 className="mt-4 text-sm font-semibold text-gray-900">No {(labels.serviceNamePlural || 'services').toLowerCase()} yet</h3>
-          <p className="mt-1 text-sm text-gray-500">Add your first {(labels.serviceName || 'service').toLowerCase()} so {labels.personLabelPlural.toLowerCase()} know what you offer.</p>
-          <button
-            onClick={openAdd}
-            className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
-          >
-            + Add {labels.serviceName || 'Service'}
-          </button>
-        </div>
+        <EmptyState
+          icon="🛎️"
+          title="No services yet"
+          description="Add the services you offer so customers can request them on WhatsApp."
+          actionLabel="Add your first service"
+          onAction={openAdd}
+          tip="Start with your most popular service — you can add more anytime."
+        />
       ) : (
         <div className="mt-6 space-y-3">
           {services.map((service) => (
