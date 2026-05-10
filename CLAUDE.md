@@ -1,5 +1,30 @@
 # Waaiio — WhatsApp Business Automation Platform
 
+## Golden Rules — READ FIRST
+
+1. **Understand before changing.** Read every file you plan to modify. Trace how it connects to other files. Understand what depends on it. Never edit blind.
+2. **Trace the impact.** Before changing a function, type, table column, or capability — grep for every usage across the codebase. A change to `lib/capabilities/types.ts` affects bot flows, sidebar, onboarding, dashboard provider, and admin panel. Know the blast radius.
+3. **No guessing.** If you're unsure how something works, read the code. If the code isn't clear, ask the user. Never assume a column exists, a constraint allows a value, or a type accepts a field without verifying.
+4. **Ask when lost.** If a task is ambiguous, has multiple valid approaches, or could break existing features — stop and ask. A 10-second question is better than a 10-minute rollback.
+5. **Security first.** Every change goes through a security lens:
+   - Never expose service role keys, `META_APP_SECRET`, or `STRIPE_SECRET_KEY` to the client
+   - Never use `NEXT_PUBLIC_` prefix for secret values
+   - Always verify business ownership before mutations (`owner_id = auth.uid()`)
+   - Sanitize user input in `.or()` filters with `sanitizeFilterValue()`
+   - Validate redirect URLs (`startsWith('/')` and `!startsWith('//')`)
+   - RLS on every new table in public schema — default deny, explicit allow
+   - SECURITY DEFINER functions go in private schemas, never public
+   - Webhook handlers must verify signatures (HMAC) before processing
+   - Never trust `user_metadata` / `raw_user_meta_data` for authorization — use `app_metadata`
+6. **Verify after changing.** Run `npx next build` after changes. Check for type errors. If you modified a bot flow, trace the step chain to make sure routing is correct. If you modified a migration, verify column names match what the code uses.
+7. **Dependencies map.** Key dependency chains to be aware of:
+   - `CapabilityId` type → used in: types.ts, sidebar, onboarding, capability-selection flow, dashboard provider, admin panel businesses page
+   - `whatsapp_channels` table → used by: channel-resolver, webhook handler, dashboard page, settings page, admin channels page, onboarding
+   - `businesses` table → used by: nearly everything — bot service, all dashboard pages, all API routes, admin panel
+   - `bot_sessions.session_data` → shared state across all flow steps — changing a key name breaks the flow
+   - Payment flows → webhook handlers → platform_fees → financials — changing payment structure cascades through revenue tracking
+   - CHECK constraints on DB columns → if code writes a value the constraint doesn't allow, the insert silently fails or errors
+
 ## Quick Start
 ```bash
 npm run dev          # Next.js dev server (port 3000)
