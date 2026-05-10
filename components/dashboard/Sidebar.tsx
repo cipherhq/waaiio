@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/setup-assistant',
-    label: 'Ace AI Assistant',
+    label: 'Setup Guide',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',
     section: 'main',
   },
@@ -86,7 +86,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/giving',
-    label: 'Giving Categories',
+    label: 'Donation Options',
     icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
     capabilities: ['giving'],
     section: 'main',
@@ -162,14 +162,14 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/reports',
-    label: 'Document Share',
+    label: 'Documents',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     capabilities: ['reports'],
     section: 'commerce',
   },
   {
     href: '/dashboard/contracts',
-    label: 'Waaiio Sign',
+    label: 'E-Signatures',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     capabilities: ['whatsapp_sign'],
     section: 'commerce',
@@ -249,19 +249,19 @@ const navItems: NavItem[] = [
   // Marketing
   {
     href: '/dashboard/keywords',
-    label: 'Keywords',
+    label: 'Auto-Responses',
     icon: 'M7 20l4-16m2 16l4-16M6 9h14M4 15h14',
     section: 'marketing',
   },
   {
     href: '/dashboard/sequences',
-    label: 'Sequences',
+    label: 'Follow-ups',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',
     section: 'marketing',
   },
   {
     href: '/dashboard/rules',
-    label: 'Rules',
+    label: 'Automations',
     icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
     section: 'marketing',
   },
@@ -301,7 +301,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/whatsapp-usage',
-    label: 'WA Usage',
+    label: 'Message Usage',
     icon: 'M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z',
     section: 'marketing',
   },
@@ -326,25 +326,25 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/faq',
-    label: 'FAQ Bot',
+    label: 'FAQ Answers',
     icon: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     section: 'settings',
   },
   {
     href: '/dashboard/whatsapp',
-    label: 'WhatsApp Bot',
+    label: 'Bot Settings',
     icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
     section: 'settings',
   },
   {
     href: '/dashboard/whatsapp/templates',
-    label: 'WA Templates',
+    label: 'Message Templates',
     icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
     section: 'settings',
   },
   {
     href: '/dashboard/flow-editor',
-    label: 'Bot Flows',
+    label: 'Bot Conversations',
     icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z',
     section: 'settings',
   },
@@ -388,7 +388,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/capabilities',
-    label: 'Capabilities',
+    label: 'Features',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',
     section: 'settings',
   },
@@ -407,8 +407,8 @@ const navItems: NavItem[] = [
 ];
 
 const sectionLabels: Record<string, string> = {
-  commerce: 'Commerce',
-  marketing: 'Marketing',
+  commerce: 'Your Business',
+  marketing: 'Grow',
   settings: 'Settings',
 };
 
