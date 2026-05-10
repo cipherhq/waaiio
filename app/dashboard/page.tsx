@@ -265,47 +265,8 @@ export default function DashboardOverview() {
 
   return (
     <div>
-      {/* AI setup assistant for new businesses */}
-      <AISetupCard />
-
-      {/* Onboarding checklist for new businesses */}
-      <OnboardingChecklist />
-
-      {/* Verification banner */}
-      {(!verificationLevel || verificationLevel === 'unverified') && (
-        <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-yellow-100">
-              <svg className="h-4 w-4 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-yellow-800">Verify your business to receive payouts</p>
-              <p className="mt-0.5 text-xs text-yellow-700">
-                Your business is currently unverified. Upload required documents to unlock payouts and higher limits.
-              </p>
-              <Link
-                href="/dashboard/verification"
-                className="mt-2 inline-flex items-center gap-1 rounded-lg bg-yellow-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-yellow-700 transition"
-              >
-                Verify Now
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </Link>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Payout setup banner */}
-      {(hasCapability('payment') || hasCapability('ordering') || hasCapability('ticketing') || hasCapability('crowdfunding')) && (
-        <PayoutBanner />
-      )}
-
-      {/* Header */}
-      <div className="flex items-start justify-between">
+      {/* Header — always first, no banners above */}
+      <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -324,6 +285,36 @@ export default function DashboardOverview() {
           </button>
         )}
       </div>
+
+      {/* Onboarding checklist (dismissible) */}
+      <OnboardingChecklist />
+
+      {/* Compact banners — inline, not full-width blocks */}
+      <div className="space-y-2 mb-6">
+        <AISetupCard />
+
+        {(!verificationLevel || verificationLevel === 'unverified') && (
+          <div className="flex items-center gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3">
+            <svg className="h-4 w-4 text-yellow-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <p className="text-xs text-yellow-700 flex-1">
+              <span className="font-semibold">Verify your business</span> to unlock payouts and higher limits.
+            </p>
+            <Link
+              href="/dashboard/verification"
+              className="shrink-0 rounded-lg bg-yellow-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-yellow-700 transition"
+            >
+              Verify Now
+            </Link>
+          </div>
+        )}
+      </div>
+
+      {/* Payout setup banner */}
+      {(hasCapability('payment') || hasCapability('ordering') || hasCapability('ticketing') || hasCapability('crowdfunding')) && (
+        <PayoutBanner />
+      )}
 
       {/* Upgrade nudge banner */}
       <UpgradeBanner
