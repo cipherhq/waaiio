@@ -7,6 +7,7 @@ import type { FlowContext } from '../types';
 vi.mock('@/lib/logger', () => ({ logger: { debug: vi.fn(), error: vi.fn() } }));
 vi.mock('@/lib/constants', () => ({
   formatCurrency: (amount: number, _cc: string) => `₦${amount.toLocaleString()}`,
+  getLocale: (_cc: string) => 'en-NG',
 }));
 vi.mock('../shared/payment', () => ({
   initializePayment: vi.fn().mockResolvedValue({ url: 'https://pay.test/abc', reference: 'REF-123' }),
