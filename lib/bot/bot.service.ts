@@ -219,6 +219,10 @@ export class BotService {
     const isInvoiceQuery = /^(my\s+)?(invoices?|bills?)$/i.test(text)
       || /^(check|view|show|pay)\s+(my\s+)?(invoices?|bills?)$/i.test(text);
 
+    const isGivingQuery = /^(my\s+)?(giving|donations?|tithes?|offerings?)(\s+history)?$/i.test(text)
+      || /^(check|view|show)\s+(my\s+)?(giving|donations?|tithes?|offerings?)$/i.test(text)
+      || /^(giving|donation)\s+history$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     // Handle location query — send business address/location
@@ -535,6 +539,85 @@ export class BotService {
         .single();
 
       await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
+      return;
+    }
+
+    // ── My Giving / Donation History ──
+    if (isGivingQuery) {
+      const profile = await getProfile();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        return;
+      }
+
+      const businessId = session?.business_id || null;
+
+      // Fetch giving history (payments for giving services + campaign donations)
+      const { data: givingPayments } = await this.supabase
+        .from('payments')
+        .select('amount, status, created_at, metadata')
+        .eq('user_id', profile.id)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      const { data: donations } = await this.supabase
+        .from('campaign_donations')
+        .select('amount, status, campaign_id, created_at, reference_code')
+        .eq('donor_phone', phoneP)
+        .eq('status', 'completed')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      // Combine and show
+      const allGiving: Array<{ amount: number; date: string; label: string }> = [];
+
+      if (givingPayments) {
+        for (const p of givingPayments) {
+          const meta = (p.metadata || {}) as Record<string, unknown>;
+          if (meta.service_type === 'giving' || meta.flow_type === 'giving') {
+            allGiving.push({
+              amount: Number(p.amount),
+              date: new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+              label: (meta.service_name as string) || 'Offering',
+            });
+          }
+        }
+      }
+
+      if (donations) {
+        for (const d of donations) {
+          allGiving.push({
+            amount: Number(d.amount),
+            date: new Date(d.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            label: `Campaign (${d.reference_code})`,
+          });
+        }
+      }
+
+      // Sort by date descending
+      allGiving.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+      if (allGiving.length === 0) {
+        await this.sendText(from, "You don't have any giving history yet. Send *Hi* to get started!");
+        return;
+      }
+
+      const total = allGiving.reduce((sum, g) => sum + g.amount, 0);
+      const lines = [
+        `🙏 *Your Giving History*`,
+        '',
+        ...allGiving.slice(0, 10).map(g =>
+          `📅 ${g.date} — *${g.label}* — ${g.amount.toLocaleString()}`
+        ),
+        '',
+        `💰 *Total Given: ${total.toLocaleString()}*`,
+        `📊 ${allGiving.length} contribution${allGiving.length !== 1 ? 's' : ''}`,
+        '',
+        'Type *receipt* to get your giving receipt',
+        'Type *Hi* to give again',
+      ];
+      await this.sendText(from, lines.join('\n'));
       return;
     }
 

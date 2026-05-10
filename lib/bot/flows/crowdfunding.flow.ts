@@ -378,6 +378,11 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             `🔑 Ref: *${refCode}*`,
             '',
             `Your generosity makes a difference! ❤️`,
+            '',
+            '💡 *What you can do:*',
+            '• Type *my giving* to see your giving history',
+            '• Type *receipt* to get your donation receipt',
+            '• Type *Hi* to give again',
           ].join('\n'),
         });
 
