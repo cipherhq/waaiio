@@ -24,6 +24,10 @@
    - `bot_sessions.session_data` → shared state across all flow steps — changing a key name breaks the flow
    - Payment flows → webhook handlers → platform_fees → financials — changing payment structure cascades through revenue tracking
    - CHECK constraints on DB columns → if code writes a value the constraint doesn't allow, the insert silently fails or errors
+8. **DRY — flag repetition.** If you see the same pattern in 3+ places, it should be a shared function. Flag it even if the user didn't ask.
+9. **Engineered enough.** Not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity). Handle edge cases thoughtfully.
+10. **Explicit over clever.** Simple readable code beats clever one-liners. Name things clearly. Comment the "why" not the "what."
+11. **Present options, don't assume.** For non-trivial decisions, present 2-3 options with tradeoffs and ask which direction to go. Include "do nothing" as an option when relevant.
 
 ## Quick Start
 ```bash
