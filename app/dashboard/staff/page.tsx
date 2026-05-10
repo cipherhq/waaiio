@@ -308,7 +308,7 @@ export default function StaffPage() {
       is_active: form.is_active,
       services: form.services,
       schedule: form.schedule,
-      commission_rate: form.commission_rate,
+      commission_rate: form.commission_rate != null ? Math.max(0, Math.min(100, Number(form.commission_rate) || 0)) : null,
       notes: form.notes || null,
       start_date: form.start_date || null,
       color: form.color || null,

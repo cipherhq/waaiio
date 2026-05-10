@@ -63,6 +63,11 @@ export default function AnalyticsPage() {
       const startStr = customDateFrom || startDate.toISOString().split('T')[0];
       const endStr = customDateTo || new Date().toISOString().split('T')[0];
 
+      if (customDateFrom && customDateTo && customDateFrom > customDateTo) {
+        setLoading(false);
+        return;
+      }
+
       let bookingsQuery = supabase
         .from('bookings')
         .select('id, status, date, time, guest_phone, total_amount, deposit_amount, service_id')
@@ -218,6 +223,9 @@ export default function AnalyticsPage() {
             <span className="text-xs text-gray-400">to</span>
             <input type="date" value={customDateTo} onChange={(e) => setCustomDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
           </div>
+          {customDateFrom && customDateTo && customDateFrom > customDateTo && (
+            <p className="text-xs font-medium text-red-500">End date must be after start date</p>
+          )}
           <CsvExportButton
             data={dailyCounts.map(d => ({
               Date: d.date,

@@ -252,15 +252,13 @@ export default function MembershipPage() {
                 </p>
               </div>
               <div className="flex gap-2">
-                {tiers.length === 0 && (
-                  <button
-                    onClick={addDefaultTiers}
-                    disabled={saving}
-                    className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Add Default Tiers
-                  </button>
-                )}
+                <button
+                  onClick={addDefaultTiers}
+                  disabled={saving}
+                  className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Add Default Tiers
+                </button>
                 <button
                   onClick={openAddForm}
                   className="rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white transition hover:bg-brand/90"

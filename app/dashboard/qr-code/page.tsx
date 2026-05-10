@@ -208,6 +208,14 @@ export default function QRCodePage() {
         </p>
       </div>
 
+      {!phone && (
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>No phone number set.</strong> Please add a WhatsApp phone number in{' '}
+          <a href="/dashboard/settings" className="font-medium underline hover:no-underline">Settings</a>{' '}
+          to generate a working QR code and link.
+        </div>
+      )}
+
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_380px]">
         {/* ── Left: Settings ── */}
         <div className="space-y-6">

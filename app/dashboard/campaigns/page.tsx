@@ -124,6 +124,10 @@ export default function CampaignsPage() {
 
   async function handleSave() {
     if (!form.title.trim()) return;
+    if (form.min_donation && form.max_donation && Number(form.min_donation) > Number(form.max_donation)) {
+      alert('Minimum donation cannot be greater than maximum donation');
+      return;
+    }
     setSaving(true);
     const supabase = createClient();
 
