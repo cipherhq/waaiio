@@ -75,8 +75,8 @@ export default function ScanPage() {
     setError('');
 
     try {
-      // GET to check ticket
-      const res = await fetch(`/api/tickets/verify/${code.trim()}`);
+      // GET to check ticket (pass business_id for ownership verification)
+      const res = await fetch(`/api/tickets/verify/${code.trim()}?business_id=${business.id}`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -97,7 +97,7 @@ export default function ScanPage() {
       const checkInRes = await fetch(`/api/tickets/verify/${code.trim()}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scanned_by: business.name }),
+        body: JSON.stringify({ scanned_by: business.name, business_id: business.id }),
       });
 
       if (checkInRes.ok) {

@@ -5,12 +5,15 @@ import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 /**
  * GET /api/tickets/verify/[code]
  * Returns ticket details + validity status.
+ * Optional ?business_id= param to verify ticket belongs to the scanning business.
+ * Without business_id, guest details (phone) are masked for privacy.
  */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
   const { code } = await params;
+  const businessId = req.nextUrl.searchParams.get('business_id');
   const supabase = createServiceClient();
 
   const { data: ticket, error } = await supabase
@@ -27,12 +30,14 @@ export async function GET(
       created_at,
       booking_id,
       event:events!event_id (
+        id,
         name,
         date,
         time,
         venue,
         image_url,
-        self_checkin_enabled
+        self_checkin_enabled,
+        business_id
       ),
       booking:bookings!booking_id (
         quantity,
@@ -52,6 +57,17 @@ export async function GET(
   const event = ticket.event as any;
   const booking = ticket.booking as any;
 
+  // If business_id provided, verify ticket belongs to this business
+  if (businessId && event?.business_id && event.business_id !== businessId) {
+    return NextResponse.json(
+      { valid: false, error: 'This ticket is not for your event' },
+      { status: 403 },
+    );
+  }
+
+  // Mask guest phone if no business_id (public/self-checkin view)
+  const guestPhone = businessId ? (ticket.guest_phone || '') : undefined;
+
   return NextResponse.json({
     valid: ticket.status === 'valid',
     ticket: {
@@ -61,6 +77,7 @@ export async function GET(
       event_time: event?.time || null,
       venue: event?.venue || '',
       guest_name: ticket.guest_name || '',
+      guest_phone: guestPhone,
       ticket_number: ticket.ticket_number,
       total_tickets: booking?.quantity || 1,
       reference_code: booking?.reference_code || '',
@@ -89,11 +106,13 @@ export async function POST(
   const { code } = await params;
   const supabase = createServiceClient();
 
-  // Read optional scanned_by from body
+  // Read optional scanned_by and business_id from body
   let scannedBy: string | null = null;
+  let businessId: string | null = null;
   try {
     const body = await req.json();
     scannedBy = body.scanned_by || null;
+    businessId = body.business_id || null;
   } catch {
     // No body is fine
   }
@@ -101,7 +120,7 @@ export async function POST(
   // Fetch ticket with event info
   const { data: ticket, error } = await supabase
     .from('event_tickets')
-    .select('id, status, scanned_at, scanned_by, guest_name, event:events!event_id(date, time, self_checkin_enabled)')
+    .select('id, status, scanned_at, scanned_by, guest_name, event:events!event_id(date, time, self_checkin_enabled, business_id)')
     .eq('ticket_code', code.toUpperCase())
     .single();
 
@@ -109,6 +128,24 @@ export async function POST(
     return NextResponse.json(
       { success: false, error: 'Ticket not found' },
       { status: 404 },
+    );
+  }
+
+  const event = ticket.event as any;
+
+  // Verify ticket belongs to scanning business (if business_id provided)
+  if (businessId && event?.business_id && event.business_id !== businessId) {
+    return NextResponse.json(
+      { success: false, error: 'This ticket is not for your event' },
+      { status: 403 },
+    );
+  }
+
+  // Self-checkin: if no business_id (guest scanning themselves), check if self-checkin is enabled
+  if (!businessId && !event?.self_checkin_enabled) {
+    return NextResponse.json(
+      { success: false, error: 'Self check-in is not enabled for this event. Please check in at the door.' },
+      { status: 403 },
     );
   }
 
@@ -132,7 +169,6 @@ export async function POST(
   }
 
   // Event-day check: only allow check-in on event day (with 1hr buffer before)
-  const event = ticket.event as any;
   if (event?.date) {
     const eventDate = new Date(event.date + 'T00:00:00');
     const now = new Date();
