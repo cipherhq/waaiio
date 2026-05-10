@@ -273,26 +273,41 @@ export default function SequencesPage() {
         .eq('id', editingId);
     }
 
-    // Save steps
+    // Save steps (upsert to preserve existing step IDs for active enrollments)
     if (sequenceId) {
-      // Remove existing steps then re-insert
-      await supabase
+      // Get existing step IDs from the database
+      const { data: existingSteps } = await supabase
         .from('bot_sequence_steps')
-        .delete()
+        .select('id')
         .eq('sequence_id', sequenceId);
 
-      const stepPayloads = steps.map((s, i) => ({
-        sequence_id: sequenceId!,
-        step_order: i + 1,
-        delay_minutes: s.delay_minutes,
-        message_type: s.message_type,
-        message_content: s.message_content.trim() || null,
-        image_url: s.image_url.trim() || null,
-        condition: s.condition.trim() || null,
-      }));
+      const existingIds = new Set((existingSteps || []).map((s: { id: string }) => s.id));
+      const keptIds = new Set(steps.filter((s) => s.id && existingIds.has(s.id)).map((s) => s.id!));
 
-      if (stepPayloads.length > 0) {
-        await supabase.from('bot_sequence_steps').insert(stepPayloads);
+      // Delete only the steps that were removed by the user
+      const toDelete = [...existingIds].filter((id) => !keptIds.has(id));
+      if (toDelete.length > 0) {
+        await supabase.from('bot_sequence_steps').delete().in('id', toDelete);
+      }
+
+      // Upsert remaining steps: update existing, insert new
+      for (let i = 0; i < steps.length; i++) {
+        const step = steps[i];
+        const payload = {
+          sequence_id: sequenceId!,
+          step_order: i + 1,
+          delay_minutes: step.delay_minutes,
+          message_type: step.message_type,
+          message_content: step.message_content.trim() || null,
+          image_url: step.image_url.trim() || null,
+          condition: step.condition.trim() || null,
+        };
+
+        if (step.id && existingIds.has(step.id)) {
+          await supabase.from('bot_sequence_steps').update(payload).eq('id', step.id);
+        } else {
+          await supabase.from('bot_sequence_steps').insert(payload);
+        }
       }
     }
 
