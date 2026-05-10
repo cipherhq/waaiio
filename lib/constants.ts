@@ -390,8 +390,8 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   free: {
     name: 'Starter',
     price: 0,
-    feePercentage: 4.9,
-    feeFlat: 100,
+    feePercentage: 2.0,
+    feeFlat: 0,
     maxBookings: 50,
     whitelabel: false,
     features: [
@@ -399,14 +399,14 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '4.9% + flat fee per transaction after trial',
+      '2% per transaction after trial',
     ],
   },
   growth: {
     name: 'Growth',
     price: 15_000,
-    feePercentage: 3.9,
-    feeFlat: 50,
+    feePercentage: 1.5,
+    feeFlat: 0,
     maxBookings: 500,
     whitelabel: false,
     features: [
@@ -415,14 +415,14 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
-      '3.9% + flat fee per transaction',
+      '1.5% per transaction',
     ],
   },
   business: {
     name: 'Business',
     price: 50_000,
-    feePercentage: 3.5,
-    feeFlat: 50,
+    feePercentage: 1.0,
+    feeFlat: 0,
     maxBookings: Infinity,
     whitelabel: true,
     features: [
@@ -431,7 +431,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
-      '1% + ₦50 per transaction',
+      '1% per transaction',
     ],
   },
 };
@@ -469,7 +469,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
   free: {
     marketingName: 'Starter',
     description: 'Perfect for trying out Waaiio with zero risk.',
-    feePercentage: 2.5,
+    feePercentage: 2.0,
     maxBookings: 50,
     whitelabel: false,
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],
@@ -479,6 +479,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
+      '2% per transaction after trial',
     ],
   },
   growth: {
