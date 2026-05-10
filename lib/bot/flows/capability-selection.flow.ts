@@ -287,12 +287,49 @@ const myAccountMenuStep: FlowStepConfig = {
     const action = input.toLowerCase().trim();
 
     // Map selections to built-in bot.service.ts handlers via session step
+    // Handle receipt request directly — no flow step, uses bot.service.ts handler
+    if (action === 'acct_receipt' || action === 'receipt' || action === 'my receipt') {
+      // Get user profile for receipt generation
+      const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+      const { data: profile } = await ctx.supabase
+        .from('profiles')
+        .select('id')
+        .eq('phone', phone)
+        .maybeSingle();
+
+      if (profile?.id) {
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+        try {
+          const res = await fetch(`${baseUrl}/api/receipts/generate`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-internal-token': process.env.INTERNAL_API_TOKEN || '',
+            },
+            body: JSON.stringify({ userId: profile.id, type: 'receipt', phone: ctx.from }),
+          });
+          if (res.ok) {
+            const { url, filename } = await res.json();
+            await ctx.sender.sendDocument({ to: ctx.from, documentUrl: url, filename, caption: 'Your latest receipt' });
+          } else {
+            await ctx.sender.sendText({ to: ctx.from, text: 'No recent transactions found. Make a purchase first!' });
+          }
+        } catch {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Sorry, could not generate your receipt right now. Try again later.' });
+        }
+      } else {
+        await ctx.sender.sendText({ to: ctx.from, text: 'No account found for this number. Send *Hi* to get started!' });
+      }
+      // Return to menu
+      ctx.session.session_data._my_account_route = 'select_capability';
+      return { valid: true, data: { _my_account_route: 'select_capability' } };
+    }
+
     const routeMap: Record<string, string> = {
       'acct_bookings': 'my_bookings',
       'acct_orders': 'my_orders',
       'acct_loyalty': 'loyalty_menu',
       'acct_invoices': 'invoice_list',
-      'acct_receipt': 'receipt_request',
       // Natural language fallbacks
       'my bookings': 'my_bookings',
       'bookings': 'my_bookings',
@@ -302,10 +339,8 @@ const myAccountMenuStep: FlowStepConfig = {
       'my points': 'loyalty_menu',
       'points': 'loyalty_menu',
       'loyalty': 'loyalty_menu',
-      'my invoices': 'my_invoices',
-      'invoices': 'my_invoices',
-      'receipt': 'receipt_request',
-      'my receipt': 'receipt_request',
+      'my invoices': 'invoice_list',
+      'invoices': 'invoice_list',
     };
 
     const targetStep = routeMap[action];

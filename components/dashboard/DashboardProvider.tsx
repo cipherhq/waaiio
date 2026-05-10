@@ -28,8 +28,11 @@ export interface Business {
   cover_photo_url: string | null;
   bot_code: string | null;
   wa_method: 'shared' | 'transfer' | 'coexist' | null;
+  assigned_channel_id: string | null;
+  whatsapp_channel_id: string | null;
   gupshup_app_id: string | null;
   is_whitelabel: boolean;
+  verification_level: string | null;
   timezone: string;
   trial_ends_at: string;
   country_code: string | null;

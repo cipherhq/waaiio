@@ -83,7 +83,7 @@ export default function DashboardOverview() {
       const supabase = createClient();
 
       // 1. Check assigned channel (assigned_channel_id takes priority, then whatsapp_channel_id)
-      const channelId = (business as any).assigned_channel_id || (business as any).whatsapp_channel_id;
+      const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
       if (channelId) {
         const { data: ch } = await supabase
           .from('whatsapp_channels')
@@ -258,7 +258,7 @@ export default function DashboardOverview() {
     );
   }
 
-  const verificationLevel = (business as unknown as Record<string, unknown>).verification_level as string | undefined;
+  const verificationLevel = business.verification_level;
 
   return (
     <div>
