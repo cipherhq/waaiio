@@ -114,6 +114,87 @@ export class BotService {
       return;
     }
 
+    // Handle RSVP keyword or token — check for pending invites
+    const isRsvpKeyword = /^(rsvp|invite|yes\s*i'?m?\s*coming|i'?ll?\s*be\s*there)$/i.test(text);
+    const rsvpTokenMatch = text.match(/^rsvp\s+([a-f0-9]{24})$/i);
+    if (isRsvpKeyword || rsvpTokenMatch) {
+      const phoneP2 = from.startsWith('+') ? from : `+${from}`;
+      const phoneN2 = from.startsWith('+') ? from.slice(1) : from;
+
+      let inviteQuery = this.supabase
+        .from('event_invites')
+        .select('id, event_id, guest_name, invite_token, status, events!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
+        .or(`guest_phone.eq.${phoneP2},guest_phone.eq.${phoneN2}`)
+        .in('status', ['pending', 'maybe']);
+
+      if (rsvpTokenMatch) {
+        inviteQuery = inviteQuery.eq('invite_token', rsvpTokenMatch[1]);
+      }
+
+      const { data: pendingInvite } = await inviteQuery
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (pendingInvite) {
+        // Deactivate any existing session
+        const existingSession2 = await this.getActiveSession(from);
+        if (existingSession2) await this.deactivateSession(existingSession2.id);
+
+        const ev = (Array.isArray(pendingInvite.events) ? pendingInvite.events[0] : pendingInvite.events) as unknown as Record<string, unknown>;
+        const biz = (Array.isArray(ev.businesses) ? (ev.businesses as unknown[])[0] : ev.businesses) as Record<string, unknown>;
+
+        // Create a new session with the rsvp flow
+        const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: biz.id as string,
+          current_step: 'rsvp_welcome',
+          session_data: {
+            rsvp_invite_id: pendingInvite.id,
+            rsvp_event_id: pendingInvite.event_id,
+            rsvp_event_name: ev.name,
+            rsvp_event_date: ev.date,
+            rsvp_event_time: ev.time,
+            rsvp_event_venue: ev.venue,
+            rsvp_invite_message: ev.invite_message,
+            rsvp_allow_plus_ones: ev.allow_plus_ones,
+            rsvp_max_plus_ones: ev.max_plus_ones,
+            rsvp_ask_dietary: ev.ask_dietary,
+          },
+          is_active: true,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }).select().single();
+
+        if (newSession) {
+          // Build the business context and execute the rsvp flow prompt
+          await this.flowExecutor.execute(
+            from,
+            '', // empty input = send prompt
+            {
+              id: newSession.id,
+              user_id: null,
+              business_id: biz.id as string,
+              current_step: 'rsvp_welcome',
+              session_data: newSession.session_data as Record<string, unknown>,
+            },
+            {
+              id: biz.id as string,
+              name: biz.name as string,
+              slug: biz.slug as string,
+              category: biz.category as BusinessCategoryKey,
+              flow_type: biz.flow_type as FlowType,
+              subscription_tier: biz.subscription_tier as string,
+              trial_ends_at: biz.trial_ends_at as string,
+              metadata: (biz.metadata || {}) as Record<string, unknown>,
+              country_code: biz.country_code as CountryCode | undefined,
+            },
+          );
+          return;
+        }
+      }
+    }
+
     // Handle waitlist notification responses (yes/no after "a spot has opened up")
     const isWaitlistReply = /^(yes|no|yep|nah|nope|yeah)$/i.test(text);
     if (isWaitlistReply) {
