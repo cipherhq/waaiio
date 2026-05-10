@@ -45,7 +45,7 @@ export default function Dashboard() {
         const [bizRes, feesRes, payoutsRes, heldRes, usersRes, ticketsRes, botRes, bookingsRes, unverifiedRes, pendingDocsRes, flaggedRes, overridesRes, newBizRes, newUsersRes, churnedRes] = await Promise.all([
           adminQuery('businesses', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'active' }], count: 'exact' }),
           adminQuery('platform_fees', { select: 'fee_total, business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }, { column: 'waived', op: 'eq', value: false }, { column: 'refunded_at', op: 'is', value: null }] }),
-          adminQuery('business_payouts', { select: 'net_amount, status', filters: [{ column: 'status', op: 'eq', value: 'pending' }] }),
+          adminQuery('business_payouts', { select: 'net_amount, status, business_id', filters: [{ column: 'status', op: 'eq', value: 'pending' }] }),
           adminQuery('business_payouts', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'held' }], count: 'exact' }),
           adminQuery('profiles', { select: 'id', count: 'exact' }),
           adminQuery('support_tickets', { select: 'id', filters: [{ column: 'status', op: 'in', value: ['open', 'in_progress', 'waiting'] }], count: 'exact' }),
@@ -81,10 +81,17 @@ export default function Dashboard() {
           .map(([cur, amt]) => formatMoney(amt, cur))
           .join(' · ') || '—';
 
-        // Group payouts by currency
+        // Group payouts by currency via business country
+        const payoutBizIds = [...new Set((payoutsRes.data || []).map(p => p.business_id).filter(Boolean))];
+        const payoutBizRes = payoutBizIds.length > 0
+          ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: payoutBizIds }] })
+          : { data: [] };
+        const payoutBizCountry = new Map((payoutBizRes.data || []).map(b => [b.id, b.country_code || 'NG']));
         const payoutByCurrency: Record<string, number> = {};
         for (const p of payoutsRes.data || []) {
-          payoutByCurrency['NGN'] = (payoutByCurrency['NGN'] || 0) + Number(p.net_amount || 0); // payouts don't have currency yet
+          const cc = payoutBizCountry.get(p.business_id) || 'NG';
+          const cur = countryToCur[cc] || 'NGN';
+          payoutByCurrency[cur] = (payoutByCurrency[cur] || 0) + Number(p.net_amount || 0);
         }
         const pendingCount = payoutsRes.data?.length || 0;
         const pendingDisplay = pendingCount > 0

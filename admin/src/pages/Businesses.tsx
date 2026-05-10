@@ -31,6 +31,10 @@ const ALL_CAPABILITIES = [
   { id: 'survey', label: 'Surveys', icon: '📊' },
   { id: 'poll', label: 'Polls', icon: '🗳️' },
   { id: 'giving', label: 'Giving', icon: '🙏' },
+  { id: 'broadcast', label: 'Broadcasts', icon: '📢' },
+  { id: 'recurring', label: 'Subscriptions', icon: '🔄' },
+  { id: 'auto_reply', label: 'Auto-Reply', icon: '🤖' },
+  { id: 'membership', label: 'Membership', icon: '🏅' },
 ] as const;
 
 const TIER_REQUIREMENTS: Record<string, string> = {
@@ -39,6 +43,7 @@ const TIER_REQUIREMENTS: Record<string, string> = {
   reservation: 'growth', reminders: 'growth', loyalty: 'growth', referral: 'growth', survey: 'growth',
   whatsapp_sign: 'business', queue: 'business', waitlist: 'business', reports: 'business',
   staff: 'business', crowdfunding: 'business', invoice: 'business',
+  broadcast: 'growth', recurring: 'growth', auto_reply: 'free', membership: 'growth',
 };
 
 const TIER_RANK: Record<string, number> = { free: 0, growth: 1, business: 2 };

@@ -47,7 +47,7 @@ const TIER_CATALOG = {
   free: {
     marketingName: 'Starter',
     internalName: 'free',
-    feePercentage: 2.5,
+    feePercentage: 2.0,
     maxBookings: 50,
     whitelabel: false,
     broadcastLimits: { maxBroadcasts: 0, maxRecipients: 0 },

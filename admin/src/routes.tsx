@@ -41,6 +41,7 @@ import ConversationUsage from './pages/ConversationUsage';
 import Surveys from './pages/Surveys';
 import AISetupLog from './pages/AISetupLog';
 import SystemHealth from './pages/SystemHealth';
+import ChatHistory from './pages/ChatHistory';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -81,6 +82,7 @@ export const router = createBrowserRouter([
       { path: 'notifications', Component: Notifications },
       { path: 'broadcasts', Component: Broadcasts },
       { path: 'support', Component: Support },
+      { path: 'chat-history', Component: ChatHistory },
       // Finance
       { path: 'payouts', Component: Payouts },
       { path: 'finance', Component: Finance },

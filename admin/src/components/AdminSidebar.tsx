@@ -38,6 +38,7 @@ import {
   Moon,
   Zap,
   Activity,
+  MessagesSquare,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { LucideIcon } from 'lucide-react';
@@ -104,6 +105,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Bell, label: 'Notifications', path: '/notifications' },
       { icon: Megaphone, label: 'Broadcasts', path: '/broadcasts' },
       { icon: LifeBuoy, label: 'Support', path: '/support' },
+      { icon: MessagesSquare, label: 'Chat History', path: '/chat-history' },
     ],
   },
   {
