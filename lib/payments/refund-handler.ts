@@ -166,6 +166,40 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       .is('refunded_at', null);
   }
 
+  // 10. Check if a payout was already sent for this payment's period — if so, create adjustment
+  try {
+    const { data: payment2 } = await supabase
+      .from('payments')
+      .select('created_at')
+      .eq('id', paymentId)
+      .single();
+
+    if (payment2) {
+      const { data: paidPayout } = await supabase
+        .from('business_payouts')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('status', 'paid')
+        .gte('period_end', payment2.created_at)
+        .maybeSingle();
+
+      if (paidPayout) {
+        // Payout already sent — create adjustment record for next payout
+        await supabase.from('payout_adjustments').insert({
+          business_id: businessId,
+          payout_id: paidPayout.id,
+          amount: -amount, // negative = deduction from next payout
+          reason: `Refund for payment ${payment.gateway_reference}`,
+          payment_id: paymentId,
+        });
+      }
+    }
+  } catch (adjError) {
+    // Non-blocking — log but don't fail the refund
+    // eslint-disable-next-line no-console
+    console.error('[REFUND] Failed to create payout adjustment:', adjError);
+  }
+
   return {
     success: true,
     refundId: refundRecord.id,

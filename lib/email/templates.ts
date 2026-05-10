@@ -406,6 +406,23 @@ export function trialEndedEmail(businessName: string) {
   };
 }
 
+export function payoutFailedEmail(businessName: string, amount: string, reason: string) {
+  return {
+    subject: `Payout failed — ${amount}`,
+    html: wrap(`
+      ${h('Payout Failed')}
+      ${p(`A payout for <strong>${esc(businessName)}</strong> could not be completed.`)}
+      ${table(
+        kv('Business', esc(businessName)) +
+        kv('Amount', esc(amount)) +
+        kv('Reason', esc(reason || 'Transfer failed'))
+      )}
+      ${p('Please check your bank details in your dashboard settings. If your details are correct, the payout will be retried in the next cycle.')}
+      ${btn('Check Bank Details', '${appUrl}/dashboard/settings')}
+    `),
+  };
+}
+
 export function paymentFailedEmail(businessName: string, amount: string, reason: string) {
   return {
     subject: `Payment failed — ${businessName}`,

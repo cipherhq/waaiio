@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { sendEmail } from '@/lib/email/client';
+import { payoutFailedEmail } from '@/lib/email/templates';
 
 /**
  * GET /api/cron/auto-payout
@@ -28,6 +30,16 @@ const AUTO_APPROVE_LIMIT_USD = 1_000;   // $1,000 max auto-approve
 const VELOCITY_THRESHOLD = 50;           // max transactions per day
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
+
+// Minimum payout thresholds per country (in local currency)
+const MINIMUM_PAYOUT: Record<string, number> = {
+  NG: 5000,  // ₦5,000
+  GH: 50,    // GH₵50
+  US: 25,    // $25
+  GB: 20,    // £20
+  CA: 25,    // CA$25
+  KE: 2500,  // KSh2,500
+};
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -84,9 +96,27 @@ export async function GET(request: NextRequest) {
 
       const gross = (fees || []).reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const net = Math.max(0, gross - totalFees);
+      let netAmount = Math.max(0, gross - totalFees);
 
-      if (net <= 0) continue;
+      if (netAmount <= 0) continue;
+
+      // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
+      const { data: adjustments } = await supabase
+        .from('payout_adjustments')
+        .select('id, amount')
+        .eq('business_id', biz.id)
+        .is('applied_to_payout_id', null);
+
+      const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
+      netAmount = Math.max(0, netAmount + totalAdjustments); // adjustments are negative
+
+      if (netAmount <= 0) continue;
+
+      // Minimum payout threshold — skip if amount too small, will accumulate for next period
+      const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
+      if (netAmount < minPayout) continue;
+
+      const net = netAmount;
 
       // Get payout account
       const { data: payoutAccount } = await supabase
@@ -132,6 +162,15 @@ export async function GET(request: NextRequest) {
         flags: holdReasons.length > 0 ? holdReasons : null,
         auto_generated: true,
       }).select('id, net_amount').single();
+
+      // Mark adjustments as applied to this payout
+      if (payout && adjustments && adjustments.length > 0) {
+        const adjIds = adjustments.map((a) => a.id);
+        await supabase
+          .from('payout_adjustments')
+          .update({ applied_to_payout_id: payout.id })
+          .in('id', adjIds);
+      }
 
       generated++;
 
@@ -190,6 +229,11 @@ export async function GET(request: NextRequest) {
                 }).eq('id', payout!.id);
                 held++;
                 logger.error(`[AUTO-PAYOUT] Transfer failed for ${biz.name}:`, transferData.message);
+
+                // Notify business owner of failure (non-blocking)
+                notifyPayoutFailure(supabase, biz.id, net, getCurrencyCode((biz.country_code || 'NG') as CountryCode), transferData.message).catch(
+                  (err) => logger.error('[AUTO-PAYOUT] Failure email error:', err),
+                );
               }
             }
           } catch (err) {
@@ -202,7 +246,44 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    logger.debug(`[AUTO-PAYOUT] Generated: ${generated}, Auto-approved: ${autoApproved}, Transferred: ${transferred}, Held: ${held}`);
+    // ── Auto-release held payouts where blocking condition has expired ──
+    let released = 0;
+    const { data: heldPayouts } = await supabase
+      .from('business_payouts')
+      .select('id, business_id, flags')
+      .eq('status', 'held');
+
+    for (const hp of heldPayouts || []) {
+      const { data: heldBiz } = await supabase
+        .from('businesses')
+        .select('created_at, verification_level')
+        .eq('id', hp.business_id)
+        .single();
+
+      if (!heldBiz) continue;
+
+      const age = (Date.now() - new Date(heldBiz.created_at).getTime()) / (1000 * 60 * 60 * 24);
+      const isVerified = heldBiz.verification_level && heldBiz.verification_level !== 'unverified';
+      const coolingDone = age >= COOLING_PERIOD_DAYS;
+
+      // Check if the payout account now exists
+      const { data: heldAccount } = await supabase
+        .from('payout_accounts')
+        .select('id')
+        .eq('business_id', hp.business_id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (coolingDone && isVerified && heldAccount) {
+        await supabase
+          .from('business_payouts')
+          .update({ status: 'approved' })
+          .eq('id', hp.id);
+        released++;
+      }
+    }
+
+    logger.debug(`[AUTO-PAYOUT] Generated: ${generated}, Auto-approved: ${autoApproved}, Transferred: ${transferred}, Held: ${held}, Released: ${released}`);
 
     return NextResponse.json({
       message: 'Auto-payout complete',
@@ -211,9 +292,41 @@ export async function GET(request: NextRequest) {
       autoApproved,
       transferred,
       held,
+      released,
     });
   } catch (error) {
     logger.error('[AUTO-PAYOUT] Error:', error);
     return NextResponse.json({ error: 'Auto-payout failed' }, { status: 500 });
   }
+}
+
+/**
+ * Send email notification to business owner when a payout transfer fails.
+ */
+async function notifyPayoutFailure(
+  supabase: ReturnType<typeof createServiceClient>,
+  businessId: string,
+  amount: number,
+  currency: string,
+  reason: string,
+) {
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('name, owner_id')
+    .eq('id', businessId)
+    .single();
+
+  if (!biz) return;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('email')
+    .eq('id', biz.owner_id)
+    .single();
+
+  if (!profile?.email) return;
+
+  const formattedAmount = `${currency} ${amount.toLocaleString()}`;
+  const email = payoutFailedEmail(biz.name, formattedAmount, reason || 'Transfer failed');
+  await sendEmail({ to: profile.email, ...email });
 }

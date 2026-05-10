@@ -6,6 +6,16 @@ import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 const COOLING_PERIOD_DAYS = 7;
 const VELOCITY_THRESHOLD = 50; // max transactions per day before flagging
 
+// Minimum payout thresholds per country (in local currency)
+const MINIMUM_PAYOUT: Record<string, number> = {
+  NG: 5000,  // ₦5,000
+  GH: 50,    // GH₵50
+  US: 25,    // $25
+  GB: 20,    // £20
+  CA: 25,    // CA$25
+  KE: 2500,  // KSh2,500
+};
+
 interface Flag {
   type: string;
   message: string;
@@ -91,7 +101,23 @@ export async function POST(request: NextRequest) {
         .lte('created_at', periodEnd.toISOString());
 
       const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const net = Math.max(0, gross - totalFees);
+
+      // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
+      const { data: adjustments } = await supabase
+        .from('payout_adjustments')
+        .select('id, amount')
+        .eq('business_id', biz.id)
+        .is('applied_to_payout_id', null);
+
+      const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
+      const net = Math.max(0, gross - totalFees + totalAdjustments);
+
+      // Minimum payout threshold — skip if amount too small
+      const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
+      if (net < minPayout) {
+        skipped++;
+        continue;
+      }
 
       // Build flags
       const flags: Flag[] = [];
@@ -179,7 +205,7 @@ export async function POST(request: NextRequest) {
         .eq('is_active', true)
         .maybeSingle();
 
-      await supabase.from('business_payouts').insert({
+      const { data: newPayout } = await supabase.from('business_payouts').insert({
         business_id: biz.id,
         payout_account_id: payoutAccount?.id || null,
         period_start: periodStartStr,
@@ -191,7 +217,16 @@ export async function POST(request: NextRequest) {
         currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,
         flags,
-      });
+      }).select('id').single();
+
+      // Mark adjustments as applied to this payout
+      if (newPayout && adjustments && adjustments.length > 0) {
+        const adjIds = adjustments.map((a) => a.id);
+        await supabase
+          .from('payout_adjustments')
+          .update({ applied_to_payout_id: newPayout.id })
+          .in('id', adjIds);
+      }
 
       if (status === 'held') {
         held++;

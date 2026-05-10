@@ -94,6 +94,15 @@ export async function GET(request: NextRequest) {
 
     const paidOut = (payouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
 
+    // Get unapplied payout adjustments (e.g. post-payout refunds pending deduction)
+    const { data: adjustments } = await supabase
+      .from('payout_adjustments')
+      .select('amount')
+      .eq('business_id', businessId)
+      .is('applied_to_payout_id', null);
+
+    const pendingAdjustments = (adjustments || []).reduce((sum, a) => sum + Number(a.amount || 0), 0);
+
     // Get pending payouts
     const { data: pendingPayouts } = await supabase
       .from('business_payouts')
@@ -103,7 +112,7 @@ export async function GET(request: NextRequest) {
 
     const pending = (pendingPayouts || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0);
 
-    const netAvailable = Math.max(0, gross - totalFees - paidOut - pending);
+    const netAvailable = Math.max(0, gross - totalFees - paidOut - pending + pendingAdjustments);
 
     // Get pending revenue from orders (confirmed but not yet paid)
     const { data: pendingOrders } = await supabase
@@ -142,6 +151,7 @@ export async function GET(request: NextRequest) {
       net_available: netAvailable,
       paid_out: paidOut,
       pending_payouts: pending,
+      pending_adjustments: pendingAdjustments,
       pending_order_revenue: pendingOrderRevenue,
       pending_booking_revenue: pendingBookingRevenue,
       total_orders: completedOrderCount || 0,
