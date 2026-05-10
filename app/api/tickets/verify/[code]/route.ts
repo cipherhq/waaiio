@@ -31,6 +31,7 @@ export async function GET(
         date,
         time,
         venue,
+        image_url,
         self_checkin_enabled
       ),
       booking:bookings!booking_id (
@@ -67,6 +68,7 @@ export async function GET(
       scanned_at: ticket.scanned_at,
       scanned_by: ticket.scanned_by,
       self_checkin_enabled: event?.self_checkin_enabled || false,
+      image_url: event?.image_url || null,
     },
   });
 }

@@ -20,7 +20,7 @@ export const ticketingFlow: FlowDefinition = {
 
         const { data: events } = await ctx.supabase
           .from('events')
-          .select('id, name, date, venue, price, total_tickets, tickets_sold')
+          .select('id, name, date, venue, price, total_tickets, tickets_sold, image_url')
           .eq('business_id', ctx.business.id)
           .in('status', ['published'])
           .gte('date', new Date().toISOString().split('T')[0])
@@ -51,7 +51,7 @@ export const ticketingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: event } = await ctx.supabase
           .from('events')
-          .select('id, name, date, time, venue, price, total_tickets, tickets_sold, max_per_order')
+          .select('id, name, date, time, venue, price, total_tickets, tickets_sold, max_per_order, image_url')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
@@ -74,6 +74,7 @@ export const ticketingFlow: FlowDefinition = {
             event_price: event.price,
             event_available: available,
             event_max_per_order: event.max_per_order,
+            event_image_url: event.image_url || null,
           },
         };
       },
@@ -148,7 +149,18 @@ export const ticketingFlow: FlowDefinition = {
         const maxTickets = eventMax || bizMax;
         const maxShow = Math.min(available, maxTickets);
 
-        return [
+        const messages: PromptMessage[] = [];
+
+        // Show event flyer if available
+        if (d.event_image_url) {
+          messages.push({
+            type: 'image' as const,
+            imageUrl: d.event_image_url as string,
+            caption: d.event_name as string,
+          });
+        }
+
+        messages.push(
           {
             type: 'text',
             text: [
@@ -168,7 +180,9 @@ export const ticketingFlow: FlowDefinition = {
               ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
             ].slice(0, 3), // WhatsApp max 3 buttons
           },
-        ];
+        );
+
+        return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const qty = parseInt(input, 10);

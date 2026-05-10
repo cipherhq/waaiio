@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -49,6 +49,8 @@ export default function EventsPage() {
   const [newTypeName, setNewTypeName] = useState('');
   const [newTypePrice, setNewTypePrice] = useState(0);
   const [newTypeTotal, setNewTypeTotal] = useState(100);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
     id: '',
@@ -62,6 +64,7 @@ export default function EventsPage() {
     max_per_order: 0,
     status: 'published' as EventItem['status'],
     self_checkin_enabled: false,
+    image_url: '' as string | null,
   });
 
   const loadEvents = useCallback(async () => {
@@ -110,8 +113,26 @@ export default function EventsPage() {
     loadTicketTypes(form.id);
   }
 
+  async function handleImageUpload(file: File) {
+    if (file.size > 5 * 1024 * 1024) { alert('Image must be under 5MB'); return; }
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('business_id', business.id);
+      const res = await fetch('/api/services/upload-image', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success && json.url) {
+        setForm(prev => ({ ...prev, image_url: json.url }));
+      }
+    } catch {
+      // upload failed silently
+    }
+    setUploading(false);
+  }
+
   function openAdd() {
-    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false });
+    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false, image_url: null });
     setView('add');
   }
 
@@ -128,6 +149,7 @@ export default function EventsPage() {
       max_per_order: event.max_per_order || 0,
       status: event.status,
       self_checkin_enabled: event.self_checkin_enabled || false,
+      image_url: event.image_url || null,
     });
     setView('edit');
     loadTicketTypes(event.id);
@@ -149,6 +171,7 @@ export default function EventsPage() {
       max_per_order: form.max_per_order || null,
       status: form.status,
       self_checkin_enabled: form.self_checkin_enabled,
+      image_url: form.image_url || null,
     };
 
     if (view === 'add') {
@@ -217,6 +240,63 @@ export default function EventsPage() {
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Venue</label>
               <input type="text" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} placeholder="e.g. Eko Hotel, Lagos" className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+            </div>
+
+            {/* Event Flyer / Image */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Event Flyer</label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleImageUpload(f);
+                }}
+              />
+              {form.image_url ? (
+                <div className="relative inline-block">
+                  <img
+                    src={form.image_url}
+                    alt="Event flyer"
+                    className="h-32 w-48 rounded-lg border border-gray-200 object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, image_url: null }))}
+                    className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow hover:bg-red-600"
+                  >
+                    x
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-2 block text-xs text-brand hover:underline"
+                  >
+                    Change image
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex h-32 w-48 items-center justify-center rounded-lg border-2 border-dashed border-gray-200 text-sm text-gray-400 hover:border-brand hover:text-brand disabled:opacity-50"
+                >
+                  {uploading ? (
+                    <span className="flex items-center gap-2">
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                      Uploading...
+                    </span>
+                  ) : (
+                    <span className="text-center">
+                      <span className="block text-2xl">📷</span>
+                      Upload Flyer
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -395,8 +475,14 @@ export default function EventsPage() {
               <div
                 key={event.id}
                 onClick={() => openEdit(event)}
-                className="cursor-pointer rounded-xl border border-gray-100 bg-white p-5 transition hover:border-gray-200 hover:shadow-sm"
+                className="cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm"
               >
+                {event.image_url ? (
+                  <img src={event.image_url} alt={event.name} className="h-32 w-full object-cover" />
+                ) : (
+                  <div className="flex h-32 w-full items-center justify-center bg-gray-50 text-3xl text-gray-300">🎪</div>
+                )}
+                <div className="p-5">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-900">{event.name}</h3>
                   {event.status !== 'published' && (
@@ -419,6 +505,7 @@ export default function EventsPage() {
                     <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${progress}%` }} />
                   </div>
                 )}
+                </div>
               </div>
             );
           })}

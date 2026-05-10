@@ -17,6 +17,7 @@ interface TicketData {
   status: string;
   scanned_at: string | null;
   scanned_by: string | null;
+  image_url: string | null;
 }
 
 type PageState = 'loading' | 'ready' | 'marking' | 'verified' | 'error';
@@ -210,6 +211,14 @@ export default function TicketVerifyPage() {
               <p className="text-sm font-bold text-red-700">Cancelled</p>
               <p className="text-xs text-red-600">This ticket has been cancelled</p>
             </div>
+          </div>
+        )}
+
+        {/* Event flyer */}
+        {ticket.image_url && (
+          <div className="mb-4 overflow-hidden rounded-xl border border-gray-200 shadow-sm">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={ticket.image_url} alt={ticket.event_name} className="w-full object-cover" style={{ maxHeight: '200px' }} />
           </div>
         )}
 
