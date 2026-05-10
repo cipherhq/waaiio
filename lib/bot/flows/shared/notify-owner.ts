@@ -6,10 +6,13 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 // ── Helper: fetch owner info from business ──
+// IMPORTANT: Always prefer profile.phone (owner's personal phone) over biz.phone
+// because biz.phone might be the WABA number (which can't receive WhatsApp messages
+// since it's disconnected from the phone app once registered on the API).
 async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string) {
   const { data: biz } = await supabase
     .from('businesses')
-    .select('phone, owner_id, wa_method, profiles:owner_id (email, phone)')
+    .select('phone, owner_id, wa_method, whatsapp_channel_id, profiles:owner_id (email, phone)')
     .eq('id', businessId)
     .single();
 
@@ -17,7 +20,26 @@ async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string) {
 
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email;
-  const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  // Prefer owner's personal phone — biz.phone may be the WABA number
+  let ownerPhone = (profile?.phone as string) || (biz.phone as string) || null;
+
+  // If the business has a dedicated WABA channel, make sure we don't send to the WABA number
+  if (ownerPhone && biz.whatsapp_channel_id) {
+    const { data: channel } = await supabase
+      .from('whatsapp_channels')
+      .select('phone_number')
+      .eq('id', biz.whatsapp_channel_id)
+      .maybeSingle();
+    if (channel?.phone_number) {
+      const wabaDigits = channel.phone_number.replace(/\D/g, '');
+      const ownerDigits = ownerPhone.replace(/\D/g, '');
+      if (wabaDigits === ownerDigits) {
+        // Owner's phone IS the WABA number — can't send WhatsApp to it
+        ownerPhone = null;
+      }
+    }
+  }
+
   const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
 
   return { ownerEmail, ownerPhone, isDedicated };
@@ -57,7 +79,8 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
 
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email;
-  const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  // Prefer owner's personal phone — biz.phone may be the WABA number
+  const ownerPhone = (profile?.phone as string) || (biz.phone as string) || null;
   const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(totalAmount, cc);
@@ -145,7 +168,8 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
 
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email;
-  const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  // Prefer owner's personal phone — biz.phone may be the WABA number
+  const ownerPhone = (profile?.phone as string) || (biz.phone as string) || null;
   const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(estimatedSubtotal, cc);
@@ -277,7 +301,8 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
 
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email;
-  const ownerPhone = (biz.phone as string) || (profile?.phone as string);
+  // Prefer owner's personal phone — biz.phone may be the WABA number
+  const ownerPhone = (profile?.phone as string) || (biz.phone as string) || null;
   const isDedicated = biz.wa_method && biz.wa_method !== 'shared';
   const cc = countryCode || 'NG';
   const dashboardUrl = `https://app.waaiio.com/dashboard/reservations`;
