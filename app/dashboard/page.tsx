@@ -134,6 +134,7 @@ export default function DashboardOverview() {
 
   useEffect(() => {
     async function load() {
+      try {
       const supabase = createClient();
       const today = new Date().toISOString().split('T')[0];
       const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
@@ -142,9 +143,7 @@ export default function DashboardOverview() {
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
-        supabase.from('payments').select('amount').eq('status', 'success').in('booking_id',
-          (await supabase.from('bookings').select('id').eq('business_id', business.id)).data?.map(b => b.id) || []
-        ),
+        supabase.from('platform_fees').select('transaction_amount').eq('business_id', business.id).is('refunded_at', null),
         supabase.from('bookings')
           .select('id, reference_code, guest_name, guest_phone, date, time, party_size, total_amount, deposit_amount, status, created_at')
           .eq('business_id', business.id)
@@ -163,7 +162,7 @@ export default function DashboardOverview() {
         supabase.from('invoices').select('total_amount').eq('business_id', business.id).in('status', ['sent', 'viewed', 'overdue']),
       ]);
 
-      const revenue = (revenueRes.data || []).reduce((sum, p) => sum + (p.amount || 0), 0);
+      const revenue = (revenueRes.data || []).reduce((sum, p) => sum + (Number(p.transaction_amount) || 0), 0);
       const hours = business.operating_hours as Record<string, unknown> | null;
 
       const outstandingInvoices = outstandingInvRes.data || [];
@@ -191,6 +190,10 @@ export default function DashboardOverview() {
         .then(r => r.json())
         .then(data => setRecommendations(data.recommendations || []))
         .catch(() => {});
+      } catch (err) {
+        console.error('[DASHBOARD] Load error:', err);
+        setLoading(false); // Show page even if data fetch fails
+      }
     }
     load();
   }, [business.id]);
