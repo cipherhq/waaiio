@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useMemo, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { getPostHogClient } from '@/lib/posthog/client';
@@ -206,20 +206,18 @@ const COEXIST_WARNINGS = [
   },
 ];
 
-function useQueryParams() {
-  const searchParams = useSearchParams();
-  return {
-    searchParams,
-    preselectedPlan: searchParams.get('plan') as SubscriptionTier | null,
-    successBusinessId: searchParams.get('business_id'),
-    successStep: searchParams.get('step'),
-  };
+function getQueryParam(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  return params.get(key);
 }
 
 function OnboardingWizard() {
   useCategoryConfig(); // trigger DB load for category templates
   const router = useRouter();
-  const { searchParams, preselectedPlan, successBusinessId, successStep } = useQueryParams();
+  const preselectedPlan = getQueryParam('plan') as SubscriptionTier | null;
+  const successBusinessId = getQueryParam('business_id');
+  const successStep = getQueryParam('step');
 
   const [step, setStep] = useState<WizardStep>('auth');
   const [user, setUser] = useState<User | null>(null);
@@ -407,7 +405,7 @@ function OnboardingWizard() {
     if (step !== 'success' || successData) return;
     if (!successBusinessId) return;
 
-    const ref = searchParams.get('reference') || searchParams.get('trxref');
+    const ref = getQueryParam('reference') || getQueryParam('trxref');
     verifyPayment(ref || '', successBusinessId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, successBusinessId]);
