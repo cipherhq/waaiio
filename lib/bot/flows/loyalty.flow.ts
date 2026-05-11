@@ -219,7 +219,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
       await ctx.sender.sendText({
         to: ctx.from,
-        text: `✅ *Reward Redeemed!*\n\nYou've redeemed *${rewardDesc}*.\n\n${threshold} points have been deducted. Your new balance is *${balance - threshold}* points.\n\nScreenshot this message and show it at your next visit to claim your reward!`,
+        text: `✅ *Reward Redeemed!*\n\nYou've redeemed *${rewardDesc}*.\n\n${threshold} points have been deducted. Your new balance is *${balance - threshold}* points.\n\nScreenshot this message and show it at your next visit to claim your reward!\n\n💡 *What you can do:*\n• Type *my points* to check your balance\n• Type *Hi* to book or order`,
       });
     } catch (err) {
       logger.error('[LOYALTY] Redemption error:', err);

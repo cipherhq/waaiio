@@ -184,14 +184,14 @@ export const rsvpFlow: FlowDefinition = {
         if (response === 'declined') {
           return [{
             type: 'text',
-            text: `Sorry to miss you! Maybe next time 🙏\n\nIf you change your mind, just send *rsvp* again.`,
+            text: `Sorry to miss you! Maybe next time 🙏\n\nIf you change your mind, just send *rsvp* again.\n\n💡 *What you can do:*\n• Type *Hi* to explore more`,
           }];
         }
 
         if (response === 'maybe') {
           return [{
             type: 'text',
-            text: `Got it! We'll check back with you closer to the date.\n\nIf you decide, just send *yes* or *no* anytime.`,
+            text: `Got it! We'll check back with you closer to the date.\n\nIf you decide, just send *yes* or *no* anytime.\n\n💡 *What you can do:*\n• Type *Hi* to explore more`,
           }];
         }
 
@@ -229,7 +229,7 @@ export const rsvpFlow: FlowDefinition = {
           `We'll send you a reminder before the event. See you there! 🎉`,
         ].filter(Boolean);
 
-        return [{ type: 'text', text: lines.join('\n') }];
+        return [{ type: 'text', text: lines.join('\n') + `\n\n💡 *What you can do:*\n• Type *Hi* to explore more` }];
       },
       async validate(): Promise<ValidationResult> {
         return { valid: true };

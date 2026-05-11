@@ -108,7 +108,8 @@ export const recurringManageFlow: FlowDefinition = {
               `Charges: ${sub.charge_count}`,
               sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
               sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
-            ].filter(Boolean).join('\n'),
+            ].filter(Boolean).join('\n')
+            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
           });
         }
         return null;
@@ -181,9 +182,10 @@ export const recurringManageFlow: FlowDefinition = {
 
         return [{
           type: 'text',
-          text: cancelled
+          text: (cancelled
             ? '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
-            : '✅ Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.',
+            : '✅ Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.')
+            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },

@@ -90,7 +90,7 @@ const waitlistConfirmStep: FlowStepConfig = {
       .maybeSingle();
 
     if (existing) {
-      return [{ type: 'text', text: `You're already on the waitlist, ${customerName}! We'll notify you when a spot opens up.` }];
+      return [{ type: 'text', text: `You're already on the waitlist, ${customerName}! We'll notify you when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Type *Hi* to start again` }];
     }
 
     // Insert waitlist entry
@@ -113,7 +113,7 @@ const waitlistConfirmStep: FlowStepConfig = {
 
     return [{
       type: 'text',
-      text: `You're on the waitlist, ${customerName}! We'll send you a message when a spot opens up.`,
+      text: `You're on the waitlist, ${customerName}! We'll send you a message when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Type *Hi* to start again`,
     }];
   },
 

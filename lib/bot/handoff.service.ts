@@ -128,6 +128,6 @@ export async function resolveConversation(params: ResolveParams): Promise<void> 
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
   await sender.sendText({
     to: phone,
-    text: "This chat session has been closed. ✅\n\nSend *Hi* to continue with bookings, payments, and other services. 🙏",
+    text: "This chat session has been closed. ✅\n\nSend *Hi* to continue with bookings, payments, and other services. 🙏\n\n💡 *What you can do:*\n• Type *Hi* to start a new conversation\n• Type *my bookings* to check your bookings",
   });
 }
