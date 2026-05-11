@@ -19,7 +19,7 @@ import {
 import { getCategoryList, getCategoryByKey } from '@/lib/categoryConfig';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
-import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
+import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import type { User } from '@supabase/supabase-js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -1417,6 +1417,9 @@ function OnboardingWizard() {
                     },
                   ] as const).map(feat => {
                     const isSelected = selectedCapabilities.includes(feat.id);
+                    const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
+                    const tierLabel = tier === 'free' ? null : tier === 'growth' ? 'Pro' : 'Premium';
+                    const tierColor = tier === 'growth' ? 'bg-blue-100 text-blue-700' : tier === 'business' ? 'bg-purple-100 text-purple-700' : '';
                     return (
                       <div key={feat.id} className="group relative">
                         <button
@@ -1448,6 +1451,9 @@ function OnboardingWizard() {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-semibold text-gray-900">{feat.title}</span>
+                                {tierLabel && (
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tierColor}`}>{tierLabel}</span>
+                                )}
                               </div>
                               <p className="mt-0.5 text-xs text-gray-500">{feat.desc}</p>
                               <p className="mt-1 text-[11px] text-gray-400 italic">{feat.example}</p>
@@ -1492,6 +1498,9 @@ function OnboardingWizard() {
                       { id: 'waitlist' as CapabilityId, title: 'Waitlist', desc: 'Automatically manage waitlists when fully booked' },
                     ] as const).map(feat => {
                       const isSelected = selectedCapabilities.includes(feat.id);
+                      const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
+                      const tierLabel = tier === 'free' ? null : tier === 'growth' ? 'Pro' : 'Premium';
+                      const tierColor = tier === 'growth' ? 'bg-blue-100 text-blue-700' : tier === 'business' ? 'bg-purple-100 text-purple-700' : '';
                       return (
                         <button
                           key={feat.id}
@@ -1512,9 +1521,10 @@ function OnboardingWizard() {
                           }`}>
                             {isSelected && <svg className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                           </div>
-                          <div>
+                          <div className="flex items-center gap-2">
                             <span className="text-xs font-medium text-gray-700">{feat.title}</span>
-                            <span className="ml-2 text-[11px] text-gray-400">{feat.desc}</span>
+                            {tierLabel && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${tierColor}`}>{tierLabel}</span>}
+                            <span className="text-[11px] text-gray-400">{feat.desc}</span>
                           </div>
                         </button>
                       );
