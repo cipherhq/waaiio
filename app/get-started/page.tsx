@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -1017,6 +1017,18 @@ function OnboardingWizard() {
     ? `https://wa.me/${dedicatedNumber}`
     : `https://wa.me/${sharedNumber}?text=${encodeURIComponent(successData?.bot_code || botCode)}`;
   const localTiers = getPricingTiers(selectedCountry);
+
+  // Compute the minimum required plan based on selected features
+  const requiredPlan = useMemo(() => {
+    let highest: 'free' | 'growth' | 'business' = 'free';
+    for (const cap of selectedCapabilities) {
+      const tier = CAPABILITY_TIER_REQUIREMENTS[cap] || 'free';
+      if (tier === 'business') { highest = 'business'; break; }
+      if (tier === 'growth' && highest === 'free') highest = 'growth';
+    }
+    return highest;
+  }, [selectedCapabilities]);
+
   const panel = STEP_PANELS[step];
 
   function handleConnectContinue() {
@@ -1532,30 +1544,48 @@ function OnboardingWizard() {
                   </div>
                 </div>
 
-                {/* Selected count */}
-                <div className="mt-6 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-medium text-gray-700">{selectedCapabilities.length} feature{selectedCapabilities.length !== 1 ? 's' : ''} selected</p>
-                    <p className="text-[11px] text-gray-400">You can change these anytime in Dashboard &rarr; Settings</p>
-                  </div>
-                  {selectedCapabilities.length === 0 && (
-                    <button
-                      type="button"
-                      onClick={() => {
+                {/* Selected count & plan indicator */}
+                <div className="mt-6 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-medium text-gray-700">
+                        {selectedCapabilities.length} feature{selectedCapabilities.length !== 1 ? 's' : ''} selected
+                      </p>
+                      <p className="text-[11px] text-gray-500 mt-0.5">
+                        {requiredPlan === 'free' ? (
+                          <span className="text-green-600 font-medium">Free plan — no monthly fee, {localTiers.free.feePercentage}% per transaction</span>
+                        ) : requiredPlan === 'growth' ? (
+                          <span className="text-blue-600 font-medium">Requires Pro plan — {formatCurrency(localTiers.growth.price as number, selectedCountry)}/mo, {localTiers.growth.feePercentage}% per transaction</span>
+                        ) : (
+                          <span className="text-purple-600 font-medium">Requires Premium plan — {formatCurrency(localTiers.business.price as number, selectedCountry)}/mo, {localTiers.business.feePercentage}% per transaction</span>
+                        )}
+                      </p>
+                    </div>
+                    {selectedCapabilities.length === 0 && (
+                      <button type="button" onClick={() => {
                         const defaults = CATEGORY_DEFAULT_CAPABILITIES[category!] || ['chat'];
                         setSelectedCapabilities([...defaults]);
-                      }}
-                      className="text-xs font-medium text-brand hover:underline"
-                    >
-                      Reset to defaults
-                    </button>
-                  )}
+                      }} className="text-xs font-medium text-brand hover:underline">
+                        Reset to defaults
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1">You can always change this later in Dashboard &rarr; Settings</p>
                 </div>
 
                 <div className="mt-6">
                   <button
                     type="button"
-                    onClick={() => setStep('plan')}
+                    onClick={() => {
+                      // Auto-select the minimum required plan based on features, but never downgrade a manual choice
+                      const planOrder = ['free', 'growth', 'business'] as const;
+                      const requiredIdx = planOrder.indexOf(requiredPlan);
+                      const currentIdx = planOrder.indexOf(selectedPlan);
+                      if (requiredIdx > currentIdx) {
+                        setSelectedPlan(requiredPlan as SubscriptionTier);
+                      }
+                      setStep('plan');
+                    }}
                     disabled={selectedCapabilities.length === 0}
                     className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
@@ -1579,7 +1609,10 @@ function OnboardingWizard() {
 
                 <div className="mt-6 space-y-4">
                   {/* Free / Starter */}
-                  <button type="button" onClick={() => setSelectedPlan('free')} className={`w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <button type="button" onClick={() => setSelectedPlan('free')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                    {requiredPlan === 'free' && selectedCapabilities.length > 0 && (
+                      <span className="absolute -top-3 left-4 rounded-full bg-green-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
+                    )}
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-gray-900">{localTiers.free.name}</h3>
@@ -1601,6 +1634,9 @@ function OnboardingWizard() {
                   {/* Growth / Pro */}
                   <button type="button" onClick={() => setSelectedPlan('growth')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
                     <span className="absolute -top-3 right-4 rounded-full bg-accent px-3 py-0.5 text-xs font-bold text-gray-900">Most Popular</span>
+                    {requiredPlan === 'growth' && (
+                      <span className="absolute -top-3 left-4 rounded-full bg-blue-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
+                    )}
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-gray-900">{localTiers.growth.name}</h3>
@@ -1621,7 +1657,10 @@ function OnboardingWizard() {
                   </button>
 
                   {/* Business / Premium */}
-                  <button type="button" onClick={() => setSelectedPlan('business')} className={`w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'business' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <button type="button" onClick={() => setSelectedPlan('business')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'business' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                    {requiredPlan === 'business' && (
+                      <span className="absolute -top-3 left-4 rounded-full bg-purple-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
+                    )}
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="text-lg font-bold text-gray-900">{localTiers.business.name}</h3>
