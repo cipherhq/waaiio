@@ -99,7 +99,7 @@ export const recurringManageFlow: FlowDefinition = {
           await ctx.sender.sendText({
             to: ctx.from,
             text: [
-              `\ud83d\udccb *Subscription Details*`,
+              `📋 *Subscription Details*`,
               '',
               `Amount: ${formatCurrency(sub.amount, cc)}`,
               `Frequency: ${sub.frequency}`,
@@ -182,8 +182,8 @@ export const recurringManageFlow: FlowDefinition = {
         return [{
           type: 'text',
           text: cancelled
-            ? '\u2705 Your recurring payment has been cancelled. You will no longer be charged automatically.'
-            : '\u2705 Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.',
+            ? '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
+            : '✅ Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.',
         }];
       },
       async validate(): Promise<ValidationResult> { return { valid: true }; },

@@ -16,7 +16,7 @@ const invoiceListStep: FlowStepConfig = {
     const businessId = ctx.session.business_id || ctx.session.session_data.invoice_business_id as string;
 
     if (!businessId) {
-      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705' }];
+      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! ✅' }];
     }
 
     const { data: invoices } = await ctx.supabase
@@ -29,7 +29,7 @@ const invoiceListStep: FlowStepConfig = {
       .limit(10);
 
     if (!invoices || invoices.length === 0) {
-      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705' }];
+      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! ✅' }];
     }
 
     // Store invoice list for selection
@@ -43,17 +43,17 @@ const invoiceListStep: FlowStepConfig = {
 
     const lines = invoices.map((inv, i) => {
       const num = i + 1;
-      const emoji = num <= 9 ? `${num}\uFE0F\u20E3` : `${num}.`;
+      const emoji = num <= 9 ? `${num}️\u20E3` : `${num}.`;
       const dueDateStr = inv.due_date
         ? new Date(inv.due_date).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' })
         : 'No due date';
-      const statusTag = inv.status === 'overdue' ? ' \u26A0\uFE0F OVERDUE' : '';
+      const statusTag = inv.status === 'overdue' ? ' ⚠️ OVERDUE' : '';
       return `${emoji} ${inv.invoice_number} \u2022 ${formatCurrency(inv.total_amount, cc)} \u2022 Due ${dueDateStr}${statusTag}`;
     });
 
     return [{
       type: 'text',
-      text: `\uD83D\uDCC4 *Your Invoices*\n\n${lines.join('\n')}\n\nReply with a number to view or pay.`,
+      text: `📄 *Your Invoices*\n\n${lines.join('\n')}\n\nReply with a number to view or pay.`,
     }];
   },
 
@@ -105,23 +105,23 @@ const invoiceDetailStep: FlowStepConfig = {
     const dueDate = invoice.due_date
       ? new Date(invoice.due_date).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric', year: 'numeric' })
       : 'N/A';
-    const statusTag = invoice.status === 'overdue' ? ' \u26A0\uFE0F OVERDUE' : '';
+    const statusTag = invoice.status === 'overdue' ? ' ⚠️ OVERDUE' : '';
 
     const itemLines = (items || []).map(item =>
       `  \u2022 ${item.description} x${item.quantity} \u2014 ${formatCurrency(item.total, cc)}`
     );
 
     const summary = [
-      `\uD83D\uDCC4 *Invoice ${invoice.invoice_number}*`,
+      `📄 *Invoice ${invoice.invoice_number}*`,
       '',
       `From: ${biz?.name || 'Business'}`,
       `Date: ${createdDate}`,
       `Due: ${dueDate}${statusTag}`,
       '',
-      `\uD83D\uDCCB Items:`,
+      `📋 Items:`,
       ...itemLines,
       '',
-      `\uD83D\uDCB0 Total: *${formatCurrency(invoice.total_amount, cc)}*`,
+      `💰 Total: *${formatCurrency(invoice.total_amount, cc)}*`,
     ];
 
     return [
@@ -251,7 +251,7 @@ const invoicePayStep: FlowStepConfig = {
 
       return [{
         type: 'text',
-        text: `\uD83D\uDCB3 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt`,
+        text: `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt`,
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);

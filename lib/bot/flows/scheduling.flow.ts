@@ -1568,7 +1568,7 @@ export const schedulingFlow: FlowDefinition = {
                   `👥 ${partySize} ${labels.quantityLabel}`,
                   `🔑 Ref: *${booking.reference_code}*`,
                   '',
-                  `\ud83d\udcb3 *${isPrepay ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
+                  `💳 *${isPrepay ? 'Payment' : 'Deposit'} Required: ${formatCurrency(totalDeposit, (ctx.business?.country_code || 'NG') as CountryCode)}*`,
                   '',
                   `Pay here 👇`,
                   paymentResult.url,

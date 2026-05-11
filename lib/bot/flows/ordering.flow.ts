@@ -12,7 +12,7 @@ import { logger } from '@/lib/logger';
 
 /** Generic labels for ordering flow */
 function getOrderingLabels(_category: string): { noun: string; emoji: string; browseLabel: string } {
-  return { noun: 'catalog', emoji: '\uD83D\uDECD\uFE0F', browseLabel: 'Browse' };
+  return { noun: 'catalog', emoji: '🛍️', browseLabel: 'Browse' };
 }
 
 /** WhatsApp list row titles max 24 chars, descriptions max 72 chars */
@@ -283,7 +283,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const items = [
-          { title: '\u2B05 Back to Categories', description: 'Browse other categories', postbackText: 'back_to_categories' },
+          { title: '⬅ Back to Categories', description: 'Browse other categories', postbackText: 'back_to_categories' },
           ...products.map(p => {
             let desc = p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc);
             if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
@@ -295,7 +295,7 @@ export const orderingFlow: FlowDefinition = {
 
         const cart = (d.cart as CartItem[]) || [];
         const cartInfo = cart.length > 0
-          ? `\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`
+          ? `\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`
           : '';
 
         return [{
@@ -594,7 +594,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: '\uD83D\uDCF8 *Send a photo of the style you want*\n\nAttach a reference image showing the design, style, or look you\'re going for.\n\nType *skip* if you don\'t have one.',
+          text: '📸 *Send a photo of the style you want*\n\nAttach a reference image showing the design, style, or look you\'re going for.\n\nType *skip* if you don\'t have one.',
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -606,7 +606,7 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.mediaUrl) {
           return { valid: true, data: { custom_style_photo_url: ctx.mediaUrl } };
         }
-        return { valid: false, errorMessage: '\uD83D\uDCF7 Please send a photo or type *skip* to continue without one.' };
+        return { valid: false, errorMessage: '📷 Please send a photo or type *skip* to continue without one.' };
       },
       async next(ctx: FlowContext) {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -638,7 +638,7 @@ export const orderingFlow: FlowDefinition = {
         if (!field) return [{ type: 'text', text: 'Measurements complete.' }];
         return [{
           type: 'text',
-          text: `\uD83D\uDCCF *Measurement ${index + 1} of ${fields.length}: ${field}*\n\nType the measurement (e.g. 38 inches, 96cm):`,
+          text: `📏 *Measurement ${index + 1} of ${fields.length}: ${field}*\n\nType the measurement (e.g. 38 inches, 96cm):`,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -676,7 +676,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: '\u270D\uFE0F *Describe what you want*\n\nShare special details, color preferences, fabric choices, or any notes for the maker.\n\nType *skip* if nothing to add.',
+          text: '✍️ *Describe what you want*\n\nShare special details, color preferences, fabric choices, or any notes for the maker.\n\nType *skip* if nothing to add.',
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
@@ -711,7 +711,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'text',
-          text: '\uD83D\uDCC5 *When do you need this ready?*\n\nType a date (e.g. Dec 20, Next Friday, 2 weeks) or type *no deadline*.',
+          text: '📅 *When do you need this ready?*\n\nType a date (e.g. Dec 20, Next Friday, 2 weeks) or type *no deadline*.',
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
@@ -983,7 +983,7 @@ export const orderingFlow: FlowDefinition = {
         const addonCost = lastAddon ? formatCurrency(lastAddon.price * (lastAddon.quantity || 1), cc) : '';
         return [{
           type: 'buttons',
-          body: `\u2705 Added: ${lastAddon?.name} (${addonCost})\n\nAdd another extra?`,
+          body: `✅ Added: ${lastAddon?.name} (${addonCost})\n\nAdd another extra?`,
           buttons: [
             { id: 'more_addons', title: 'Add more' },
             { id: 'done_addons', title: 'Continue' },
@@ -1046,7 +1046,7 @@ export const orderingFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const total = calculateCartTotal(cart);
         const variantInfo = cartItem.variant_label ? ` (${cartItem.variant_label})` : '';
-        const addedText = `\u2705 *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`;
+        const addedText = `✅ *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`;
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
@@ -1082,7 +1082,7 @@ export const orderingFlow: FlowDefinition = {
           !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
         );
 
-        const checkoutItem = { title: 'Checkout \u2705', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
+        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
 
         await ctx.supabase
           .from('bot_sessions')
@@ -1163,7 +1163,7 @@ export const orderingFlow: FlowDefinition = {
         if (browseByCategory) {
           return [{
             type: 'buttons' as const,
-            body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 *${formatCurrency(total, cc)}*\n\nAdd more items or checkout:`,
+            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 *${formatCurrency(total, cc)}*\n\nAdd more items or checkout:`,
             buttons: [
               { id: 'browse_more', title: 'Browse Menu' },
               { id: 'checkout', title: 'Checkout' },
@@ -1185,7 +1185,7 @@ export const orderingFlow: FlowDefinition = {
           !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
         );
 
-        const checkoutItem = { title: 'Checkout \u2705', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
+        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
 
         // Group by category into sections
         const categoryMap = new Map<string, typeof products>();
@@ -1214,7 +1214,7 @@ export const orderingFlow: FlowDefinition = {
           return [{
             type: 'list' as const,
             title: 'Your Cart',
-            body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
+            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
             buttonLabel: 'View Options',
             items: [checkoutItem, ...products.slice(0, 9).map(p => ({
               title: truncTitle(p.name),
@@ -1237,7 +1237,7 @@ export const orderingFlow: FlowDefinition = {
         return [{
           type: 'list',
           title: 'Your Cart',
-          body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
+          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
           buttonLabel: 'View Options',
           items: listItems.slice(0, 10),
         }];
@@ -1507,8 +1507,8 @@ export const orderingFlow: FlowDefinition = {
             type: 'buttons',
             body: 'Would you like delivery or pickup?',
             buttons: [
-              { id: 'delivery', title: '\uD83D\uDE9A Delivery' },
-              { id: 'pickup', title: '\uD83C\uDFEA Pickup' },
+              { id: 'delivery', title: '🚚 Delivery' },
+              { id: 'pickup', title: '🏪 Pickup' },
             ],
           },
         ];
@@ -1531,7 +1531,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'collect_pickup_address',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83D\uDCCD *Pickup Location*\n\nWhere should we pick up the package?\n\nType the full address (e.g., 12 Main St, Lagos):' }];
+        return [{ type: 'text', text: '📍 *Pickup Location*\n\nWhere should we pick up the package?\n\nType the full address (e.g., 12 Main St, Lagos):' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input.trim().length < 5) {
@@ -1546,7 +1546,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'collect_dropoff_address',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83D\uDCCD *Drop-off Location*\n\nWhere should we deliver it? Type the full address:' }];
+        return [{ type: 'text', text: '📍 *Drop-off Location*\n\nWhere should we deliver it? Type the full address:' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input.trim().length < 5) {
@@ -1561,7 +1561,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'collect_package_description',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83D\uDCE6 What are you sending?\n\nBriefly describe the package (e.g., "Small box of documents"):' }];
+        return [{ type: 'text', text: '📦 What are you sending?\n\nBriefly describe the package (e.g., "Small box of documents"):' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input.trim().length < 3) {
@@ -1578,7 +1578,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: '\uD83D\uDCF8 Want to add a photo of the package?\n\nThis helps the rider identify it. You can also tap Skip.',
+          body: '📸 Want to add a photo of the package?\n\nThis helps the rider identify it. You can also tap Skip.',
           buttons: [
             { id: 'skip', title: 'Skip' },
           ],
@@ -1601,7 +1601,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'collect_address',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83D\uDCCD Please type your delivery address:' }];
+        return [{ type: 'text', text: '📍 Please type your delivery address:' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input.trim().length < 5) {
@@ -1619,7 +1619,7 @@ export const orderingFlow: FlowDefinition = {
         const address = ctx.session.session_data.delivery_address as string;
         return [{
           type: 'buttons',
-          body: `\uD83D\uDCCD Your delivery address:\n\n*${address}*\n\nIs this correct?`,
+          body: `📍 Your delivery address:\n\n*${address}*\n\nIs this correct?`,
           buttons: [
             { id: 'yes', title: 'Yes, correct' },
             { id: 'change', title: 'Change address' },
@@ -1663,7 +1663,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: '\uD83C\uDF81 Got a referral code from a friend?',
+          body: '🎁 Got a referral code from a friend?',
           buttons: [
             { id: 'enter_code', title: 'Enter Code' },
             { id: 'skip', title: 'Skip' },
@@ -1704,7 +1704,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'enter_referral_code',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83C\uDF81 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
+        return [{ type: 'text', text: '🎁 Enter your referral code below.\n\nType *skip* if you changed your mind.' }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const code = input.trim();
@@ -1737,7 +1737,7 @@ export const orderingFlow: FlowDefinition = {
     {
       id: 'collect_email',
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '\uD83D\uDCE7 Please type your email address:' }];
+        return [{ type: 'text', text: '📧 Please type your email address:' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         const email = input.trim().toLowerCase();
@@ -1841,7 +1841,7 @@ export const orderingFlow: FlowDefinition = {
           return [
             {
               type: 'text',
-              text: `\u26A0\uFE0F Minimum order amount is *${formatCurrency(minOrder, cc)}*.\n\nYour current total is ${formatCurrency(total, cc)}. Please add more items to continue.`,
+              text: `⚠️ Minimum order amount is *${formatCurrency(minOrder, cc)}*.\n\nYour current total is ${formatCurrency(total, cc)}. Please add more items to continue.`,
             },
             {
               type: 'buttons',
@@ -1853,59 +1853,59 @@ export const orderingFlow: FlowDefinition = {
 
         // Build summary
         const summary: string[] = [
-          `\uD83D\uDED2 *Order Summary*`,
+          `🛒 *Order Summary*`,
           '',
           ...lines,
         ];
 
         if (addonsTotal > 0) {
-          summary.push(`\n\uD83D\uDD27 Add-ons: ${formatCurrency(addonsTotal, cc)}`);
+          summary.push(`\n🔧 Add-ons: ${formatCurrency(addonsTotal, cc)}`);
         }
         if (volumeDiscountTotal > 0) {
-          summary.push(`\uD83C\uDF81 Volume Discount: -${formatCurrency(volumeDiscountTotal, cc)}`);
+          summary.push(`🎁 Volume Discount: -${formatCurrency(volumeDiscountTotal, cc)}`);
         }
         if (promoDiscount > 0) {
-          summary.push(`\uD83C\uDF9F\uFE0F Promo: -${formatCurrency(promoDiscount, cc)}`);
+          summary.push(`🎟️ Promo: -${formatCurrency(promoDiscount, cc)}`);
         }
         if (zoneName) {
-          summary.push(`\uD83D\uDE9A ${zoneName}: ${zonePrice > 0 ? formatCurrency(zonePrice, cc) : 'FREE'}`);
+          summary.push(`🚚 ${zoneName}: ${zonePrice > 0 ? formatCurrency(zonePrice, cc) : 'FREE'}`);
         } else if (shippingCost > 0) {
-          summary.push(`\uD83D\uDE9A Shipping: ${formatCurrency(shippingCost, cc)}`);
+          summary.push(`🚚 Shipping: ${formatCurrency(shippingCost, cc)}`);
         }
 
-        summary.push('', `\uD83D\uDCB0 *Total: ${formatCurrency(total, cc)}*`);
+        summary.push('', `💰 *Total: ${formatCurrency(total, cc)}*`);
 
         // Customer details
         summary.push('');
         const name = `${d.first_name || ''} ${d.last_name || ''}`.trim();
-        if (name) summary.push(`\uD83D\uDC64 ${name}`);
-        if (d.customer_email) summary.push(`\uD83D\uDCE7 ${d.customer_email}`);
+        if (name) summary.push(`👤 ${name}`);
+        if (d.customer_email) summary.push(`📧 ${d.customer_email}`);
         // Logistics mode: show pickup + dropoff
         if (d.pickup_address) {
-          summary.push(`\uD83D\uDCCD Pickup: ${d.pickup_address}`);
-          summary.push(`\uD83D\uDCCD Drop-off: ${d.dropoff_address || d.delivery_address}`);
-          if (d.package_description) summary.push(`\uD83D\uDCE6 Package: ${d.package_description}`);
-          if (d.package_photo_url) summary.push(`\uD83D\uDCF8 Photo: attached`);
+          summary.push(`📍 Pickup: ${d.pickup_address}`);
+          summary.push(`📍 Drop-off: ${d.dropoff_address || d.delivery_address}`);
+          if (d.package_description) summary.push(`📦 Package: ${d.package_description}`);
+          if (d.package_photo_url) summary.push(`📸 Photo: attached`);
         } else {
-          if (d.delivery_address) summary.push(`\uD83D\uDCCD ${d.delivery_address}`);
-          if (d.delivery_type === 'pickup') summary.push(`\uD83C\uDFEA Pickup`);
+          if (d.delivery_address) summary.push(`📍 ${d.delivery_address}`);
+          if (d.delivery_type === 'pickup') summary.push(`🏪 Pickup`);
         }
 
         // Custom order details
         const isCustomOrder = !!d.custom_order_started;
         if (isCustomOrder) {
           summary.push('');
-          summary.push('\uD83C\uDFA8 *Custom Order Details*');
-          if (d.custom_style_photo_url) summary.push('\uD83D\uDCF8 Style photo: attached');
+          summary.push('🎨 *Custom Order Details*');
+          if (d.custom_style_photo_url) summary.push('📸 Style photo: attached');
           const measurements = d.custom_measurements as Record<string, string> | undefined;
           if (measurements && Object.keys(measurements).length > 0) {
-            summary.push('\uD83D\uDCCF Measurements:');
+            summary.push('📏 Measurements:');
             for (const [field, value] of Object.entries(measurements)) {
               summary.push(`  \u2022 ${field}: ${value}`);
             }
           }
-          if (d.custom_design_notes) summary.push(`\u270D\uFE0F Notes: ${d.custom_design_notes}`);
-          if (d.custom_deadline) summary.push(`\uD83D\uDCC5 Deadline: ${d.custom_deadline}`);
+          if (d.custom_design_notes) summary.push(`✍️ Notes: ${d.custom_design_notes}`);
+          if (d.custom_deadline) summary.push(`📅 Deadline: ${d.custom_deadline}`);
         }
 
         const hasNegotiable = !!d._has_negotiable_addon;
@@ -1923,7 +1923,7 @@ export const orderingFlow: FlowDefinition = {
               { id: 'edit_order', title: 'Edit Order' },
             ]
           : [
-              { id: 'confirm_order', title: 'Confirm Order \u2705' },
+              { id: 'confirm_order', title: 'Confirm Order ✅' },
               { id: 'add_more_items', title: 'Add Items' },
               { id: 'edit_order', title: 'Edit Order' },
             ];
@@ -1972,23 +1972,23 @@ export const orderingFlow: FlowDefinition = {
           const item = cart[i];
           const label = item.variant_label ? `${item.name} (${item.variant_label})` : item.name;
           items.push({
-            title: truncTitle(`\u274C ${label}`),
+            title: truncTitle(`❌ ${label}`),
             description: `Remove \u2014 x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`,
             postbackText: `remove:${i}`,
           });
         }
 
         // Edit options
-        items.push({ title: '\u270F\uFE0F Change Name', description: `Current: ${d.first_name || ''} ${d.last_name || ''}`.trim(), postbackText: 'edit_name' });
+        items.push({ title: '✏️ Change Name', description: `Current: ${d.first_name || ''} ${d.last_name || ''}`.trim(), postbackText: 'edit_name' });
         if (d.delivery_address) {
-          items.push({ title: '\uD83D\uDCCD Change Address', description: `${(d.delivery_address as string).slice(0, 60)}`, postbackText: 'edit_address' });
+          items.push({ title: '📍 Change Address', description: `${(d.delivery_address as string).slice(0, 60)}`, postbackText: 'edit_address' });
         }
-        items.push({ title: '\u2B05 Back to Summary', description: 'Return to order review', postbackText: 'back_to_summary' });
+        items.push({ title: '⬅ Back to Summary', description: 'Return to order review', postbackText: 'back_to_summary' });
 
         return [{
           type: 'list',
           title: 'Edit Order',
-          body: `\uD83D\uDED2 ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
+          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
           buttonLabel: 'Edit Options',
           items: items.slice(0, 10),
         }];
@@ -2031,7 +2031,7 @@ export const orderingFlow: FlowDefinition = {
             const cart = (d.cart as CartItem[]) || [];
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `\u274C *${d._removed_name}* removed.\n\n\uD83D\uDED2 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`,
+              text: `❌ *${d._removed_name}* removed.\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`,
             });
             delete d._removed_name;
           }
@@ -2040,7 +2040,7 @@ export const orderingFlow: FlowDefinition = {
         if (action === 'cart_empty') {
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `\u274C *${d._removed_name}* removed. Your cart is now empty.\n\nSend *Hi* to start a new order.`,
+            text: `❌ *${d._removed_name}* removed. Your cart is now empty.\n\nSend *Hi* to start a new order.`,
           });
           delete d._removed_name;
           return null; // deactivate session
@@ -2434,11 +2434,11 @@ export const orderingFlow: FlowDefinition = {
                   addonsTotal: addonsTotal || undefined,
                   volumeDiscountAmount: volumeDiscountTotal || undefined,
                   countryCode: cc,
-                }) + `\n\n\uD83D\uDCB3 Pay here \uD83D\uDC47\n${paymentResult.url}\n\n\u2757 After completing payment, *come back to this chat* and tap *I've Paid* to confirm your order.`,
+                }) + `\n\n💳 Pay here 👇\n${paymentResult.url}\n\n❗ After completing payment, *come back to this chat* and tap *I've Paid* to confirm your order.`,
               },
               {
                 type: 'buttons',
-                body: "\uD83D\uDD14 Completed payment? Return here and tap *I've Paid* to confirm:",
+                body: "🔔 Completed payment? Return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'cancel', title: 'Cancel' },
@@ -2597,7 +2597,7 @@ export const orderingFlow: FlowDefinition = {
 
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `\u2705 *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
+              text: `✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
                 items: cart,
                 totalAmount,

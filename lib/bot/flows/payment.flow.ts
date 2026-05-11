@@ -121,11 +121,11 @@ export const paymentFlow: FlowDefinition = {
           {
             type: 'text',
             text: [
-              `\ud83d\udccb *${summaryTitle}*`,
+              `📋 *${summaryTitle}*`,
               '',
               `${isGiving ? '🙏' : '🏢'} ${ctx.business?.name}`,
-              `\ud83d\udccc ${d.service_name as string}`,
-              `\ud83d\udcb0 ${formatCurrency(d.amount as number, cc)}`,
+              `📌 ${d.service_name as string}`,
+              `💰 ${formatCurrency(d.amount as number, cc)}`,
             ].join('\n'),
           },
           {
@@ -290,17 +290,17 @@ export const paymentFlow: FlowDefinition = {
             {
               type: 'text',
               text: [
-                `\ud83d\udcb3 *Payment Link Ready*`,
+                `💳 *Payment Link Ready*`,
                 '',
                 `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
-                `\ud83d\udccc ${d.service_name as string}`,
-                `\ud83d\udcb0 ${formatCurrency(amount, cc)}`,
-                `\ud83d\udd11 Ref: *${booking.reference_code}*`,
+                `📌 ${d.service_name as string}`,
+                `💰 ${formatCurrency(amount, cc)}`,
+                `🔑 Ref: *${booking.reference_code}*`,
                 '',
-                `Pay here \ud83d\udc47`,
+                `Pay here 👇`,
                 paymentResult.url,
                 '',
-                `\u26a0\ufe0f After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+                `⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
               ].join('\n'),
             },
             {
@@ -542,8 +542,8 @@ export const paymentFlow: FlowDefinition = {
           type: 'buttons',
           body: `Would you like to set up automatic *${d.service_name as string}* payments of *${formatCurrency(d.amount as number, cc)}*?`,
           buttons: [
-            { id: 'monthly', title: 'Monthly \u2713' },
-            { id: 'weekly', title: 'Weekly \u2713' },
+            { id: 'monthly', title: 'Monthly ✓' },
+            { id: 'weekly', title: 'Weekly ✓' },
             { id: 'no_thanks', title: 'No thanks' },
           ],
         }];
@@ -784,7 +784,7 @@ export const paymentFlow: FlowDefinition = {
         return [{
           type: 'text',
           text: [
-            `\u2705 *Recurring Payment Set Up!*`,
+            `✅ *Recurring Payment Set Up!*`,
             '',
             `Your ${label} payment of *${formatCurrency(amount, cc)}* for *${serviceName}* is now active.`,
             '',

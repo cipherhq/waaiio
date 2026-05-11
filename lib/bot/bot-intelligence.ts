@@ -71,30 +71,30 @@ const LEET_PATTERNS: Array<[RegExp, string]> = [
 const STEP_HELP: Record<string, string> = {
   greeting: "Send *Hi* to get started, or type *help* for options.",
   quick_rebook: 'Tap a restaurant to rebook, or *Browse New* to explore.',
-  city_selection: 'Tap *Choose City* to pick where you\'d like to dine. \ud83c\udfd9\ufe0f',
-  neighborhood_selection: 'Tap *Choose Area* to select a neighborhood. \ud83d\udccd',
-  restaurant_selection: 'Tap *Choose Restaurant* to pick where to eat. \ud83c\udf7d\ufe0f',
-  date_selection: 'Tap *Choose Date* to select when you\'d like to dine. \ud83d\udcc5',
-  time_selection: 'Tap *Choose Time* to pick your preferred slot. \ud83d\udd50',
-  party_size: 'Type a number (e.g. *4*) or tap a button for guest count. \ud83d\udc65',
-  confirmation: 'Tap *Confirm* to book, *Add Request* for special requests, or *For Someone* to book for a friend. \u2705',
-  special_requests: 'Tap a quick option or type your own request. \ud83d\udcdd',
-  book_for_other: 'Tap *Myself* or *Someone else*. \ud83d\udc64',
-  collect_name: 'Type your full name (e.g. *Ade Johnson*). \u270d\ufe0f',
-  collect_other_name: "Type the guest's name. \u270d\ufe0f",
-  collect_other_phone: "Type the guest's WhatsApp number or *skip*. \ud83d\udcf1",
-  collect_email: 'Type your email or tap *Skip*. \ud83d\udce7',
-  payment: "Tap *I've Paid* after completing payment. \ud83d\udcb3",
+  city_selection: 'Tap *Choose City* to pick where you\'d like to dine. 🏙️',
+  neighborhood_selection: 'Tap *Choose Area* to select a neighborhood. 📍',
+  restaurant_selection: 'Tap *Choose Restaurant* to pick where to eat. 🍽️',
+  date_selection: 'Tap *Choose Date* to select when you\'d like to dine. 📅',
+  time_selection: 'Tap *Choose Time* to pick your preferred slot. 🕐',
+  party_size: 'Type a number (e.g. *4*) or tap a button for guest count. 👥',
+  confirmation: 'Tap *Confirm* to book, *Add Request* for special requests, or *For Someone* to book for a friend. ✅',
+  special_requests: 'Tap a quick option or type your own request. 📝',
+  book_for_other: 'Tap *Myself* or *Someone else*. 👤',
+  collect_name: 'Type your full name (e.g. *Ade Johnson*). ✍️',
+  collect_other_name: "Type the guest's name. ✍️",
+  collect_other_phone: "Type the guest's WhatsApp number or *skip*. 📱",
+  collect_email: 'Type your email or tap *Skip*. 📧',
+  payment: "Tap *I've Paid* after completing payment. 💳",
   my_bookings: 'Tap a booking to manage it, or send *Hi* to make a new one.',
   modify_booking: 'Tap *Cancel*, *Change Date/Time*, or *Back*.',
-  review_text: 'Type your comment or tap *No thanks* to skip. \u270d\ufe0f',
+  review_text: 'Type your comment or tap *No thanks* to skip. ✍️',
   // Flow engine steps
   select_service: 'Tap *Choose* to select a service. 📌',
   select_date: 'Tap *Choose Date* to select when. 📅',
   select_time: 'Tap *Choose Time* to pick your slot. 🕐',
   select_quantity: 'Type a number or tap a button. 👥',
   select_category: 'Tap to select a payment category. 📋',
-  enter_amount: 'Type the amount. \ud83d\udcb0',
+  enter_amount: 'Type the amount. 💰',
   confirm_amount: 'Tap *Confirm* or *Cancel*. ✅',
   browse_catalog: 'Tap *Browse* to see products. 🛍️',
   add_to_cart: 'Tap *Checkout* or *Add More*. 🛒',
@@ -186,7 +186,7 @@ export class BotIntelligenceService {
       return {
         timeout: true,
         warn: false,
-        message: "I'll be here when you're ready. Send *Hi* to start fresh. \ud83d\ude4f",
+        message: "I'll be here when you're ready. Send *Hi* to start fresh. 🙏",
       };
     }
 
@@ -194,7 +194,7 @@ export class BotIntelligenceService {
       return {
         timeout: false,
         warn: true,
-        message: "I'm having trouble understanding. Try tapping the buttons, or type *help*. \ud83e\udd14",
+        message: "I'm having trouble understanding. Try tapping the buttons, or type *help*. 🤔",
       };
     }
 
@@ -219,7 +219,7 @@ export class BotIntelligenceService {
       return {
         timeout: true,
         warn: false,
-        message: "I'm going to take a short break. You can message again in 30 minutes. \ud83d\ude4f",
+        message: "I'm going to take a short break. You can message again in 30 minutes. 🙏",
       };
     }
 
@@ -227,14 +227,14 @@ export class BotIntelligenceService {
       return {
         timeout: false,
         warn: true,
-        message: "I want to help, but let's keep things friendly. What can I assist you with? \ud83d\ude4f",
+        message: "I want to help, but let's keep things friendly. What can I assist you with? 🙏",
       };
     }
 
     return {
       timeout: false,
       warn: false,
-      message: "I understand you may be frustrated. I'm here to help you book a great dining experience. \ud83d\ude0a",
+      message: "I understand you may be frustrated. I'm here to help you book a great dining experience. 😊",
     };
   }
 
@@ -283,7 +283,7 @@ export class BotIntelligenceService {
       lines.push('🔍 *Browse businesses* — explore options');
     }
 
-    lines.push('', '\ud83d\udd04 Send *Hi* to start over anytime.');
+    lines.push('', '🔄 Send *Hi* to start over anytime.');
     return lines.join('\n');
   }
 
@@ -291,8 +291,8 @@ export class BotIntelligenceService {
 
   getPersonaGreeting(alias: string | null, restaurantName: string): string {
     if (alias) {
-      return `Hi! I'm ${alias}, your booking assistant at ${restaurantName}. \ud83c\udf7d\ufe0f How can I help?`;
+      return `Hi! I'm ${alias}, your booking assistant at ${restaurantName}. 🍽️ How can I help?`;
     }
-    return `Welcome to ${restaurantName}! \ud83c\udf7d\ufe0f\n\nLet's book you a table.`;
+    return `Welcome to ${restaurantName}! 🍽️\n\nLet's book you a table.`;
   }
 }

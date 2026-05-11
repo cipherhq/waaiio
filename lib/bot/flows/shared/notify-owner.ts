@@ -362,8 +362,8 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
       '',
       `🔑 Ref: *${referenceCode}*`,
       `👤 Customer: ${customerName}`,
-      `\uD83D\uDCC6 ${date} at ${time}`,
-      `\uD83D\uDC65 ${quantity} ${quantityLabel}`,
+      `📆 ${date} at ${time}`,
+      `👥 ${quantity} ${quantityLabel}`,
     ];
 
     if (amount) {

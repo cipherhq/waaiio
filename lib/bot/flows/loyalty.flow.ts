@@ -14,7 +14,7 @@ const loyaltyMenuStep: FlowStepConfig = {
     // Find loyalty record for this customer + business
     const businessId = ctx.session.business_id || ctx.session.session_data.loyalty_business_id as string;
     if (!businessId) {
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! \u2B50" }];
+      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! ⭐" }];
     }
 
     const { data: loyalty } = await ctx.supabase
@@ -25,7 +25,7 @@ const loyaltyMenuStep: FlowStepConfig = {
       .maybeSingle();
 
     if (!loyalty) {
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! \u2B50" }];
+      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! ⭐" }];
     }
 
     // Store loyalty ID for later steps
@@ -43,11 +43,11 @@ const loyaltyMenuStep: FlowStepConfig = {
       {
         type: 'text',
         text: [
-          `\u2B50 *Your Loyalty Status*`,
+          `⭐ *Your Loyalty Status*`,
           '',
-          `\uD83D\uDCB0 Points: *${loyalty.points_balance}*`,
-          `\uD83C\uDFC6 Visits: *${loyalty.visit_count || 0}*`,
-          `\uD83C\uDF81 Reward at: *${threshold} points*`,
+          `💰 Points: *${loyalty.points_balance}*`,
+          `🏆 Visits: *${loyalty.visit_count || 0}*`,
+          `🎁 Reward at: *${threshold} points*`,
         ].join('\n'),
       },
       {
@@ -116,7 +116,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
     return [
       {
         type: 'text',
-        text: `\uD83D\uDCCB *Recent Points Activity*\n\n${lines.join('\n')}`,
+        text: `📋 *Recent Points Activity*\n\n${lines.join('\n')}`,
       },
       {
         type: 'buttons',
@@ -164,7 +164,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `\uD83C\uDF81 You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`,
+      body: `🎁 You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`,
       buttons: [
         { id: 'confirm', title: 'Redeem Now' },
         { id: 'cancel', title: 'Cancel' },
@@ -219,7 +219,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
       await ctx.sender.sendText({
         to: ctx.from,
-        text: `\u2705 *Reward Redeemed!*\n\nYou've redeemed *${rewardDesc}*.\n\n${threshold} points have been deducted. Your new balance is *${balance - threshold}* points.\n\nScreenshot this message and show it at your next visit to claim your reward!`,
+        text: `✅ *Reward Redeemed!*\n\nYou've redeemed *${rewardDesc}*.\n\n${threshold} points have been deducted. Your new balance is *${balance - threshold}* points.\n\nScreenshot this message and show it at your next visit to claim your reward!`,
       });
     } catch (err) {
       logger.error('[LOYALTY] Redemption error:', err);
