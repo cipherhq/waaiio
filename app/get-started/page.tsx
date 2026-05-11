@@ -39,38 +39,8 @@ const FALLBACK_WHATSAPP_NUMBERS: Record<string, string> = {
   GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || '12029226251',
 };
 
-/* ─── Category Grouping for Onboarding ─── */
-
-const CATEGORY_GROUPS: { label: string; keys: BusinessCategoryKey[] }[] = [
-  {
-    label: 'Food & Hospitality',
-    keys: ['restaurant', 'food_delivery', 'catering', 'hotel', 'shortlet'],
-  },
-  {
-    label: 'Health & Beauty',
-    keys: ['barber', 'salon', 'spa', 'gym', 'clinic', 'dental', 'veterinary', 'tattoo', 'pharmacy'],
-  },
-  {
-    label: 'Professional Services',
-    keys: ['consultant', 'tutor', 'photographer', 'real_estate', 'travel_agency', 'coworking', 'laundry', 'tailor', 'funeral'],
-  },
-  {
-    label: 'Retail & Commerce',
-    keys: ['shop', 'instagram_vendor', 'mall_vendor', 'logistics', 'car_wash', 'car_park'],
-  },
-  {
-    label: 'Religious & Education',
-    keys: ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'],
-  },
-  {
-    label: 'Entertainment & Transport',
-    keys: ['events', 'cinema', 'transport', 'taxi'],
-  },
-  {
-    label: 'Government & Other',
-    keys: ['government', 'other'],
-  },
-];
+/* ─── Popular categories for onboarding ─── */
+const POPULAR_CATEGORY_KEYS = ['restaurant', 'barber', 'salon', 'church', 'shop', 'hotel', 'gym', 'events', 'consultant', 'clinic'];
 
 type WizardStep = 'auth' | 'category' | 'features' | 'plan' | 'details' | 'success';
 type AuthSubStep = 'phone' | 'otp';
@@ -306,8 +276,7 @@ function OnboardingWizard() {
 
   // Category
   const [category, setCategory] = useState<BusinessCategoryKey | ''>('');
-  const [selectedGroupIndex, setSelectedGroupIndex] = useState(0);
-  const [showCapabilities, setShowCapabilities] = useState(false);
+  const [categorySearch, setCategorySearch] = useState('');
   const [selectedCapabilities, setSelectedCapabilities] = useState<CapabilityId[]>([]);
 
   // Owner details
@@ -377,6 +346,21 @@ function OnboardingWizard() {
 
   // Success state
   const [successData, setSuccessData] = useState<{ bot_code: string; business_id: string } | null>(null);
+
+  // Category search computed values
+  const allCategories = getCategoryList();
+  const allCategoriesSorted = [...allCategories].filter(c => c.key !== 'other').sort((a, b) => a.label.localeCompare(b.label));
+  const popularCategories = POPULAR_CATEGORY_KEYS
+    .map(k => allCategories.find(c => c.key === k))
+    .filter((c): c is NonNullable<typeof c> => !!c);
+  const popularKeys = new Set(POPULAR_CATEGORY_KEYS);
+
+  const filteredCategories = categorySearch.trim()
+    ? allCategoriesSorted.filter(c =>
+        c.label.toLowerCase().includes(categorySearch.toLowerCase()) ||
+        c.key.toLowerCase().includes(categorySearch.toLowerCase())
+      )
+    : allCategoriesSorted;
 
   useEffect(() => {
     const supabase = createClient();
@@ -1212,52 +1196,110 @@ function OnboardingWizard() {
             {/* ── Step 2: Category ── */}
             {step === 'category' && (
               <div>
-                <>
-                    <h2 className="text-2xl font-bold text-gray-900">Where is your business?</h2>
-                    <p className="mt-1 text-sm text-gray-500">Select your country and industry</p>
-                    <div className="mt-6">
-                      <label className="mb-2 block text-sm font-medium text-gray-700">Country</label>
-                      <div className="flex flex-wrap gap-2">
-                        {countryList.map(c => (
-                          <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); }}
-                            className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${selectedCountry === c.code ? 'border-brand bg-brand-50 text-brand' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
-                            <span>{c.flag}</span><span>{c.name}</span>
+                <h2 className="text-2xl font-bold text-gray-900">Where is your business?</h2>
+                <p className="mt-1 text-sm text-gray-500">Select your country and find your business type</p>
+
+                {/* Country selection */}
+                <div className="mt-6">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">Country</label>
+                  <div className="flex flex-wrap gap-2">
+                    {countryList.map(c => (
+                      <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); }}
+                        className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${selectedCountry === c.code ? 'border-brand bg-brand-50 text-brand' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                        <span>{c.flag}</span><span>{c.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Search */}
+                <div className="mt-8">
+                  <label className="mb-2 block text-sm font-medium text-gray-700">What type of business do you run?</label>
+                  <div className="relative">
+                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      type="text"
+                      value={categorySearch}
+                      onChange={e => setCategorySearch(e.target.value)}
+                      placeholder="Search... e.g. bakery, salon, church"
+                      className="w-full rounded-xl border border-gray-300 pl-10 pr-4 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
+                    />
+                    {categorySearch && (
+                      <button onClick={() => setCategorySearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Categories */}
+                <div className="mt-4">
+                  {filteredCategories.length > 0 ? (
+                    <>
+                      {!categorySearch && <p className="text-xs text-gray-400 mb-2">Popular</p>}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                        {(categorySearch ? filteredCategories : popularCategories).map(cat => (
+                          <button key={cat.key} type="button" onClick={() => {
+                            setCategory(cat.key as BusinessCategoryKey);
+                            const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key as BusinessCategoryKey] || ['scheduling'];
+                            setSelectedCapabilities([...defaults]);
+                          }}
+                            className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${category === cat.key ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                            <span className="text-xl">{cat.icon}</span>
+                            <span className="text-xs font-medium text-gray-700">{cat.label}</span>
                           </button>
                         ))}
                       </div>
+
+                      {/* All categories (when not searching) */}
+                      {!categorySearch && (
+                        <>
+                          <p className="text-xs text-gray-400 mb-2 mt-6">All categories</p>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                            {allCategoriesSorted.filter(c => !popularKeys.has(c.key)).map(cat => (
+                              <button key={cat.key} type="button" onClick={() => {
+                                setCategory(cat.key as BusinessCategoryKey);
+                                const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key as BusinessCategoryKey] || ['scheduling'];
+                                setSelectedCapabilities([...defaults]);
+                              }}
+                                className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${category === cat.key ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                                <span className="text-xl">{cat.icon}</span>
+                                <span className="text-xs font-medium text-gray-700">{cat.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-gray-500">No match found for &ldquo;{categorySearch}&rdquo;</p>
+                      <p className="text-xs text-gray-400 mt-1">Pick &ldquo;Other&rdquo; below and we&apos;ll set you up</p>
                     </div>
-                    <div className="mt-8">
-                      <label className="mb-2 block text-sm font-medium text-gray-700">Industry</label>
-                      <select
-                        value={selectedGroupIndex}
-                        onChange={(e) => setSelectedGroupIndex(Number(e.target.value))}
-                        className="mb-4 w-full rounded-xl border border-gray-300 px-4 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
-                      >
-                        {CATEGORY_GROUPS.map((group, i) => (
-                          <option key={group.label} value={i}>{group.label}</option>
-                        ))}
-                      </select>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                        {CATEGORY_GROUPS[selectedGroupIndex].keys
-                          .map(k => getCategoryByKey(k))
-                          .filter((cat): cat is NonNullable<typeof cat> => !!cat)
-                          .map((cat) => (
-                            <button key={cat.key} type="button" onClick={() => {
-                              setCategory(cat.key as BusinessCategoryKey);
-                              const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key as BusinessCategoryKey] || ['scheduling'];
-                              setSelectedCapabilities([...defaults]);
-                            }}
-                              className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${category === cat.key ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                              <span className="text-xl">{cat.icon}</span>
-                              <span className="text-xs font-medium text-gray-700">{cat.label}</span>
-                            </button>
-                          ))}
+                  )}
+
+                  {/* Other - always visible */}
+                  <div className="mt-4">
+                    <button type="button" onClick={() => {
+                      setCategory('other' as BusinessCategoryKey);
+                      const defaults = CATEGORY_DEFAULT_CAPABILITIES['other'] || ['appointment', 'feedback', 'chat'];
+                      setSelectedCapabilities([...defaults]);
+                    }}
+                      className={`w-full flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition ${category === 'other' ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                      <span className="text-xl">&#x1F3E2;</span>
+                      <div>
+                        <span className="text-sm font-medium text-gray-700">Other</span>
+                        <span className="text-xs text-gray-400 ml-2">Don&apos;t see your type? Start here</span>
                       </div>
-                    </div>
-                    <div className="mt-8">
-                      <button type="button" onClick={() => setStep('features')} disabled={!category} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
-                    </div>
-                  </>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-8">
+                  <button type="button" onClick={() => setStep('features')} disabled={!category} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
+                </div>
               </div>
             )}
 
