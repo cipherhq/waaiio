@@ -142,7 +142,11 @@ export class FlowExecutor {
       } else {
         const messages = await step.prompt(ctx);
         this.logPromptMessages(session, messages);
-        await this.persistConversationLog(session.id, session.conversation_log);
+        // Persist session_data after prompt — flows may store state (e.g., item lists for validation)
+        await this.supabase
+          .from('bot_sessions')
+          .update({ session_data: session.session_data, conversation_log: session.conversation_log })
+          .eq('id', session.id);
         await this.sendMessages(from, messages);
       }
       return;
