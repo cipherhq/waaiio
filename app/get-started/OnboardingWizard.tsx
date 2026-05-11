@@ -1432,6 +1432,41 @@ function OnboardingWizard() {
                       tip: 'Create Bronze/Silver/Gold tiers based on customer spending. Members get automatic discounts and bonus loyalty points. Tiers upgrade automatically — no manual work.',
                       example: 'e.g. "Congrats! You\'ve been upgraded to Gold Member — 10% off everything"',
                     },
+                    {
+                      id: 'whatsapp_sign' as CapabilityId,
+                      title: 'E-Signatures',
+                      desc: 'Send contracts and documents for digital signature via WhatsApp.',
+                      tip: 'For real estate, legal, freelancers, and any business that needs signed agreements. Customers review and sign directly from their phone.',
+                      example: 'e.g. "Please review and sign your service agreement"',
+                    },
+                    {
+                      id: 'survey' as CapabilityId,
+                      title: 'Surveys',
+                      desc: 'Create and send custom surveys to collect customer feedback.',
+                      tip: 'Build surveys with multiple question types (choice, rating, text, yes/no). Send via WhatsApp and track responses in your dashboard.',
+                      example: 'e.g. "How did you hear about us?" with multiple choice options',
+                    },
+                    {
+                      id: 'poll' as CapabilityId,
+                      title: 'Polls',
+                      desc: 'Create quick polls and let customers vote via WhatsApp.',
+                      tip: 'Great for churches, communities, and events. Ask a question, customers vote, see results live. Perfect for deciding event dates, menu items, etc.',
+                      example: 'e.g. "What time works best for Bible study? 5pm / 6pm / 7pm"',
+                    },
+                    {
+                      id: 'queue' as CapabilityId,
+                      title: 'Queue Management',
+                      desc: 'Walk-in customers check in and get notified when it\'s their turn.',
+                      tip: 'For clinics, barbers, government offices, and any walk-in business. Customers join the queue via WhatsApp and get a notification when their turn is next.',
+                      example: 'e.g. "You are #5 in line. Estimated wait: 15 minutes"',
+                    },
+                    {
+                      id: 'staff' as CapabilityId,
+                      title: 'Staff Management',
+                      desc: 'Assign team members to services and manage their schedules.',
+                      tip: 'For businesses with multiple staff. Assign services to specific people, set work schedules, auto-balance bookings. Customers can pick their preferred staff.',
+                      example: 'e.g. "Book with James (Barber) or Sarah (Stylist)"',
+                    },
                   ] as const).map(feat => {
                     const isSelected = selectedCapabilities.includes(feat.id);
                     const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
@@ -1508,10 +1543,7 @@ function OnboardingWizard() {
                       { id: 'loyalty' as CapabilityId, title: 'Loyalty Program', desc: 'Reward repeat customers with points' },
                       { id: 'referral' as CapabilityId, title: 'Referral Program', desc: 'Let customers earn rewards for referring friends' },
                       { id: 'reminders' as CapabilityId, title: 'Auto Reminders', desc: 'Send booking/payment reminders automatically' },
-                      { id: 'staff' as CapabilityId, title: 'Staff Management', desc: 'Assign services to specific team members' },
                       { id: 'reports' as CapabilityId, title: 'Document Sharing', desc: 'Send documents to customers via WhatsApp' },
-                      { id: 'survey' as CapabilityId, title: 'Surveys', desc: 'Send customer surveys after service' },
-                      { id: 'queue' as CapabilityId, title: 'Queue Management', desc: 'Walk-in check-in and turn notifications' },
                       { id: 'waitlist' as CapabilityId, title: 'Waitlist', desc: 'Automatically manage waitlists when fully booked' },
                     ] as const).map(feat => {
                       const isSelected = selectedCapabilities.includes(feat.id);
