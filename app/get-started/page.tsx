@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo, Suspense } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
@@ -2185,14 +2185,8 @@ class OnboardingErrorBoundary extends React.Component<
 
 export default function GetStartedPage() {
   return (
-    <Suspense fallback={
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
-      </div>
-    }>
-      <OnboardingErrorBoundary>
-        <OnboardingWizard />
-      </OnboardingErrorBoundary>
-    </Suspense>
+    <OnboardingErrorBoundary>
+      <OnboardingWizard />
+    </OnboardingErrorBoundary>
   );
 }
