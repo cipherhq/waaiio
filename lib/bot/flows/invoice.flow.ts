@@ -4,6 +4,7 @@ import { notifyOwnerNewInvoicePayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 // ── Invoice List ──
 const invoiceListStep: FlowStepConfig = {
@@ -21,7 +22,7 @@ const invoiceListStep: FlowStepConfig = {
     const { data: invoices } = await ctx.supabase
       .from('invoices')
       .select('id, invoice_number, total_amount, due_date, status, businesses!inner(name, country_code)')
-      .or(`customer_phone.eq.${phone},customer_phone.eq.${phoneN}`)
+      .or(`customer_phone.eq.${sanitizeFilterValue(phone)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .eq('business_id', businessId)
       .in('status', ['sent', 'viewed', 'overdue'])
       .order('due_date', { ascending: true })
@@ -177,7 +178,7 @@ const invoicePayStep: FlowStepConfig = {
       const { data: profile } = await ctx.supabase
         .from('profiles')
         .select('id')
-        .or(`phone.eq.${phone},phone.eq.${phoneN}`)
+        .or(`phone.eq.${sanitizeFilterValue(phone)},phone.eq.${sanitizeFilterValue(phoneN)}`)
         .limit(1)
         .maybeSingle();
       userId = profile?.id || null;

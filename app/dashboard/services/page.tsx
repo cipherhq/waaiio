@@ -7,6 +7,7 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 interface Service {
   id: string;
@@ -155,7 +156,7 @@ export default function ServicesPage() {
       .from('service_addons')
       .select('*')
       .eq('business_id', business.id)
-      .or(`service_id.eq.${serviceId},service_id.is.null`)
+      .or(`service_id.eq.${sanitizeFilterValue(serviceId)},service_id.is.null`)
       .eq('is_active', true)
       .order('sort_order');
     setAddons((data as ServiceAddon[]) || []);

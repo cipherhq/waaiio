@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
         if (gupshup.isConfigured) {
           await gupshup.sendText({ to: phone, text: message });
         } else {
-          console.log(`[mock] OTP sent to ${phone} (value redacted)`);
+          logger.debug(`[mock] OTP sent to ${phone} (value redacted)`);
         }
       }
     }

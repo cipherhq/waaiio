@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { enrollInSequence } from './sequence-service';
 
 interface BotRule {
@@ -139,7 +140,7 @@ async function executeAction(
         const { data: profile } = await supabase
           .from('profiles')
           .select('id, metadata')
-          .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+          .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
           .limit(1)
           .maybeSingle();
 

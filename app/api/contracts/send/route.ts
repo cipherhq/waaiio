@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { logger } from '@/lib/logger';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(24);
@@ -49,7 +50,7 @@ async function sendWhatsAppMessage(
         });
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
-        if (sent) console.log(`[CONTRACT] Template message sent to ${cleanPhone}`);
+        if (sent) logger.info(`[CONTRACT] Template message sent to ${cleanPhone}`);
       } catch (tmplErr) {
         console.warn(`[CONTRACT] Template message failed for ${cleanPhone}:`, tmplErr);
       }

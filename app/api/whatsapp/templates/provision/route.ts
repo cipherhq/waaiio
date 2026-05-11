@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { logger } from '@/lib/logger';
 
 /**
  * POST /api/whatsapp/templates/provision
@@ -219,7 +220,7 @@ export async function POST(request: NextRequest) {
           allow_category_change: true,
         });
 
-        console.log(`[PROVISION] Created template "${templateDef.name}" on WABA ${channel.waba_id} for business ${business_id}:`, result);
+        logger.info(`[PROVISION] Created template "${templateDef.name}" on WABA ${channel.waba_id} for business ${business_id}:`, result);
         results.push({ name: templateDef.name, status: result.status, action: 'created' });
       } catch (err) {
         console.error(`[PROVISION] Failed to create "${templateDef.name}":`, err);

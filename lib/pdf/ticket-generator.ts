@@ -13,7 +13,7 @@ export interface TicketPdfOptions {
     ticketNumber: number;
     totalTickets: number;
   }>;
-  verifyBaseUrl: string;   // e.g. "https://waaiio.com/tickets"
+  verifyBaseUrl: string;   // derived from NEXT_PUBLIC_APP_URL env var
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {

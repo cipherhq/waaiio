@@ -3,6 +3,7 @@ import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
+import { logger } from '@/lib/logger';
 import { createAlert } from '@/lib/alerts/create-alert';
 import type { SubscriptionTier } from '@/lib/constants';
 
@@ -214,7 +215,7 @@ export async function POST(request: NextRequest) {
               .eq('gateway_reference', sessionId)
               .neq('status', 'success');
 
-            console.log(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
+            logger.info(`[STRIPE WEBHOOK] Recurring subscription activated: ${stripeSubId} (session ${sessionId})`);
           }
         }
       }

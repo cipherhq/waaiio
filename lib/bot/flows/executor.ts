@@ -11,6 +11,7 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessage } from '@/lib/bot/conversation-guard';
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
@@ -184,7 +185,7 @@ export class FlowExecutor {
         const { data: profile } = await this.supabase
           .from('profiles')
           .select('first_name, last_name')
-          .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+          .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
           .limit(1)
           .maybeSingle();
         if (profile?.first_name) {

@@ -8,6 +8,7 @@ import { getReservationConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
 import type { SubscriptionTier } from '@/lib/constants';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export const reservationFlow: FlowDefinition = {
   type: 'reservation',
@@ -602,7 +603,7 @@ export const reservationFlow: FlowDefinition = {
             .from('reservations')
             .select('id')
             .eq('business_id', ctx.business!.id)
-            .or(`property_id.eq.${propertyId},service_id.eq.${propertyId}`)
+            .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
             .in('status', ['pending', 'confirmed'])
             .lt('check_in', d.check_out as string)
             .gt('check_out', d.check_in as string)

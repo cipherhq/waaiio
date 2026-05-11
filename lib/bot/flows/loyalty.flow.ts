@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 // ── Loyalty Menu ──
 const loyaltyMenuStep: FlowStepConfig = {
@@ -20,7 +21,7 @@ const loyaltyMenuStep: FlowStepConfig = {
       .from('loyalty_points')
       .select('id, points_balance, total_earned, total_redeemed, visit_count')
       .eq('business_id', businessId)
-      .or(`customer_phone.eq.${phone},customer_phone.eq.${phoneN}`)
+      .or(`customer_phone.eq.${sanitizeFilterValue(phone)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .maybeSingle();
 
     if (!loyalty) {

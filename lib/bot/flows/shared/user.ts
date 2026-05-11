@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export async function createWhatsAppUser(
   supabase: SupabaseClient,
@@ -29,7 +30,7 @@ export async function createWhatsAppUser(
       const { data: byPhone } = await supabase
         .from('profiles')
         .select('id')
-        .or(`phone.eq.${fullPhone},phone.eq.${phoneWithout}`)
+        .or(`phone.eq.${sanitizeFilterValue(fullPhone)},phone.eq.${sanitizeFilterValue(phoneWithout)}`)
         .limit(1)
         .maybeSingle();
 
@@ -88,7 +89,7 @@ export async function createWhatsAppUser(
       const { data: fallback } = await supabase
         .from('profiles')
         .select('id')
-        .or(`phone.eq.${fullPhone},phone.eq.${phoneWithout}`)
+        .or(`phone.eq.${sanitizeFilterValue(fullPhone)},phone.eq.${sanitizeFilterValue(phoneWithout)}`)
         .limit(1)
         .maybeSingle();
       if (fallback?.id) return fallback.id;
@@ -107,7 +108,7 @@ export async function findUserByPhone(
   const { data } = await supabase
     .from('profiles')
     .select('id, first_name, last_name, email')
-    .or(`phone.eq.${fullPhone},phone.eq.${phoneWithout}`)
+    .or(`phone.eq.${sanitizeFilterValue(fullPhone)},phone.eq.${sanitizeFilterValue(phoneWithout)}`)
     .limit(1)
     .maybeSingle();
   return data || null;

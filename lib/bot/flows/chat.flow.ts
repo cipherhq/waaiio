@@ -1,4 +1,5 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 /**
  * Chat flow: Welcomes the user and transitions to chat_handoff.
@@ -31,7 +32,7 @@ export const chatFlow: FlowDefinition = {
           const { data: profile } = await ctx.supabase
             .from('profiles')
             .select('first_name, last_name')
-            .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+            .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
             .limit(1)
             .maybeSingle();
           if (profile?.first_name) {

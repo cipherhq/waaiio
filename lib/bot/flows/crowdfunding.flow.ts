@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
@@ -15,7 +16,7 @@ const selectCampaignStep: FlowStepConfig = {
       .select('id, title, description, goal_amount, raised_amount, donor_count, end_date')
       .eq('business_id', ctx.business.id)
       .eq('status', 'active')
-      .or(`end_date.is.null,end_date.gte.${today}`)
+      .or(`end_date.is.null,end_date.gte.${sanitizeFilterValue(today)}`)
       .order('created_at', { ascending: false })
       .limit(10);
 

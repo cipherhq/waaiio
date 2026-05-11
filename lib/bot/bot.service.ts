@@ -13,6 +13,7 @@ import { translateBotResponse, detectLanguage, getLanguageName } from './transla
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword, parseKeywordPayload } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
@@ -129,7 +130,7 @@ export class BotService {
       let eventInviteQuery = this.supabase
         .from('event_invites')
         .select('id, event_id, party_id, guest_name, invite_token, status, events!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
-        .or(`guest_phone.eq.${phoneP2},guest_phone.eq.${phoneN2}`)
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP2)},guest_phone.eq.${sanitizeFilterValue(phoneN2)}`)
         .not('event_id', 'is', null)
         .in('status', ['pending', 'maybe']);
 
@@ -150,7 +151,7 @@ export class BotService {
         let partyInviteQuery = this.supabase
           .from('event_invites')
           .select('id, event_id, party_id, guest_name, invite_token, status, parties!inner(id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, business_id, businesses!inner(id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code))')
-          .or(`guest_phone.eq.${phoneP2},guest_phone.eq.${phoneN2}`)
+          .or(`guest_phone.eq.${sanitizeFilterValue(phoneP2)},guest_phone.eq.${sanitizeFilterValue(phoneN2)}`)
           .not('party_id', 'is', null)
           .in('status', ['pending', 'maybe']);
 
@@ -250,7 +251,7 @@ export class BotService {
       const { data: notifiedEntry } = await this.supabase
         .from('waitlist_entries')
         .select('id, business_id, customer_name, service_id')
-        .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+        .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
         .eq('status', 'notified')
         .order('notified_at', { ascending: false })
         .limit(1)
@@ -296,7 +297,7 @@ export class BotService {
     let _cachedProfile: { id: string } | null | undefined = undefined; // undefined = not fetched yet
     const getProfile = async () => {
       if (_cachedProfile !== undefined) return _cachedProfile;
-      const { data } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+      const { data } = await this.supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
       _cachedProfile = data;
       return _cachedProfile;
     };
@@ -591,7 +592,7 @@ export class BotService {
       const { data: loyaltyEntry } = await this.supabase
         .from('loyalty_points')
         .select('business_id')
-        .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+        .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -637,7 +638,7 @@ export class BotService {
       const { data: invoiceEntry } = await this.supabase
         .from('invoices')
         .select('business_id')
-        .or(`customer_phone.eq.${phoneP},customer_phone.eq.${phoneN}`)
+        .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
         .in('status', ['sent', 'viewed', 'overdue'])
         .order('created_at', { ascending: false })
         .limit(1)
@@ -1528,7 +1529,7 @@ export class BotService {
       const { data: hProfile } = await this.supabase
         .from('profiles')
         .select('first_name, last_name')
-        .or(`phone.eq.${chatPhoneP},phone.eq.${chatPhoneN}`)
+        .or(`phone.eq.${sanitizeFilterValue(chatPhoneP)},phone.eq.${sanitizeFilterValue(chatPhoneN)}`)
         .limit(1)
         .maybeSingle();
       if (hProfile?.first_name) {
@@ -1657,7 +1658,7 @@ export class BotService {
         const { data: profile } = await this.supabase
           .from('profiles')
           .select('first_name, last_name')
-          .or(`phone.eq.${chatPhoneP},phone.eq.${chatPhoneN}`)
+          .or(`phone.eq.${sanitizeFilterValue(chatPhoneP)},phone.eq.${sanitizeFilterValue(chatPhoneN)}`)
           .limit(1)
           .maybeSingle();
         if (profile?.first_name) {
@@ -1869,8 +1870,8 @@ export class BotService {
     // ── Fetch candidate businesses for advanced matching (5-8) ──
     // Grab a broader set of active businesses for local matching algorithms
     const searchWords = meaningful.length > 0 ? meaningful : tokens;
-    const nameFilters = searchWords.map(w => `name.ilike.%${w}%`).join(',');
-    const codeFilters = searchWords.map(w => `bot_code.ilike.%${w}%`).join(',');
+    const nameFilters = searchWords.map(w => `name.ilike.%${sanitizeFilterValue(w)}%`).join(',');
+    const codeFilters = searchWords.map(w => `bot_code.ilike.%${sanitizeFilterValue(w)}%`).join(',');
 
     const { data: candidatePool } = await this.supabase
       .from('businesses')
@@ -1979,7 +1980,7 @@ export class BotService {
           .select('id, name, bot_code, country_code, total_bookings, rating_avg')
           .eq('status', 'active')
           .not('bot_code', 'is', null)
-          .or(`name.ilike.%${word}%,bot_code.ilike.%${word}%`)
+          .or(`name.ilike.%${sanitizeFilterValue(word)}%,bot_code.ilike.%${sanitizeFilterValue(word)}%`)
           .limit(5);
 
         if (singleWordMatches && singleWordMatches.length > 0) {
@@ -2918,7 +2919,7 @@ export class BotService {
             await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
             const phoneP = from.startsWith('+') ? from : `+${from}`;
             const phoneN = from.startsWith('+') ? from.slice(1) : from;
-            const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+            const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
             if (!profile?.id) {
               await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
               return true;
@@ -2942,7 +2943,7 @@ export class BotService {
             await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
             const phoneP = from.startsWith('+') ? from : `+${from}`;
             const phoneN = from.startsWith('+') ? from.slice(1) : from;
-            const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${phoneP},phone.eq.${phoneN}`).limit(1).maybeSingle();
+            const { data: profile } = await this.supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
             if (!profile?.id) {
               await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
               return true;
@@ -2968,7 +2969,7 @@ export class BotService {
                 const { data: escProfile } = await this.supabase
                   .from('profiles')
                   .select('first_name, last_name')
-                  .or(`phone.eq.${escPhoneP},phone.eq.${escPhoneN}`)
+                  .or(`phone.eq.${sanitizeFilterValue(escPhoneP)},phone.eq.${sanitizeFilterValue(escPhoneN)}`)
                   .limit(1)
                   .maybeSingle();
                 if (escProfile?.first_name) {

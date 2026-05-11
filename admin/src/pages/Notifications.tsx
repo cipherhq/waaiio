@@ -5,6 +5,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
+import { sanitizeFilterValue } from '@/lib/sanitize';
 
 interface Notification {
   id: string;
@@ -104,7 +105,7 @@ export default function Notifications() {
         const { data } = await adminDb
           .from('profiles')
           .select('id, first_name, last_name, email')
-          .or(`email.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%`)
+          .or(`email.ilike.%${sanitizeFilterValue(q)}%,first_name.ilike.%${sanitizeFilterValue(q)}%,last_name.ilike.%${sanitizeFilterValue(q)}%`)
           .limit(10);
 
         setSearchResults(data || []);
