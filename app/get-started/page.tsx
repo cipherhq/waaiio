@@ -1553,11 +1553,11 @@ function OnboardingWizard() {
                       </p>
                       <p className="text-[11px] text-gray-500 mt-0.5">
                         {requiredPlan === 'free' ? (
-                          <span className="text-green-600 font-medium">Free plan — no monthly fee, {localTiers.free.feePercentage}% per transaction</span>
+                          <span className="text-green-600 font-medium">Free plan — no monthly fee, {String(localTiers?.free?.feePercentage ?? 2)}% per transaction</span>
                         ) : requiredPlan === 'growth' ? (
-                          <span className="text-blue-600 font-medium">Requires Pro plan — {formatCurrency(localTiers.growth.price as number, selectedCountry)}/mo, {localTiers.growth.feePercentage}% per transaction</span>
+                          <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}/mo, {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
                         ) : (
-                          <span className="text-purple-600 font-medium">Requires Premium plan — {formatCurrency(localTiers.business.price as number, selectedCountry)}/mo, {localTiers.business.feePercentage}% per transaction</span>
+                          <span className="text-purple-600 font-medium">Requires Premium plan — {String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}/mo, {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
                         )}
                       </p>
                     </div>
@@ -1615,7 +1615,7 @@ function OnboardingWizard() {
                     )}
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-lg font-bold text-gray-900">{localTiers.free.name}</h3>
+                        <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.free?.name || 'Starter')}</h3>
                         <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">30-day trial</span></p>
                       </div>
                       <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'free' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
@@ -1627,7 +1627,7 @@ function OnboardingWizard() {
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Auto-book appointments &amp; take orders</li>
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Collect payments via WhatsApp</li>
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 50 bookings/month</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> {localTiers.free.feePercentage}% per transaction — no monthly fee</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> {String(localTiers?.free?.feePercentage ?? 2)}% per transaction — no monthly fee</li>
                     </ul>
                   </button>
 
@@ -1639,8 +1639,8 @@ function OnboardingWizard() {
                     )}
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-lg font-bold text-gray-900">{localTiers.growth.name}</h3>
-                        <p className="text-2xl font-bold text-brand">{formatCurrency(localTiers.growth.price as number, selectedCountry)}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+                        <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.growth?.name || 'Pro')}</h3>
+                        <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
                       </div>
                       <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'growth' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
                         {selectedPlan === 'growth' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
@@ -1651,7 +1651,7 @@ function OnboardingWizard() {
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Starter</li>
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Automated reminders — reduce no-shows by 60%</li>
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Loyalty points &amp; referral program — customers come back</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {localTiers.growth.feePercentage}% fees</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {String(localTiers?.growth?.feePercentage ?? 1.5)}% fees</li>
                       <li className="flex items-center gap-2"><span className="text-brand">&#9733;</span> <span className="font-medium text-gray-700">Connect your own WhatsApp number</span></li>
                     </ul>
                   </button>
@@ -1663,8 +1663,8 @@ function OnboardingWizard() {
                     )}
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="text-lg font-bold text-gray-900">{localTiers.business.name}</h3>
-                        <p className="text-2xl font-bold text-brand">{formatCurrency(localTiers.business.price as number, selectedCountry)}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+                        <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.business?.name || 'Premium')}</h3>
+                        <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
                       </div>
                       <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'business' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
                         {selectedPlan === 'business' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
@@ -1677,7 +1677,7 @@ function OnboardingWizard() {
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> WhatsApp Sign — send documents for e-signature</li>
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Staff management, queue, waitlist, invoices</li>
                       <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Whitelabel — your brand, not Waaiio</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Lowest fees: {localTiers.business.feePercentage}% per transaction</li>
+                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Lowest fees: {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</li>
                     </ul>
                   </button>
                 </div>
