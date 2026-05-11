@@ -233,7 +233,7 @@ const pollResultsStep: FlowStepConfig = {
         const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
         const capabilities = await getEnabledCapabilities(ctx.supabase, ctx.business.id, ctx.business.category);
         const userFacing = capabilities.filter(
-          (c: string) => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'survey', 'poll'].includes(c),
+          (c: string) => !['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'whatsapp_sign'].includes(c),
         );
 
         if (userFacing.length > 0) {

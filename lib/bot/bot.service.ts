@@ -1119,7 +1119,7 @@ export class BotService {
         // ── Welcome Buttons: send interactive menu after greeting ──
         // Show welcome buttons when business goes directly to a flow (no capability selection)
         try {
-          const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
+          const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
           if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
           const ufCount = capabilities.filter(c => !nonUF.has(c)).length;
           if (waConfig.welcome_buttons.length > 0 && ufCount <= 1) {
@@ -2188,7 +2188,7 @@ export class BotService {
     }
 
     // Filter to user-facing capabilities only (same filter as select_capability prompt)
-    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll']);
+    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
     // If scheduling is present, payment/invoice happen within the booking flow — don't show as separate options
     if (capabilities.includes('scheduling')) {
       nonUserFacing.add('payment');
