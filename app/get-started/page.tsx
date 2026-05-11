@@ -206,13 +206,20 @@ const COEXIST_WARNINGS = [
   },
 ];
 
+function useQueryParams() {
+  const searchParams = useSearchParams();
+  return {
+    searchParams,
+    preselectedPlan: searchParams.get('plan') as SubscriptionTier | null,
+    successBusinessId: searchParams.get('business_id'),
+    successStep: searchParams.get('step'),
+  };
+}
+
 function OnboardingWizard() {
   useCategoryConfig(); // trigger DB load for category templates
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const preselectedPlan = searchParams.get('plan') as SubscriptionTier | null;
-  const successBusinessId = searchParams.get('business_id');
-  const successStep = searchParams.get('step');
+  const { searchParams, preselectedPlan, successBusinessId, successStep } = useQueryParams();
 
   const [step, setStep] = useState<WizardStep>('auth');
   const [user, setUser] = useState<User | null>(null);
@@ -2180,14 +2187,14 @@ class OnboardingErrorBoundary extends React.Component<
 
 export default function GetStartedPage() {
   return (
-    <OnboardingErrorBoundary>
-      <Suspense fallback={
-        <div className="flex min-h-screen items-center justify-center bg-gray-50">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
-        </div>
-      }>
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+      </div>
+    }>
+      <OnboardingErrorBoundary>
         <OnboardingWizard />
-      </Suspense>
-    </OnboardingErrorBoundary>
+      </OnboardingErrorBoundary>
+    </Suspense>
   );
 }
