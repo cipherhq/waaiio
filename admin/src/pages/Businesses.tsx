@@ -38,12 +38,16 @@ const ALL_CAPABILITIES = [
 ] as const;
 
 const TIER_REQUIREMENTS: Record<string, string> = {
-  scheduling: 'free', payment: 'free', ordering: 'free', ticketing: 'free',
-  feedback: 'free', chat: 'free', giving: 'free',
-  reservation: 'growth', reminders: 'growth', loyalty: 'growth', referral: 'growth', survey: 'growth',
-  whatsapp_sign: 'business', queue: 'business', waitlist: 'business', reports: 'business',
-  staff: 'business', crowdfunding: 'business', invoice: 'business',
-  broadcast: 'growth', recurring: 'growth', auto_reply: 'free', membership: 'growth',
+  // Free
+  appointment: 'free', scheduling: 'free', payment: 'free', ordering: 'free',
+  ticketing: 'free', giving: 'free', chat: 'free', feedback: 'free', poll: 'free',
+  // Pro (Growth)
+  reservation: 'growth', recurring: 'growth', broadcast: 'growth', membership: 'growth',
+  survey: 'growth', invoice: 'growth', auto_reply: 'growth', loyalty: 'growth',
+  referral: 'growth', reminders: 'growth',
+  // Premium (Business)
+  staff: 'business', whatsapp_sign: 'business', reports: 'business',
+  waitlist: 'business', queue: 'business', crowdfunding: 'business',
 };
 
 const TIER_RANK: Record<string, number> = { free: 0, growth: 1, business: 2 };
