@@ -174,6 +174,13 @@ const navItems: NavItem[] = [
     section: 'money',
   },
   {
+    href: '/dashboard/recurring',
+    label: 'Subscriptions',
+    icon: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
+    capabilities: ['recurring'],
+    section: 'money',
+  },
+  {
     href: '/dashboard/invoices',
     label: 'Invoices',
     icon: 'M9 14l2 2 4-4m5 4.5V7a2 2 0 00-2-2H6a2 2 0 00-2 2v12.5l3.5-2 3.5 2 3.5-2 3.5 2z',
