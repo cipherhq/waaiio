@@ -68,17 +68,9 @@ export async function GET(request: NextRequest) {
       botCode = business?.bot_code || null;
     }
 
-    // Determine the WhatsApp number to redirect back to
-    const waNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '';
-
-    if (waNumber && botCode) {
-      // Redirect back to WhatsApp conversation with the business
-      const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent('paid')}`;
-      return NextResponse.redirect(waUrl);
-    }
-
-    // Fallback: redirect to a simple thank-you
-    return NextResponse.redirect(new URL('/?payment=success', request.url));
+    // Redirect to payment success page (handles WhatsApp return link)
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    return NextResponse.redirect(`${appUrl}/payment-success?ref=${ref || ''}`);
   } catch {
     return NextResponse.redirect(new URL('/?payment=error', request.url));
   }

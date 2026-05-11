@@ -194,11 +194,10 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 
 // ── Per-Country Pricing ──
 
-// Pricing = Gateway fee + 2% markup to ensure profit
-// Stripe (US/CA): 2.9% + $0.30 → Waaiio: 4.9% + $0.50
-// Stripe (UK): 2.5% + £0.20 → Waaiio: 4.5% + £0.40
-// Paystack (NG): 1.5% + ₦100 → Waaiio: 3.5% + ₦150
-// Paystack (GH): 1.5% + GH₵ → Waaiio: 3.5% + GH₵3
+// Waaiio fee: 2.0% (free) / 1.5% (growth) / 1.0% (business) — no flat fee
+// Gateway fees are separate (Stripe: 2.9%+$0.30, Paystack: 1.5%+₦100)
+// Total cost to business = waaiio fee + gateway fee
+// Flat fees below are LEGACY and set to 0 in PRICING_TIERS — kept for COUNTRY_PRICING only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
   NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 14_999, feeFlat: 100 }, business: { price: 39_999, feeFlat: 75 } },
   US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.40 }, business: { price: 99, feeFlat: 0.35 } },
