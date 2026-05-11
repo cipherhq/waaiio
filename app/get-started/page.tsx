@@ -2183,10 +2183,25 @@ class OnboardingErrorBoundary extends React.Component<
   }
 }
 
+// Exported as the actual page component — renders client-only to avoid hydration issues
+import dynamic from 'next/dynamic';
+
+const DynamicWizard = dynamic(
+  () => Promise.resolve(OnboardingWizard),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+      </div>
+    ),
+  }
+);
+
 export default function GetStartedPage() {
   return (
     <OnboardingErrorBoundary>
-      <OnboardingWizard />
+      <DynamicWizard />
     </OnboardingErrorBoundary>
   );
 }
