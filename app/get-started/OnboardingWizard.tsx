@@ -1003,16 +1003,6 @@ function OnboardingWizard() {
 
   const stepIndex = steps.findIndex(s => s.key === step);
 
-  if (loading && step === 'auth') {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
-      </div>
-    );
-  }
-
-  // City auto-filled by Google Places autocomplete — no pre-configured city list needed
-
   // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
   // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)
   const sharedNumber = sharedWhatsAppNumber || FALLBACK_WHATSAPP_NUMBERS[selectedCountry] || '12029226251';
@@ -1024,6 +1014,7 @@ function OnboardingWizard() {
   const localTiers = getPricingTiers(selectedCountry);
 
   // Compute the minimum required plan based on selected features
+  // IMPORTANT: This useMemo must be BEFORE any conditional returns (React hooks rule)
   const requiredPlan = useMemo(() => {
     let highest: 'free' | 'growth' | 'business' = 'free';
     for (const cap of selectedCapabilities) {
@@ -1035,6 +1026,15 @@ function OnboardingWizard() {
   }, [selectedCapabilities]);
 
   const panel = STEP_PANELS[step];
+
+  // Loading state — MUST be after all hooks (React rules of hooks)
+  if (loading && step === 'auth') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+      </div>
+    );
+  }
 
   function handleConnectContinue() {
     if (waMethod === 'shared') {
