@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 
 function corsHeaders(origin?: string | null) {
   const allowedOrigins = [
@@ -117,11 +118,13 @@ export async function POST(request: NextRequest) {
     const { data, error, count: rowCount } = await query;
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders() });
+      logger.error('[ADMIN QUERY] db error:', error);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders() });
     }
 
     return NextResponse.json({ data, count: rowCount }, { headers: corsHeaders() });
   } catch (error) {
-    return NextResponse.json({ error: (error as Error).message }, { status: 500, headers: corsHeaders() });
+    logger.error('[ADMIN QUERY] error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders() });
   }
 }

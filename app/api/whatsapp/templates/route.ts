@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService, type CreateTemplateInput } from '@/lib/channels/meta-cloud';
+import { logger } from '@/lib/logger';
 
 /**
  * GET /api/whatsapp/templates?business_id=xxx
@@ -51,9 +52,9 @@ export async function GET(request: NextRequest) {
     const result = await meta.getTemplates();
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[TEMPLATES] GET error:', error);
+    logger.error('[TEMPLATES] GET error:', error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : 'Failed to fetch templates' },
+      { message: 'Internal server error' },
       { status: 500 },
     );
   }
@@ -121,9 +122,9 @@ export async function POST(request: NextRequest) {
     const result = await meta.createTemplate(template);
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[TEMPLATES] POST error:', error);
+    logger.error('[TEMPLATES] POST error:', error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : 'Failed to create template' },
+      { message: 'Internal server error' },
       { status: 500 },
     );
   }
@@ -177,9 +178,9 @@ export async function DELETE(request: NextRequest) {
     const result = await meta.deleteTemplate(name);
     return NextResponse.json(result);
   } catch (error) {
-    console.error('[TEMPLATES] DELETE error:', error);
+    logger.error('[TEMPLATES] DELETE error:', error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : 'Failed to delete template' },
+      { message: 'Internal server error' },
       { status: 500 },
     );
   }

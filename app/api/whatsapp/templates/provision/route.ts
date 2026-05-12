@@ -236,9 +236,9 @@ export async function POST(request: NextRequest) {
       results,
     });
   } catch (error) {
-    console.error('[PROVISION] Error:', error);
+    logger.error('[PROVISION] Error:', error);
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : 'Failed to provision template' },
+      { message: 'Internal server error' },
       { status: 500 },
     );
   }

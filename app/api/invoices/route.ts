@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     const { data, count, error } = await query;
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     return NextResponse.json({ invoices: data || [], total: count || 0 });
@@ -117,7 +117,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !invoice) {
-      return NextResponse.json({ error: error?.message || 'Failed to create invoice' }, { status: 500 });
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     // Insert line items

@@ -26,7 +26,8 @@ export async function GET(request: NextRequest) {
       .order('sort_order', { ascending: true });
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      logger.error('[CANNED] GET db error:', error);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     return NextResponse.json({ responses: data || [] });
@@ -75,7 +76,8 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      logger.error('[CANNED] POST db error:', error);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     return NextResponse.json({ response: data });
@@ -114,7 +116,8 @@ export async function PUT(request: NextRequest) {
       .eq('business_id', businessId);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      logger.error('[CANNED] PUT db error:', error);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
@@ -147,7 +150,8 @@ export async function DELETE(request: NextRequest) {
       .eq('business_id', businessId);
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      logger.error('[CANNED] DELETE db error:', error);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
