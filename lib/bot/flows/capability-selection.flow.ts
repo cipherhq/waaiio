@@ -429,106 +429,17 @@ const myAccountMenuStep: FlowStepConfig = {
       return { valid: true, data: { _my_account_route: 'select_capability' } };
     }
 
-    // Handle My Bookings inline — built-in step in bot.service.ts, not a flow step
-    if (action === 'acct_bookings' || action === 'my bookings' || action === 'bookings') {
-      const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-      const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
-
-      const [{ data: upcoming }, { data: tickets }, { data: reservations }] = await Promise.all([
-        ctx.supabase.from('bookings')
-          .select('id, date, time, party_size, reference_code, businesses (name)')
-          .eq('user_id', ctx.session.user_id!)
-          .in('status', ['confirmed', 'pending'])
-          .gte('date', new Date().toISOString().split('T')[0])
-          .order('date', { ascending: true }).limit(5),
-        ctx.supabase.from('event_tickets')
-          .select('id, ticket_code, guest_name, status, created_at, event:events!event_id(name, date, time, venue)')
-          .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
-          .eq('status', 'valid')
-          .order('created_at', { ascending: false }).limit(5),
-        ctx.supabase.from('reservations')
-          .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name)')
-          .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
-          .in('status', ['confirmed', 'pending', 'checked_in'])
-          .gte('check_out', new Date().toISOString().split('T')[0])
-          .order('check_in', { ascending: true }).limit(5),
-      ]);
-
-      const items: { title: string; description: string; postbackText: string }[] = [];
-      if (upcoming) {
-        for (const r of upcoming) {
-          const biz = r.businesses as unknown as { name: string } | null;
-          const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-          items.push({ title: biz?.name || 'Business', description: `${dateLabel} at ${r.time} • ${r.party_size} guests`, postbackText: `booking_${r.id}` });
-        }
-      }
-      if (tickets) {
-        for (const t of tickets) {
-          const evt = t.event as unknown as { name: string; date: string; time?: string; venue?: string } | null;
-          const dateLabel = evt?.date ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
-          items.push({ title: evt?.name || 'Event', description: `${dateLabel} • Ticket: ${t.ticket_code}`, postbackText: `ticket_${t.id}` });
-        }
-      }
-      if (reservations) {
-        for (const r of reservations) {
-          const biz = r.businesses as unknown as { name: string } | null;
-          const checkIn = new Date(r.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-          const checkOut = new Date(r.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-          items.push({ title: biz?.name || 'Stay', description: `${checkIn} → ${checkOut} • Ref: ${r.reference_code}`, postbackText: `reservation_${r.id}` });
-        }
-      }
-
-      if (items.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to get started!" });
-      } else {
-        await ctx.sender.sendList({ to: ctx.from, title: 'Your Bookings & Tickets', body: 'Select a booking, ticket, or stay to view:', buttonLabel: 'View All', items });
-      }
-      // Set built-in step so follow-up interactions (booking_123, ticket_456) are handled by bot.service.ts
-      await ctx.supabase.from('bot_sessions').update({ current_step: 'my_bookings' }).eq('id', ctx.session.id);
-      ctx.session.session_data._my_account_route = 'done';
-      return { valid: true, data: { _my_account_route: 'done' } };
-    }
-
-    // Handle My Orders inline — built-in step in bot.service.ts, not a flow step
-    if (action === 'acct_orders' || action === 'my orders' || action === 'orders' || action === 'track') {
-      const { data: orders } = await ctx.supabase
-        .from('orders')
-        .select('id, reference_code, status, total_amount, created_at, businesses (name, country_code)')
-        .eq('user_id', ctx.session.user_id!)
-        .in('status', ['pending', 'confirmed', 'processing', 'ready', 'shipped'])
-        .order('created_at', { ascending: false }).limit(10);
-
-      if (!orders || orders.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any active orders. Send *Hi* to place an order!" });
-      } else {
-        const statusEmoji: Record<string, string> = { pending: '🕐', confirmed: '✅', processing: '🔧', ready: '📦', shipped: '🚚' };
-        const statusLabel: Record<string, string> = { pending: 'Pending', confirmed: 'Confirmed', processing: 'Processing', ready: 'Ready', shipped: 'Shipped' };
-        if (orders.length <= 3) {
-          const lines = orders.map((o) => {
-            const b = o.businesses as unknown as { name: string; country_code?: string } | null;
-            const cc = (b?.country_code as CountryCode) || 'NG';
-            const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
-            return `${statusEmoji[o.status] || '📋'} *${o.reference_code}* — ${statusLabel[o.status] || o.status}\n   ${b?.name || 'Order'} • ${dateLabel} • ${formatCurrency(o.total_amount || 0, cc)}`;
-          });
-          await ctx.sender.sendText({ to: ctx.from, text: `📦 *Your Orders*\n\n${lines.join('\n\n')}` });
-          await ctx.sender.sendButtons({ to: ctx.from, body: 'Select an order to view details:', buttons: orders.slice(0, 3).map((o) => ({ id: `order_${o.id}`, title: `${o.reference_code}`.slice(0, 20) })) });
-        } else {
-          const items = orders.map((o) => {
-            const b = o.businesses as unknown as { name: string; country_code?: string } | null;
-            const cc = (b?.country_code as CountryCode) || 'NG';
-            return { title: `${o.reference_code}`.slice(0, 24), description: `${statusLabel[o.status] || o.status} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, cc)}`.slice(0, 72), postbackText: `order_${o.id}` };
-          });
-          await ctx.sender.sendList({ to: ctx.from, title: 'Your Orders', body: '📦 Select an order to view details:', buttonLabel: 'View Orders', items });
-        }
-      }
-      // Set built-in step so follow-up interactions (order_123) are handled by bot.service.ts
-      await ctx.supabase.from('bot_sessions').update({ current_step: 'my_orders' }).eq('id', ctx.session.id);
-      ctx.session.session_data._my_account_route = 'done';
-      return { valid: true, data: { _my_account_route: 'done' } };
-    }
-
-    // Handle items routed via actual flow steps
+    // Route to flow steps — bookings/orders are stub steps in this flow,
+    // subscriptions/loyalty/invoices are steps in their own flows.
+    // All found via cross-flow lookup in the executor.
     const routeMap: Record<string, string> = {
+      'acct_bookings': 'my_bookings',
+      'my bookings': 'my_bookings',
+      'bookings': 'my_bookings',
+      'acct_orders': 'my_orders',
+      'my orders': 'my_orders',
+      'orders': 'my_orders',
+      'track': 'my_orders',
       'acct_subscriptions': 'list_subscriptions',
       'subscriptions': 'list_subscriptions',
       'acct_loyalty': 'loyalty_menu',
@@ -542,10 +453,6 @@ const myAccountMenuStep: FlowStepConfig = {
 
     const targetStep = routeMap[action];
     if (targetStep) {
-      // Route to the flow step
-      await ctx.supabase.from('bot_sessions')
-        .update({ current_step: targetStep })
-        .eq('id', ctx.session.id);
       ctx.session.session_data._my_account_route = targetStep;
       return { valid: true, data: { _my_account_route: targetStep } };
     }
@@ -562,9 +469,136 @@ const myAccountMenuStep: FlowStepConfig = {
   },
 };
 
+// ── My Bookings Stub ──
+// Shows bookings listing via prompt(). Follow-up messages (booking_123, ticket_456)
+// are intercepted by bot.service.ts before the executor runs.
+const myBookingsStep: FlowStepConfig = {
+  id: 'my_bookings',
+
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+    const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+
+    const [{ data: upcoming }, { data: tickets }, { data: reservations }] = await Promise.all([
+      ctx.supabase.from('bookings')
+        .select('id, date, time, party_size, reference_code, businesses (name)')
+        .eq('user_id', ctx.session.user_id!)
+        .in('status', ['confirmed', 'pending'])
+        .gte('date', new Date().toISOString().split('T')[0])
+        .order('date', { ascending: true }).limit(5),
+      ctx.supabase.from('event_tickets')
+        .select('id, ticket_code, guest_name, status, created_at, event:events!event_id(name, date, time, venue)')
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .eq('status', 'valid')
+        .order('created_at', { ascending: false }).limit(5),
+      ctx.supabase.from('reservations')
+        .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name)')
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .in('status', ['confirmed', 'pending', 'checked_in'])
+        .gte('check_out', new Date().toISOString().split('T')[0])
+        .order('check_in', { ascending: true }).limit(5),
+    ]);
+
+    const items: { title: string; description: string; postbackText: string }[] = [];
+    if (upcoming) {
+      for (const r of upcoming) {
+        const biz = r.businesses as unknown as { name: string } | null;
+        const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
+        items.push({ title: biz?.name || 'Business', description: `${dateLabel} at ${r.time} • ${r.party_size} guests`, postbackText: `booking_${r.id}` });
+      }
+    }
+    if (tickets) {
+      for (const t of tickets) {
+        const evt = t.event as unknown as { name: string; date: string; time?: string; venue?: string } | null;
+        const dateLabel = evt?.date ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+        items.push({ title: evt?.name || 'Event', description: `${dateLabel} • Ticket: ${t.ticket_code}`, postbackText: `ticket_${t.id}` });
+      }
+    }
+    if (reservations) {
+      for (const r of reservations) {
+        const biz = r.businesses as unknown as { name: string } | null;
+        const checkIn = new Date(r.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+        const checkOut = new Date(r.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+        items.push({ title: biz?.name || 'Stay', description: `${checkIn} → ${checkOut} • Ref: ${r.reference_code}`, postbackText: `reservation_${r.id}` });
+      }
+    }
+
+    if (items.length === 0) {
+      return [{ type: 'text' as const, text: "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to get started!" }];
+    }
+    return [{
+      type: 'list' as const,
+      title: 'Your Bookings & Tickets',
+      body: 'Select a booking, ticket, or stay to view:',
+      buttonLabel: 'View All',
+      items,
+    }];
+  },
+
+  // validate/next are never called — bot.service.ts intercepts at current_step === 'my_bookings'
+  async validate() { return { valid: true }; },
+  async next() { return null; },
+};
+
+// ── My Orders Stub ──
+// Shows orders listing via prompt(). Follow-up messages (order_123)
+// are intercepted by bot.service.ts before the executor runs.
+const myOrdersStep: FlowStepConfig = {
+  id: 'my_orders',
+
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    const { data: orders } = await ctx.supabase
+      .from('orders')
+      .select('id, reference_code, status, total_amount, created_at, businesses (name, country_code)')
+      .eq('user_id', ctx.session.user_id!)
+      .in('status', ['pending', 'confirmed', 'processing', 'ready', 'shipped'])
+      .order('created_at', { ascending: false }).limit(10);
+
+    if (!orders || orders.length === 0) {
+      return [{ type: 'text' as const, text: "You don't have any active orders. Send *Hi* to place an order!" }];
+    }
+
+    const statusLabel: Record<string, string> = { pending: 'Pending', confirmed: 'Confirmed', processing: 'Processing', ready: 'Ready', shipped: 'Shipped' };
+    const statusEmoji: Record<string, string> = { pending: '🕐', confirmed: '✅', processing: '🔧', ready: '📦', shipped: '🚚' };
+
+    if (orders.length <= 3) {
+      const lines = orders.map((o) => {
+        const b = o.businesses as unknown as { name: string; country_code?: string } | null;
+        const cc = (b?.country_code as CountryCode) || 'NG';
+        const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+        return `${statusEmoji[o.status] || '📋'} *${o.reference_code}* — ${statusLabel[o.status] || o.status}\n   ${b?.name || 'Order'} • ${dateLabel} • ${formatCurrency(o.total_amount || 0, cc)}`;
+      });
+      return [
+        { type: 'text' as const, text: `📦 *Your Orders*\n\n${lines.join('\n\n')}` },
+        { type: 'buttons' as const, body: 'Select an order to view details:', buttons: orders.slice(0, 3).map((o) => ({ id: `order_${o.id}`, title: `${o.reference_code}`.slice(0, 20) })) },
+      ];
+    }
+
+    return [{
+      type: 'list' as const,
+      title: 'Your Orders',
+      body: '📦 Select an order to view details:',
+      buttonLabel: 'View Orders',
+      items: orders.map((o) => {
+        const b = o.businesses as unknown as { name: string; country_code?: string } | null;
+        const cc = (b?.country_code as CountryCode) || 'NG';
+        return {
+          title: `${o.reference_code}`.slice(0, 24),
+          description: `${statusLabel[o.status] || o.status} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, cc)}`.slice(0, 72),
+          postbackText: `order_${o.id}`,
+        };
+      }),
+    }];
+  },
+
+  // validate/next are never called — bot.service.ts intercepts at current_step === 'my_orders'
+  async validate() { return { valid: true }; },
+  async next() { return null; },
+};
+
 export const capabilitySelectionFlow: FlowDefinition = {
   type: 'scheduling', // placeholder — this is a pseudo-flow
-  steps: [selectCapabilityStep, myAccountMenuStep],
+  steps: [selectCapabilityStep, myAccountMenuStep, myBookingsStep, myOrdersStep],
 };
 
 export { getFirstStepForCapability };
