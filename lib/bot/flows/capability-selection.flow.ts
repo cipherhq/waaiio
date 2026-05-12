@@ -274,10 +274,14 @@ const myAccountMenuStep: FlowStepConfig = {
       body: 'Manage your bookings, orders, and more:',
       buttonLabel: 'My Account',
       items: [
-        { title: 'My Bookings', description: 'View, reschedule, or cancel', postbackText: 'acct_bookings' },
+        { title: 'My Bookings', description: 'Appointments, tickets, stays', postbackText: 'acct_bookings' },
         { title: 'My Orders', description: 'Track order status', postbackText: 'acct_orders' },
-        { title: 'My Points', description: 'Check loyalty balance', postbackText: 'acct_loyalty' },
+        { title: 'My Giving', description: 'Donation & offering history', postbackText: 'acct_giving' },
         { title: 'My Invoices', description: 'View and pay invoices', postbackText: 'acct_invoices' },
+        { title: 'My Contracts', description: 'Sign or view contracts', postbackText: 'acct_contracts' },
+        { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes' },
+        { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty' },
+        { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions' },
         { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt' },
       ],
     }];
@@ -325,7 +329,110 @@ const myAccountMenuStep: FlowStepConfig = {
       return { valid: true, data: { _my_account_route: 'select_capability' } };
     }
 
+    // Handle giving history inline
+    if (action === 'acct_giving' || action === 'my giving' || action === 'giving') {
+      const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+      const { data: payments } = await ctx.supabase
+        .from('payments')
+        .select('amount, created_at, metadata')
+        .eq('status', 'success')
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      const giving = (payments || []).filter(p => {
+        const meta = (p.metadata || {}) as Record<string, unknown>;
+        return meta.service_type === 'giving' || meta.flow_type === 'giving';
+      });
+
+      if (giving.length === 0) {
+        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any giving history yet. Send *Hi* to give!" });
+      } else {
+        const total = giving.reduce((sum, g) => sum + Number(g.amount || 0), 0);
+        const lines = ['🙏 *Your Giving History*', ''];
+        for (const g of giving.slice(0, 8)) {
+          const date = new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          lines.push(`📅 ${date} — ${Number(g.amount).toLocaleString()}`);
+        }
+        lines.push('', `💰 *Total: ${total.toLocaleString()}*`);
+        await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
+      }
+      ctx.session.session_data._my_account_route = 'select_capability';
+      return { valid: true, data: { _my_account_route: 'select_capability' } };
+    }
+
+    // Handle contracts inline
+    if (action === 'acct_contracts' || action === 'my contracts' || action === 'contracts') {
+      const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+      const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+      const { sanitizeFilterValue } = await import('@/lib/utils/sanitize');
+      const { data: contracts } = await ctx.supabase
+        .from('contracts')
+        .select('id, title, status, signed_at, created_at, token, businesses:business_id(name)')
+        .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (!contracts || contracts.length === 0) {
+        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any contracts. Send *Hi* to get started!" });
+      } else {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const pending = contracts.filter(c => c.status === 'pending');
+        const signed = contracts.filter(c => c.status === 'signed');
+        const lines = ['📋 *Your Contracts*', ''];
+        if (pending.length > 0) {
+          lines.push('⏳ *Pending:*');
+          for (const c of pending) { lines.push(`• ${c.title} — ${appUrl}/sign/${c.token}`); }
+          lines.push('');
+        }
+        if (signed.length > 0) {
+          lines.push('✅ *Signed:*');
+          for (const c of signed) {
+            const d = c.signed_at ? new Date(c.signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+            lines.push(`• ${c.title} — ${d}`);
+          }
+        }
+        await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
+      }
+      ctx.session.session_data._my_account_route = 'select_capability';
+      return { valid: true, data: { _my_account_route: 'select_capability' } };
+    }
+
+    // Handle quotes inline
+    if (action === 'acct_quotes' || action === 'my quotes' || action === 'quotes') {
+      const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+      const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+      const { sanitizeFilterValue } = await import('@/lib/utils/sanitize');
+      const { data: quotes } = await ctx.supabase
+        .from('quote_requests')
+        .select('id, status, quoted_amount, created_at, businesses:business_id(name)')
+        .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (!quotes || quotes.length === 0) {
+        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any price requests. Send *Hi* to get started!" });
+      } else {
+        const emoji: Record<string, string> = { pending: '⏳', quoted: '💰', accepted: '✅', rejected: '❌', expired: '⌛' };
+        const lines = ['📋 *Your Price Requests*', ''];
+        for (const q of quotes) {
+          const biz = q.businesses as any;
+          const d = new Date(q.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const e = emoji[q.status] || '📋';
+          let line = `${e} ${biz?.name || 'Business'} — ${d}`;
+          if (q.status === 'quoted' && q.quoted_amount) line += ` — ${q.quoted_amount}`;
+          else if (q.status === 'pending') line += ' — Awaiting response';
+          lines.push(line);
+        }
+        await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
+      }
+      ctx.session.session_data._my_account_route = 'select_capability';
+      return { valid: true, data: { _my_account_route: 'select_capability' } };
+    }
+
+    // Handle items routed via flow steps
     const routeMap: Record<string, string> = {
+      'acct_subscriptions': 'list_subscriptions',
+      'subscriptions': 'list_subscriptions',
       'acct_bookings': 'my_bookings',
       'acct_orders': 'my_orders',
       'acct_loyalty': 'loyalty_menu',
@@ -357,8 +464,11 @@ const myAccountMenuStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
-    // The session step was already updated in validate — return null to let the executor re-route
-    return ctx.session.session_data._my_account_route as string || 'select_capability';
+    const route = ctx.session.session_data._my_account_route as string;
+    // If handled inline (giving, contracts, quotes, receipt), go back to menu or end
+    if (route === 'select_capability' || route === 'done') return null;
+    // Otherwise route to the flow step
+    return route || 'select_capability';
   },
 };
 
