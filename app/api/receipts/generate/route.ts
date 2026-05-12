@@ -89,13 +89,24 @@ async function handleReceipt(
     .limit(1)
     .maybeSingle();
 
+  // Fetch most recent paid invoice
+  const { data: recentInvoice } = await supabase
+    .from('invoices')
+    .select('id, invoice_number, total_amount, status, paid_at, created_at, customer_name, customer_phone, business_id, businesses:business_id(name, country_code, subscription_tier)')
+    .eq('customer_phone', customerPhone)
+    .eq('status', 'paid')
+    .order('paid_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   // Use whichever is newest
-  type TransactionSource = 'booking' | 'charge' | 'payment';
+  type TransactionSource = 'booking' | 'charge' | 'payment' | 'invoice';
   let source: TransactionSource | null = null;
   const candidates: { source: TransactionSource; date: Date }[] = [];
   if (recentBooking) candidates.push({ source: 'booking', date: new Date(recentBooking.created_at) });
   if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at) });
   if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at) });
+  if (recentInvoice) candidates.push({ source: 'invoice', date: new Date(recentInvoice.paid_at || recentInvoice.created_at) });
 
   if (candidates.length > 0) {
     candidates.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -171,6 +182,22 @@ async function handleReceipt(
       countryCode,
       whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
     };
+  } else if (source === 'invoice' && recentInvoice) {
+    const biz = recentInvoice.businesses as unknown as { name: string; country_code?: string; subscription_tier?: string } | null;
+    const countryCode = (biz?.country_code || 'NG') as CountryCode;
+
+    receiptData = {
+      businessName: biz?.name || 'Business',
+      referenceCode: recentInvoice.invoice_number || '-',
+      date: recentInvoice.paid_at || recentInvoice.created_at,
+      serviceName: 'Invoice',
+      amount: recentInvoice.total_amount || 0,
+      paymentStatus: recentInvoice.status,
+      customerName: recentInvoice.customer_name || customerName,
+      customerPhone,
+      countryCode,
+      whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
+    };
   } else {
     return NextResponse.json({ error: 'No transactions found' }, { status: 404 });
   }
@@ -210,6 +237,15 @@ async function handleHistory(
     .eq('user_id', userId)
     .eq('status', 'success')
     .order('created_at', { ascending: false })
+    .limit(50);
+
+  // Fetch paid invoices
+  const { data: invoices } = await supabase
+    .from('invoices')
+    .select('invoice_number, total_amount, status, paid_at, created_at, customer_name, businesses:business_id(name, country_code)')
+    .eq('customer_phone', customerPhone)
+    .eq('status', 'paid')
+    .order('paid_at', { ascending: false })
     .limit(50);
 
   // Merge and sort by date
@@ -265,6 +301,21 @@ async function handleHistory(
         referenceCode: p.gateway_reference || '-',
         amount: p.amount || 0,
         status: p.status,
+      });
+    }
+  }
+
+  if (invoices) {
+    for (const inv of invoices) {
+      const biz = inv.businesses as unknown as { name: string; country_code?: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      rows.push({
+        date: inv.paid_at || inv.created_at,
+        serviceName: 'Invoice',
+        businessName: biz?.name || 'Business',
+        referenceCode: inv.invoice_number || '-',
+        amount: inv.total_amount || 0,
+        status: inv.status,
       });
     }
   }
@@ -330,6 +381,17 @@ async function handleAnnual(
     .order('created_at', { ascending: true })
     .limit(200);
 
+  // Fetch paid invoices for the year
+  const { data: annualInvoices } = await supabase
+    .from('invoices')
+    .select('invoice_number, total_amount, status, paid_at, created_at, customer_name, businesses:business_id(name, country_code)')
+    .eq('customer_phone', customerPhone)
+    .eq('status', 'paid')
+    .gte('paid_at', `${startDate}T00:00:00`)
+    .lte('paid_at', `${endDate}T23:59:59`)
+    .order('paid_at', { ascending: true })
+    .limit(200);
+
   const rows: HistoryRow[] = [];
   let countryCode: CountryCode = 'NG';
   let businessName: string | undefined;
@@ -383,6 +445,22 @@ async function handleAnnual(
         referenceCode: p.gateway_reference || '-',
         amount: p.amount || 0,
         status: p.status,
+      });
+    }
+  }
+
+  if (annualInvoices) {
+    for (const inv of annualInvoices) {
+      const biz = inv.businesses as unknown as { name: string; country_code?: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      if (biz?.name && !businessName) businessName = biz.name;
+      rows.push({
+        date: inv.paid_at || inv.created_at,
+        serviceName: 'Invoice',
+        businessName: biz?.name || 'Business',
+        referenceCode: inv.invoice_number || '-',
+        amount: inv.total_amount || 0,
+        status: inv.status,
       });
     }
   }

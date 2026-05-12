@@ -2251,6 +2251,18 @@ export class BotService {
         .order('created_at', { ascending: false })
         .limit(5);
 
+      // Fetch upcoming reservations (stays)
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const { data: reservations } = await this.supabase
+        .from('reservations')
+        .select('id, check_in, check_out, reference_code, guest_name, status, property_id, businesses:business_id(name)')
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .in('status', ['confirmed', 'pending', 'checked_in'])
+        .gte('check_out', new Date().toISOString().split('T')[0])
+        .order('check_in', { ascending: true })
+        .limit(5);
+
       const items: { title: string; description: string; postbackText: string }[] = [];
 
       if (upcoming) {
@@ -2281,8 +2293,21 @@ export class BotService {
         }
       }
 
+      if (reservations && reservations.length > 0) {
+        for (const r of reservations) {
+          const biz = r.businesses as unknown as { name: string } | null;
+          const checkIn = new Date(r.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+          const checkOut = new Date(r.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+          items.push({
+            title: biz?.name || 'Stay',
+            description: `${checkIn} → ${checkOut} • Ref: ${r.reference_code}`,
+            postbackText: `reservation_${r.id}`,
+          });
+        }
+      }
+
       if (items.length === 0) {
-        await this.sendText(from, "You don't have any upcoming bookings or tickets. Send *Hi* to get started!");
+        await this.sendText(from, "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to get started!");
         await this.deactivateSession(session.id);
         return;
       }
@@ -2290,7 +2315,7 @@ export class BotService {
       await this.messageSender.sendList({
         to: from,
         title: 'Your Bookings & Tickets',
-        body: 'Select a booking or ticket to view:',
+        body: 'Select a booking, ticket, or stay to view:',
         buttonLabel: 'View All',
         items,
       });
@@ -2311,6 +2336,12 @@ export class BotService {
     if (input.startsWith('ticket_')) {
       const ticketId = input.replace('ticket_', '');
       await this.handleViewTicket(session, from, ticketId);
+      return;
+    }
+
+    if (input.startsWith('reservation_')) {
+      const reservationId = input.replace('reservation_', '');
+      await this.handleViewReservation(session, from, reservationId);
       return;
     }
   }
@@ -2342,6 +2373,46 @@ export class BotService {
       evt?.venue ? `📍 ${evt.venue}` : '',
       `🔑 Ticket: *${ticket.ticket_code}*`,
       `👤 ${ticket.guest_name || 'Guest'}`,
+      `📊 Status: ${statusLabel}`,
+    ].filter(Boolean).join('\n'));
+  }
+
+  private async handleViewReservation(_session: BotSession, from: string, reservationId: string): Promise<void> {
+    const { data: reservation } = await this.supabase
+      .from('reservations')
+      .select('id, check_in, check_out, reference_code, guest_name, guests, total_amount, status, businesses:business_id(name, country_code)')
+      .eq('id', reservationId)
+      .single();
+
+    if (!reservation) {
+      await this.sendText(from, 'Reservation not found. Send *my bookings* to try again.');
+      return;
+    }
+
+    const biz = reservation.businesses as unknown as { name: string; country_code?: string } | null;
+    const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
+    const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
+    const statusMap: Record<string, string> = {
+      confirmed: '✅ Confirmed',
+      pending: '⏳ Pending',
+      checked_in: '🏠 Checked In',
+      checked_out: '✅ Checked Out',
+      cancelled: '❌ Cancelled',
+    };
+    const statusLabel = statusMap[reservation.status] || reservation.status;
+
+    const currencySymbol = biz?.country_code === 'US' ? '$' : biz?.country_code === 'GB' ? '£' : '₦';
+
+    await this.sendText(from, [
+      `🏨 *Reservation Details*`,
+      '',
+      `🏢 *${biz?.name || 'Property'}*`,
+      `📅 Check-in: ${checkIn}`,
+      `📅 Check-out: ${checkOut}`,
+      reservation.guests ? `👥 ${reservation.guests} guest(s)` : '',
+      reservation.total_amount ? `💰 ${currencySymbol}${Number(reservation.total_amount).toLocaleString()}` : '',
+      `👤 ${reservation.guest_name || 'Guest'}`,
+      `🔑 Ref: *${reservation.reference_code}*`,
       `📊 Status: ${statusLabel}`,
     ].filter(Boolean).join('\n'));
   }
