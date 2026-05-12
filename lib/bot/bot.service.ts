@@ -697,7 +697,7 @@ export class BotService {
           .select('total_amount, created_at, services:service_id(name, service_type), businesses:business_id(name)')
           .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
           .eq('deposit_status', 'paid')
-          .order('created_at', { ascending: false }).limit(20),
+          .order('created_at', { ascending: false }).limit(100),
         this.supabase.from('campaign_donations')
           .select('amount, status, campaign_id, created_at, reference_code')
           .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)

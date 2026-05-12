@@ -102,14 +102,27 @@ async function handleReceipt(
     .limit(1)
     .maybeSingle();
 
+  // Fetch most recent campaign donation
+  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const { data: recentDonation } = await supabase
+    .from('campaign_donations')
+    .select('id, amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
+    .or(`donor_phone.eq.${phoneP},donor_phone.eq.${phoneN}`)
+    .eq('status', 'success')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   // Use whichever is newest
-  type TransactionSource = 'booking' | 'charge' | 'payment' | 'invoice';
+  type TransactionSource = 'booking' | 'charge' | 'payment' | 'invoice' | 'donation';
   let source: TransactionSource | null = null;
   const candidates: { source: TransactionSource; date: Date }[] = [];
   if (recentBooking) candidates.push({ source: 'booking', date: new Date(recentBooking.created_at) });
   if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at) });
   if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at) });
   if (recentInvoice) candidates.push({ source: 'invoice', date: new Date(recentInvoice.paid_at || recentInvoice.created_at) });
+  if (recentDonation) candidates.push({ source: 'donation', date: new Date(recentDonation.created_at) });
 
   if (candidates.length > 0) {
     candidates.sort((a, b) => b.date.getTime() - a.date.getTime());
@@ -200,6 +213,23 @@ async function handleReceipt(
       customerPhone,
       countryCode,
       whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
+    };
+  } else if (source === 'donation' && recentDonation) {
+    const biz = recentDonation.businesses as unknown as { name: string; country_code?: string } | null;
+    const campaign = recentDonation.campaigns as unknown as { name: string } | null;
+    const countryCode = (biz?.country_code || 'NG') as CountryCode;
+
+    receiptData = {
+      businessName: biz?.name || 'Organization',
+      referenceCode: recentDonation.reference_code || '-',
+      date: recentDonation.created_at,
+      serviceName: campaign?.name || 'Donation',
+      amount: recentDonation.amount || 0,
+      paymentStatus: 'success',
+      customerName,
+      customerPhone,
+      countryCode,
+      whitelabel: false,
     };
   } else {
     return NextResponse.json({ error: 'No transactions found' }, { status: 404 });
@@ -319,6 +349,33 @@ async function handleHistory(
         referenceCode: inv.invoice_number || '-',
         amount: inv.total_amount || 0,
         status: inv.status,
+      });
+    }
+  }
+
+  // Fetch campaign donations
+  const histPhoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+  const histPhoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const { data: donations } = await supabase
+    .from('campaign_donations')
+    .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
+    .or(`donor_phone.eq.${histPhoneP},donor_phone.eq.${histPhoneN}`)
+    .eq('status', 'success')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (donations) {
+    for (const d of donations) {
+      const biz = d.businesses as unknown as { name: string; country_code?: string } | null;
+      const campaign = d.campaigns as unknown as { name: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      rows.push({
+        date: d.created_at,
+        serviceName: campaign?.name || 'Donation',
+        businessName: biz?.name || 'Organization',
+        referenceCode: d.reference_code || '-',
+        amount: d.amount || 0,
+        status: 'success',
       });
     }
   }
@@ -464,6 +521,36 @@ async function handleAnnual(
         referenceCode: inv.invoice_number || '-',
         amount: inv.total_amount || 0,
         status: inv.status,
+      });
+    }
+  }
+
+  // Fetch campaign donations for the year
+  const annPhoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+  const annPhoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const { data: annualDonations } = await supabase
+    .from('campaign_donations')
+    .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
+    .or(`donor_phone.eq.${annPhoneP},donor_phone.eq.${annPhoneN}`)
+    .eq('status', 'success')
+    .gte('created_at', `${startDate}T00:00:00`)
+    .lte('created_at', `${endDate}T23:59:59`)
+    .order('created_at', { ascending: true })
+    .limit(200);
+
+  if (annualDonations) {
+    for (const d of annualDonations) {
+      const biz = d.businesses as unknown as { name: string; country_code?: string } | null;
+      const campaign = d.campaigns as unknown as { name: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      if (biz?.name && !businessName) businessName = biz.name;
+      rows.push({
+        date: d.created_at,
+        serviceName: campaign?.name || 'Donation',
+        businessName: biz?.name || 'Organization',
+        referenceCode: d.reference_code || '-',
+        amount: d.amount || 0,
+        status: 'success',
       });
     }
   }

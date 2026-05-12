@@ -339,11 +339,13 @@ const myAccountMenuStep: FlowStepConfig = {
       // Giving payments are bookings linked to services with service_type='giving'
       // and deposit_status='paid'. Also include campaign_donations.
       const [{ data: givingBookings }, { data: donations }] = await Promise.all([
+        // Fetch paid bookings — limit higher because we post-filter for service_type='giving'
+        // (Supabase can't filter on joined column directly)
         ctx.supabase.from('bookings')
           .select('total_amount, created_at, services:service_id(name, service_type), businesses:business_id(name)')
           .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
           .eq('deposit_status', 'paid')
-          .order('created_at', { ascending: false }).limit(20),
+          .order('created_at', { ascending: false }).limit(100),
         ctx.supabase.from('campaign_donations')
           .select('amount, created_at, reference_code')
           .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
