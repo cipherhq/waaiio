@@ -6,6 +6,25 @@ export const metadata: Metadata = {
   title: 'Waaiio — Your WhatsApp. Now 10x Smarter.',
   description:
     'Automate bookings, payments, orders, and customer engagement on WhatsApp — for any business, any industry, any country. AI-powered automation for 40+ industries with 20+ capabilities.',
+  openGraph: {
+    title: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
+    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp. 40+ industries, 6 countries, 25 capabilities.',
+    url: '/',
+    siteName: 'Waaiio',
+    type: 'website',
+    locale: 'en_US',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Waaiio — Your WhatsApp. Now 10x Smarter.',
+    description: 'Automate bookings, payments, orders, and engagement on WhatsApp — for any business, any industry, any country.',
+  },
+  keywords: [
+    'WhatsApp automation', 'WhatsApp business bot', 'WhatsApp booking system',
+    'WhatsApp payments', 'WhatsApp ordering', 'church giving WhatsApp',
+    'salon booking WhatsApp', 'restaurant ordering WhatsApp', 'AI WhatsApp bot',
+    'Paystack WhatsApp', 'Stripe WhatsApp', 'Meta Business Partner',
+  ],
 };
 
 export default function MarketingLayout({

@@ -1,15 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { motion, useScroll, useTransform } from 'framer-motion';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import CounterAnimation from '@/components/marketing/CounterAnimation';
 import HeroAutomationFlow from '@/components/marketing/HeroAutomationFlow';
-import LiveBotDemo from '@/components/marketing/LiveBotDemo';
 import { formatCurrency, getPricingTiers } from '@/lib/constants';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+
+// Lazy load heavy below-fold components
+const LiveBotDemo = lazy(() => import('@/components/marketing/LiveBotDemo'));
 
 const DEFAULT_PRICING = getPricingTiers('NG');
 const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
@@ -319,7 +321,9 @@ export default function HomePage() {
             </p>
           </AnimatedSection>
           <AnimatedSection className="mt-12">
-            <LiveBotDemo />
+            <Suspense fallback={<div className="mx-auto h-[400px] max-w-md animate-pulse rounded-2xl bg-gray-100" />}>
+              <LiveBotDemo />
+            </Suspense>
           </AnimatedSection>
         </div>
       </section>
