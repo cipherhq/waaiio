@@ -358,6 +358,9 @@ export class BotService {
     const isQuoteQuery = /^(my\s+)?(quotes?|price\s+requests?)$/i.test(text)
       || /^(check|view|show)\s+(my\s+)?(quotes?|price\s+requests?)$/i.test(text);
 
+    const isMyAccountQuery = /^(my\s+)?account$/i.test(text)
+      || /^(manage|my\s+stuff)$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     // Handle location query — send business address/location
@@ -897,6 +900,46 @@ export class BotService {
       qLines.push('• Type *Hi* to make a new request');
 
       await this.sendText(from, qLines.join('\n'));
+      return;
+    }
+
+    // ── My Account — global shortcut from any step ──
+    if (isMyAccountQuery) {
+      if (session) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      }
+      const profile = await getProfile();
+      if (!profile?.id) {
+        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        return;
+      }
+
+      // Find most recent business the customer interacted with
+      const resolvedBusinessId = session?.business_id || null;
+
+      await this.supabase.from('bot_sessions').delete()
+        .eq('whatsapp_number', from).eq('is_active', false);
+
+      const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+        whatsapp_number: from, user_id: profile.id, business_id: resolvedBusinessId,
+        current_step: 'my_account_menu', session_data: { active_capability: 'my_account' }, is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+
+      if (!newSession) { await this.sendText(from, 'Something went wrong. Try again.'); return; }
+
+      // Load business for flow context (may be null for cross-business account view)
+      let biz = null;
+      if (resolvedBusinessId) {
+        const { data } = await this.supabase
+          .from('businesses')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+          .eq('id', resolvedBusinessId)
+          .single();
+        biz = data;
+      }
+
+      await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
       return;
     }
 
