@@ -2230,6 +2230,7 @@ export class BotService {
 
   private async handleMyBookings(session: BotSession, from: string, input: string): Promise<void> {
     if (!input) {
+      // Fetch upcoming bookings
       const { data: upcoming } = await this.supabase
         .from('bookings')
         .select('id, date, time, party_size, reference_code, businesses (name)')
@@ -2239,29 +2240,58 @@ export class BotService {
         .order('date', { ascending: true })
         .limit(5);
 
-      if (!upcoming || upcoming.length === 0) {
-        await this.sendText(from, "You don't have any upcoming bookings. Send *Hi* to get started!");
+      // Fetch event tickets (match both +234... and 234... phone formats)
+      const phoneWithPlus = from.startsWith('+') ? from : `+${from}`;
+      const phoneWithoutPlus = from.startsWith('+') ? from.slice(1) : from;
+      const { data: tickets } = await this.supabase
+        .from('event_tickets')
+        .select('id, ticket_code, guest_name, status, created_at, event:events!event_id(name, date, time, venue)')
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneWithPlus)},guest_phone.eq.${sanitizeFilterValue(phoneWithoutPlus)}`)
+        .eq('status', 'valid')
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      const items: { title: string; description: string; postbackText: string }[] = [];
+
+      if (upcoming) {
+        for (const r of upcoming) {
+          const biz = r.businesses as unknown as { name: string } | null;
+          const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', {
+            weekday: 'short', day: 'numeric', month: 'short',
+          });
+          items.push({
+            title: biz?.name || 'Business',
+            description: `${dateLabel} at ${r.time} • ${r.party_size} guests`,
+            postbackText: `booking_${r.id}`,
+          });
+        }
+      }
+
+      if (tickets) {
+        for (const t of tickets) {
+          const evt = t.event as unknown as { name: string; date: string; time?: string; venue?: string } | null;
+          const dateLabel = evt?.date
+            ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' })
+            : '';
+          items.push({
+            title: evt?.name || 'Event',
+            description: `${dateLabel} • Ticket: ${t.ticket_code}`,
+            postbackText: `ticket_${t.id}`,
+          });
+        }
+      }
+
+      if (items.length === 0) {
+        await this.sendText(from, "You don't have any upcoming bookings or tickets. Send *Hi* to get started!");
         await this.deactivateSession(session.id);
         return;
       }
 
-      const items = upcoming.map((r) => {
-        const biz = r.businesses as unknown as { name: string } | null;
-        const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', {
-          weekday: 'short', day: 'numeric', month: 'short',
-        });
-        return {
-          title: biz?.name || 'Business',
-          description: `${dateLabel} at ${r.time} • ${r.party_size} guests`,
-          postbackText: `booking_${r.id}`,
-        };
-      });
-
       await this.messageSender.sendList({
         to: from,
-        title: 'Your Bookings',
-        body: 'Select a booking to manage:',
-        buttonLabel: 'View Bookings',
+        title: 'Your Bookings & Tickets',
+        body: 'Select a booking or ticket to view:',
+        buttonLabel: 'View All',
         items,
       });
       return;
@@ -2275,7 +2305,45 @@ export class BotService {
         session_data: session.session_data,
       }).eq('id', session.id);
       await this.handleModifyBooking(session, from, '');
+      return;
     }
+
+    if (input.startsWith('ticket_')) {
+      const ticketId = input.replace('ticket_', '');
+      await this.handleViewTicket(session, from, ticketId);
+      return;
+    }
+  }
+
+  private async handleViewTicket(_session: BotSession, from: string, ticketId: string): Promise<void> {
+    const { data: ticket } = await this.supabase
+      .from('event_tickets')
+      .select('id, ticket_code, guest_name, status, scanned_at, created_at, event:events!event_id(name, date, time, venue)')
+      .eq('id', ticketId)
+      .single();
+
+    if (!ticket) {
+      await this.sendText(from, 'Ticket not found. Send *my bookings* to try again.');
+      return;
+    }
+
+    const evt = ticket.event as unknown as { name: string; date: string; time?: string; venue?: string } | null;
+    const dateLabel = evt?.date
+      ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })
+      : 'TBD';
+
+    const statusLabel = ticket.status === 'used' ? '✅ Used' : ticket.status === 'cancelled' ? '❌ Cancelled' : '✅ Valid';
+
+    await this.sendText(from, [
+      `🎟️ *Event Ticket*`,
+      '',
+      `🎪 *${evt?.name || 'Event'}*`,
+      `📅 ${dateLabel}${evt?.time ? ` at ${evt.time}` : ''}`,
+      evt?.venue ? `📍 ${evt.venue}` : '',
+      `🔑 Ticket: *${ticket.ticket_code}*`,
+      `👤 ${ticket.guest_name || 'Guest'}`,
+      `📊 Status: ${statusLabel}`,
+    ].filter(Boolean).join('\n'));
   }
 
   private async handleModifyBooking(session: BotSession, from: string, input: string): Promise<void> {

@@ -79,15 +79,27 @@ async function handleReceipt(
     .limit(1)
     .maybeSingle();
 
+  // Fetch most recent payment (covers event tickets, general payments, etc.)
+  const { data: recentPayment } = await supabase
+    .from('payments')
+    .select('id, gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code, subscription_tier)')
+    .eq('user_id', userId)
+    .eq('status', 'success')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   // Use whichever is newest
-  type TransactionSource = 'booking' | 'charge';
+  type TransactionSource = 'booking' | 'charge' | 'payment';
   let source: TransactionSource | null = null;
-  if (recentBooking && recentCharge) {
-    source = new Date(recentBooking.created_at) >= new Date(recentCharge.created_at) ? 'booking' : 'charge';
-  } else if (recentBooking) {
-    source = 'booking';
-  } else if (recentCharge) {
-    source = 'charge';
+  const candidates: { source: TransactionSource; date: Date }[] = [];
+  if (recentBooking) candidates.push({ source: 'booking', date: new Date(recentBooking.created_at) });
+  if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at) });
+  if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at) });
+
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => b.date.getTime() - a.date.getTime());
+    source = candidates[0].source;
   }
 
   if (!source) {
@@ -112,7 +124,7 @@ async function handleReceipt(
       countryCode,
       whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
     };
-  } else if (recentCharge) {
+  } else if (source === 'charge' && recentCharge) {
     const biz = recentCharge.businesses as unknown as { name: string; country_code?: string; subscription_tier?: string } | null;
     const svc = recentCharge.services as unknown as { name: string } | null;
     const countryCode = (biz?.country_code || 'NG') as CountryCode;
@@ -124,6 +136,36 @@ async function handleReceipt(
       serviceName: svc?.name || 'Subscription',
       amount: recentCharge.amount || 0,
       paymentStatus: recentCharge.status,
+      customerName,
+      customerPhone,
+      countryCode,
+      whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,
+    };
+  } else if (source === 'payment' && recentPayment) {
+    const biz = recentPayment.businesses as unknown as { name: string; country_code?: string; subscription_tier?: string } | null;
+    const countryCode = (biz?.country_code || 'NG') as CountryCode;
+
+    // If payment has a booking_id, try to get the service name from the booking
+    let serviceName = 'Payment';
+    if (recentPayment.booking_id) {
+      const { data: linkedBooking } = await supabase
+        .from('bookings')
+        .select('services(name)')
+        .eq('id', recentPayment.booking_id)
+        .single();
+      if (linkedBooking) {
+        const svc = linkedBooking.services as unknown as { name: string } | null;
+        if (svc?.name) serviceName = svc.name;
+      }
+    }
+
+    receiptData = {
+      businessName: biz?.name || 'Business',
+      referenceCode: recentPayment.gateway_reference || '-',
+      date: recentPayment.created_at,
+      serviceName,
+      amount: recentPayment.amount || 0,
+      paymentStatus: recentPayment.status,
       customerName,
       customerPhone,
       countryCode,
@@ -146,7 +188,7 @@ async function handleHistory(
   // Fetch bookings
   const { data: bookings } = await supabase
     .from('bookings')
-    .select('reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
+    .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
     .eq('user_id', userId)
     .in('status', ['completed', 'confirmed', 'pending'])
     .order('created_at', { ascending: false })
@@ -161,15 +203,28 @@ async function handleHistory(
     .order('created_at', { ascending: false })
     .limit(50);
 
+  // Fetch payments (covers event tickets, general payments, etc.)
+  const { data: payments } = await supabase
+    .from('payments')
+    .select('gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code)')
+    .eq('user_id', userId)
+    .eq('status', 'success')
+    .order('created_at', { ascending: false })
+    .limit(50);
+
   // Merge and sort by date
   const rows: HistoryRow[] = [];
   let countryCode: CountryCode = 'NG';
+
+  // Collect booking IDs that already have rows so we don't double-count payments linked to bookings
+  const bookingIds = new Set<string>();
 
   if (bookings) {
     for (const b of bookings) {
       const biz = b.businesses as unknown as { name: string; country_code?: string } | null;
       const svc = b.services as unknown as { name: string } | null;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      bookingIds.add((b as any).id || '');
       rows.push({
         date: b.date || b.created_at,
         serviceName: svc?.name || 'Service',
@@ -193,6 +248,23 @@ async function handleHistory(
         referenceCode: c.reference_code || '-',
         amount: c.amount || 0,
         status: c.status,
+      });
+    }
+  }
+
+  if (payments) {
+    for (const p of payments) {
+      // Skip payments that are already represented by a booking row
+      if (p.booking_id && bookingIds.has(p.booking_id)) continue;
+      const biz = p.businesses as unknown as { name: string; country_code?: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      rows.push({
+        date: p.created_at,
+        serviceName: 'Payment',
+        businessName: biz?.name || 'Business',
+        referenceCode: p.gateway_reference || '-',
+        amount: p.amount || 0,
+        status: p.status,
       });
     }
   }
@@ -228,7 +300,7 @@ async function handleAnnual(
   // Fetch bookings for the year
   const { data: bookings } = await supabase
     .from('bookings')
-    .select('reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
+    .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
     .eq('user_id', userId)
     .in('status', ['completed', 'confirmed'])
     .gte('created_at', `${startDate}T00:00:00`)
@@ -247,9 +319,21 @@ async function handleAnnual(
     .order('created_at', { ascending: true })
     .limit(200);
 
+  // Fetch payments for the year
+  const { data: annualPayments } = await supabase
+    .from('payments')
+    .select('gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code)')
+    .eq('user_id', userId)
+    .eq('status', 'success')
+    .gte('created_at', `${startDate}T00:00:00`)
+    .lte('created_at', `${endDate}T23:59:59`)
+    .order('created_at', { ascending: true })
+    .limit(200);
+
   const rows: HistoryRow[] = [];
   let countryCode: CountryCode = 'NG';
   let businessName: string | undefined;
+  const annualBookingIds = new Set<string>();
 
   if (bookings) {
     for (const b of bookings) {
@@ -257,6 +341,7 @@ async function handleAnnual(
       const svc = b.services as unknown as { name: string } | null;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (biz?.name && !businessName) businessName = biz.name;
+      annualBookingIds.add((b as any).id || '');
       rows.push({
         date: b.date || b.created_at,
         serviceName: svc?.name || 'Service',
@@ -281,6 +366,23 @@ async function handleAnnual(
         referenceCode: c.reference_code || '-',
         amount: c.amount || 0,
         status: c.status,
+      });
+    }
+  }
+
+  if (annualPayments) {
+    for (const p of annualPayments) {
+      if (p.booking_id && annualBookingIds.has(p.booking_id)) continue;
+      const biz = p.businesses as unknown as { name: string; country_code?: string } | null;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      if (biz?.name && !businessName) businessName = biz.name;
+      rows.push({
+        date: p.created_at,
+        serviceName: 'Payment',
+        businessName: biz?.name || 'Business',
+        referenceCode: p.gateway_reference || '-',
+        amount: p.amount || 0,
+        status: p.status,
       });
     }
   }
