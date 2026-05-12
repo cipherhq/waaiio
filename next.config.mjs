@@ -6,6 +6,11 @@ const nextConfig = {
     ignoreBuildErrors: false,
   },
   poweredBy: false,
+  experimental: {
+    outputFileTracingIncludes: {
+      '/api/**': ['./node_modules/pdfkit/js/data/**/*'],
+    },
+  },
   async headers() {
     return [
       {

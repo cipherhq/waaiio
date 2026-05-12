@@ -172,10 +172,9 @@ export async function GET(request: NextRequest) {
 
         // Only alert if they've had payments (so they need payouts)
         const { count: payments } = await supabase
-          .from('payments')
+          .from('platform_fees')
           .select('id', { count: 'exact', head: true })
-          .eq('status', 'success')
-          .in('booking_id', supabase.from('bookings').select('id').eq('business_id', biz.id) as any);
+          .eq('business_id', biz.id);
 
         if ((count || 0) === 0 && (payments || 0) > 0) {
           await createAlert(supabase, {

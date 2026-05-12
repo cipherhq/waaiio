@@ -144,12 +144,22 @@ export class MetaCloudService {
   // ── Send Interactive List ──
 
   async sendList(message: CloudInteractiveListMessage): Promise<{ messageId: string }> {
+    // Enforce Meta WhatsApp API limits to prevent #131009 parameter errors
+    const safeSections = message.sections.slice(0, 10).map(section => ({
+      ...section,
+      rows: section.rows.slice(0, 10).map(row => ({
+        ...row,
+        title: row.title.slice(0, 24),
+        description: row.description ? row.description.slice(0, 72) : undefined,
+      })),
+    }));
+
     const interactive: Record<string, unknown> = {
       type: 'list',
-      body: { text: message.bodyText },
+      body: { text: message.bodyText.slice(0, 1024) },
       action: {
-        button: message.buttonText,
-        sections: message.sections,
+        button: message.buttonText.slice(0, 20),
+        sections: safeSections,
       },
     };
     if (message.headerText) interactive.header = { type: 'text', text: message.headerText };

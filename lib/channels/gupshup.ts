@@ -154,34 +154,33 @@ export class GupshupService {
     }
 
     try {
+      // Enforce WhatsApp API limits to prevent parameter value errors
+      const truncateItems = (items: typeof message.items) =>
+        items.slice(0, 10).map(item => ({
+          type: 'text',
+          title: item.title.slice(0, 24),
+          description: (item.description || '').slice(0, 72),
+          postbackText: item.postbackText,
+        }));
+
       const gupshupSections = message.sections
-        ? message.sections.map(s => ({
-            title: s.title,
+        ? message.sections.slice(0, 10).map(s => ({
+            title: s.title.slice(0, 24),
             subtitle: '',
-            options: s.items.map(item => ({
-              type: 'text',
-              title: item.title,
-              description: item.description || '',
-              postbackText: item.postbackText,
-            })),
+            options: truncateItems(s.items),
           }))
         : [{
-            title: message.title,
+            title: message.title.slice(0, 24),
             subtitle: '',
-            options: message.items.map(item => ({
-              type: 'text',
-              title: item.title,
-              description: item.description || '',
-              postbackText: item.postbackText,
-            })),
+            options: truncateItems(message.items),
           }];
 
       const interactive = {
         type: 'list',
-        title: message.title,
-        body: message.body,
+        title: message.title.slice(0, 24),
+        body: message.body.slice(0, 1024),
         msgid: `list_${Date.now()}`,
-        globalButtons: [{ type: 'text', title: message.buttonLabel }],
+        globalButtons: [{ type: 'text', title: message.buttonLabel.slice(0, 20) }],
         items: gupshupSections,
       };
 
