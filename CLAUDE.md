@@ -3,12 +3,15 @@
 ## Golden Rules — READ FIRST
 
 1. **Understand before changing.** Read every file you plan to modify. Trace how it connects to other files. Understand what depends on it. Never edit blind.
-2. **Trace the impact.** Before changing a function, type, table column, or capability — grep for every usage across the codebase. A change to `lib/capabilities/types.ts` affects bot flows, sidebar, onboarding, dashboard provider, and admin panel. Know the blast radius.
-3. **No guessing.** If you're unsure how something works, read the code. If the code isn't clear, ask the user. Never assume a column exists, a constraint allows a value, or a type accepts a field without verifying.
-4. **Ask when lost.** If a task is ambiguous, has multiple valid approaches, or could break existing features — stop and ask. A 10-second question is better than a 10-minute rollback.
-5. **Security first.** Every change goes through a security lens:
+2. **Trace the full lifecycle.** Before writing code that hooks into a system (flow steps, executors, webhooks, session handlers), read what happens BEFORE your code runs AND what happens AFTER. Don't just read the function you're modifying — read the caller. If you write a `validate()`, read what the executor does with the return value. If you return `null` from `next()`, check if that triggers deactivation. The bug is always in the part you didn't read.
+3. **Trace the data origin.** Before querying a table or filtering by a field, verify the data actually exists the way you think. Read the INSERT/UPDATE that creates the records. Check the migration for column types, enums, and CHECK constraints. Never assume a metadata field exists — check how the record is created. `payments.metadata` doesn't have `service_type` just because you want it to. The `payment_status` enum is `('pending','success','failed','refunded')` — not `'completed'`.
+4. **Trace the impact.** Before changing a function, type, table column, or capability — grep for every usage across the codebase. A change to `lib/capabilities/types.ts` affects bot flows, sidebar, onboarding, dashboard provider, and admin panel. Know the blast radius.
+5. **No guessing.** If you're unsure how something works, read the code. If the code isn't clear, ask the user. Never assume a column exists, a constraint allows a value, or a type accepts a field without verifying.
+6. **Ask when lost.** If a task is ambiguous, has multiple valid approaches, or could break existing features — stop and ask. A 10-second question is better than a 10-minute rollback.
+7. **Security first.** Every change goes through a security lens:
    - Never expose service role keys, `META_APP_SECRET`, or `STRIPE_SECRET_KEY` to the client
    - Never use `NEXT_PUBLIC_` prefix for secret values
+   - Never accept secrets/tokens inline — always insist on env vars
    - Always verify business ownership before mutations (`owner_id = auth.uid()`)
    - Sanitize user input in `.or()` filters with `sanitizeFilterValue()`
    - Validate redirect URLs (`startsWith('/')` and `!startsWith('//')`)
@@ -16,18 +19,20 @@
    - SECURITY DEFINER functions go in private schemas, never public
    - Webhook handlers must verify signatures (HMAC) before processing
    - Never trust `user_metadata` / `raw_user_meta_data` for authorization — use `app_metadata`
-6. **Verify after changing.** Run `npx next build` after changes. Check for type errors. If you modified a bot flow, trace the step chain to make sure routing is correct. If you modified a migration, verify column names match what the code uses.
-7. **Dependencies map.** Key dependency chains to be aware of:
-   - `CapabilityId` type → used in: types.ts, sidebar, onboarding, capability-selection flow, dashboard provider, admin panel businesses page
-   - `whatsapp_channels` table → used by: channel-resolver, webhook handler, dashboard page, settings page, admin channels page, onboarding
-   - `businesses` table → used by: nearly everything — bot service, all dashboard pages, all API routes, admin panel
-   - `bot_sessions.session_data` → shared state across all flow steps — changing a key name breaks the flow
-   - Payment flows → webhook handlers → platform_fees → financials — changing payment structure cascades through revenue tracking
-   - CHECK constraints on DB columns → if code writes a value the constraint doesn't allow, the insert silently fails or errors
-8. **DRY — flag repetition.** If you see the same pattern in 3+ places, it should be a shared function. Flag it even if the user didn't ask.
-9. **Engineered enough.** Not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity). Handle edge cases thoughtfully.
-10. **Explicit over clever.** Simple readable code beats clever one-liners. Name things clearly. Comment the "why" not the "what."
-11. **Present options, don't assume.** For non-trivial decisions, present 2-3 options with tradeoffs and ask which direction to go. Include "do nothing" as an option when relevant.
+8. **Verify after changing.** Run `npx next build` after changes. Check for type errors. If you modified a bot flow, trace the step chain to make sure routing is correct. If you modified a migration, verify column names match what the code uses.
+9. **Check the final state, not just the creation.** When auditing DB schema, RLS policies, or config — don't just grep the migration that created it. Check ALL subsequent migrations that may have altered, dropped, or replaced it. Migration 020 may create a permissive policy, but migration 023 may have already fixed it. The truth is the cumulative result, not any single file.
+10. **Dependencies map.** Key dependency chains to be aware of:
+    - `CapabilityId` type → used in: types.ts, sidebar, onboarding, capability-selection flow, dashboard provider, admin panel businesses page
+    - `whatsapp_channels` table → used by: channel-resolver, webhook handler, dashboard page, settings page, admin channels page, onboarding
+    - `businesses` table → used by: nearly everything — bot service, all dashboard pages, all API routes, admin panel
+    - `bot_sessions.session_data` → shared state across all flow steps — changing a key name breaks the flow
+    - Payment flows → webhook handlers → platform_fees → financials — changing payment structure cascades through revenue tracking
+    - CHECK constraints on DB columns → if code writes a value the constraint doesn't allow, the insert silently fails or errors
+    - Flow executor lifecycle: `validate()` → merge data → `next()` → `advanceToStep()` or `deactivateSession()` — returning null from next() kills the session
+11. **DRY — flag repetition.** If you see the same pattern in 3+ places, it should be a shared function. Flag it even if the user didn't ask.
+12. **Engineered enough.** Not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity). Handle edge cases thoughtfully.
+13. **Explicit over clever.** Simple readable code beats clever one-liners. Name things clearly. Comment the "why" not the "what."
+14. **Present options, don't assume.** For non-trivial decisions, present 2-3 options with tradeoffs and ask which direction to go. Include "do nothing" as an option when relevant.
 
 ## Quick Start
 ```bash
