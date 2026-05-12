@@ -336,22 +336,14 @@ const myAccountMenuStep: FlowStepConfig = {
       const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
       const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
 
-      // Look up user profile for user_id filter
-      const { data: profile } = await ctx.supabase
-        .from('profiles')
-        .select('id')
-        .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .limit(1)
-        .maybeSingle();
-
-      const [{ data: payments }, { data: donations }] = await Promise.all([
-        profile?.id
-          ? ctx.supabase.from('payments')
-              .select('amount, created_at, metadata')
-              .eq('user_id', profile.id)
-              .eq('status', 'success')
-              .order('created_at', { ascending: false }).limit(10)
-          : Promise.resolve({ data: null }),
+      // Giving payments are bookings linked to services with service_type='giving'
+      // and deposit_status='paid'. Also include campaign_donations.
+      const [{ data: givingBookings }, { data: donations }] = await Promise.all([
+        ctx.supabase.from('bookings')
+          .select('total_amount, created_at, services:service_id(name, service_type), businesses:business_id(name)')
+          .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .eq('deposit_status', 'paid')
+          .order('created_at', { ascending: false }).limit(20),
         ctx.supabase.from('campaign_donations')
           .select('amount, created_at, reference_code')
           .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
@@ -360,16 +352,16 @@ const myAccountMenuStep: FlowStepConfig = {
       ]);
 
       const allGiving: Array<{ amount: number; date: string; label: string }> = [];
-      if (payments) {
-        for (const p of payments) {
-          const meta = (p.metadata || {}) as Record<string, unknown>;
-          if (meta.service_type === 'giving' || meta.flow_type === 'giving') {
-            allGiving.push({
-              amount: Number(p.amount),
-              date: new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-              label: (meta.service_name as string) || 'Offering',
-            });
-          }
+      if (givingBookings) {
+        for (const b of givingBookings) {
+          const svc = b.services as unknown as { name: string; service_type?: string } | null;
+          if (svc?.service_type !== 'giving') continue;
+          const biz = b.businesses as unknown as { name: string } | null;
+          allGiving.push({
+            amount: Number(b.total_amount || 0),
+            date: new Date(b.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            label: svc.name || biz?.name || 'Offering',
+          });
         }
       }
       if (donations) {

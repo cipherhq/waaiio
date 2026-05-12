@@ -687,36 +687,34 @@ export class BotService {
 
       const businessId = session?.business_id || null;
 
-      // Fetch giving history (payments for giving services + campaign donations)
-      const { data: givingPayments } = await this.supabase
-        .from('payments')
-        .select('amount, status, created_at, metadata')
-        .eq('user_id', profile.id)
-        .eq('status', 'success')
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      const { data: donations } = await this.supabase
-        .from('campaign_donations')
-        .select('amount, status, campaign_id, created_at, reference_code')
-        .eq('donor_phone', phoneP)
-        .eq('status', 'success')
-        .order('created_at', { ascending: false })
-        .limit(10);
+      // Fetch giving history: bookings linked to services with service_type='giving' + campaign donations
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+      const [{ data: givingBookings }, { data: donations }] = await Promise.all([
+        this.supabase.from('bookings')
+          .select('total_amount, created_at, services:service_id(name, service_type), businesses:business_id(name)')
+          .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .eq('deposit_status', 'paid')
+          .order('created_at', { ascending: false }).limit(20),
+        this.supabase.from('campaign_donations')
+          .select('amount, status, campaign_id, created_at, reference_code')
+          .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .eq('status', 'success')
+          .order('created_at', { ascending: false }).limit(10),
+      ]);
 
       // Combine and show
       const allGiving: Array<{ amount: number; date: string; label: string }> = [];
 
-      if (givingPayments) {
-        for (const p of givingPayments) {
-          const meta = (p.metadata || {}) as Record<string, unknown>;
-          if (meta.service_type === 'giving' || meta.flow_type === 'giving') {
-            allGiving.push({
-              amount: Number(p.amount),
-              date: new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-              label: (meta.service_name as string) || 'Offering',
-            });
-          }
+      if (givingBookings) {
+        for (const b of givingBookings) {
+          const svc = b.services as unknown as { name: string; service_type?: string } | null;
+          if (svc?.service_type !== 'giving') continue;
+          const biz = b.businesses as unknown as { name: string } | null;
+          allGiving.push({
+            amount: Number(b.total_amount || 0),
+            date: new Date(b.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+            label: svc.name || biz?.name || 'Offering',
+          });
         }
       }
 
