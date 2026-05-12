@@ -692,7 +692,7 @@ export class BotService {
         .from('payments')
         .select('amount, status, created_at, metadata')
         .eq('user_id', profile.id)
-        .eq('status', 'completed')
+        .eq('status', 'success')
         .order('created_at', { ascending: false })
         .limit(10);
 
@@ -700,7 +700,7 @@ export class BotService {
         .from('campaign_donations')
         .select('amount, status, campaign_id, created_at, reference_code')
         .eq('donor_phone', phoneP)
-        .eq('status', 'completed')
+        .eq('status', 'success')
         .order('created_at', { ascending: false })
         .limit(10);
 

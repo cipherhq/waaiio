@@ -333,29 +333,62 @@ const myAccountMenuStep: FlowStepConfig = {
 
     // Handle giving history inline
     if (action === 'acct_giving' || action === 'my giving' || action === 'giving') {
-      const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-      const { data: payments } = await ctx.supabase
-        .from('payments')
-        .select('amount, created_at, metadata')
-        .eq('status', 'success')
-        .order('created_at', { ascending: false })
-        .limit(10);
+      const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+      const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
 
-      const giving = (payments || []).filter(p => {
-        const meta = (p.metadata || {}) as Record<string, unknown>;
-        return meta.service_type === 'giving' || meta.flow_type === 'giving';
-      });
+      // Look up user profile for user_id filter
+      const { data: profile } = await ctx.supabase
+        .from('profiles')
+        .select('id')
+        .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .limit(1)
+        .maybeSingle();
 
-      if (giving.length === 0) {
+      const [{ data: payments }, { data: donations }] = await Promise.all([
+        profile?.id
+          ? ctx.supabase.from('payments')
+              .select('amount, created_at, metadata')
+              .eq('user_id', profile.id)
+              .eq('status', 'success')
+              .order('created_at', { ascending: false }).limit(10)
+          : Promise.resolve({ data: null }),
+        ctx.supabase.from('campaign_donations')
+          .select('amount, created_at, reference_code')
+          .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .eq('status', 'success')
+          .order('created_at', { ascending: false }).limit(10),
+      ]);
+
+      const allGiving: Array<{ amount: number; date: string; label: string }> = [];
+      if (payments) {
+        for (const p of payments) {
+          const meta = (p.metadata || {}) as Record<string, unknown>;
+          if (meta.service_type === 'giving' || meta.flow_type === 'giving') {
+            allGiving.push({
+              amount: Number(p.amount),
+              date: new Date(p.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+              label: (meta.service_name as string) || 'Offering',
+            });
+          }
+        }
+      }
+      if (donations) {
+        for (const d of donations) {
+          allGiving.push({
+            amount: Number(d.amount),
+            date: new Date(d.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            label: `Campaign (${d.reference_code})`,
+          });
+        }
+      }
+
+      if (allGiving.length === 0) {
         await ctx.sender.sendText({ to: ctx.from, text: "You don't have any giving history yet. Send *Hi* to give!" });
       } else {
-        const total = giving.reduce((sum, g) => sum + Number(g.amount || 0), 0);
-        const lines = ['🙏 *Your Giving History*', ''];
-        for (const g of giving.slice(0, 8)) {
-          const date = new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          lines.push(`📅 ${date} — ${Number(g.amount).toLocaleString()}`);
-        }
-        lines.push('', `💰 *Total: ${total.toLocaleString()}*`);
+        const total = allGiving.reduce((sum, g) => sum + g.amount, 0);
+        const lines = ['🙏 *Your Giving History*', '',
+          ...allGiving.slice(0, 8).map(g => `📅 ${g.date} — *${g.label}* — ${Number(g.amount).toLocaleString()}`),
+          '', `💰 *Total: ${total.toLocaleString()}*`];
         await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
       }
       ctx.session.session_data._my_account_route = 'select_capability';
