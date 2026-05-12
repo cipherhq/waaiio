@@ -50,18 +50,67 @@ export async function GET(request: NextRequest) {
     const alertExists = (bizId: string, type: string) =>
       (existingAlerts || []).some(a => a.business_id === bizId && a.type === type);
 
+    // ── Batch queries — fetch aggregated data for ALL businesses at once ──
+    // This replaces up to 8 sequential queries per business with 8 total queries.
+    const bizIds = businesses.map(b => b.id);
+
+    // Helper: build a Map<business_id, count> from a flat rows array
+    const countByBiz = (rows: Array<{ business_id: string }> | null): Map<string, number> => {
+      const map = new Map<string, number>();
+      for (const row of rows || []) {
+        map.set(row.business_id, (map.get(row.business_id) || 0) + 1);
+      }
+      return map;
+    };
+
+    const [
+      { data: servicesRows },
+      { data: inboundMsgRows },
+      { data: recentMsgRows7d },
+      { data: recentMsgRows14d },
+      { data: totalMsgRows },
+      { data: recentBookingRows7d },
+      { data: recentBookingRows14d },
+      { data: payoutAccountRows },
+      { data: platformFeeRows },
+    ] = await Promise.all([
+      // services count per business
+      supabase.from('services').select('business_id').in('business_id', bizIds).limit(5000),
+      // inbound messages (bot ever used)
+      supabase.from('chat_messages').select('business_id').in('business_id', bizIds).eq('direction', 'inbound').limit(5000),
+      // recent messages last 7 days
+      supabase.from('chat_messages').select('business_id').in('business_id', bizIds).gte('created_at', sevenDaysAgo).limit(5000),
+      // recent messages last 14 days
+      supabase.from('chat_messages').select('business_id').in('business_id', bizIds).gte('created_at', fourteenDaysAgo).limit(5000),
+      // total messages ever (to detect previously-active businesses)
+      supabase.from('chat_messages').select('business_id').in('business_id', bizIds).limit(5000),
+      // recent bookings last 7 days
+      supabase.from('bookings').select('business_id').in('business_id', bizIds).gte('created_at', sevenDaysAgo).limit(5000),
+      // recent bookings last 14 days
+      supabase.from('bookings').select('business_id').in('business_id', bizIds).gte('created_at', fourteenDaysAgo).limit(5000),
+      // active payout accounts
+      supabase.from('payout_accounts').select('business_id').in('business_id', bizIds).eq('is_active', true).limit(5000),
+      // platform fees (to detect businesses that have had payments)
+      supabase.from('platform_fees').select('business_id').in('business_id', bizIds).limit(5000),
+    ]);
+
+    const serviceCount = countByBiz(servicesRows);
+    const inboundMsgCount = countByBiz(inboundMsgRows);
+    const recentMsgCount7d = countByBiz(recentMsgRows7d);
+    const recentMsgCount14d = countByBiz(recentMsgRows14d);
+    const totalMsgCount = countByBiz(totalMsgRows);
+    const recentBookingCount7d = countByBiz(recentBookingRows7d);
+    const recentBookingCount14d = countByBiz(recentBookingRows14d);
+    const payoutAccountCount = countByBiz(payoutAccountRows);
+    const platformFeeCount = countByBiz(platformFeeRows);
+
     for (const biz of businesses) {
       // Skip businesses created less than 3 days ago (still onboarding)
       if (new Date(biz.created_at).getTime() > now.getTime() - 3 * 24 * 60 * 60 * 1000) continue;
 
       // ── Check 1: No services added ──
       if (!alertExists(biz.id, 'no_services')) {
-        const { count } = await supabase
-          .from('services')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id);
-
-        if ((count || 0) === 0) {
+        if ((serviceCount.get(biz.id) || 0) === 0) {
           await createAlert(supabase, {
             businessId: biz.id,
             type: 'no_services',
@@ -75,13 +124,7 @@ export async function GET(request: NextRequest) {
 
       // ── Check 2: No inbound messages (bot never used) ──
       if (!alertExists(biz.id, 'no_messages')) {
-        const { count } = await supabase
-          .from('chat_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id)
-          .eq('direction', 'inbound');
-
-        if ((count || 0) === 0) {
+        if ((inboundMsgCount.get(biz.id) || 0) === 0) {
           await createAlert(supabase, {
             businessId: biz.id,
             type: 'no_messages',
@@ -95,26 +138,12 @@ export async function GET(request: NextRequest) {
 
       // ── Check 3: Churn risk — no activity in 7+ days ──
       if (!alertExists(biz.id, 'churn_risk_7d')) {
-        const { count: recentMessages } = await supabase
-          .from('chat_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id)
-          .gte('created_at', sevenDaysAgo);
+        const recentMessages = recentMsgCount7d.get(biz.id) || 0;
+        const recentBookings = recentBookingCount7d.get(biz.id) || 0;
 
-        const { count: recentBookings } = await supabase
-          .from('bookings')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id)
-          .gte('created_at', sevenDaysAgo);
-
-        if ((recentMessages || 0) === 0 && (recentBookings || 0) === 0) {
-          // Check if they HAD activity before (not just a new silent business)
-          const { count: totalMessages } = await supabase
-            .from('chat_messages')
-            .select('id', { count: 'exact', head: true })
-            .eq('business_id', biz.id);
-
-          if ((totalMessages || 0) > 0) {
+        if (recentMessages === 0 && recentBookings === 0) {
+          // Only alert if they HAD activity before (not just a new silent business)
+          if ((totalMsgCount.get(biz.id) || 0) > 0) {
             await createAlert(supabase, {
               businessId: biz.id,
               type: 'churn_risk_7d',
@@ -130,25 +159,11 @@ export async function GET(request: NextRequest) {
 
       // ── Check 4: Critical churn — no activity in 14+ days ──
       if (!alertExists(biz.id, 'churn_risk_14d')) {
-        const { count: recentMessages } = await supabase
-          .from('chat_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id)
-          .gte('created_at', fourteenDaysAgo);
+        const recentMessages = recentMsgCount14d.get(biz.id) || 0;
+        const recentBookings = recentBookingCount14d.get(biz.id) || 0;
 
-        const { count: recentBookings } = await supabase
-          .from('bookings')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id)
-          .gte('created_at', fourteenDaysAgo);
-
-        if ((recentMessages || 0) === 0 && (recentBookings || 0) === 0) {
-          const { count: totalMessages } = await supabase
-            .from('chat_messages')
-            .select('id', { count: 'exact', head: true })
-            .eq('business_id', biz.id);
-
-          if ((totalMessages || 0) > 0) {
+        if (recentMessages === 0 && recentBookings === 0) {
+          if ((totalMsgCount.get(biz.id) || 0) > 0) {
             await createAlert(supabase, {
               businessId: biz.id,
               type: 'churn_risk_14d',
@@ -164,19 +179,10 @@ export async function GET(request: NextRequest) {
 
       // ── Check 5: No payout account ──
       if (!alertExists(biz.id, 'no_payout')) {
-        const { count } = await supabase
-          .from('payout_accounts')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id)
-          .eq('is_active', true);
+        const hasPayoutAccount = (payoutAccountCount.get(biz.id) || 0) > 0;
+        const hasPayments = (platformFeeCount.get(biz.id) || 0) > 0;
 
-        // Only alert if they've had payments (so they need payouts)
-        const { count: payments } = await supabase
-          .from('platform_fees')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', biz.id);
-
-        if ((count || 0) === 0 && (payments || 0) > 0) {
+        if (!hasPayoutAccount && hasPayments) {
           await createAlert(supabase, {
             businessId: biz.id,
             type: 'no_payout',

@@ -73,17 +73,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: 'No platform-managed businesses', generated: 0 });
     }
 
-    for (const biz of businesses) {
-      // Check if payout already exists for this period
-      const { data: existing } = await supabase
-        .from('business_payouts')
-        .select('id')
-        .eq('business_id', biz.id)
-        .eq('period_start', periodStartStr)
-        .eq('period_end', periodEndStr)
-        .maybeSingle();
+    const bizIds = businesses.map(b => b.id);
 
-      if (existing) continue;
+    // Batch-fetch all existing payouts for this period in one query instead of one per business.
+    const { data: existingPayoutsForPeriod } = await supabase
+      .from('business_payouts')
+      .select('business_id')
+      .in('business_id', bizIds)
+      .eq('period_start', periodStartStr)
+      .eq('period_end', periodEndStr)
+      .limit(5000);
+
+    const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
+
+    for (const biz of businesses) {
+      // Skip if payout already exists for this period (checked via batch query above)
+      if (alreadyHasPayout.has(biz.id)) continue;
 
       // Get platform fees for this business in the period
       const { data: fees } = await supabase
@@ -253,33 +258,44 @@ export async function GET(request: NextRequest) {
       .select('id, business_id, flags')
       .eq('status', 'held');
 
-    for (const hp of heldPayouts || []) {
-      const { data: heldBiz } = await supabase
-        .from('businesses')
-        .select('created_at, verification_level')
-        .eq('id', hp.business_id)
-        .single();
+    if (heldPayouts && heldPayouts.length > 0) {
+      const heldBizIds = [...new Set(heldPayouts.map(hp => hp.business_id))];
 
-      if (!heldBiz) continue;
+      // Batch-fetch business data and active payout accounts for all held payouts at once
+      // instead of 2 queries per held payout.
+      const [{ data: heldBizRows }, { data: heldAccountRows }] = await Promise.all([
+        supabase
+          .from('businesses')
+          .select('id, created_at, verification_level')
+          .in('id', heldBizIds)
+          .limit(5000),
+        supabase
+          .from('payout_accounts')
+          .select('business_id')
+          .in('business_id', heldBizIds)
+          .eq('is_active', true)
+          .limit(5000),
+      ]);
 
-      const age = (Date.now() - new Date(heldBiz.created_at).getTime()) / (1000 * 60 * 60 * 24);
-      const isVerified = heldBiz.verification_level && heldBiz.verification_level !== 'unverified';
-      const coolingDone = age >= COOLING_PERIOD_DAYS;
+      const heldBizMap = new Map((heldBizRows || []).map(b => [b.id, b]));
+      const heldAccountSet = new Set((heldAccountRows || []).map(r => r.business_id));
 
-      // Check if the payout account now exists
-      const { data: heldAccount } = await supabase
-        .from('payout_accounts')
-        .select('id')
-        .eq('business_id', hp.business_id)
-        .eq('is_active', true)
-        .maybeSingle();
+      for (const hp of heldPayouts) {
+        const heldBiz = heldBizMap.get(hp.business_id);
+        if (!heldBiz) continue;
 
-      if (coolingDone && isVerified && heldAccount) {
-        await supabase
-          .from('business_payouts')
-          .update({ status: 'approved' })
-          .eq('id', hp.id);
-        released++;
+        const age = (Date.now() - new Date(heldBiz.created_at).getTime()) / (1000 * 60 * 60 * 24);
+        const isVerified = heldBiz.verification_level && heldBiz.verification_level !== 'unverified';
+        const coolingDone = age >= COOLING_PERIOD_DAYS;
+        const hasAccount = heldAccountSet.has(hp.business_id);
+
+        if (coolingDone && isVerified && hasAccount) {
+          await supabase
+            .from('business_payouts')
+            .update({ status: 'approved' })
+            .eq('id', hp.id);
+          released++;
+        }
       }
     }
 

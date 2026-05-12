@@ -1395,16 +1395,45 @@ export const schedulingFlow: FlowDefinition = {
           quantity: partySize,
         };
 
-        const { data: booking, error: insertError } = await ctx.supabase
-          .from('bookings')
-          .insert(insertPayload)
-          .select('id, reference_code')
-          .single();
+        // Use atomic booking function to prevent double-booking race condition
+        const maxCapacity = (d._service_max_capacity as number) || 1;
+        const { data: slotResult, error: slotError } = await ctx.supabase
+          .rpc('book_slot_atomic' as string, {
+            p_business_id: ctx.business!.id,
+            p_user_id: userId,
+            p_service_id: (d.service_id as string) || null,
+            p_staff_id: (d.staff_id as string) || null,
+            p_date: d.date as string,
+            p_time: d.time as string,
+            p_party_size: partySize,
+            p_max_capacity: maxCapacity,
+            p_flow_type: 'scheduling',
+            p_deposit_amount: totalDeposit,
+            p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
+            p_status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
+            p_guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+            p_guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+            p_guest_email: (d.email as string) || null,
+            p_special_requests: (d.special_requests as string) || null,
+            p_venue_address: (d.venue_address as string) || null,
+            p_end_date: (d.end_date as string) || null,
+            p_addons_snapshot: d._selected_addons || null,
+            p_promo_code_id: (d._promo_id as string) || null,
+            p_total_amount: totalDeposit,
+            p_staff_name: (d.staff_name as string) || null,
+          })
+          .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
-        if (insertError || !booking) {
-          console.error('Failed to create booking', insertError);
+        if (slotError || !slotResult) {
+          console.error('Failed to create booking', slotError);
           return [{ type: 'text', text: 'Sorry, something went wrong. Send "Hi" to try again.' }];
         }
+
+        if (!slotResult.slot_available) {
+          return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
+        }
+
+        const booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
 
         // Increment promo code usage if applied
         if (d._promo_id) {
