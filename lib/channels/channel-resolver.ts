@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { GupshupService } from './gupshup';
 import { MetaCloudService } from './meta-cloud';
 import { MetaCloudSender, type MessageSender } from './message-sender';
+import { logger } from '@/lib/logger';
 import type { CountryCode } from '@/lib/constants';
 
 interface ChannelRecord {
@@ -42,7 +43,9 @@ export class ChannelResolver {
       try {
         const { decryptToken } = require('@/lib/encryption');
         accessToken = decryptToken(accessToken);
-      } catch {}
+      } catch (err) {
+        logger.error('[CHANNEL] Token decryption failed, using raw value:', err);
+      }
       return new MetaCloudSender(
         new MetaCloudService({
           accessToken,

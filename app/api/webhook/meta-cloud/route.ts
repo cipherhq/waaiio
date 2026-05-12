@@ -45,6 +45,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
     }
 
+    if (!signature) {
+      logger.error('[META-WEBHOOK] Missing x-hub-signature-256 header — rejecting webhook');
+      return NextResponse.json({ error: 'Missing signature' }, { status: 401 });
+    }
+
     if (appSecret && signature) {
       const expectedSignature = 'sha256=' + createHmac('sha256', appSecret)
         .update(rawBody)
@@ -107,12 +112,12 @@ export async function POST(request: NextRequest) {
         // Process delivery/read status updates for contract tracking
         if (statuses.length > 0) {
           const supabase = createServiceClient();
-          const statusOrder: Record<string, number> = { sent: 1, delivered: 2, read: 3 };
+          const statusOrder: Record<string, number> = { sent: 1, delivered: 2, read: 3, failed: 0 };
 
           for (const status of statuses) {
             const wamid = status.id;
             const newStatus = status.status; // 'sent' | 'delivered' | 'read' | 'failed'
-            if (!wamid || !statusOrder[newStatus]) continue;
+            if (!wamid || !(newStatus in statusOrder)) continue;
 
             // Check contracts and contract_signers in parallel
             const [{ data: contract }, { data: signer }] = await Promise.all([
@@ -120,25 +125,30 @@ export async function POST(request: NextRequest) {
               supabase.from('contract_signers').select('id, wa_delivery_status').eq('wa_message_id', wamid).maybeSingle(),
             ]);
 
-            const lowerStatuses = Object.entries(statusOrder)
-              .filter(([, order]) => order < statusOrder[newStatus])
-              .map(([s]) => s);
+            // 'failed' always overwrites any status — it signals a delivery failure regardless of order.
+            // For normal progression (sent → delivered → read) only advance forward.
+            const isFailed = newStatus === 'failed';
+            const lowerStatuses = isFailed
+              ? Object.keys(statusOrder).filter(s => s !== 'failed')
+              : Object.entries(statusOrder)
+                  .filter(([, order]) => order < statusOrder[newStatus])
+                  .map(([s]) => s);
 
             const updates: PromiseLike<unknown>[] = [];
-            if (contract && lowerStatuses.length > 0) {
+            if (contract && (isFailed || lowerStatuses.length > 0)) {
               updates.push(
                 supabase.from('contracts')
                   .update({ wa_delivery_status: newStatus, wa_status_updated_at: new Date().toISOString() })
                   .eq('id', contract.id)
-                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string])
+                  .in('wa_delivery_status', isFailed ? [...lowerStatuses, null as unknown as string] : [...lowerStatuses, null as unknown as string])
               );
             }
-            if (signer && lowerStatuses.length > 0) {
+            if (signer && (isFailed || lowerStatuses.length > 0)) {
               updates.push(
                 supabase.from('contract_signers')
                   .update({ wa_delivery_status: newStatus, wa_status_updated_at: new Date().toISOString() })
                   .eq('id', signer.id)
-                  .in('wa_delivery_status', [...lowerStatuses, null as unknown as string])
+                  .in('wa_delivery_status', isFailed ? [...lowerStatuses, null as unknown as string] : [...lowerStatuses, null as unknown as string])
               );
             }
             if (updates.length > 0) await Promise.all(updates);

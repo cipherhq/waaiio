@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
 
 /**
@@ -63,7 +64,17 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const accessToken = tokenData.access_token;
+    // Exchange short-lived token for long-lived token before storing
+    let accessToken = tokenData.access_token;
+    try {
+      const longLivedData = await MetaCloudService.exchangeToken(accessToken);
+      if (longLivedData.access_token) {
+        accessToken = longLivedData.access_token;
+        logger.debug('[EMBEDDED-SIGNUP] Exchanged for long-lived token');
+      }
+    } catch (exchangeErr) {
+      logger.error('[EMBEDDED-SIGNUP] Long-lived token exchange failed, proceeding with short-lived token:', exchangeErr);
+    }
 
     // 2. Get shared WABA IDs from the debug token
     const debugRes = await fetch(

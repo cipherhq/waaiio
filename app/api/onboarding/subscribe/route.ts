@@ -19,7 +19,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
-    const { business_id, plan, callback } = await request.json();
+    let { business_id, plan, callback } = await request.json();
+    if (callback !== undefined && (!callback.startsWith('/') || callback.startsWith('//'))) callback = '/dashboard';
 
     if (!business_id || !plan) {
       return NextResponse.json(

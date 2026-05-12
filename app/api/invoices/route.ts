@@ -18,6 +18,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'business_id required' }, { status: 400 });
     }
 
+    const { data: business } = await supabase.from('businesses').select('id').eq('id', businessId).eq('owner_id', user.id).maybeSingle();
+    if (!business) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
     let query = supabase
       .from('invoices')
       .select('*, invoice_items(*)', { count: 'exact' })
@@ -58,6 +61,9 @@ export async function POST(request: NextRequest) {
     if (!business_id || !customer_name || !items?.length) {
       return NextResponse.json({ error: 'business_id, customer_name, and items are required' }, { status: 400 });
     }
+
+    const { data: ownedBusiness } = await supabase.from('businesses').select('id').eq('id', business_id).eq('owner_id', user.id).maybeSingle();
+    if (!ownedBusiness) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
     // Compute financials server-side
     const subtotal = items.reduce((sum: number, item: { quantity: number; unit_price: number }) =>

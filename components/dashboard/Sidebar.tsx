@@ -249,12 +249,14 @@ const navItems: NavItem[] = [
     href: '/dashboard/parties',
     label: 'Parties',
     icon: 'M21 15.546c-.523 0-1.046.151-1.5.454a2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0A1.75 1.75 0 003 15.546V12a9 9 0 0118 0v3.546zM12 3v2m6.364 1.636l-1.414 1.414M21 12h-2M5 12H3m3.05-4.95L4.636 5.636',
+    capabilities: ['ticketing'],
     section: 'engage',
   },
   {
     href: '/dashboard/forms',
     label: 'Forms',
     icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
+    capabilities: ['survey'],
     section: 'engage',
   },
   {

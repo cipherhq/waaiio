@@ -143,7 +143,7 @@ export default function DashboardOverview() {
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
-        supabase.from('platform_fees').select('transaction_amount').eq('business_id', business.id).is('refunded_at', null),
+        supabase.from('platform_fees').select('transaction_amount').eq('business_id', business.id).is('refunded_at', null).limit(5000),
         supabase.from('bookings')
           .select('id, reference_code, guest_name, guest_phone, date, time, party_size, total_amount, deposit_amount, status, created_at')
           .eq('business_id', business.id)

@@ -102,6 +102,7 @@ export async function POST(request: NextRequest) {
         );
       }
       // Auto-generated code collision: append suffix as fallback
+      let resolved = false;
       for (let i = 1; i <= 99; i++) {
         const candidate = `${botCode}-${String(i).padStart(2, '0')}`.slice(0, 30);
         const { data: collision } = await service
@@ -111,8 +112,13 @@ export async function POST(request: NextRequest) {
           .maybeSingle();
         if (!collision) {
           botCode = candidate;
+          resolved = true;
           break;
         }
+      }
+      if (!resolved) {
+        // All 99 suffixes taken — append random chars
+        botCode = `${botCode.slice(0, 24)}-${Math.random().toString(36).slice(2, 7)}`;
       }
     }
 
@@ -125,6 +131,7 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (slugExists) {
+      let slugResolved = false;
       for (let i = 1; i <= 99; i++) {
         const candidate = `${slug}-${i}`;
         const { data: collision } = await service
@@ -134,8 +141,12 @@ export async function POST(request: NextRequest) {
           .maybeSingle();
         if (!collision) {
           finalSlug = candidate;
+          slugResolved = true;
           break;
         }
+      }
+      if (!slugResolved) {
+        finalSlug = `${slug.slice(0, 44)}-${Math.random().toString(36).slice(2, 7)}`;
       }
     }
 

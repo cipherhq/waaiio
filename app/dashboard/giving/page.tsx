@@ -78,10 +78,12 @@ export default function GivingPage() {
     };
 
     if (formId) {
-      await supabase.from('services').update(payload).eq('id', formId);
+      const { error } = await supabase.from('services').update(payload).eq('id', formId);
+      if (error) { alert('Failed to save. Please try again.'); setSaving(false); return; }
     } else {
       const maxOrder = categories.length > 0 ? Math.max(...categories.map(c => c.sort_order)) + 1 : 0;
-      await supabase.from('services').insert({ ...payload, sort_order: maxOrder });
+      const { error } = await supabase.from('services').insert({ ...payload, sort_order: maxOrder });
+      if (error) { alert('Failed to save. Please try again.'); setSaving(false); return; }
     }
 
     resetForm();
@@ -103,14 +105,16 @@ export default function GivingPage() {
 
   const handleToggleActive = async (id: string, currentActive: boolean) => {
     const supabase = createClient();
-    await supabase.from('services').update({ is_active: !currentActive }).eq('id', id);
+    const { error } = await supabase.from('services').update({ is_active: !currentActive }).eq('id', id);
+    if (error) { alert('Failed to update. Please try again.'); return; }
     fetchCategories();
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this giving category?')) return;
     const supabase = createClient();
-    await supabase.from('services').update({ deleted_at: new Date().toISOString(), is_active: false }).eq('id', id);
+    const { error } = await supabase.from('services').update({ deleted_at: new Date().toISOString(), is_active: false }).eq('id', id);
+    if (error) { alert('Failed to delete. Please try again.'); return; }
     fetchCategories();
   };
 

@@ -130,16 +130,6 @@ function LoginForm() {
         return;
       }
 
-      const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithOtp({
-        phone,
-      });
-
-      if (signInError) {
-        setError('Authentication failed. Please try again.');
-        return;
-      }
-
       if (data.is_new_user) {
         router.push('/get-started');
       } else {
