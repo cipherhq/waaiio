@@ -97,6 +97,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();
@@ -133,6 +134,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();
@@ -199,6 +201,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();
@@ -246,6 +249,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();
@@ -292,6 +296,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();
@@ -334,6 +339,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();
@@ -375,6 +381,7 @@ export class GupshupService {
           'Content-Type': 'application/x-www-form-urlencoded',
         },
         body: body.toString(),
+        signal: AbortSignal.timeout(8000),
       });
 
       const data = await response.json();

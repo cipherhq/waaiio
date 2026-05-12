@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     const businessId = searchParams.get('business_id');
     const status = searchParams.get('status');
     const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '50');
+    const limit = Math.min(parseInt(searchParams.get('limit') || '50') || 50, 200);
 
     if (!businessId) {
       return NextResponse.json({ error: 'business_id required' }, { status: 400 });

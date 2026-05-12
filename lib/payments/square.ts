@@ -22,6 +22,7 @@ async function squareRequest(path: string, body: Record<string, unknown>): Promi
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
   });
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -32,6 +33,7 @@ async function squareGet(path: string): Promise<Record<string, unknown>> {
       'Square-Version': '2024-12-18',
       Authorization: `Bearer ${squareAccessToken}`,
     },
+    signal: AbortSignal.timeout(15000),
   });
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -114,6 +116,7 @@ export class SquareGateway implements PaymentGateway {
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify(body),
+              signal: AbortSignal.timeout(15000),
             });
             return response.json() as Promise<Record<string, unknown>>;
           }

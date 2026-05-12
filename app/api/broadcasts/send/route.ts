@@ -36,6 +36,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Cap per-request recipients to prevent abuse
+    const MAX_PER_REQUEST = 500;
+    if (phones.length > MAX_PER_REQUEST) {
+      return NextResponse.json(
+        { message: `Too many recipients. Maximum ${MAX_PER_REQUEST} per request.` },
+        { status: 400 },
+      );
+    }
+
     // Rate limit: max 3 sends per minute per business
     const rateLimited = rateLimitResponse(`broadcast:${business_id}`, 3, 60_000);
     if (rateLimited) return rateLimited;

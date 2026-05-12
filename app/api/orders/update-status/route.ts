@@ -36,6 +36,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'orderId, businessId, and status required' }, { status: 400 });
     }
 
+    const validStatuses = ['pending', 'confirmed', 'processing', 'ready', 'shipped', 'delivered', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return NextResponse.json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` }, { status: 400 });
+    }
+
     const supabase = createServiceClient();
 
     // Validate order belongs to business

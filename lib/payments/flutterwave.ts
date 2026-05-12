@@ -68,6 +68,7 @@ export class FlutterwaveGateway implements PaymentGateway {
           Authorization: `Bearer ${secretKey}`,
           'Content-Type': 'application/json',
         },
+        signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           tx_ref: txRef,
           amount: opts.amount,
@@ -165,7 +166,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       // Find the transaction ID by tx_ref
       const searchRes = await fetch(
         `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`,
-        { headers: { Authorization: `Bearer ${secretKey}` } },
+        { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
       );
       const searchData = await searchRes.json();
 
@@ -227,7 +228,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       // First resolve tx_ref to transaction id via verify-by-reference
       const verifyRes = await fetch(
         `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${encodeURIComponent(opts.gatewayReference)}`,
-        { headers: { Authorization: `Bearer ${secretKey}` } },
+        { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
       );
       const verifyData = await verifyRes.json();
 
@@ -255,6 +256,7 @@ export class FlutterwaveGateway implements PaymentGateway {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(15000),
         },
       );
 

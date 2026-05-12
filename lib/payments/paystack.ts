@@ -70,6 +70,7 @@ export class PaystackGateway implements PaymentGateway {
       const response = await fetch('https://api.paystack.co/transaction/initialize', {
         method: 'POST',
         headers,
+        signal: AbortSignal.timeout(15000),
         body: JSON.stringify({
           email,
           amount: amountInKobo,
@@ -158,7 +159,7 @@ export class PaystackGateway implements PaymentGateway {
     try {
       const response = await fetch(
         `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-        { headers: { Authorization: `Bearer ${secretKey}` } },
+        { headers: { Authorization: `Bearer ${secretKey}` }, signal: AbortSignal.timeout(15000) },
       );
       const data = await response.json();
 
@@ -238,6 +239,7 @@ export class PaystackGateway implements PaymentGateway {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
       });
 
       const data = await response.json();

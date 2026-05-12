@@ -25,6 +25,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Missing business_id or products array' }, { status: 400 });
   }
 
+  if (products.length > 500) {
+    return NextResponse.json({ error: 'Maximum 500 products per request' }, { status: 400 });
+  }
+
   // Verify ownership
   const { data: biz } = await supabase
     .from('businesses')

@@ -16,6 +16,7 @@ async function stripeRequest(path: string, body: Record<string, string>): Promis
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams(body).toString(),
+    signal: AbortSignal.timeout(15000),
   });
   return response.json() as Promise<Record<string, unknown>>;
 }
@@ -24,6 +25,7 @@ async function stripeGet(path: string): Promise<Record<string, unknown>> {
   const key = getStripeKey();
   const response = await fetch(`https://api.stripe.com/v1${path}`, {
     headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(15000),
   });
   return response.json() as Promise<Record<string, unknown>>;
 }

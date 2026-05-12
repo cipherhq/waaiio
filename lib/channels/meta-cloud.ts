@@ -262,7 +262,7 @@ export class MetaCloudService {
   }> {
     const res = await fetch(
       `${this.baseUrl}/${this.phoneNumberId}?fields=verified_name,display_phone_number,quality_rating,platform_type,messaging_limit_tier`,
-      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      { headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) throw new Error(`Failed to get phone info: ${res.status}`);
     return res.json();
@@ -278,7 +278,7 @@ export class MetaCloudService {
   }> {
     const res = await fetch(
       `${this.baseUrl}/${this.wabaId}?fields=id,name,currency,message_template_namespace`,
-      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      { headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) throw new Error(`Failed to get WABA info: ${res.status}`);
     return res.json();
@@ -294,7 +294,8 @@ export class MetaCloudService {
     const appId = process.env.NEXT_PUBLIC_META_APP_ID || process.env.META_APP_ID || '';
     const appSecret = process.env.META_APP_SECRET || '';
     const res = await fetch(
-      `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`
+      `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`,
+      { signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) throw new Error(`Token exchange failed: ${res.status}`);
     return res.json();
@@ -310,7 +311,7 @@ export class MetaCloudService {
   }>> {
     const res = await fetch(
       `${this.baseUrl}/${this.wabaId}/phone_numbers?fields=id,verified_name,display_phone_number,quality_rating`,
-      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      { headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) throw new Error(`Failed to get phone numbers: ${res.status}`);
     const data = await res.json();
@@ -332,6 +333,7 @@ export class MetaCloudService {
           messaging_product: 'whatsapp',
           pin,
         }),
+        signal: AbortSignal.timeout(8000),
       }
     );
     if (!res.ok) throw new Error(`Failed to register phone: ${res.status}`);
@@ -396,6 +398,7 @@ export class MetaCloudService {
         messaging_product: 'whatsapp',
         ...profile,
       }),
+      signal: AbortSignal.timeout(8000),
     });
     return res.ok;
   }
@@ -405,7 +408,7 @@ export class MetaCloudService {
   async getBusinessProfile(): Promise<Record<string, unknown> | null> {
     const res = await fetch(
       `${this.baseUrl}/${this.phoneNumberId}/whatsapp_business_profile?fields=about,address,description,email,websites,vertical,profile_picture_url`,
-      { headers: { Authorization: `Bearer ${this.accessToken}` } }
+      { headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(8000) }
     );
     if (!res.ok) return null;
     const data = await res.json();
@@ -527,6 +530,7 @@ export class MetaCloudService {
     if (params?.after) url += `&after=${params.after}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${this.accessToken}` },
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -543,6 +547,7 @@ export class MetaCloudService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(template),
+      signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -557,6 +562,7 @@ export class MetaCloudService {
       {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${this.accessToken}` },
+        signal: AbortSignal.timeout(8000),
       }
     );
     if (!res.ok) {
@@ -576,6 +582,7 @@ export class MetaCloudService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
     });
 
     if (!res.ok) {

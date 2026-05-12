@@ -20,8 +20,8 @@ export async function POST(request: NextRequest) {
       reason?: string;
     };
 
-    if (!paymentId || !businessId || !amount) {
-      return NextResponse.json({ error: 'Missing required fields: paymentId, businessId, amount' }, { status: 400 });
+    if (!paymentId || !businessId || !amount || typeof amount !== 'number' || amount <= 0) {
+      return NextResponse.json({ error: 'Missing or invalid fields: paymentId, businessId, amount (must be positive number)' }, { status: 400 });
     }
 
     // Verify the user owns the business
