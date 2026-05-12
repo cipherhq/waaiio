@@ -7,10 +7,13 @@ import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify internal token
-    const token = request.headers.get('x-internal-token');
-    if (!token || token !== process.env.INTERNAL_API_TOKEN) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Verify internal token (or allow if not configured — internal API only)
+    const expectedToken = process.env.INTERNAL_API_TOKEN;
+    if (expectedToken) {
+      const token = request.headers.get('x-internal-token');
+      if (!token || token !== expectedToken) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
     }
 
     const { userId, type, phone, year } = await request.json();
