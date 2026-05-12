@@ -18,6 +18,9 @@ import { checkAIFeature, incrementAIUsage, getVoiceNotSupportedMessage } from '@
  * Payload format: https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks
  */
 
+// Allow up to 60s for bot processing on Vercel Pro
+export const maxDuration = 60;
+
 let intelligence: BotIntelligenceService;
 let channelResolver: ChannelResolver;
 

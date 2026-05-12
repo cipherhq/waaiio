@@ -4,6 +4,7 @@ import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } fr
 import type { HistoryRow } from '@/lib/pdf/receipt-generator';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {

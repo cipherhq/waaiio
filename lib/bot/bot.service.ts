@@ -260,22 +260,23 @@ export class BotService {
       if (notifiedEntry) {
         const accepted = /^(yes|yep|yeah)$/i.test(text);
         if (accepted) {
-          // Mark as confirmed and route to booking
-          await this.supabase
-            .from('waitlist_entries')
-            .update({ status: 'confirmed' })
-            .eq('id', notifiedEntry.id);
-
-          const { data: biz } = await this.supabase
-            .from('businesses')
-            .select('name')
-            .eq('id', notifiedEntry.business_id)
-            .single();
+          // Confirm waitlist entry, fetch business name, and find any active session — all in parallel
+          const [, { data: biz }, existingSession] = await Promise.all([
+            this.supabase
+              .from('waitlist_entries')
+              .update({ status: 'confirmed' })
+              .eq('id', notifiedEntry.id),
+            this.supabase
+              .from('businesses')
+              .select('name')
+              .eq('id', notifiedEntry.business_id)
+              .single(),
+            this.getActiveSession(from),
+          ]);
 
           await this.sendText(from, `Great! Let's get you booked at *${biz?.name || 'the business'}*.`);
 
           // Deactivate any existing session and start a new booking flow
-          const existingSession = await this.getActiveSession(from);
           if (existingSession) await this.deactivateSession(existingSession.id);
           return this.handleMessage(from, 'Hi', messageType, destinationPhone, notifiedEntry.business_id);
         } else {
@@ -759,21 +760,21 @@ export class BotService {
 
     // ── My Contracts / E-Signatures ──
     if (isContractQuery) {
-      // Query single-signer contracts
-      const { data: singleContracts } = await this.supabase
-        .from('contracts')
-        .select('id, title, status, signed_at, created_at, token, signing_mode, businesses:business_id(name)')
-        .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      // Query multi-signer contracts via contract_signers
-      const { data: multiSignerEntries } = await this.supabase
-        .from('contract_signers')
-        .select('id, token, status, signed_at, created_at, contracts:contract_id(id, title, signing_mode, businesses:business_id(name))')
-        .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .order('created_at', { ascending: false })
-        .limit(10);
+      // Query single-signer and multi-signer contracts in parallel (independent tables)
+      const [{ data: singleContracts }, { data: multiSignerEntries }] = await Promise.all([
+        this.supabase
+          .from('contracts')
+          .select('id, title, status, signed_at, created_at, token, signing_mode, businesses:business_id(name)')
+          .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .order('created_at', { ascending: false })
+          .limit(10),
+        this.supabase
+          .from('contract_signers')
+          .select('id, token, status, signed_at, created_at, contracts:contract_id(id, title, signing_mode, businesses:business_id(name))')
+          .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+          .order('created_at', { ascending: false })
+          .limit(10),
+      ]);
 
       // Normalize into a unified list
       const allContracts: Array<{
@@ -1274,7 +1275,15 @@ export class BotService {
 
         // ── Returning customer: personalized greeting + repeat suggestion ──
         try {
-          const custHistory = await getCustomerHistory(this.supabase, from, business.id);
+          // Fetch customer history and profile name in parallel — both are independent of each other
+          const profileNamePromise = profile?.id
+            ? this.supabase.from('profiles').select('first_name').eq('id', profile.id).maybeSingle()
+            : Promise.resolve({ data: null });
+          const [custHistory, { data: fullProfile }] = await Promise.all([
+            getCustomerHistory(this.supabase, from, business.id),
+            profileNamePromise,
+          ]);
+
           if (custHistory.isReturning) {
             session.session_data._customer_history = {
               totalVisits: custHistory.totalVisits,
@@ -1284,16 +1293,8 @@ export class BotService {
               favoriteServiceName: custHistory.favoriteServiceName,
             };
 
-            // Lookup customer name for personalized greeting
-            let customerName: string | null = null;
-            if (profile?.id) {
-              const { data: fullProfile } = await this.supabase
-                .from('profiles')
-                .select('first_name')
-                .eq('id', profile.id)
-                .maybeSingle();
-              customerName = (fullProfile as { first_name?: string } | null)?.first_name || null;
-            }
+            // Use pre-fetched profile name for personalized greeting
+            const customerName = (fullProfile as { first_name?: string } | null)?.first_name || null;
 
             const returnMsg = buildReturnGreeting(
               customerName,

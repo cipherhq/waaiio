@@ -19,6 +19,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
  * - Weekly reminder after that until they connect.
  */
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);

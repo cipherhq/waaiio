@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateInvoicePdf } from '@/lib/pdf/invoice-pdf-generator';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -104,7 +105,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error('invoices/pdf error:', err);
+    logger.error('invoices/pdf error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

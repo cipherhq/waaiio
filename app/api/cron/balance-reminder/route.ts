@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+export const maxDuration = 60;
 
 /**
  * Cron: Send balance payment reminders for bookings with:

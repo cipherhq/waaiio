@@ -6,6 +6,7 @@ import { GupshupService } from '@/lib/channels/gupshup';
 import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(48);
@@ -31,7 +32,7 @@ async function sendWhatsAppMessage(
   const cleanPhone = phone.replace(/\D/g, '');
 
   if (!resolved) {
-    console.warn(`[INVOICE] No WhatsApp channel for business ${businessId}`);
+    logger.warn(`[INVOICE] No WhatsApp channel for business ${businessId}`);
     return null;
   }
 
@@ -47,7 +48,7 @@ async function sendWhatsAppMessage(
         return result.messageId;
       }
     } catch (tmplErr) {
-      console.warn('[INVOICE] Template failed, trying text:', tmplErr);
+      logger.warn('[INVOICE] Template failed, trying text:', tmplErr);
     }
   }
 
@@ -56,7 +57,7 @@ async function sendWhatsAppMessage(
     const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
     if (result.success !== false && result.messageId) return result.messageId;
   } catch (waErr) {
-    console.warn('[INVOICE] sendText failed:', waErr);
+    logger.warn('[INVOICE] sendText failed:', waErr);
   }
 
   return null;
@@ -212,7 +213,7 @@ export async function POST(request: NextRequest) {
       expires_at: expiresAt,
     });
   } catch (err) {
-    console.error('invoices/send error:', err);
+    logger.error('invoices/send error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
+export const maxDuration = 60;
 
 /**
  * Daily backup cron — exports critical table counts and metadata

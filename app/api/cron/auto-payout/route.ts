@@ -23,6 +23,7 @@ import { payoutFailedEmail } from '@/lib/email/templates';
  * Approved payouts are sent via Paystack Transfer API (NG/GH).
  */
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 const COOLING_PERIOD_DAYS = 7;
 const AUTO_APPROVE_LIMIT_NGN = 500_000; // ₦500,000 max auto-approve

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { logger } from '@/lib/logger';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 50;
@@ -174,7 +175,7 @@ export async function POST(request: NextRequest) {
             await resolved.sender.sendText({ to: phone, text: message });
             results.push({ phone, status: 'sent' });
           } catch (sendErr) {
-            console.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
+            logger.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
             results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
           }
         } else {
@@ -211,14 +212,14 @@ export async function POST(request: NextRequest) {
           await resolved.sender.sendText({ to: phone, text: message });
           results.push({ phone, status: 'sent' });
         } catch (sendErr) {
-          console.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
+          logger.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
           results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
         }
       } else {
         results.push({ phone, status: 'created', error: 'No WhatsApp channel configured' });
       }
     } catch (err) {
-      console.error(`[INVITE] Error for ${phone}:`, err);
+      logger.error(`[INVITE] Error for ${phone}:`, err);
       results.push({ phone, status: 'error', error: 'Unexpected error' });
     }
   }
@@ -355,7 +356,7 @@ export async function PUT(request: NextRequest) {
           .eq('id', invite.id);
         sent++;
       } catch (err) {
-        console.error(`[INVITE] Reminder failed for ${invite.guest_phone}:`, err);
+        logger.error(`[INVITE] Reminder failed for ${invite.guest_phone}:`, err);
       }
     }
   }

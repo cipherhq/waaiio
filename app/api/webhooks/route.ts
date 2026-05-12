@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { randomBytes } from 'crypto';
+export const maxDuration = 60;
 
 async function authenticateAndVerifyOwnership(businessId: string) {
   const supabase = await createClient();

@@ -7,6 +7,7 @@ import { rateLimitResponse } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
+export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {

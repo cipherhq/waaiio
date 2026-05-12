@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutPaidEmail, payoutFailedEmail } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
+export const maxDuration = 60;
 
 /**
  * POST /api/webhooks/stripe-transfer

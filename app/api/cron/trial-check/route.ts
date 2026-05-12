@@ -7,6 +7,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 function verifyCronSecret(authHeader: string | null): boolean {
   const secret = process.env.CRON_SECRET;

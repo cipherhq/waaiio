@@ -11,6 +11,9 @@ import { StandaloneService } from '@/lib/bot/standalone.service';
 import { logger } from '@/lib/logger';
 import { transcribeAudio } from '@/lib/bot/transcription';
 
+// Allow up to 60s for bot processing on Vercel Pro
+export const maxDuration = 60;
+
 // Singleton instances (persisted across warm invocations)
 let defaultGupshup: GupshupService;
 let intelligence: BotIntelligenceService;

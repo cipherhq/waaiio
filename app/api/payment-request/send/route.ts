@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
             <p style="color: #999; font-size: 12px; margin-top: 24px;">Powered by Waaiio</p>
           </div>
         `,
-      }).catch(err => console.error('[PAYMENT-REQUEST] Email error:', err));
+      }).catch(err => logger.error('[PAYMENT-REQUEST] Email error:', err));
     }
 
     return NextResponse.json({
