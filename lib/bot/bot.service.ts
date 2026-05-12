@@ -352,6 +352,12 @@ export class BotService {
       || /^(check|view|show)\s+(my\s+)?(giving|donations?|tithes?|offerings?)$/i.test(text)
       || /^(giving|donation)\s+history$/i.test(text);
 
+    const isContractQuery = /^(my\s+)?(contracts?|signatures?|documents?\s+to\s+sign)$/i.test(text)
+      || /^(check|view|show)\s+(my\s+)?(contracts?|signatures?)$/i.test(text);
+
+    const isQuoteQuery = /^(my\s+)?(quotes?|price\s+requests?)$/i.test(text)
+      || /^(check|view|show)\s+(my\s+)?(quotes?|price\s+requests?)$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     // Handle location query — send business address/location
@@ -747,6 +753,152 @@ export class BotService {
         'Type *Hi* to give again',
       ];
       await this.sendText(from, lines.join('\n'));
+      return;
+    }
+
+    // ── My Contracts / E-Signatures ──
+    if (isContractQuery) {
+      // Query single-signer contracts
+      const { data: singleContracts } = await this.supabase
+        .from('contracts')
+        .select('id, title, status, signed_at, created_at, token, signing_mode, businesses:business_id(name)')
+        .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      // Query multi-signer contracts via contract_signers
+      const { data: multiSignerEntries } = await this.supabase
+        .from('contract_signers')
+        .select('id, token, status, signed_at, created_at, contracts:contract_id(id, title, signing_mode, businesses:business_id(name))')
+        .or(`signer_phone.eq.${sanitizeFilterValue(phoneP)},signer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      // Normalize into a unified list
+      const allContracts: Array<{
+        title: string; status: string; signed_at: string | null;
+        created_at: string; token: string; bizName: string;
+      }> = [];
+
+      if (singleContracts) {
+        for (const c of singleContracts) {
+          if (c.signing_mode !== 'single' && c.signing_mode !== null) continue; // skip multi-signer (handled below)
+          const biz = c.businesses as any;
+          allContracts.push({
+            title: c.title, status: c.status, signed_at: c.signed_at,
+            created_at: c.created_at, token: c.token, bizName: biz?.name || 'Business',
+          });
+        }
+      }
+
+      if (multiSignerEntries) {
+        for (const s of multiSignerEntries) {
+          const contract = s.contracts as any;
+          if (!contract) continue;
+          const biz = contract.businesses as any;
+          allContracts.push({
+            title: contract.title, status: s.status, signed_at: s.signed_at,
+            created_at: s.created_at, token: s.token, bizName: biz?.name || 'Business',
+          });
+        }
+      }
+
+      // Deduplicate by token
+      const seen = new Set<string>();
+      const unique = allContracts.filter(c => {
+        if (seen.has(c.token)) return false;
+        seen.add(c.token);
+        return true;
+      });
+
+      if (unique.length === 0) {
+        await this.sendText(from, "You don't have any contracts. Send *Hi* to get started!");
+        return;
+      }
+
+      const pending = unique.filter(c => c.status === 'pending' || c.status === 'waiting');
+      const signed = unique.filter(c => c.status === 'signed');
+      const other = unique.filter(c => c.status !== 'pending' && c.status !== 'waiting' && c.status !== 'signed');
+
+      const cLines = ['📋 *Your Contracts*', ''];
+
+      if (pending.length > 0) {
+        cLines.push('⏳ *Pending Signature:*');
+        for (const c of pending) {
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          cLines.push(`• ${c.title} from ${c.bizName}`);
+          cLines.push(`  Sign here: ${appUrl}/sign/${c.token}`);
+        }
+        cLines.push('');
+      }
+
+      if (signed.length > 0) {
+        cLines.push('✅ *Signed:*');
+        for (const c of signed) {
+          const signedDate = c.signed_at ? new Date(c.signed_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+          cLines.push(`• ${c.title} from ${c.bizName} — signed ${signedDate}`);
+        }
+        cLines.push('');
+      }
+
+      if (other.length > 0) {
+        const statusEmoji: Record<string, string> = { expired: '⌛', revoked: '🚫', declined: '❌' };
+        for (const c of other) {
+          const emoji = statusEmoji[c.status] || '📋';
+          cLines.push(`${emoji} ${c.title} from ${c.bizName} — ${c.status}`);
+        }
+        cLines.push('');
+      }
+
+      cLines.push('💡 *What you can do:*');
+      cLines.push('• Tap a signing link above to sign pending contracts');
+      cLines.push('• Type *Hi* to start a new conversation');
+
+      await this.sendText(from, cLines.join('\n'));
+      return;
+    }
+
+    // ── My Quotes / Price Requests ──
+    if (isQuoteQuery) {
+      const { data: quotes } = await this.supabase
+        .from('quote_requests')
+        .select('id, status, estimated_subtotal, quoted_amount, created_at, businesses:business_id(name)')
+        .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      if (!quotes || quotes.length === 0) {
+        await this.sendText(from, "You don't have any price requests. Send *Hi* to get started!");
+        return;
+      }
+
+      const statusEmoji: Record<string, string> = {
+        pending: '⏳', quoted: '💰', accepted: '✅',
+        rejected: '❌', expired: '⌛', cancelled: '🚫',
+      };
+
+      const qLines = ['📋 *Your Price Requests*', ''];
+
+      for (const q of quotes) {
+        const biz = q.businesses as any;
+        const emoji = statusEmoji[q.status] || '📋';
+        const date = new Date(q.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+        let detail = `${emoji} ${biz?.name || 'Business'} — ${date}`;
+        if (q.status === 'quoted' && q.quoted_amount) {
+          detail += ` — Quoted: ${q.quoted_amount.toLocaleString()}`;
+        } else if (q.status === 'pending') {
+          detail += ' — Awaiting response';
+        } else {
+          detail += ` — ${q.status}`;
+        }
+        qLines.push(detail);
+      }
+
+      qLines.push('');
+      qLines.push('💡 *What you can do:*');
+      qLines.push('• Type *Hi* to make a new request');
+
+      await this.sendText(from, qLines.join('\n'));
       return;
     }
 
