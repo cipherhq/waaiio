@@ -6,7 +6,9 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const token_hash = searchParams.get('token_hash');
   const type = searchParams.get('type') as 'signup' | 'email' | 'recovery' | 'invite' | 'magiclink' | undefined;
-  const next = searchParams.get('next') || '/get-started';
+  const rawNext = searchParams.get('next') || '/get-started';
+  // Prevent open redirect — only allow relative paths, not protocol-relative or absolute URLs
+  const next = (rawNext.startsWith('/') && !rawNext.startsWith('//')) ? rawNext : '/get-started';
 
   const supabase = await createClient();
 

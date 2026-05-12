@@ -56,6 +56,27 @@ export async function middleware(request: NextRequest) {
     });
   }
 
+  // CSRF protection: verify Origin header on state-mutating API requests
+  const isStateMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
+  const isApiRoute = request.nextUrl.pathname.startsWith('/api/');
+  const isWebhook = request.nextUrl.pathname.startsWith('/api/webhook') || request.nextUrl.pathname.startsWith('/api/webhooks');
+  if (isStateMutating && isApiRoute && !isWebhook) {
+    const origin = request.headers.get('origin');
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const allowedOrigins = [
+      new URL(appUrl).origin,
+      process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+      'http://localhost:3000',
+      'http://localhost:8083',
+    ];
+    if (origin && !allowedOrigins.includes(origin)) {
+      return new NextResponse(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(

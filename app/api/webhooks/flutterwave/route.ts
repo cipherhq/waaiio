@@ -11,14 +11,16 @@ export async function POST(request: NextRequest) {
   try {
     // Validate webhook signature (timing-safe)
     const verifHash = request.headers.get('verif-hash') || '';
-    if (FLUTTERWAVE_SECRET_HASH) {
-      try {
-        if (!verifHash || !timingSafeEqual(Buffer.from(verifHash), Buffer.from(FLUTTERWAVE_SECRET_HASH))) {
-          return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
-        }
-      } catch {
+    if (!FLUTTERWAVE_SECRET_HASH) {
+      logger.error('[FLUTTERWAVE] FLUTTERWAVE_WEBHOOK_HASH not configured — rejecting request');
+      return NextResponse.json({ message: 'Webhook not configured' }, { status: 500 });
+    }
+    try {
+      if (!verifHash || !timingSafeEqual(Buffer.from(verifHash), Buffer.from(FLUTTERWAVE_SECRET_HASH))) {
         return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
       }
+    } catch {
+      return NextResponse.json({ message: 'Invalid hash' }, { status: 401 });
     }
 
     const body = await request.json();

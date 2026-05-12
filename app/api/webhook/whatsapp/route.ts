@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { GupshupService } from '@/lib/channels/gupshup';
@@ -36,7 +37,8 @@ export async function POST(request: NextRequest) {
     const webhookSecret = request.headers.get('x-webhook-secret');
     const expectedSecret = process.env.GUPSHUP_WEBHOOK_SECRET;
     if (expectedSecret) {
-      if (webhookSecret !== expectedSecret) {
+      if (!webhookSecret || webhookSecret.length !== expectedSecret.length
+          || !timingSafeEqual(Buffer.from(webhookSecret), Buffer.from(expectedSecret))) {
         console.warn('[WEBHOOK] Invalid webhook secret');
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
       }

@@ -1,11 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 // Support all Waaiio countries: NG (+234), US (+1), GB (+44), CA (+1), GH (+233)
 const PHONE_REGEX = /^\+[1-9][0-9]{6,14}$/;
-
-// In-memory rate limiter (replace with Redis in production)
-const rateLimits = new Map<string, { count: number; windowStart: number }>();
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,20 +16,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Rate limit: 3 per phone per 10 minutes
-    const now = Date.now();
-    const record = rateLimits.get(phone);
-    if (record && now - record.windowStart < 600_000) {
-      if (record.count >= 3) {
-        return NextResponse.json(
-          { message: 'Too many OTP requests. Please wait 10 minutes.' },
-          { status: 429 },
-        );
-      }
-      record.count++;
-    } else {
-      rateLimits.set(phone, { count: 1, windowStart: now });
-    }
+    // Rate limit: 3 per phone per 10 minutes + 10 per IP per 10 minutes
+    const phoneLimit = rateLimitResponse(`otp-send:${phone}`, 3, 600_000);
+    if (phoneLimit) return phoneLimit;
+    const ipLimit = rateLimitResponse(getRateLimitKey(request, 'otp-send'), 10, 600_000);
+    if (ipLimit) return ipLimit;
 
     // Use Supabase phone OTP
     const supabase = await createClient();

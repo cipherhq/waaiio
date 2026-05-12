@@ -10,6 +10,10 @@ import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limit: max 10 broadcasts per IP per hour
+    const broadcastLimit = rateLimitResponse('broadcast:' + (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'), 10, 3600_000);
+    if (broadcastLimit) return broadcastLimit;
+
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
 
