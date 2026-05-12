@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 /**
  * GET /api/contracts/templates
@@ -28,13 +29,13 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('Failed to fetch templates:', error);
+      logger.error('Failed to fetch templates:', error);
       return NextResponse.json({ error: 'Failed to fetch templates' }, { status: 500 });
     }
 
     return NextResponse.json({ templates: data || [] });
   } catch (err) {
-    console.error('templates GET error:', err);
+    logger.error('templates GET error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -74,13 +75,13 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
-      console.error('Failed to save template:', error);
+      logger.error('Failed to save template:', error);
       return NextResponse.json({ error: 'Failed to save template' }, { status: 500 });
     }
 
     return NextResponse.json({ template: data });
   } catch (err) {
-    console.error('templates POST error:', err);
+    logger.error('templates POST error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
@@ -110,13 +111,13 @@ export async function DELETE(request: NextRequest) {
       .eq('id', templateId);
 
     if (error) {
-      console.error('Failed to delete template:', error);
+      logger.error('Failed to delete template:', error);
       return NextResponse.json({ error: 'Failed to delete template' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('templates DELETE error:', err);
+    logger.error('templates DELETE error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -143,7 +143,8 @@ export default function DashboardOverview() {
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
-        supabase.from('platform_fees').select('transaction_amount').eq('business_id', business.id).is('refunded_at', null).limit(5000),
+        // Server-side SUM via RPC — avoids fetching thousands of rows to the client
+        supabase.rpc('get_business_revenue', { p_business_id: business.id }),
         supabase.from('bookings')
           .select('id, reference_code, guest_name, guest_phone, date, time, party_size, total_amount, deposit_amount, status, created_at')
           .eq('business_id', business.id)
@@ -154,18 +155,27 @@ export default function DashboardOverview() {
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).gte('created_at', monthStart),
         // Order queries
         supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id).is('deleted_at', null),
-        supabase.from('orders').select('total_amount').eq('business_id', business.id).is('deleted_at', null).in('status', ['confirmed', 'processing', 'ready', 'shipped', 'delivered']),
+        // Server-side SUM via RPC — avoids fetching all order rows to the client
+        supabase.rpc('get_order_revenue', { p_business_id: business.id }),
         supabase.from('orders').select('id, reference_code, total_amount, status, created_at').eq('business_id', business.id).is('deleted_at', null).order('created_at', { ascending: false }).limit(5),
         // Completion rate
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'completed'),
-        // Outstanding invoices
-        supabase.from('invoices').select('total_amount').eq('business_id', business.id).in('status', ['sent', 'viewed', 'overdue']),
+        // Server-side SUM via RPC — avoids fetching all invoice rows to the client
+        supabase.rpc('get_outstanding_invoices', { p_business_id: business.id }),
       ]);
 
-      const revenue = (revenueRes.data || []).reduce((sum, p) => sum + (Number(p.transaction_amount) || 0), 0);
+      const revenue = Number(revenueRes.data ?? 0);
       const hours = business.operating_hours as Record<string, unknown> | null;
 
-      const outstandingInvoices = outstandingInvRes.data || [];
+      // get_outstanding_invoices returns the SUM only; count outstanding separately
+      const outstandingInvoiceAmount = Number(outstandingInvRes.data ?? 0);
+      // We still need the count — fetch it cheaply with head:true
+      const { count: outstandingInvoiceCount } = await supabase
+        .from('invoices')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', business.id)
+        .in('status', ['sent', 'viewed', 'overdue']);
+
       setStats({
         totalBookings: totalRes.count || 0,
         todayBookings: todayRes.count || 0,
@@ -175,12 +185,12 @@ export default function DashboardOverview() {
         totalServices: servicesRes.count || 0,
         hasHours: !!hours && Object.keys(hours).length > 0,
         hasWhatsAppConfig: !!waConfigRes.data?.bot_greeting,
-        outstandingInvoiceCount: outstandingInvoices.length,
-        outstandingInvoiceAmount: outstandingInvoices.reduce((sum, inv) => sum + Number(inv.total_amount || 0), 0),
+        outstandingInvoiceCount: outstandingInvoiceCount || 0,
+        outstandingInvoiceAmount,
       });
       setRecent((recentRes.data || []) as RecentBooking[]);
       setTotalOrders(orderCountRes.count || 0);
-      setOrderRevenue((orderRevenueRes.data || []).reduce((sum, o) => sum + (o.total_amount || 0), 0));
+      setOrderRevenue(Number(orderRevenueRes.data ?? 0));
       setRecentOrders((recentOrdersRes.data || []) as RecentOrder[]);
       setMonthlyBookings(monthlyRes.count || 0);
       setLoading(false);

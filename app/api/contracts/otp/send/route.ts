@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
           const result = await resolved.sender.sendText({ to: phone, text: message });
           sent = result.success !== false;
         } catch (chErr) {
-          console.warn('OTP channel send failed:', chErr);
+          logger.warn('OTP channel send failed:', chErr);
         }
       }
 
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('contracts/otp/send error:', err);
+    logger.error('contracts/otp/send error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

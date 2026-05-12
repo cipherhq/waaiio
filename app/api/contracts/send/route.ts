@@ -52,7 +52,7 @@ async function sendWhatsAppMessage(
         if (sent && result.messageId) messageId = result.messageId;
         if (sent) logger.info(`[CONTRACT] Template message sent to ${cleanPhone}`);
       } catch (tmplErr) {
-        console.warn(`[CONTRACT] Template message failed for ${cleanPhone}:`, tmplErr);
+        logger.warn(`[CONTRACT] Template message failed for ${cleanPhone}:`, tmplErr);
       }
     }
 
@@ -63,11 +63,11 @@ async function sendWhatsAppMessage(
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
       } catch (waErr) {
-        console.warn(`[CONTRACT] sendText also failed for ${cleanPhone}:`, waErr);
+        logger.warn(`[CONTRACT] sendText also failed for ${cleanPhone}:`, waErr);
       }
     }
   } else {
-    console.warn(`[CONTRACT] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
+    logger.warn(`[CONTRACT] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
   }
 
   // Last resort: try Gupshup with env vars
@@ -98,10 +98,10 @@ async function sendWhatsAppMessage(
         }
       }
       if (!sent) {
-        console.warn(`[CONTRACT] All Gupshup attempts failed for ${cleanPhone}`);
+        logger.warn(`[CONTRACT] All Gupshup attempts failed for ${cleanPhone}`);
       }
     } else {
-      console.warn(`[CONTRACT] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
+      logger.warn(`[CONTRACT] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
     }
   }
 
@@ -205,7 +205,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !contract) {
-      console.error('Failed to create contract:', error);
+      logger.error('Failed to create contract:', error);
       return NextResponse.json({ error: 'Failed to create contract' }, { status: 500 });
     }
 
@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
         .select('id, token, signer_phone, signer_name, status');
 
       if (signerError) {
-        console.error('Failed to create signers:', signerError);
+        logger.error('Failed to create signers:', signerError);
         return NextResponse.json({ error: 'Failed to create signers' }, { status: 500 });
       }
 
@@ -305,7 +305,7 @@ export async function POST(request: NextRequest) {
       message_delivered: delivered,
     });
   } catch (err) {
-    console.error('contracts/send error:', err);
+    logger.error('contracts/send error:', err);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 },

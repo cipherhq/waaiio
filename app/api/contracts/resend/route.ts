@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { logger } from '@/lib/logger';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(24);
@@ -44,7 +45,7 @@ async function sendWhatsAppMessage(
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
       } catch (tmplErr) {
-        console.warn(`[CONTRACT-RESEND] Template failed for ${cleanPhone}:`, tmplErr);
+        logger.warn(`[CONTRACT-RESEND] Template failed for ${cleanPhone}:`, tmplErr);
       }
     }
 
@@ -55,11 +56,11 @@ async function sendWhatsAppMessage(
         sent = result.success !== false;
         if (sent && result.messageId) messageId = result.messageId;
       } catch (waErr) {
-        console.warn(`[CONTRACT-RESEND] sendText also failed for ${cleanPhone}:`, waErr);
+        logger.warn(`[CONTRACT-RESEND] sendText also failed for ${cleanPhone}:`, waErr);
       }
     }
   } else {
-    console.warn(`[CONTRACT-RESEND] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
+    logger.warn(`[CONTRACT-RESEND] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
   }
 
   if (!sent) {
@@ -88,10 +89,10 @@ async function sendWhatsAppMessage(
         }
       }
       if (!sent) {
-        console.warn(`[CONTRACT-RESEND] All Gupshup attempts failed for ${cleanPhone}`);
+        logger.warn(`[CONTRACT-RESEND] All Gupshup attempts failed for ${cleanPhone}`);
       }
     } else {
-      console.warn(`[CONTRACT-RESEND] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
+      logger.warn(`[CONTRACT-RESEND] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
     }
   }
 
@@ -226,7 +227,7 @@ export async function POST(request: NextRequest) {
       .eq('id', contract.id);
 
     if (updateError) {
-      console.error('Failed to update contract token:', updateError);
+      logger.error('Failed to update contract token:', updateError);
       return NextResponse.json({ error: 'Failed to regenerate link' }, { status: 500 });
     }
 
@@ -261,7 +262,7 @@ export async function POST(request: NextRequest) {
       message_delivered: delivered,
     });
   } catch (err) {
-    console.error('contracts/resend error:', err);
+    logger.error('contracts/resend error:', err);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 },

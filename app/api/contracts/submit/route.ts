@@ -5,6 +5,7 @@ import { appendSignatureToUploadedPdf } from '@/lib/pdf/append-signature';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 async function sendWhatsApp(
   supabase: ReturnType<typeof createServiceClient>,
@@ -25,7 +26,7 @@ async function sendWhatsApp(
       const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
       sent = result.success !== false;
     } catch (chErr) {
-      console.warn('Channel send failed:', chErr);
+      logger.warn('Channel send failed:', chErr);
     }
   }
 
@@ -224,7 +225,7 @@ export async function POST(request: NextRequest) {
               });
             }
           } catch (pdfErr) {
-            console.error('Multi-signer PDF generation failed:', pdfErr);
+            logger.error('Multi-signer PDF generation failed:', pdfErr);
           }
         }
 
@@ -247,7 +248,7 @@ export async function POST(request: NextRequest) {
               upsert: true,
             });
           } catch (pdfErr) {
-            console.error('Multi-signer PDF generation failed:', pdfErr);
+            logger.error('Multi-signer PDF generation failed:', pdfErr);
           }
         }
 
@@ -266,7 +267,7 @@ export async function POST(request: NextRequest) {
             const ownerMsg = `"${activeContract.title}" has been signed by all signers! View from your dashboard.`;
             await sendWhatsApp(supabase, activeContract.business_id, biz.country_code, biz.phone, ownerMsg);
           } catch (ownerErr) {
-            console.warn('Failed to send owner notification:', ownerErr);
+            logger.warn('Failed to send owner notification:', ownerErr);
           }
         }
       } else if (activeContract.signing_mode === 'sequential') {
@@ -309,7 +310,7 @@ export async function POST(request: NextRequest) {
           ].join('\n');
           await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', signerPhone, confirmMsg);
         } catch (msgErr) {
-          console.warn('Failed to send signer confirmation:', msgErr);
+          logger.warn('Failed to send signer confirmation:', msgErr);
         }
       }
 
@@ -348,7 +349,7 @@ export async function POST(request: NextRequest) {
           });
         }
       } catch (pdfErr) {
-        console.error('Uploaded doc PDF generation failed:', pdfErr);
+        logger.error('Uploaded doc PDF generation failed:', pdfErr);
       }
     }
 
@@ -371,7 +372,7 @@ export async function POST(request: NextRequest) {
           upsert: true,
         });
       } catch (pdfErr) {
-        console.error('PDF generation failed (signature still saved):', pdfErr);
+        logger.error('PDF generation failed (signature still saved):', pdfErr);
       }
     }
 
@@ -388,7 +389,7 @@ export async function POST(request: NextRequest) {
       .eq('id', activeContract.id);
 
     if (updateError) {
-      console.error('Failed to update contract:', updateError);
+      logger.error('Failed to update contract:', updateError);
       return NextResponse.json({ error: 'Failed to save signature' }, { status: 500 });
     }
 
@@ -415,7 +416,7 @@ export async function POST(request: NextRequest) {
 
         await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', signerPhone, confirmMsg);
       } catch (msgErr) {
-        console.warn('Failed to send signing confirmation:', msgErr);
+        logger.warn('Failed to send signing confirmation:', msgErr);
       }
     }
 
@@ -425,7 +426,7 @@ export async function POST(request: NextRequest) {
         const ownerMsg = `"${activeContract.title}" has been signed by ${signerName}! View from your dashboard.`;
         await sendWhatsApp(supabase, activeContract.business_id, biz.country_code, biz.phone, ownerMsg);
       } catch (ownerErr) {
-        console.warn('Failed to send owner notification:', ownerErr);
+        logger.warn('Failed to send owner notification:', ownerErr);
       }
     }
 
@@ -438,7 +439,7 @@ export async function POST(request: NextRequest) {
             const ccMsg = `"${activeContract.title}" has been signed by ${signerName}. You were CC'd on this document.`;
             await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', cc.phone, ccMsg);
           } catch (ccErr) {
-            console.warn('Failed to send CC notification:', ccErr);
+            logger.warn('Failed to send CC notification:', ccErr);
           }
         }
       }
@@ -446,7 +447,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, contract_id: activeContract.id, has_pdf: !!pdfPath });
   } catch (err) {
-    console.error('Contract submit error:', err);
+    logger.error('Contract submit error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 /** Fetch the direct gateway checkout URL from the payments table */
 async function getDirectGatewayUrl(supabase: SupabaseClient, reference: string): Promise<string | null> {
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ url: gatewayUrl || result.url, reference: result.reference });
   } catch (err) {
-    console.error('invoices/pay error:', err);
+    logger.error('invoices/pay error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

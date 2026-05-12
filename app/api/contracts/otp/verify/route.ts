@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('contracts/otp/verify error:', err);
+    logger.error('contracts/otp/verify error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

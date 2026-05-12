@@ -75,44 +75,89 @@ export async function GET(request: NextRequest) {
 
     const bizIds = businesses.map(b => b.id);
 
-    // Batch-fetch all existing payouts for this period in one query instead of one per business.
-    const { data: existingPayoutsForPeriod } = await supabase
-      .from('business_payouts')
-      .select('business_id')
-      .in('business_id', bizIds)
-      .eq('period_start', periodStartStr)
-      .eq('period_end', periodEndStr)
-      .limit(5000);
+    // Batch-fetch all data needed for the main loop in parallel — one query each instead of N per business.
+    const [
+      { data: existingPayoutsForPeriod },
+      { data: allFeeRows },
+      { data: allAdjustmentRows },
+      { data: allPayoutAccountRows },
+    ] = await Promise.all([
+      // Existing payouts for this period
+      supabase
+        .from('business_payouts')
+        .select('business_id')
+        .in('business_id', bizIds)
+        .eq('period_start', periodStartStr)
+        .eq('period_end', periodEndStr)
+        .limit(5000),
+      // Platform fees for the period across all businesses
+      supabase
+        .from('platform_fees')
+        .select('business_id, transaction_amount, fee_total')
+        .in('business_id', bizIds)
+        .is('refunded_at', null)
+        .gte('created_at', periodStart.toISOString())
+        .lte('created_at', periodEnd.toISOString())
+        .limit(100_000),
+      // Unapplied payout adjustments across all businesses
+      supabase
+        .from('payout_adjustments')
+        .select('id, business_id, amount')
+        .in('business_id', bizIds)
+        .is('applied_to_payout_id', null)
+        .limit(10_000),
+      // Active payout accounts across all businesses
+      supabase
+        .from('payout_accounts')
+        .select('id, business_id, bank_code, account_number, account_name, gateway')
+        .in('business_id', bizIds)
+        .eq('is_active', true)
+        .limit(5000),
+    ]);
 
+    // Build lookup structures from batch results
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
+
+    // Group fees by business_id
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number }[]>();
+    for (const row of (allFeeRows || [])) {
+      const list = feesByBiz.get(row.business_id) ?? [];
+      list.push(row);
+      feesByBiz.set(row.business_id, list);
+    }
+
+    // Group adjustments by business_id
+    const adjustmentsByBiz = new Map<string, { id: string; amount: number }[]>();
+    for (const row of (allAdjustmentRows || [])) {
+      const list = adjustmentsByBiz.get(row.business_id) ?? [];
+      list.push(row);
+      adjustmentsByBiz.set(row.business_id, list);
+    }
+
+    // One active payout account per business (take the first active one if multiple)
+    type PayoutAccountRow = { id: string; business_id: string; bank_code: string | null; account_number: string | null; account_name: string | null; gateway: string | null };
+    const payoutAccountByBiz = new Map<string, PayoutAccountRow>();
+    for (const row of (allPayoutAccountRows || [])) {
+      if (!payoutAccountByBiz.has(row.business_id)) {
+        payoutAccountByBiz.set(row.business_id, row);
+      }
+    }
 
     for (const biz of businesses) {
       // Skip if payout already exists for this period (checked via batch query above)
       if (alreadyHasPayout.has(biz.id)) continue;
 
-      // Get platform fees for this business in the period
-      const { data: fees } = await supabase
-        .from('platform_fees')
-        .select('transaction_amount, fee_total')
-        .eq('business_id', biz.id)
-        .is('refunded_at', null)
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString());
-
-      const gross = (fees || []).reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
-      const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      // Calculate gross and fee totals from pre-fetched batch data
+      const fees = feesByBiz.get(biz.id) ?? [];
+      const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+      const totalFees = fees.reduce((s, f) => s + Number(f.fee_total || 0), 0);
       let netAmount = Math.max(0, gross - totalFees);
 
       if (netAmount <= 0) continue;
 
       // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
-      const { data: adjustments } = await supabase
-        .from('payout_adjustments')
-        .select('id, amount')
-        .eq('business_id', biz.id)
-        .is('applied_to_payout_id', null);
-
-      const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
+      const adjustments = adjustmentsByBiz.get(biz.id) ?? [];
+      const totalAdjustments = adjustments.reduce((s, a) => s + Number(a.amount || 0), 0);
       netAmount = Math.max(0, netAmount + totalAdjustments); // adjustments are negative
 
       if (netAmount <= 0) continue;
@@ -123,13 +168,8 @@ export async function GET(request: NextRequest) {
 
       const net = netAmount;
 
-      // Get payout account
-      const { data: payoutAccount } = await supabase
-        .from('payout_accounts')
-        .select('id, bank_code, account_number, account_name, gateway')
-        .eq('business_id', biz.id)
-        .eq('is_active', true)
-        .maybeSingle();
+      // Look up payout account from pre-fetched batch data
+      const payoutAccount = payoutAccountByBiz.get(biz.id) ?? null;
 
       // Safety checks
       const bizAge = (Date.now() - new Date(biz.created_at).getTime()) / (1000 * 60 * 60 * 24);

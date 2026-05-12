@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
       .eq('id', contract.id);
 
     if (updateError) {
-      console.error('Failed to revoke contract:', updateError);
+      logger.error('Failed to revoke contract:', updateError);
       return NextResponse.json({ error: 'Failed to revoke contract' }, { status: 500 });
     }
 
@@ -82,18 +83,18 @@ export async function POST(request: NextRequest) {
               const result = await resolved.sender.sendText({ to: phone, text: message });
               sent = result.success !== false;
             } catch (chErr) {
-              console.warn('Channel send failed for revoke notification:', chErr);
+              logger.warn('Channel send failed for revoke notification:', chErr);
             }
           }
         }
       } catch (msgErr) {
-        console.warn('Failed to send revoke notification:', msgErr);
+        logger.warn('Failed to send revoke notification:', msgErr);
       }
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('contracts/revoke error:', err);
+    logger.error('contracts/revoke error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

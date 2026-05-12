@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -79,7 +80,7 @@ export async function GET(
       .download(contract.signed_url);
 
     if (downloadError || !file) {
-      console.error('Failed to download PDF:', downloadError);
+      logger.error('Failed to download PDF:', downloadError);
       return NextResponse.json({ error: 'Failed to download PDF' }, { status: 500 });
     }
 
@@ -95,7 +96,7 @@ export async function GET(
       },
     });
   } catch (err) {
-    console.error('contracts/pdf error:', err);
+    logger.error('contracts/pdf error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

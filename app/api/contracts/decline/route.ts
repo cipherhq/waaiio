@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -129,7 +130,7 @@ export async function POST(request: NextRequest) {
             const result = await resolved.sender.sendText({ to: ownerPhone, text: ownerMsg });
             sent = result.success !== false;
           } catch (chErr) {
-            console.warn('Owner decline notification failed:', chErr);
+            logger.warn('Owner decline notification failed:', chErr);
           }
         }
 
@@ -140,13 +141,13 @@ export async function POST(request: NextRequest) {
           }
         }
       } catch (msgErr) {
-        console.warn('Failed to send decline notification to owner:', msgErr);
+        logger.warn('Failed to send decline notification to owner:', msgErr);
       }
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error('contracts/decline error:', err);
+    logger.error('contracts/decline error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

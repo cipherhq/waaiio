@@ -1833,7 +1833,7 @@ export const schedulingFlow: FlowDefinition = {
           const bookingId = d.booking_id as string;
           const refCode = d.reference_code as string;
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-          const email = (d.email as string) || `${phone.replace('+', '')}@whatsapp.waaiio.com`;
+          const email = (d.email as string) || `${phone.replace('+', '')}@${process.env.FALLBACK_EMAIL_DOMAIN || 'whatsapp.waaiio.com'}`;
 
           const result = await chargeSavedCard(ctx.supabase, {
             savedMethod,

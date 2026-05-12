@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
+import { logger } from '@/lib/logger';
 
 const CONTRACT_TEMPLATE_NAME = process.env.WHATSAPP_CONTRACT_TEMPLATE || 'document_signature_request';
 
@@ -131,7 +132,7 @@ export async function POST(request: NextRequest) {
             });
             sent = result.success !== false;
           } catch (tmplErr) {
-            console.warn(`[CONTRACT-BULK] Template failed for ${phone}:`, tmplErr);
+            logger.warn(`[CONTRACT-BULK] Template failed for ${phone}:`, tmplErr);
           }
         }
 
@@ -141,7 +142,7 @@ export async function POST(request: NextRequest) {
             const result = await resolved.sender.sendText({ to: phone, text: message });
             sent = result.success !== false;
           } catch (err) {
-            console.warn(`[CONTRACT-BULK] sendText failed for ${phone}:`, err);
+            logger.warn(`[CONTRACT-BULK] sendText failed for ${phone}:`, err);
           }
         }
       }
@@ -165,10 +166,10 @@ export async function POST(request: NextRequest) {
             sent = result.success !== false;
           }
           if (!sent) {
-            console.warn(`[CONTRACT-BULK] All attempts failed for ${phone}`);
+            logger.warn(`[CONTRACT-BULK] All attempts failed for ${phone}`);
           }
         } else {
-          console.warn(`[CONTRACT-BULK] No WhatsApp channel configured. Message NOT delivered to ${phone}.`);
+          logger.warn(`[CONTRACT-BULK] No WhatsApp channel configured. Message NOT delivered to ${phone}.`);
         }
       }
 
@@ -181,7 +182,7 @@ export async function POST(request: NextRequest) {
       results,
     });
   } catch (err) {
-    console.error('contracts/bulk-send error:', err);
+    logger.error('contracts/bulk-send error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
