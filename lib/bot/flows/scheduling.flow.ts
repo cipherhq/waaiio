@@ -1283,7 +1283,7 @@ export const schedulingFlow: FlowDefinition = {
 
           return [{
             type: 'text',
-            text: `✅ *Booking Rescheduled!*\n\n📅 ${dateLabel} at ${d.time as string}\n👥 ${(d.party_size as number) || 1} guest${((d.party_size as number) || 1) > 1 ? 's' : ''}\n\nSee you then! 🎉`,
+            text: `✅ *Booking Rescheduled!*\n\n📅 ${dateLabel} at ${d.time as string}\n👥 ${(d.party_size as number) || 1} guest${((d.party_size as number) || 1) > 1 ? 's' : ''}\n\nSee you then!`,
           }];
         }
 

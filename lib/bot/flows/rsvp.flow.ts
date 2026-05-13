@@ -38,7 +38,7 @@ export const rsvpFlow: FlowDefinition = {
         }
 
         const lines = [
-          `🎉 *You're Invited!*`,
+          `*You're Invited!*`,
           '',
           `🎪 *${eventName}*`,
           eventDate ? `📅 ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '',
@@ -226,7 +226,7 @@ export const rsvpFlow: FlowDefinition = {
           `👥 ${guestLabel}`,
           dietaryNotes ? `🍽️ Dietary: ${dietaryNotes}` : '',
           '',
-          `We'll send you a reminder before the event. See you there! 🎉`,
+          `We'll send you a reminder before the event. See you there!`,
         ].filter(Boolean);
 
         return [{ type: 'text', text: lines.join('\n') + `\n\n💡 *What you can do:*\n• Type *Hi* to explore more` }];

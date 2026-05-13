@@ -798,7 +798,7 @@ export const reservationFlow: FlowDefinition = {
             `👥 ${d.guests} guest${(d.guests as number) > 1 ? 's' : ''}`,
             `🔑 Ref: *${reservation.reference_code}*`,
             '',
-            'See you soon! 🎉',
+            'See you soon!',
             '',
             '💡 *What you can do:*',
             '• Type *my bookings* to view your reservations',
@@ -879,7 +879,7 @@ export const reservationFlow: FlowDefinition = {
                 `👥 ${d.guests} guest${(d.guests as number) > 1 ? 's' : ''}`,
                 `🔑 Ref: *${d.reference_code as string}*`,
                 '',
-                'See you soon! 🎉',
+                'See you soon!',
               ].join('\n'),
             });
 
