@@ -155,7 +155,11 @@ export async function processPaystackChargeSuccess(
         .is('payment_id', null);
     }
 
-    // Increment campaign raised_amount and donor_count atomically
+    // Increment campaign raised_amount and donor_count.
+    // Note: this SELECT+UPDATE pattern has a potential race condition if two donations
+    // succeed concurrently. A true atomic fix would require a DB-level RPC
+    // (e.g. increment_campaign_stats). Acceptable for now as concurrent donations
+    // to the same campaign are rare and webhook retries re-use the same payment record.
     const { data: campaign } = await supabase
       .from('campaigns')
       .select('raised_amount, donor_count, business_id')

@@ -359,20 +359,24 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
 
+        // Increment tickets_sold on the ticket type if one was selected
+        if (d.ticket_type_id) {
+          const { data: tt } = await ctx.supabase
+            .from('event_ticket_types')
+            .select('tickets_sold')
+            .eq('id', d.ticket_type_id as string)
+            .single();
+          if (tt) {
+            await ctx.supabase
+              .from('event_ticket_types')
+              .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
+              .eq('id', d.ticket_type_id as string);
+          }
+        }
+
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
-
-        // Record platform fee
-        if (ctx.business && total > 0) {
-          const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
-          await recordPlatformFee(ctx.supabase, {
-            businessId: ctx.business.id,
-            bookingId: booking.id,
-            transactionAmount: total,
-            tier: ctx.business.subscription_tier as SubscriptionTier,
-            isInTrial,
-          });
-        }
+        // Platform fee is recorded after payment is verified in await_ticket_payment
 
         const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long',
@@ -584,6 +588,18 @@ export const ticketingFlow: FlowDefinition = {
               channel: 'whatsapp',
               body: `New ticket sale: ${d.ticket_quantity} ticket${(d.ticket_quantity as number) > 1 ? 's' : ''} for ${d.event_name}. Amount: ${formatCurrency(d.total_amount as number, (ctx.business?.country_code || 'NG') as CountryCode)}. Ref: ${d.reference_code}`,
             }).catch(err => console.error('[TICKETING] Notification error:', err));
+
+            // Record platform fee only after payment is verified
+            if (ctx.business) {
+              const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+              recordPlatformFee(ctx.supabase, {
+                businessId: ctx.business.id,
+                bookingId: d.booking_id as string,
+                transactionAmount: d.total_amount as number,
+                tier: ctx.business.subscription_tier as SubscriptionTier,
+                isInTrial,
+              }).catch(err => console.error('[TICKETING] recordPlatformFee error:', err));
+            }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }

@@ -363,6 +363,25 @@ export const schedulingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
+        const promptBody = getStaffPrompt(ctx.business?.category || 'other');
+
+        // Use a list message for 3+ staff members; buttons for 1-2
+        if (staff.length >= 3) {
+          const items = staff.map(s => ({
+            title: s.name.slice(0, 24),
+            description: '',
+            postbackText: `staff_${s.id}`,
+          }));
+          items.push({ title: 'Any available', description: '', postbackText: 'staff_any' });
+          return [{
+            type: 'list',
+            title: 'Select Staff',
+            body: promptBody,
+            buttonLabel: 'Choose',
+            items,
+          }];
+        }
+
         const buttons = staff.slice(0, 2).map(s => ({
           id: `staff_${s.id}`,
           title: s.name,
@@ -371,7 +390,7 @@ export const schedulingFlow: FlowDefinition = {
 
         return [{
           type: 'buttons',
-          body: getStaffPrompt(ctx.business?.category || 'other'),
+          body: promptBody,
           buttons,
         }];
       },
@@ -630,9 +649,14 @@ export const schedulingFlow: FlowDefinition = {
           .filter(s => s.remaining > 0);
 
         if (availableSlots.length === 0) {
+          // Deactivate session so "Send Hi" actually starts fresh
+          await ctx.supabase
+            .from('bot_sessions')
+            .update({ is_active: false })
+            .eq('id', ctx.session.id);
           return [{
             type: 'text',
-            text: `Sorry, all time slots for ${dateLabel} are fully booked. Please go back and choose a different date.\n\nSend *Hi* to start over.`,
+            text: `Sorry, all time slots for ${dateLabel} are fully booked. Please send *Hi* to choose a different date.`,
           }];
         }
 
@@ -1362,6 +1386,10 @@ export const schedulingFlow: FlowDefinition = {
         const servicePrice = (d.service_price as number) || 0;
         const partySize = (d.party_size as number) || 1;
 
+        // Apply promo discount to the service price before calculating deposit
+        const promoDiscount = (d._promo_discount as number) || 0;
+        const finalServicePrice = Math.max(0, servicePrice - promoDiscount);
+
         // For restaurants: check business deposit_per_guest
         let depositPerGuest = 0;
         if (ctx.business) {
@@ -1389,14 +1417,14 @@ export const schedulingFlow: FlowDefinition = {
         if (prepayMode === 'free') {
           totalDeposit = 0;
         } else if (serviceDeposit > 0) {
-          // Explicit deposit set on the service
+          // Explicit deposit set on the service (not discounted — deposit is a fixed amount)
           totalDeposit = serviceDeposit;
         } else if (depositPerGuest > 0) {
           // Per-guest deposit (restaurants)
           totalDeposit = depositPerGuest * partySize;
-        } else if (isPrepay && servicePrice > 0) {
-          // Service-based businesses: charge full service price
-          totalDeposit = servicePrice * partySize;
+        } else if (isPrepay && finalServicePrice > 0) {
+          // Service-based businesses: charge full service price (after promo discount)
+          totalDeposit = finalServicePrice * partySize;
         } else {
           totalDeposit = 0;
         }
@@ -1442,124 +1470,136 @@ export const schedulingFlow: FlowDefinition = {
           quantity: partySize,
         };
 
-        // Use atomic booking function to prevent double-booking race condition
-        const maxCapacity = (d._service_max_capacity as number) || 1;
-        const { data: slotResult, error: slotError } = await ctx.supabase
-          .rpc('book_slot_atomic' as string, {
-            p_business_id: ctx.business!.id,
-            p_user_id: userId,
-            p_service_id: (d.service_id as string) || null,
-            p_staff_id: (d.staff_id as string) || null,
-            p_date: d.date as string,
-            p_time: d.time as string,
-            p_party_size: partySize,
-            p_max_capacity: maxCapacity,
-            p_flow_type: 'scheduling',
-            p_deposit_amount: totalDeposit,
-            p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
-            p_status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
-            p_guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-            p_guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-            p_guest_email: (d.email as string) || null,
-            p_special_requests: (d.special_requests as string) || null,
-            p_venue_address: (d.venue_address as string) || null,
-            p_end_date: (d.end_date as string) || null,
-            p_addons_snapshot: d._selected_addons || null,
-            p_promo_code_id: (d._promo_id as string) || null,
-            p_total_amount: totalDeposit,
-            p_staff_name: (d.staff_name as string) || null,
-          })
-          .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
-
-        if (slotError || !slotResult) {
-          console.error('Failed to create booking', slotError);
-          return [{ type: 'text', text: 'Sorry, something went wrong. Send "Hi" to try again.' }];
-        }
-
-        if (!slotResult.slot_available) {
-          return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
-        }
-
-        const booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
-
-        // Increment promo code usage if applied
-        if (d._promo_id) {
-          const { data: promoData } = await ctx.supabase
-            .from('promo_codes')
-            .select('current_uses')
-            .eq('id', d._promo_id as string)
-            .single();
-          if (promoData) {
-            await ctx.supabase
-              .from('promo_codes')
-              .update({ current_uses: (promoData.current_uses || 0) + 1 })
-              .eq('id', d._promo_id as string);
-          }
-        }
-
-        // Convert referral if applied
-        if (d.referral_id) {
-          const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-          await ctx.supabase
-            .from('referrals')
-            .update({
-              status: 'converted',
-              referee_phone: refPhone,
-              updated_at: new Date().toISOString(),
+        // If booking already exists (e.g. retry_payment), skip the RPC and reuse existing booking
+        const isNewBooking = !(d.booking_id && d.reference_code);
+        let booking: { id: string; reference_code: string };
+        if (!isNewBooking) {
+          // Reuse existing booking — just proceed to payment initiation
+          booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
+        } else {
+          // Use atomic booking function to prevent double-booking race condition
+          const maxCapacity = (d._service_max_capacity as number) || 1;
+          const { data: slotResult, error: slotError } = await ctx.supabase
+            .rpc('book_slot_atomic' as string, {
+              p_business_id: ctx.business!.id,
+              p_user_id: userId,
+              p_service_id: (d.service_id as string) || null,
+              p_staff_id: (d.staff_id as string) || null,
+              p_date: d.date as string,
+              p_time: d.time as string,
+              p_party_size: partySize,
+              p_max_capacity: maxCapacity,
+              p_flow_type: 'scheduling',
+              p_deposit_amount: totalDeposit,
+              p_deposit_status: totalDeposit > 0 ? 'pending' : 'none',
+              p_status: totalDeposit > 0 ? 'pending' : (d._auto_approve !== false ? 'confirmed' : 'pending'),
+              p_guest_name: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              p_guest_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              p_guest_email: (d.email as string) || null,
+              p_special_requests: (d.special_requests as string) || null,
+              p_venue_address: (d.venue_address as string) || null,
+              p_end_date: (d.end_date as string) || null,
+              p_addons_snapshot: d._selected_addons || null,
+              p_promo_code_id: (d._promo_id as string) || null,
+              p_total_amount: totalDeposit,
+              p_staff_name: (d.staff_name as string) || null,
             })
-            .eq('id', d.referral_id as string);
+            .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
+
+          if (slotError || !slotResult) {
+            console.error('Failed to create booking', slotError);
+            return [{ type: 'text', text: 'Sorry, something went wrong. Send "Hi" to try again.' }];
+          }
+
+          if (!slotResult.slot_available) {
+            return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
+          }
+
+          booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
+        }
+
+        if (isNewBooking) {
+          // Increment promo code usage if applied
+          if (d._promo_id) {
+            const { data: promoData } = await ctx.supabase
+              .from('promo_codes')
+              .select('current_uses')
+              .eq('id', d._promo_id as string)
+              .single();
+            if (promoData) {
+              await ctx.supabase
+                .from('promo_codes')
+                .update({ current_uses: (promoData.current_uses || 0) + 1 })
+                .eq('id', d._promo_id as string);
+            }
+          }
+
+          // Convert referral if applied
+          if (d.referral_id) {
+            const refPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+            await ctx.supabase
+              .from('referrals')
+              .update({
+                status: 'converted',
+                referee_phone: refPhone,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', d.referral_id as string);
+          }
         }
 
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
 
-        // ── Fire booking_created rules + sequences (non-blocking) ──
-        if (ctx.business) {
-          const ruleCtx = {
-            customer_phone: ctx.from,
-            customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || undefined,
-            business_name: ctx.business.name,
-            service_name: (d.service_name as string) || undefined,
-            reference_code: booking.reference_code,
-            reference_id: booking.id,
-            total_amount: totalDeposit,
-            date: d.date as string,
-            time: d.time as string,
-            party_size: d.party_size as number,
-          };
-          const sendMsg = async (to: string, txt: string) => {
-            await ctx.sender.sendText({ to, text: txt });
-          };
-          evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
-            .catch(err => console.error('[SCHEDULING] booking_created rule error:', err));
-          triggerSequences(ctx.supabase, ctx.business.id, 'after_booking', ctx.from, ruleCtx)
-            .catch(err => console.error('[SCHEDULING] after_booking sequence error:', err));
-        }
-
-        // Reserve booking slot (overbooking prevention)
-        if (ctx.business) {
-          try {
-            await ctx.supabase.rpc('reserve_booking_slot', {
-              p_business_id: ctx.business.id,
-              p_date: d.date as string,
-              p_start_time: d.time as string,
-              p_end_time: d.time as string, // end_time is auto-calculated
-              p_staff_id: (d.staff_id as string) || null,
-            });
-          } catch (err) {
-            console.error('[SCHEDULING] reserve_booking_slot error (non-fatal):', err);
+        if (isNewBooking) {
+          // ── Fire booking_created rules + sequences (non-blocking) ──
+          if (ctx.business) {
+            const ruleCtx = {
+              customer_phone: ctx.from,
+              customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim() || undefined,
+              business_name: ctx.business.name,
+              service_name: (d.service_name as string) || undefined,
+              reference_code: booking.reference_code,
+              reference_id: booking.id,
+              total_amount: totalDeposit,
+              date: d.date as string,
+              time: d.time as string,
+              party_size: d.party_size as number,
+            };
+            const sendMsg = async (to: string, txt: string) => {
+              await ctx.sender.sendText({ to, text: txt });
+            };
+            evaluateRules(ctx.supabase, ctx.business.id, 'booking_created', ruleCtx, sendMsg)
+              .catch(err => console.error('[SCHEDULING] booking_created rule error:', err));
+            triggerSequences(ctx.supabase, ctx.business.id, 'after_booking', ctx.from, ruleCtx)
+              .catch(err => console.error('[SCHEDULING] after_booking sequence error:', err));
           }
-        }
 
-        // Upsert customer profile
-        await ctx.supabase.rpc('upsert_customer_profile', {
-          p_business_id: ctx.business!.id,
-          p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-          p_name: insertPayload.guest_name as string || null,
-          p_booking_amount: totalDeposit,
-          p_is_booking: true,
-        });
+          // Reserve booking slot (overbooking prevention)
+          if (ctx.business) {
+            try {
+              await ctx.supabase.rpc('reserve_booking_slot', {
+                p_business_id: ctx.business.id,
+                p_date: d.date as string,
+                p_start_time: d.time as string,
+                p_end_time: d.time as string, // end_time is auto-calculated
+                p_staff_id: (d.staff_id as string) || null,
+              });
+            } catch (err) {
+              console.error('[SCHEDULING] reserve_booking_slot error (non-fatal):', err);
+            }
+          }
+
+          // Upsert customer profile
+          await ctx.supabase.rpc('upsert_customer_profile', {
+            p_business_id: ctx.business!.id,
+            p_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+            p_name: insertPayload.guest_name as string || null,
+            p_booking_amount: totalDeposit,
+            p_is_booking: true,
+          });
+        }
 
         await ctx.supabase
           .from('bot_sessions')
@@ -1570,18 +1610,6 @@ export const schedulingFlow: FlowDefinition = {
         const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
           weekday: 'long', day: 'numeric', month: 'long',
         });
-
-        // Record platform fee
-        if (totalDeposit > 0 && ctx.business) {
-          const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
-          await recordPlatformFee(ctx.supabase, {
-            businessId: ctx.business.id,
-            bookingId: booking.id,
-            transactionAmount: totalDeposit,
-            tier: ctx.business.subscription_tier as SubscriptionTier,
-            isInTrial,
-          });
-        }
 
         if (totalDeposit > 0) {
           // Check for saved payment method — one-tap payment
@@ -1813,7 +1841,7 @@ export const schedulingFlow: FlowDefinition = {
               customer_phone: ctx.from,
               booking_date: (d.date as string) || '',
               booking_time: (d.time as string) || '',
-              duration_minutes: d.duration_minutes as number | undefined,
+              duration_minutes: d.service_duration as number | undefined,
               reference_code: booking.reference_code,
             }).catch(err => console.error('[SCHEDULING] Calendar sync error:', err));
           }).catch(() => {});
@@ -1821,7 +1849,7 @@ export const schedulingFlow: FlowDefinition = {
 
         return [{ type: 'text', text: message + helpText }];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
@@ -1834,10 +1862,21 @@ export const schedulingFlow: FlowDefinition = {
         if (input === 'chat_with_biz') {
           return { valid: true, data: { _chat_with_biz: true } };
         }
+        if (input === 'cancel_booking' || input === 'go_back') {
+          // Cancel the pending booking if one was created
+          const d = ctx.session.session_data;
+          if (d.booking_id) {
+            await ctx.supabase.from('bookings').update({ status: 'cancelled' }).eq('id', d.booking_id as string);
+          }
+          await ctx.sender.sendText({ to: ctx.from, text: 'Booking cancelled. Send *Hi* to start over.' });
+          return { valid: true, data: { _action: 'cancel' } };
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        // Cancelled booking — end flow
+        if (d._action === 'cancel') return null;
         // After accepting/cancelling terms, re-enter this step to proceed
         if (d._terms_accepted || d._terms_cancelled) {
           return 'create_booking';
@@ -1912,7 +1951,73 @@ export const schedulingFlow: FlowDefinition = {
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
         if (d._action === 'cancel') return null;
-        if (d._saved_card_paid) return null; // Payment complete, end flow
+        if (d._saved_card_paid) {
+          // Update booking status to confirmed
+          if (d.booking_id) {
+            await ctx.supabase
+              .from('bookings')
+              .update({ status: 'confirmed', deposit_status: 'paid' })
+              .eq('id', d.booking_id as string);
+          }
+
+          // Record platform fee now that payment is confirmed
+          if (ctx.business && d.deposit_amount) {
+            const paidAmountForFee = (d.deposit_amount as number) || 0;
+            if (paidAmountForFee > 0) {
+              const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+              recordPlatformFee(ctx.supabase, {
+                businessId: ctx.business.id,
+                bookingId: d.booking_id as string,
+                transactionAmount: paidAmountForFee,
+                tier: ctx.business.subscription_tier as SubscriptionTier,
+                isInTrial,
+              }).catch(err => console.error('[SCHEDULING] saved card recordPlatformFee error:', err));
+            }
+          }
+
+          // Notify owner and run post-completion
+          if (ctx.business) {
+            const labels = getCategoryLabels(ctx.business.category || 'restaurant');
+            const paidCC = (ctx.business.country_code || 'NG') as CountryCode;
+            const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale(paidCC), {
+              weekday: 'long', day: 'numeric', month: 'long',
+            });
+            const custName = d.book_for_other
+              ? (d.other_name as string)
+              : `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
+            const paidAmount = (d.deposit_amount as number) || 0;
+
+            notifyOwnerNewBooking({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business.id,
+              businessName: ctx.business.name,
+              countryCode: paidCC,
+              referenceCode: d.reference_code as string,
+              customerName: custName,
+              date: dateLabel,
+              time: (d.time as string) || '',
+              quantity: (d.party_size as number) || 1,
+              quantityLabel: labels.quantityLabel,
+              amount: paidAmount || undefined,
+            }).catch(err => console.error('[SCHEDULING] saved card owner notification error:', err));
+
+            handlePostCompletion({
+              supabase: ctx.supabase,
+              businessId: ctx.business.id,
+              customerPhone: ctx.from,
+              customerName: d.book_for_other ? (d.other_name as string) : `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+              serviceType: 'booking',
+              referenceId: d.booking_id as string,
+              sender: ctx.sender,
+              amountPaid: paidAmount,
+              serviceName: d.service_name as string,
+              referenceCode: d.reference_code as string,
+            }).catch(err => console.error('[SCHEDULING] saved card post-completion error:', err));
+          }
+
+          return null; // Payment complete, end flow
+        }
         // Saved card failed or user chose new card — go to regular payment
         return 'create_booking'; // Re-enter create_booking which will skip saved card this time
       },
@@ -1952,6 +2057,28 @@ export const schedulingFlow: FlowDefinition = {
           const verified = await verifyPayment(ctx.supabase, ref, (ctx.business?.country_code || 'NG') as CountryCode);
           if (verified) {
             const d = ctx.session.session_data;
+
+            // Update booking status to confirmed
+            await ctx.supabase
+              .from('bookings')
+              .update({ status: 'confirmed', deposit_status: 'paid' })
+              .eq('id', d.booking_id as string);
+
+            // Record platform fee now that payment is confirmed
+            if (ctx.business) {
+              const paidAmountForFee = (d.deposit_amount as number) || 0;
+              if (paidAmountForFee > 0) {
+                const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+                recordPlatformFee(ctx.supabase, {
+                  businessId: ctx.business.id,
+                  bookingId: d.booking_id as string,
+                  transactionAmount: paidAmountForFee,
+                  tier: ctx.business.subscription_tier as SubscriptionTier,
+                  isInTrial,
+                }).catch(err => console.error('[SCHEDULING] recordPlatformFee error:', err));
+              }
+            }
+
             const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
             const dateLabel = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
               weekday: 'long', day: 'numeric', month: 'long',

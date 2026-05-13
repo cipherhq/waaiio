@@ -23,8 +23,12 @@ const queueStartStep: FlowStepConfig = {
     const { paused } = await getQueueConfig(ctx);
     if (paused) {
       return [{
-        type: 'text',
-        text: "Sorry, our queue is temporarily paused. Please try again later or contact us directly.",
+        type: 'buttons',
+        body: 'The queue is currently closed. Would you like to be notified when it reopens?',
+        buttons: [
+          { id: 'notify_reopen', title: 'Notify Me' },
+          { id: 'no_thanks', title: 'No Thanks' },
+        ],
       }];
     }
 
@@ -39,9 +43,32 @@ const queueStartStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext) {
-    // If paused, any input ends the flow
+    // If paused, handle notification opt-in
     const { paused } = await getQueueConfig(ctx);
-    if (paused) return { valid: true };
+    if (paused) {
+      const normalized = input.toLowerCase().trim();
+      if (normalized === 'notify_reopen') {
+        // Save the customer's phone for reopen notification
+        if (ctx.business) {
+          await ctx.supabase
+            .from('waitlist_entries')
+            .insert({
+              business_id: ctx.business.id,
+              customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              type: 'queue_reopen_notify',
+              status: 'waiting',
+            })
+            .then(({ error }) => {
+              if (error) console.error('[QUEUE] Waitlist notify insert error:', error);
+            });
+        }
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: "We'll notify you when the queue reopens. Send *Hi* to do something else.",
+        });
+      }
+      return { valid: true };
+    }
 
     const normalized = input.toLowerCase().trim();
     if (normalized === 'queue_checkin' || normalized === 'check in') {
@@ -50,7 +77,7 @@ const queueStartStep: FlowStepConfig = {
     if (normalized === 'queue_status' || normalized === 'queue status') {
       return { valid: true, data: { queue_action: 'status' } };
     }
-    return { valid: false, errorMessage: 'Please tap "Check In" or "Queue Status".' };
+    return { valid: false, errorMessage: 'Please tap *Join Queue* or *My Position*.' };
   },
 
   async next(ctx: FlowContext) {
@@ -109,7 +136,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     const customerName = ctx.session.session_data.queue_customer_name as string;
     const { avgMinutes } = await getQueueConfig(ctx);
 
-    // Get next queue number
+    // Get next queue number (preview only — actual insert happens in validate)
     const { data: nextNum } = await ctx.supabase
       .rpc('next_queue_number', { biz_id: ctx.business.id });
 
@@ -126,7 +153,41 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     const waitingAhead = (count || 0);
     const estimatedWait = waitingAhead * avgMinutes;
 
-    // Insert queue entry
+    // Store preview values for use in validate
+    ctx.session.session_data._queue_preview_number = queueNumber;
+    ctx.session.session_data._queue_preview_wait = estimatedWait;
+
+    const waitText = estimatedWait > 0
+      ? `Estimated wait: ~${estimatedWait} minutes.`
+      : 'You should be served shortly!';
+
+    return [{
+      type: 'buttons',
+      body: `Ready to join the queue, ${customerName}?\n\nYou'll be *#${queueNumber}* in line. ${waitText}`,
+      buttons: [
+        { id: 'confirm_checkin', title: 'Join Queue ✓' },
+        { id: 'cancel_checkin', title: 'Cancel' },
+      ],
+    }];
+  },
+
+  async validate(input: string, ctx: FlowContext) {
+    const text = input.toLowerCase().trim();
+    if (text === 'cancel_checkin' || text === 'cancel') {
+      return { valid: true, data: { _queue_cancelled: true } };
+    }
+
+    if (text !== 'confirm_checkin' && text !== 'confirm') {
+      return { valid: false, errorMessage: 'Please tap *Join Queue* to confirm or *Cancel* to go back.' };
+    }
+
+    if (!ctx.business) return { valid: false, errorMessage: 'Business not found.' };
+
+    const customerName = ctx.session.session_data.queue_customer_name as string;
+    const queueNumber = ctx.session.session_data._queue_preview_number as number ?? 1;
+    const estimatedWait = ctx.session.session_data._queue_preview_wait as number ?? 0;
+
+    // Insert queue entry now that user confirmed
     const { error } = await ctx.supabase
       .from('queue_entries')
       .insert({
@@ -141,45 +202,42 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     if (error) {
       console.error('[QUEUE] Insert error:', error);
-      return [{ type: 'text', text: 'Sorry, there was an error joining the queue. Please try again.' }];
+      return { valid: false, errorMessage: 'Sorry, there was an error joining the queue. Please try again.' };
     }
 
     // Notify owner: email + WhatsApp
-    if (ctx.business) {
-      notifyOwnerNewQueueCheckin({
-        supabase: ctx.supabase,
-        sender: ctx.sender,
-        businessId: ctx.business.id,
-        businessName: ctx.business.name,
-        customerName,
-        queueNumber,
-      }).catch(err => console.error('[QUEUE] Notify error:', err));
+    notifyOwnerNewQueueCheckin({
+      supabase: ctx.supabase,
+      sender: ctx.sender,
+      businessId: ctx.business.id,
+      businessName: ctx.business.name,
+      customerName,
+      queueNumber,
+    }).catch(err => console.error('[QUEUE] Notify error:', err));
 
-      // In-app notification
-      createNotification(ctx.supabase, {
-        businessId: ctx.business.id,
-        type: 'queue_checkin',
-        channel: 'whatsapp',
-        body: `${customerName} checked in to the queue (#${queueNumber}).`,
-      }).catch(err => console.error('[QUEUE] Notification error:', err));
-    }
+    // In-app notification
+    createNotification(ctx.supabase, {
+      businessId: ctx.business.id,
+      type: 'queue_checkin',
+      channel: 'whatsapp',
+      body: `${customerName} checked in to the queue (#${queueNumber}).`,
+    }).catch(err => console.error('[QUEUE] Notification error:', err));
 
     const waitText = estimatedWait > 0
       ? `Estimated wait: ~${estimatedWait} minutes.`
       : 'You should be served shortly!';
 
-    return [{
-      type: 'text',
+    await ctx.sender.sendText({
+      to: ctx.from,
       text: `You're checked in, ${customerName}!\n\nYou're *#${queueNumber}* in the queue. ${waitText}\n\nWe'll message you when it's your turn!\n\n💡 *What you can do:*\n• Type *my bookings* to manage your booking\n• Type *receipt* to get your receipt`,
-    }];
-  },
+    });
 
-  async validate() {
     return { valid: true };
   },
 
-  async next() {
-    return null; // Flow complete
+  async next(ctx: FlowContext) {
+    if (ctx.session.session_data._queue_cancelled) return null;
+    return null; // Flow complete after checkin confirmation sent in validate
   },
 };
 
@@ -193,11 +251,12 @@ const queueCheckStatusStep: FlowStepConfig = {
     const { avgMinutes } = await getQueueConfig(ctx);
 
     // Find customer's active queue entry
+    const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
     const { data: entry } = await ctx.supabase
       .from('queue_entries')
       .select('queue_number, status, checked_in_at, estimated_wait_minutes')
       .eq('business_id', ctx.business.id)
-      .eq('customer_phone', ctx.from)
+      .eq('customer_phone', phoneP)
       .eq('queue_date', today)
       .in('status', ['waiting', 'serving'])
       .order('queue_number', { ascending: false })

@@ -18,7 +18,7 @@ const selectAppointmentStep: FlowStepConfig = {
 
     const { data: appointments } = await ctx.supabase
       .from('appointments')
-      .select('id, name, price, duration_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
+      .select('id, name, price, deposit_amount, duration_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
       .eq('business_id', ctx.business.id)
       .eq('is_active', true)
       .order('sort_order');
@@ -33,6 +33,7 @@ const selectAppointmentStep: FlowStepConfig = {
       ctx.session.session_data.service_id = a.id;
       ctx.session.session_data.service_name = a.name;
       ctx.session.session_data.service_price = a.price;
+      ctx.session.session_data.service_deposit = a.deposit_amount || 0;
       ctx.session.session_data.service_duration = a.duration_minutes;
       ctx.session.session_data._service_requires_staff = a.requires_staff;
       ctx.session.session_data._service_staff_ids = a.staff_ids;
@@ -41,6 +42,7 @@ const selectAppointmentStep: FlowStepConfig = {
       ctx.session.session_data._service_available_from = a.available_from;
       ctx.session.session_data._service_available_to = a.available_to;
       ctx.session.session_data._service_max_capacity = a.max_capacity || 1;
+      ctx.session.session_data._auto_approve = a.auto_approve !== false;
       ctx.session.session_data._is_appointment = true;
       ctx.session.session_data.skip_service = true;
       return [];
@@ -65,9 +67,10 @@ const selectAppointmentStep: FlowStepConfig = {
     // Try exact ID match first
     const { data: appointment } = await ctx.supabase
       .from('appointments')
-      .select('id, name, price, duration_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
+      .select('id, name, price, deposit_amount, duration_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
       .eq('id', input)
       .eq('business_id', ctx.business!.id)
+      .eq('is_active', true)
       .maybeSingle();
 
     if (appointment) {
@@ -77,6 +80,7 @@ const selectAppointmentStep: FlowStepConfig = {
           service_id: appointment.id,
           service_name: appointment.name,
           service_price: appointment.price,
+          service_deposit: appointment.deposit_amount || 0,
           service_duration: appointment.duration_minutes,
           _service_requires_staff: appointment.requires_staff,
           _service_staff_ids: appointment.staff_ids,

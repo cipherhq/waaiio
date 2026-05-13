@@ -2510,7 +2510,7 @@ export const orderingFlow: FlowDefinition = {
           },
         ];
       },
-      async validate(input: string): Promise<ValidationResult> {
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
           return { valid: true, data: { _terms_accepted: true } };
         }
@@ -2526,10 +2526,21 @@ export const orderingFlow: FlowDefinition = {
         if (input === 'track_my_order') {
           return { valid: true, data: { _track_my_order: true } };
         }
+        if (input === 'cancel_order') {
+          const orderId = ctx.session.session_data.order_id as string;
+          if (orderId) {
+            await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
+          }
+          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          return { valid: true, data: { _action: 'cancelled' } };
+        }
         return { valid: true };
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+        if (d._action === 'cancelled') {
+          return null;
+        }
         if (d._terms_accepted || d._terms_cancelled) {
           return 'process_order';
         }

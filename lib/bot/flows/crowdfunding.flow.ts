@@ -243,6 +243,7 @@ const confirmDonationStep: FlowStepConfig = {
 
   async next(ctx: FlowContext) {
     if (ctx.session.session_data.cancelled) {
+      await ctx.sender.sendText({ to: ctx.from, text: 'Donation cancelled. Send *Hi* to start over.' });
       return null; // End flow
     }
     return 'donation_payment';

@@ -60,7 +60,7 @@ export const paymentFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, billing_type, recurring_interval')
+          .select('id, name, billing_type, recurring_interval, price')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .single();
@@ -74,6 +74,7 @@ export const paymentFlow: FlowDefinition = {
             service_name: service.name,
             service_billing_type: service.billing_type || 'one_time',
             service_recurring_interval: service.recurring_interval || null,
+            service_price: service.price || 0,
           },
         };
       },
@@ -83,6 +84,14 @@ export const paymentFlow: FlowDefinition = {
     // ── Enter Amount ──
     {
       id: 'enter_amount',
+      async skipIf(ctx: FlowContext): Promise<boolean> {
+        const price = ctx.session.session_data.service_price as number;
+        if (price && price > 0) {
+          ctx.session.session_data.amount = price;
+          return true;
+        }
+        return false;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const isGiving = ctx.session.session_data.active_capability === 'giving';
@@ -149,7 +158,10 @@ export const paymentFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'cancel') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Payment cancelled. Send *Hi* to start over.' });
+          return null;
+        }
         return 'collect_name';
       },
     },

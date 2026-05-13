@@ -251,15 +251,34 @@ export const reservationFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const checkInStr = ctx.session.session_data.check_in as string;
         const checkInDate = new Date(checkInStr + 'T00:00');
+
+        // Load blocked dates for this property (same pattern as check-in step)
+        const propertyId = ctx.session.session_data.property_id as string | undefined;
+        let blockedRanges: Array<{ from: string; to: string }> = [];
+        if (propertyId) {
+          const { data: blocked } = await ctx.supabase
+            .from('property_blocked_dates')
+            .select('date_from, date_to')
+            .eq('property_id', propertyId)
+            .gte('date_to', checkInStr);
+          blockedRanges = (blocked || []).map(b => ({ from: b.date_from, to: b.date_to }));
+        }
+
+        function isBlocked(dateStr: string): boolean {
+          return blockedRanges.some(r => dateStr >= r.from && dateStr <= r.to);
+        }
+
         const dates: Array<{ title: string; description: string; postbackText: string }> = [];
-        for (let i = 1; i <= 30 && dates.length < 10; i++) {
+        for (let i = 1; i <= 60 && dates.length < 10; i++) {
           const d = new Date(checkInDate);
           d.setDate(d.getDate() + i);
+          const dateStr = d.toISOString().split('T')[0];
+          if (isBlocked(dateStr)) continue;
           const label = d.toLocaleDateString(getLocale(cc), { weekday: 'short', day: 'numeric', month: 'short' });
           dates.push({
             title: label,
             description: `${i} night${i > 1 ? 's' : ''}`,
-            postbackText: d.toISOString().split('T')[0],
+            postbackText: dateStr,
           });
         }
         return [{
@@ -485,7 +504,10 @@ export const reservationFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'cancel') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Reservation cancelled. Send *Hi* to start over.' });
+          return null;
+        }
         return 'collect_name';
       },
     },
@@ -673,18 +695,6 @@ export const reservationFlow: FlowDefinition = {
           weekday: 'short', day: 'numeric', month: 'short',
         });
 
-        // Record platform fee
-        if (payableAmount > 0 && ctx.business) {
-          const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
-          await recordPlatformFee(ctx.supabase, {
-            businessId: ctx.business.id,
-            reservationId: reservation.id,
-            transactionAmount: payableAmount,
-            tier: ctx.business.subscription_tier as SubscriptionTier,
-            isInTrial,
-          });
-        }
-
         if (payableAmount > 0) {
           const paymentResult = await initializePayment(ctx.supabase, {
             reservationId: reservation.id,
@@ -860,6 +870,18 @@ export const reservationFlow: FlowDefinition = {
           if (verified) {
             const d = ctx.session.session_data;
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+            // Record platform fee after confirmed payment
+            if (ctx.business) {
+              const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+              await recordPlatformFee(ctx.supabase, {
+                businessId: ctx.business.id,
+                reservationId: d.reservation_id as string,
+                transactionAmount: d.payable_amount as number,
+                tier: ctx.business.subscription_tier as SubscriptionTier,
+                isInTrial,
+              });
+            }
             const checkInLabel = new Date((d.check_in as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
               weekday: 'short', day: 'numeric', month: 'short',
             });
