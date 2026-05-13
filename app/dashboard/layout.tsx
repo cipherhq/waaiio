@@ -43,7 +43,8 @@ export default async function DashboardLayout({
       .eq('id', impersonateAdminId)
       .maybeSingle();
 
-    if (adminProfile && ['admin', 'support'].includes(adminProfile.role)) {
+    // Impersonation is admin-only — must match token issuance and validation endpoints
+    if (adminProfile && adminProfile.role === 'admin') {
       // Load the impersonated business
       const { data: impBiz } = await supabase
         .from('businesses')

@@ -15,6 +15,7 @@ import type { CapabilityId } from '@/lib/capabilities/types';
 import { sendEmail } from '@/lib/email/client';
 import { welcomeEmail, businessRegisteredEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -174,8 +175,18 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError || !business) {
+      // Handle unique constraint violations cleanly (concurrent signup race condition)
+      const isDuplicate = insertError?.code === '23505';
+      if (isDuplicate) {
+        const field = insertError.message?.includes('bot_code') ? 'bot code' : insertError.message?.includes('slug') ? 'URL slug' : 'business name';
+        return NextResponse.json(
+          { message: `This ${field} is already taken. Please try a different name.` },
+          { status: 409 },
+        );
+      }
+      logger.error('[ONBOARDING] Business insert failed:', insertError);
       return NextResponse.json(
-        { message: 'Failed to create business', error: insertError?.message },
+        { message: 'Failed to create business. Please try again.' },
         { status: 500 },
       );
     }
