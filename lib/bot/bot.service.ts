@@ -2541,9 +2541,21 @@ export class BotService {
       await this.handleViewReservation(session, from, reservationId);
       return;
     }
+
+    // Back button from detail views — re-show bookings list
+    if (input === 'back_bookings') {
+      await this.handleMyBookings(session, from, '');
+      return;
+    }
+
+    // Receipt button from detail views
+    if (input === 'get_receipt') {
+      await this.handleTransactionDocument(from, session.user_id!, 'receipt');
+      return;
+    }
   }
 
-  private async handleViewTicket(_session: BotSession, from: string, ticketId: string): Promise<void> {
+  private async handleViewTicket(session: BotSession, from: string, ticketId: string): Promise<void> {
     const { data: ticket } = await this.supabase
       .from('event_tickets')
       .select('id, ticket_code, guest_name, status, scanned_at, created_at, event:events!event_id(name, date, time, venue)')
@@ -2560,18 +2572,27 @@ export class BotService {
       ? new Date(evt.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })
       : 'TBD';
 
-    const statusLabel = ticket.status === 'used' ? '✅ Used' : ticket.status === 'cancelled' ? '❌ Cancelled' : '✅ Valid';
+    const statusLabel = ticket.status === 'used' ? 'Used' : ticket.status === 'cancelled' ? 'Cancelled' : 'Valid';
 
     await this.sendText(from, [
-      `🎟️ *Event Ticket*`,
+      `*Event Ticket*`,
       '',
-      `🎪 *${evt?.name || 'Event'}*`,
-      `📅 ${dateLabel}${evt?.time ? ` at ${evt.time}` : ''}`,
-      evt?.venue ? `📍 ${evt.venue}` : '',
-      `🔑 Ticket: *${ticket.ticket_code}*`,
-      `👤 ${ticket.guest_name || 'Guest'}`,
-      `📊 Status: ${statusLabel}`,
+      `*${evt?.name || 'Event'}*`,
+      `${dateLabel}${evt?.time ? ` at ${evt.time}` : ''}`,
+      evt?.venue ? `${evt.venue}` : '',
+      `Ticket: *${ticket.ticket_code}*`,
+      `${ticket.guest_name || 'Guest'}`,
+      `Status: ${statusLabel}`,
     ].filter(Boolean).join('\n'));
+
+    await this.messageSender.sendButtons({
+      to: from,
+      body: 'What would you like to do?',
+      buttons: [
+        { id: 'back_bookings', title: 'Back to Bookings' },
+        { id: 'get_receipt', title: 'Get Receipt' },
+      ],
+    });
   }
 
   private async handleViewReservation(_session: BotSession, from: string, reservationId: string): Promise<void> {
@@ -2601,17 +2622,26 @@ export class BotService {
     const currencySymbol = biz?.country_code === 'US' ? '$' : biz?.country_code === 'GB' ? '£' : '₦';
 
     await this.sendText(from, [
-      `🏨 *Reservation Details*`,
+      `*Reservation Details*`,
       '',
-      `🏢 *${biz?.name || 'Property'}*`,
-      `📅 Check-in: ${checkIn}`,
-      `📅 Check-out: ${checkOut}`,
-      reservation.guests ? `👥 ${reservation.guests} guest(s)` : '',
-      reservation.total_amount ? `💰 ${currencySymbol}${Number(reservation.total_amount).toLocaleString()}` : '',
-      `👤 ${reservation.guest_name || 'Guest'}`,
-      `🔑 Ref: *${reservation.reference_code}*`,
-      `📊 Status: ${statusLabel}`,
+      `*${biz?.name || 'Property'}*`,
+      `Check-in: ${checkIn}`,
+      `Check-out: ${checkOut}`,
+      reservation.guests ? `${reservation.guests} guest(s)` : '',
+      reservation.total_amount ? `${currencySymbol}${Number(reservation.total_amount).toLocaleString()}` : '',
+      `${reservation.guest_name || 'Guest'}`,
+      `Ref: *${reservation.reference_code}*`,
+      `Status: ${statusLabel}`,
     ].filter(Boolean).join('\n'));
+
+    await this.messageSender.sendButtons({
+      to: from,
+      body: 'What would you like to do?',
+      buttons: [
+        { id: 'back_bookings', title: 'Back to Bookings' },
+        { id: 'get_receipt', title: 'Get Receipt' },
+      ],
+    });
   }
 
   private async handleModifyBooking(session: BotSession, from: string, input: string): Promise<void> {
