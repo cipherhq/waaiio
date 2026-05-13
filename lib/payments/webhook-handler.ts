@@ -135,12 +135,25 @@ export async function processPaystackChargeSuccess(
 
   // Update campaign donation on successful payment
   if (existingPayment.campaign_id) {
-    // Mark donation as success
-    await supabase
+    // Mark donation as success — match by payment_id (set at donation creation)
+    // Falls back to campaign_id match for older donations created before this fix
+    const { data: updated } = await supabase
       .from('campaign_donations')
-      .update({ status: 'success', payment_id: existingPayment.id })
-      .eq('reference_code', reference)
-      .eq('status', 'pending');
+      .update({ status: 'success' })
+      .eq('payment_id', existingPayment.id)
+      .eq('status', 'pending')
+      .select('id')
+      .maybeSingle();
+
+    if (!updated) {
+      // Fallback: match by campaign_id + pending status for donations without payment_id
+      await supabase
+        .from('campaign_donations')
+        .update({ status: 'success', payment_id: existingPayment.id })
+        .eq('campaign_id', existingPayment.campaign_id)
+        .eq('status', 'pending')
+        .is('payment_id', null);
+    }
 
     // Increment campaign raised_amount and donor_count atomically
     const { data: campaign } = await supabase
