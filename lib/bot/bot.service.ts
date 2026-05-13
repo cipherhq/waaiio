@@ -1556,7 +1556,7 @@ export class BotService {
     // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
-    const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking';
+    const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
     const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
@@ -2538,9 +2538,8 @@ export class BotService {
       }
 
       if (items.length === 0) {
-        await this.sendText(from, "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to get started!");
-        await this.deactivateSession(session.id);
-        return;
+        await this.sendText(from, "You don't have any upcoming bookings, tickets, or stays.\n\nType *my account* for more options or *Hi* to start fresh.");
+        return; // Don't deactivate — user can type another command
       }
 
       await this.messageSender.sendList({
@@ -2587,6 +2586,9 @@ export class BotService {
       await this.handleTransactionDocument(from, session.user_id!, 'receipt');
       return;
     }
+
+    // Unrecognized input — re-show the bookings list
+    await this.handleMyBookings(session, from, '');
   }
 
   private async handleViewTicket(session: BotSession, from: string, ticketId: string): Promise<void> {
@@ -2904,9 +2906,8 @@ export class BotService {
         .limit(10);
 
       if (!orders || orders.length === 0) {
-        await this.sendText(from, "You don't have any active orders. Send *Hi* to place an order!");
-        await this.deactivateSession(session.id);
-        return;
+        await this.sendText(from, "You don't have any active orders.\n\nType *my account* for more options or *Hi* to start fresh.");
+        return; // Don't deactivate — user can type another command
       }
 
       if (orders.length <= 3) {
@@ -2977,6 +2978,9 @@ export class BotService {
       await this.handleMyOrders(session, from, '');
       return;
     }
+
+    // Unrecognized input — re-show the orders list
+    await this.handleMyOrders(session, from, '');
   }
 
   private async handleOrderDetail(session: BotSession, from: string, orderId: string): Promise<void> {
@@ -3136,12 +3140,12 @@ export class BotService {
         .eq('user_id', userId).eq('status', 'success')
         .order('created_at', { ascending: false }).limit(5),
       this.supabase.from('invoices')
-        .select('invoice_number, total_amount, status, paid_at, businesses:business_id(name)')
+        .select('invoice_number, total_amount, status, paid_at, businesses:business_id(name, country_code)')
         .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
         .eq('status', 'paid')
         .order('paid_at', { ascending: false }).limit(3),
       this.supabase.from('campaign_donations')
-        .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name)')
+        .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
         .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
         .eq('status', 'success')
         .order('created_at', { ascending: false }).limit(3),
@@ -3183,8 +3187,9 @@ export class BotService {
       );
     } else if (donations && donations.length > 0) {
       const d = donations[0];
-      const biz = d.businesses as unknown as { name: string } | null;
+      const biz = d.businesses as unknown as { name: string; country_code?: string } | null;
       const campaign = d.campaigns as unknown as { name: string } | null;
+      const cc = (biz?.country_code as CountryCode) || 'NG';
       const dateStr = new Date(d.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
       lines.push(
@@ -3193,12 +3198,13 @@ export class BotService {
         `Organization: *${biz?.name || 'Organization'}*`,
         `Campaign: ${campaign?.name || 'Donation'}`,
         `Date: ${dateStr}`,
-        `Amount: ${Number(d.amount).toLocaleString()}`,
+        `Amount: ${formatCurrency(Number(d.amount), cc)}`,
         `Ref: *${d.reference_code}*`,
       );
     } else if (invoices && invoices.length > 0) {
       const inv = invoices[0];
-      const biz = inv.businesses as unknown as { name: string } | null;
+      const biz = inv.businesses as unknown as { name: string; country_code?: string } | null;
+      const cc = (biz?.country_code as CountryCode) || 'NG';
       const dateStr = inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
       lines.push(
@@ -3207,7 +3213,7 @@ export class BotService {
         `Business: *${biz?.name || 'Business'}*`,
         `Invoice: ${inv.invoice_number}`,
         `Paid: ${dateStr}`,
-        `Amount: ${Number(inv.total_amount).toLocaleString()}`,
+        `Amount: ${formatCurrency(Number(inv.total_amount), cc)}`,
       );
     }
 

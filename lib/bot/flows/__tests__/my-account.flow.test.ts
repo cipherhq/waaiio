@@ -40,17 +40,36 @@ describe('My Account Menu', () => {
   describe('my_account_menu step', () => {
     const step = getStep(capabilitySelectionFlow, 'my_account_menu');
 
-    it('shows 9 menu items in prompt', async () => {
-      const ctx = createMockContext();
+    it('shows menu items filtered by capabilities', async () => {
+      // With all capabilities enabled, should show all 9 items
+      const ctx = createMockContext({
+        session: {
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu',
+          session_data: { capabilities: ['scheduling', 'ordering', 'giving', 'invoice', 'whatsapp_sign', 'loyalty', 'recurring'] },
+        },
+      });
       const messages = await step.prompt(ctx);
       expect(messages).toHaveLength(1);
       expect(messages[0].type).toBe('list');
       if (messages[0].type === 'list') {
         expect(messages[0].items).toHaveLength(9);
-        expect(messages[0].items.map(i => i.postbackText)).toEqual([
-          'acct_bookings', 'acct_orders', 'acct_giving', 'acct_invoices',
-          'acct_contracts', 'acct_quotes', 'acct_loyalty', 'acct_subscriptions', 'acct_receipt',
-        ]);
+      }
+    });
+
+    it('shows only relevant items when capabilities are limited', async () => {
+      const ctx = createMockContext({
+        session: {
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu',
+          session_data: { capabilities: ['scheduling'] },
+        },
+      });
+      const messages = await step.prompt(ctx);
+      expect(messages[0].type).toBe('list');
+      if (messages[0].type === 'list') {
+        // Only My Bookings, My Quotes, Get Receipt (always shown)
+        expect(messages[0].items.length).toBeLessThan(9);
+        expect(messages[0].items.map(i => i.postbackText)).toContain('acct_bookings');
+        expect(messages[0].items.map(i => i.postbackText)).toContain('acct_receipt');
       }
     });
 
@@ -76,16 +95,16 @@ describe('My Account Menu', () => {
       expect(next).toBe('my_orders');
     });
 
-    it('handles acct_giving inline and returns to menu', async () => {
+    it('handles acct_giving inline and returns to my account menu', async () => {
       const ctx = createMockContext();
       const result = await step.validate('acct_giving', ctx);
       expect(result.valid).toBe(true);
       expect(result.data?._my_account_route).toBe('select_capability');
 
-      // Should have called sendText with giving history
+      // Inline handlers now loop back to my_account_menu instead of killing session
       ctx.session.session_data._my_account_route = 'select_capability';
       const next = await step.next(ctx);
-      expect(next).toBeNull(); // inline handlers end the flow
+      expect(next).toBe('my_account_menu');
     });
 
     it('handles acct_receipt inline via direct call', async () => {

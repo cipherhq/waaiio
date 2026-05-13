@@ -149,17 +149,32 @@ const selectCapabilityStep: FlowStepConfig = {
         .eq('phone', phone)
         .maybeSingle();
       if (profile?.id) {
-        const { count: bookingCount } = await ctx.supabase
-          .from('bookings')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', profile.id)
-          .limit(1);
-        const { count: orderCount } = await ctx.supabase
-          .from('orders')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', profile.id)
-          .limit(1);
-        hasHistory = (bookingCount || 0) > 0 || (orderCount || 0) > 0;
+        const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const phoneN = ctx.from.startsWith('+') ? ctx.from.slice(1) : ctx.from;
+
+        // Check if customer has ANY history (bookings, orders, payments, invoices, donations)
+        const [
+          { count: bookingCount },
+          { count: orderCount },
+          { count: paymentCount },
+          { count: invoiceCount },
+          { count: donationCount },
+        ] = await Promise.all([
+          ctx.supabase.from('bookings').select('id', { count: 'exact', head: true })
+            .eq('user_id', profile.id).limit(1),
+          ctx.supabase.from('orders').select('id', { count: 'exact', head: true })
+            .eq('user_id', profile.id).limit(1),
+          ctx.supabase.from('payments').select('id', { count: 'exact', head: true })
+            .eq('user_id', profile.id).eq('status', 'success').limit(1),
+          ctx.supabase.from('invoices').select('id', { count: 'exact', head: true })
+            .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
+            .limit(1),
+          ctx.supabase.from('campaign_donations').select('id', { count: 'exact', head: true })
+            .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
+            .eq('status', 'success').limit(1),
+        ]);
+        hasHistory = (bookingCount || 0) > 0 || (orderCount || 0) > 0 || (paymentCount || 0) > 0
+          || (invoiceCount || 0) > 0 || (donationCount || 0) > 0;
       }
     }
 
@@ -269,23 +284,42 @@ const selectCapabilityStep: FlowStepConfig = {
 const myAccountMenuStep: FlowStepConfig = {
   id: 'my_account_menu',
 
-  async prompt(): Promise<PromptMessage[]> {
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
+    const hasCapability = (...caps: CapabilityId[]) => caps.some(c => capabilities.includes(c));
+
+    // Build menu items based on enabled capabilities
+    const allItems = [
+      // My Bookings — always show (covers scheduling, appointment, ticketing, reservation)
+      { title: 'My Bookings', description: 'Appointments, tickets, stays', postbackText: 'acct_bookings', show: true },
+      // My Orders — show if ordering capability enabled
+      { title: 'My Orders', description: 'Track order status', postbackText: 'acct_orders', show: hasCapability('ordering') },
+      // My Giving — show if giving or crowdfunding capability enabled
+      { title: 'My Giving', description: 'Donation & offering history', postbackText: 'acct_giving', show: hasCapability('giving', 'crowdfunding') },
+      // My Invoices — show if invoice capability enabled
+      { title: 'My Invoices', description: 'View and pay invoices', postbackText: 'acct_invoices', show: hasCapability('invoice') },
+      // My Contracts — show if whatsapp_sign capability enabled
+      { title: 'My Contracts', description: 'Sign or view contracts', postbackText: 'acct_contracts', show: hasCapability('whatsapp_sign') },
+      // My Quotes — always show (generic)
+      { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes', show: true },
+      // My Points — show if loyalty capability enabled
+      { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
+      // Subscriptions — show if recurring capability enabled
+      { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring') },
+      // Get Receipt — always show
+      { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt', show: true },
+    ];
+
+    const items = allItems
+      .filter(i => i.show)
+      .map(({ title, description, postbackText }) => ({ title, description, postbackText }));
+
     return [{
       type: 'list' as const,
       title: 'My Account',
       body: 'Manage your bookings, orders, and more:',
       buttonLabel: 'My Account',
-      items: [
-        { title: 'My Bookings', description: 'Appointments, tickets, stays', postbackText: 'acct_bookings' },
-        { title: 'My Orders', description: 'Track order status', postbackText: 'acct_orders' },
-        { title: 'My Giving', description: 'Donation & offering history', postbackText: 'acct_giving' },
-        { title: 'My Invoices', description: 'View and pay invoices', postbackText: 'acct_invoices' },
-        { title: 'My Contracts', description: 'Sign or view contracts', postbackText: 'acct_contracts' },
-        { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes' },
-        { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty' },
-        { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions' },
-        { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt' },
-      ],
+      items,
     }];
   },
 
@@ -372,9 +406,10 @@ const myAccountMenuStep: FlowStepConfig = {
         await ctx.sender.sendText({ to: ctx.from, text: "You don't have any giving history yet. Send *Hi* to give!" });
       } else {
         const total = allGiving.reduce((sum, g) => sum + g.amount, 0);
+        const bizCC = (ctx.business?.country_code || 'NG') as CountryCode;
         const lines = ['🙏 *Your Giving History*', '',
-          ...allGiving.slice(0, 8).map(g => `📅 ${g.date} — *${g.label}* — ${Number(g.amount).toLocaleString()}`),
-          '', `💰 *Total: ${total.toLocaleString()}*`];
+          ...allGiving.slice(0, 8).map(g => `📅 ${g.date} — *${g.label}* — ${formatCurrency(g.amount, bizCC)}`),
+          '', `💰 *Total: ${formatCurrency(total, bizCC)}*`];
         await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
       }
       ctx.session.session_data._my_account_route = 'select_capability';
@@ -481,10 +516,12 @@ const myAccountMenuStep: FlowStepConfig = {
 
   async next(ctx: FlowContext) {
     const route = ctx.session.session_data._my_account_route as string;
-    // If handled inline (giving, contracts, quotes, receipt), go back to menu or end
-    if (route === 'select_capability' || route === 'done') return null;
+    // If explicitly done, end the flow
+    if (route === 'done') return null;
+    // If handled inline (giving, contracts, quotes, receipt), return to My Account menu
+    if (route === 'select_capability') return 'my_account_menu';
     // Otherwise route to the flow step
-    return route || 'select_capability';
+    return route || 'my_account_menu';
   },
 };
 
