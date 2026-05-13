@@ -49,6 +49,7 @@ export async function chargeSavedCard(
     bookingId?: string;
     invoiceId?: string;
     orderId?: string;
+    campaignId?: string;
     userId?: string;
     byoSecretKey?: string;
   },
@@ -75,6 +76,7 @@ async function chargePaystackAuthorization(
     bookingId?: string;
     invoiceId?: string;
     orderId?: string;
+    campaignId?: string;
     userId?: string;
     byoSecretKey?: string;
   },
@@ -91,6 +93,7 @@ async function chargePaystackAuthorization(
     await supabase.from('payments').insert({
       booking_id: opts.bookingId || null,
       invoice_id: opts.invoiceId || null,
+      campaign_id: opts.campaignId || null,
       order_id: opts.orderId || null,
       user_id: opts.userId || null,
       amount: opts.amount,

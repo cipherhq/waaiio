@@ -13,6 +13,11 @@ import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
+
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
 import type { BusinessCategoryKey } from '@/lib/constants';
 
 /** Category-aware date prompt */
@@ -422,6 +427,38 @@ export const schedulingFlow: FlowDefinition = {
         const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
         const dates: Array<{ title: string; postbackText: string }> = [];
 
+        const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
+        const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
+        const staffId = ctx.session.session_data.staff_id as string | null;
+        const durationMin = (ctx.session.session_data._service_duration as number) || 30;
+        const slotInterval = (meta.slot_interval_minutes as number) || durationMin;
+
+        // Pre-fetch all bookings for the next maxAdvanceDays to filter fully-booked dates
+        const todayStr = new Date().toISOString().split('T')[0];
+        const futureDate = new Date();
+        futureDate.setDate(futureDate.getDate() + maxAdvanceDays);
+        const futureDateStr = futureDate.toISOString().split('T')[0];
+
+        let bookingsQuery = ctx.supabase
+          .from('bookings')
+          .select('date, time')
+          .eq('business_id', ctx.business!.id)
+          .in('status', ['confirmed', 'pending', 'in_progress'])
+          .gte('date', todayStr)
+          .lte('date', futureDateStr);
+
+        if (staffId) bookingsQuery = bookingsQuery.eq('staff_id', staffId);
+        const { data: allBookings } = await bookingsQuery.limit(2000);
+
+        // Count bookings per date+time
+        const bookingsByDate = new Map<string, number>();
+        for (const b of allBookings || []) {
+          if (b.date) {
+            const key = b.date;
+            bookingsByDate.set(key, (bookingsByDate.get(key) || 0) + 1);
+          }
+        }
+
         // Scan up to maxAdvanceDays but collect max 10 matching dates
         for (let i = 1; i <= maxAdvanceDays && dates.length < 10; i++) {
           const d = new Date();
@@ -432,11 +469,21 @@ export const schedulingFlow: FlowDefinition = {
           if (availableDays.length > 0 && !availableDays.includes(dayOfWeek)) continue;
 
           // Filter by business operating hours (skip closed days)
-          const opHours = (ctx.business?.operating_hours || {}) as Record<string, { closed?: boolean }>;
           if (opHours[dayOfWeek]?.closed) continue;
 
+          // Filter fully-booked dates: count available slots vs bookings
+          const dateStr = d.toISOString().split('T')[0];
+          const openTime = opHours[dayOfWeek]?.open || '08:00';
+          const closeTime = opHours[dayOfWeek]?.close || '18:00';
+          const totalSlots = Math.max(1, Math.floor(
+            (timeToMinutes(closeTime) - timeToMinutes(openTime)) / slotInterval
+          ));
+          const bookedCount = bookingsByDate.get(dateStr) || 0;
+          const maxBookingsForDate = totalSlots * maxCapacity;
+          if (bookedCount >= maxBookingsForDate) continue; // fully booked
+
           const label = d.toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
-          dates.push({ title: label, postbackText: d.toISOString().split('T')[0] });
+          dates.push({ title: label, postbackText: dateStr });
         }
 
         if (dates.length === 0) {

@@ -172,22 +172,22 @@ export async function initializePayment(
       isByo,
       byoBusinessId,
       connectAccountId,
+      campaignId: opts.campaignId,
     });
 
-    // Link payment to campaign if this is a donation
+    // Create donation record if this is a campaign payment
     if (result?.reference && opts.campaignId) {
-      const { data: updatedPayment } = await supabase
+      // Fetch the payment_id so the webhook can match the donation record
+      const { data: paymentRecord } = await supabase
         .from('payments')
-        .update({ campaign_id: opts.campaignId })
-        .eq('gateway_reference', result.reference)
         .select('id')
-        .single();
+        .eq('gateway_reference', result.reference)
+        .maybeSingle();
 
-      // Create donation record — store payment_id so webhook can match it
       await supabase.from('campaign_donations').insert({
         campaign_id: opts.campaignId,
         business_id: opts.businessId || '',
-        payment_id: updatedPayment?.id || null,
+        payment_id: paymentRecord?.id || null,
         donor_phone: opts.phone.startsWith('+') ? opts.phone : `+${opts.phone}`,
         donor_name: opts.donorName || null,
         amount: opts.amount,

@@ -32,6 +32,8 @@ export interface InitPaymentOpts {
   byoBusinessId?: string;
   /** Paystack Connect account ID — use platform key with X-Connect-Account header */
   connectAccountId?: string;
+  /** Campaign ID for donation tracking — set on payment record at creation to avoid webhook race */
+  campaignId?: string;
 }
 
 export interface InitPaymentResult {

@@ -25,6 +25,7 @@ export class FlutterwaveGateway implements PaymentGateway {
         await opts.supabase.from('payments').insert({
           booking_id: opts.bookingId || null,
           invoice_id: opts.invoiceId || null,
+          campaign_id: opts.campaignId || null,
           user_id: opts.userId,
           amount: opts.amount,
           currency: opts.currency,
@@ -106,6 +107,7 @@ export class FlutterwaveGateway implements PaymentGateway {
       const { data: payment } = await opts.supabase.from('payments').insert({
         booking_id: opts.bookingId || null,
         invoice_id: opts.invoiceId || null,
+        campaign_id: opts.campaignId || null,
         user_id: opts.userId,
         amount: opts.amount,
         currency: opts.currency,

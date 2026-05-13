@@ -362,6 +362,10 @@ export class BotService {
     const isMyAccountQuery = /^(my\s+)?account$/i.test(text)
       || /^(manage|my\s+stuff)$/i.test(text);
 
+    const isQueueQuery = /^(join\s+)?queue$/i.test(text)
+      || /^check\s*in$/i.test(text)
+      || /^(join|enter)\s+(the\s+)?(queue|line|waiting\s*list)$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     // Handle location query — send business address/location
@@ -942,6 +946,36 @@ export class BotService {
 
       await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
       return;
+    }
+
+    // ── Queue check-in — global shortcut ──
+    if (isQueueQuery && session?.business_id) {
+      // Check if queue capability is enabled for this business
+      const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
+      const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+      if (caps.includes('queue')) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        const profile = await getProfile();
+
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false);
+
+        const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from, user_id: profile?.id || null, business_id: session.business_id,
+          current_step: 'queue_start', session_data: { active_capability: 'queue', capabilities: caps }, is_active: true,
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }).select().single();
+
+        if (newSession) {
+          const { data: biz } = await this.supabase
+            .from('businesses')
+            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+            .eq('id', session.business_id).single();
+
+          await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
+          return;
+        }
+      }
     }
 
     // Check for "switch <keyword>" command — lets users swap between businesses
