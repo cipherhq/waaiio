@@ -9,7 +9,7 @@ import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, typ
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
-import { translateBotResponse, detectLanguage, getLanguageName } from './translate';
+import { translateBotResponse, detectLanguage, getLanguageName, setTranslationContext } from './translate';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 import { levenshtein, isCloseMatch, matchScore, phoneticMatch, isAcronymOf, phoneToCountry, detectCategoryIntent } from './fuzzy-match';
@@ -1970,6 +1970,9 @@ export class BotService {
       }
       return;
     }
+
+    // Set translation context for AI usage tracking
+    setTranslationContext(session.business_id || null, this.supabase);
 
     await this.flowExecutor.execute(from, text, session as unknown as BotSession, business, mediaUrl, messageType);
     } catch (err) {

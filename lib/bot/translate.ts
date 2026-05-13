@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { isFeatureEnabledServer, FLAGS } from '@/lib/posthog/flags';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 const SUPPORTED_LANGUAGES: Record<string, string> = {
   en: 'English',
@@ -27,6 +29,16 @@ function getClient(): Anthropic {
  * Returns the original text if language is English or unsupported.
  * Falls back to original text on any error.
  */
+// Track translation calls per business (set by the bot before calling translate)
+let _currentBusinessId: string | null = null;
+let _currentSupabase: unknown = null;
+
+/** Set the business context for AI usage tracking. Call before translateBotResponse. */
+export function setTranslationContext(businessId: string | null, supabase: unknown): void {
+  _currentBusinessId = businessId;
+  _currentSupabase = supabase;
+}
+
 export async function translateBotResponse(
   text: string,
   language: string,
@@ -63,6 +75,13 @@ export async function translateBotResponse(
   }
 
   try {
+    // Rate limit: max 50 translation calls per minute globally
+    const rl = checkRateLimit('translate-global', 50, 60_000);
+    if (!rl.allowed) {
+      logger.warn('[TRANSLATE] Rate limited — returning original text');
+      return text;
+    }
+
     const anthropic = getClient();
     const langName = SUPPORTED_LANGUAGES[language];
 
@@ -73,10 +92,22 @@ export async function translateBotResponse(
       messages: [{ role: 'user', content: templateText }],
     });
 
+    // Log token usage for cost tracking
+    const usage = response.usage;
+    if (usage) {
+      logger.info(`[AI-COST] translate(${language}): input=${usage.input_tokens} output=${usage.output_tokens}`);
+    }
+
     const translatedTemplate = response.content[0].type === 'text' ? response.content[0].text.trim() : templateText;
 
     // Cache the translated template (with placeholders)
     cache.set(cacheKey, { text: translatedTemplate, expiry: Date.now() + CACHE_TTL });
+
+    // Track AI usage for this business (non-blocking)
+    if (_currentBusinessId && _currentSupabase) {
+      const { incrementAIUsage } = await import('@/lib/bot/ai-tier-guard');
+      incrementAIUsage(_currentSupabase as any, _currentBusinessId, 'translation').catch(() => {});
+    }
 
     // Re-insert original values into translated text
     let translated = translatedTemplate;
@@ -125,6 +156,10 @@ export async function detectLanguage(text: string): Promise<string> {
 
   // LLM fallback for ambiguous text
   try {
+    // Rate limit: max 30 language detection calls per minute
+    const rl = checkRateLimit('detect-lang-global', 30, 60_000);
+    if (!rl.allowed) return 'en';
+
     const anthropic = getClient();
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5-20251001',
@@ -132,6 +167,12 @@ export async function detectLanguage(text: string): Promise<string> {
       system: `Detect the language of this text. Reply with ONLY the language code: en, pcm (Nigerian Pidgin), yo (Yoruba), ig (Igbo), ha (Hausa), tw (Twi), fr (French), es (Spanish). If unsure, reply "en".`,
       messages: [{ role: 'user', content: text }],
     });
+
+    // Log token usage for cost tracking
+    if (response.usage) {
+      logger.info(`[AI-COST] detect-lang: input=${response.usage.input_tokens} output=${response.usage.output_tokens}`);
+    }
+
     const code = response.content[0].type === 'text' ? response.content[0].text.trim().toLowerCase() : 'en';
     return SUPPORTED_LANGUAGES[code] ? code : 'en';
   } catch {

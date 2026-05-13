@@ -1,4 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { checkRateLimit } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
 
 export interface LLMIntentResult {
   flow: 'booking' | 'ordering' | 'payment' | 'ticketing' | null;
@@ -60,6 +62,13 @@ export async function classifyWithLLM(
   }
 
   try {
+    // Rate limit: max 30 LLM calls per minute globally
+    const rl = checkRateLimit('llm-intent-global', 30, 60_000);
+    if (!rl.allowed) {
+      logger.warn('[LLM-INTENT] Rate limited — returning empty result');
+      return EMPTY_RESULT;
+    }
+
     const anthropic = getClient();
     const today = new Date().toISOString().split('T')[0];
 
@@ -72,6 +81,12 @@ export async function classifyWithLLM(
         content: `Business category: ${businessCategory || 'unknown'}\nToday's date: ${today}\nMessage: "${message}"`,
       }],
     });
+
+    // Log token usage for cost tracking
+    const usage = response.usage;
+    if (usage) {
+      logger.info(`[AI-COST] llm-intent: input=${usage.input_tokens} output=${usage.output_tokens}`);
+    }
 
     const text = response.content[0].type === 'text' ? response.content[0].text : '';
     const parsed = JSON.parse(text);

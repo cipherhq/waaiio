@@ -71,7 +71,7 @@ export async function transcribeAudio(
       }
     }
 
-    logger.debug('[TRANSCRIPTION] Transcribed audio:', text.slice(0, 100));
+    logger.info(`[AI-COST] whisper: audio_bytes=${audioBuffer.length} text_length=${text.length}`);
     return text;
   } catch (error) {
     logger.error('[TRANSCRIPTION] Whisper error:', (error as Error).message);
