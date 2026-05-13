@@ -2441,7 +2441,7 @@ export const orderingFlow: FlowDefinition = {
                 body: "🔔 Completed payment? Return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
-                  { id: 'cancel', title: 'Cancel' },
+                  { id: 'go_back', title: 'Cancel' },
                 ],
               },
             ];
@@ -2455,7 +2455,7 @@ export const orderingFlow: FlowDefinition = {
               buttons: [
                 { id: 'retry_payment', title: 'Try Again' },
                 { id: 'chat_with_biz', title: 'Chat with Business' },
-                { id: 'cancel', title: 'Cancel Order' },
+                { id: 'cancel_order', title: 'Cancel Order' },
               ],
             },
           ];
@@ -2563,14 +2563,14 @@ export const orderingFlow: FlowDefinition = {
           body: "Complete payment using the link above, then *come back here* and tap *I've Paid* to confirm your order:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
-            { id: 'cancel', title: 'Cancel' },
+            { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
 
-        if (text === 'cancel') {
+        if ((text === 'cancel' || text === 'go_back' || text === 'cancel_order')) {
           const orderId = ctx.session.session_data.order_id as string;
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);

@@ -311,7 +311,7 @@ const donationPaymentStep: FlowStepConfig = {
         body: "After paying, return here and tap *I've Paid* to confirm:",
         buttons: [
           { id: 'i_paid', title: "I've Paid" },
-          { id: 'cancel', title: 'Cancel' },
+          { id: 'go_back', title: 'Cancel' },
         ],
       },
     ];
@@ -335,7 +335,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
       body: "Complete your donation using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
       buttons: [
         { id: 'i_paid', title: "I've Paid" },
-        { id: 'cancel', title: 'Cancel' },
+        { id: 'go_back', title: 'Cancel' },
       ],
     }];
   },
@@ -343,7 +343,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     const text = input.toLowerCase();
 
-    if (text === 'cancel') {
+    if ((text === 'cancel' || text === 'go_back')) {
       // Mark donation as cancelled
       const refCode = ctx.session.session_data.donation_ref_code as string;
       if (refCode) {

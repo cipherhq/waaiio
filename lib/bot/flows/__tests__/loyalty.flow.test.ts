@@ -159,19 +159,19 @@ describe('Loyalty Flow', () => {
     });
 
     it('validates confirm action', async () => {
-      const result = await step.validate('confirm', ctx);
+      const result = await step.validate('confirm_redeem', ctx);
       expect(result.valid).toBe(true);
       expect(result.data?._redeem_action).toBe('confirm');
     });
 
-    it('validates cancel action', async () => {
-      const result = await step.validate('cancel', ctx);
+    it('validates skip action', async () => {
+      const result = await step.validate('skip_redeem', ctx);
       expect(result.valid).toBe(true);
-      expect(result.data?._redeem_action).toBe('cancel');
+      expect(result.data?._redeem_action).toBe('skip');
     });
 
-    it('routes back to menu on cancel', async () => {
-      ctx.session.session_data._redeem_action = 'cancel';
+    it('routes back to menu on skip', async () => {
+      ctx.session.session_data._redeem_action = 'skip';
       const next = await step.next(ctx);
       expect(next).toBe('loyalty_menu');
     });

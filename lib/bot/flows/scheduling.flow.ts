@@ -1082,14 +1082,14 @@ export const schedulingFlow: FlowDefinition = {
             body: lines.join('\n') + '\n\nConfirm this booking?',
             buttons: [
               { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'cancel', title: 'Cancel' },
+              { id: 'go_back', title: 'Cancel' },
             ],
           },
         ];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const response = input.toLowerCase();
-        if (response === 'cancel' || response === 'no') {
+        if ((response === 'cancel' || response === 'go_back') || response === 'no') {
           return { valid: true, data: { _action: 'cancel' } };
         }
         if (response === 'confirm' || response === 'yes') {
@@ -1558,7 +1558,7 @@ export const schedulingFlow: FlowDefinition = {
                 buttons: [
                   { id: 'pay_saved', title: `Pay with ${savedMethod.card_last4 || 'card'}` },
                   { id: 'pay_new', title: 'Use different card' },
-                  { id: 'cancel', title: 'Cancel' },
+                  { id: 'go_back', title: 'Cancel' },
                 ],
               },
             ];
@@ -1610,7 +1610,7 @@ export const schedulingFlow: FlowDefinition = {
                 body: "After paying, return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
-                  { id: 'cancel', title: 'Cancel' },
+                  { id: 'go_back', title: 'Cancel' },
                 ],
               },
             ];
@@ -1624,7 +1624,7 @@ export const schedulingFlow: FlowDefinition = {
               buttons: [
                 { id: 'retry_payment', title: 'Try Again' },
                 { id: 'chat_with_biz', title: 'Chat with Business' },
-                { id: 'cancel', title: 'Cancel Booking' },
+                { id: 'cancel_booking', title: 'Cancel Booking' },
               ],
             },
           ];
@@ -1856,7 +1856,7 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _skip_saved_card: true } };
         }
 
-        if (action === 'cancel') {
+        if (action === 'cancel' || action === 'cancel_booking' || action === 'go_back') {
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -1880,14 +1880,14 @@ export const schedulingFlow: FlowDefinition = {
           body: "Please complete your deposit payment using the link sent above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm, or *Cancel* to cancel.",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
-            { id: 'cancel', title: 'Cancel' },
+            { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
 
-        if (text === 'cancel') {
+        if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = ctx.session.session_data.booking_id as string;
           if (bookingId) {
             await ctx.supabase

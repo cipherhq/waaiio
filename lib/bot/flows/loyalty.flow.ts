@@ -164,30 +164,30 @@ const loyaltyRedeemStep: FlowStepConfig = {
         {
           type: 'buttons',
           body: 'Anything else?',
-          buttons: [{ id: 'cancel', title: 'Back to Menu' }],
+          buttons: [{ id: 'go_back', title: 'Back to Menu' }],
         },
       ];
     }
 
     return [{
       type: 'buttons',
-      body: `🎁 You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`,
+      body: `You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`,
       buttons: [
-        { id: 'confirm', title: 'Redeem Now' },
-        { id: 'cancel', title: 'Cancel' },
+        { id: 'confirm_redeem', title: 'Redeem Now' },
+        { id: 'skip_redeem', title: 'Not Now' },
       ],
     }];
   },
 
   async validate(input: string): Promise<ValidationResult> {
-    if (input === 'confirm') return { valid: true, data: { _redeem_action: 'confirm' } };
-    if (input === 'cancel') return { valid: true, data: { _redeem_action: 'cancel' } };
+    if (input === 'confirm_redeem') return { valid: true, data: { _redeem_action: 'confirm' } };
+    if (input === 'skip_redeem') return { valid: true, data: { _redeem_action: 'skip' } };
     return { valid: false, errorMessage: 'Tap one of the buttons above to continue.' };
   },
 
   async next(ctx: FlowContext) {
     const action = ctx.session.session_data._redeem_action;
-    if (action === 'cancel') return 'loyalty_menu';
+    if (action === 'skip') return 'loyalty_menu';
 
     // Process redemption
     const loyaltyId = ctx.session.session_data.loyalty_id as string;

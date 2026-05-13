@@ -133,14 +133,14 @@ export const paymentFlow: FlowDefinition = {
             body: 'Confirm this payment?',
             buttons: [
               { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'cancel', title: 'Cancel' },
+              { id: 'go_back', title: 'Cancel' },
             ],
           },
         ];
       },
       async validate(input: string): Promise<ValidationResult> {
         const response = input.toLowerCase();
-        if (response === 'cancel' || response === 'no') {
+        if ((response === 'cancel' || response === 'go_back') || response === 'no') {
           return { valid: true, data: { _action: 'cancel' } };
         }
         if (response === 'confirm' || response === 'yes') {
@@ -308,7 +308,7 @@ export const paymentFlow: FlowDefinition = {
               body: "After paying, return here and tap *I've Paid* to confirm:",
               buttons: [
                 { id: 'i_paid', title: "I've Paid" },
-                { id: 'cancel', title: 'Cancel' },
+                { id: 'go_back', title: 'Cancel' },
               ],
             },
           ];
@@ -342,14 +342,14 @@ export const paymentFlow: FlowDefinition = {
           body: "Complete your payment using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
-            { id: 'cancel', title: 'Cancel' },
+            { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
 
-        if (text === 'cancel') {
+        if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = ctx.session.session_data.booking_id as string;
           if (bookingId) {
             await ctx.supabase
@@ -591,7 +591,7 @@ export const paymentFlow: FlowDefinition = {
       async validate(input: string): Promise<ValidationResult> {
         const text = input.toLowerCase();
         if (text === 'i_accept' || text === 'accept' || text === 'yes') return { valid: true, data: { recurring_accepted: true } };
-        if (text === 'decline' || text === 'no' || text === 'cancel') return { valid: true, data: { recurring_accepted: false } };
+        if (text === 'decline' || text === 'no' || (text === 'cancel' || text === 'go_back')) return { valid: true, data: { recurring_accepted: false } };
         return { valid: false, errorMessage: 'Please tap *I Accept* or *Decline*.' };
       },
       async next(ctx: FlowContext) {

@@ -235,13 +235,13 @@ export const ticketingFlow: FlowDefinition = {
             body: 'Confirm purchase?',
             buttons: [
               { id: 'confirm', title: 'Confirm ✓' },
-              { id: 'cancel', title: 'Cancel' },
+              { id: 'go_back', title: 'Cancel' },
             ],
           },
         ];
       },
       async validate(input: string): Promise<ValidationResult> {
-        if (input.toLowerCase() === 'cancel') return { valid: true, data: { _action: 'cancel' } };
+        if ((input.toLowerCase() === 'cancel' || input.toLowerCase() === 'go_back')) return { valid: true, data: { _action: 'cancel' } };
         if (input.toLowerCase() === 'confirm') return { valid: true, data: { _action: 'confirm' } };
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
@@ -407,7 +407,7 @@ export const ticketingFlow: FlowDefinition = {
                 body: "After paying, return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
-                  { id: 'cancel', title: 'Cancel' },
+                  { id: 'go_back', title: 'Cancel' },
                 ],
               },
             ];
@@ -502,14 +502,14 @@ export const ticketingFlow: FlowDefinition = {
           body: "Complete payment using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
-            { id: 'cancel', title: 'Cancel' },
+            { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
 
-        if (text === 'cancel') {
+        if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = ctx.session.session_data.booking_id as string;
           if (bookingId) {
             await ctx.supabase
