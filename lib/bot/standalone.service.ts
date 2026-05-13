@@ -107,9 +107,9 @@ export class StandaloneService {
       templates: {
         greeting: data?.bot_greeting || 'Welcome! How can I help you today?',
         confirmation: data?.bot_confirmation_template ||
-          '✅ *Confirmed!*\n\n{business_name}\n📅 {date}\n🕐 {time}\n👥 {quantity} {quantity_label}\n🔑 Ref: *{reference_code}*\n\nThank you! 🎉',
+          '✅ *Confirmed!*\n\n{business_name}\n📅 {date}\n🕐 {time}\n👥 {quantity} {quantity_label}\n🔑 Ref: *{reference_code}*\n\nThank you!',
         reminder: data?.bot_reminder_template ||
-          '⏰ *Reminder*\n\nYour booking at {business_name} is tomorrow at {time}.\n\nRef: {reference_code}\n\nSee you there! 🎉',
+          '⏰ *Reminder*\n\nYour booking at {business_name} is tomorrow at {time}.\n\nRef: {reference_code}\n\nSee you there!',
         orderConfirmation: data?.bot_order_confirmation_template ||
           '✅ *Order Confirmed!*\n\n🏢 {business_name}\n📦 {service_name}\n💰 {amount}\n🔑 Ref: *{reference_code}*\n\nWe\'ll notify you when it\'s ready!',
         paymentReceipt: data?.bot_payment_receipt_template ||
@@ -139,9 +139,9 @@ export class StandaloneService {
     return {
       greeting: data?.bot_greeting || 'Welcome! How can I help you today?',
       confirmation: data?.bot_confirmation_template ||
-        '✅ *Confirmed!*\n\n{business_name}\n📅 {date}\n🕐 {time}\n👥 {quantity} {quantity_label}\n🔑 Ref: *{reference_code}*\n\nThank you! 🎉',
+        '✅ *Confirmed!*\n\n{business_name}\n📅 {date}\n🕐 {time}\n👥 {quantity} {quantity_label}\n🔑 Ref: *{reference_code}*\n\nThank you!',
       reminder: data?.bot_reminder_template ||
-        '⏰ *Reminder*\n\nYour booking at {business_name} is tomorrow at {time}.\n\nRef: {reference_code}\n\nSee you there! 🎉',
+        '⏰ *Reminder*\n\nYour booking at {business_name} is tomorrow at {time}.\n\nRef: {reference_code}\n\nSee you there!',
       orderConfirmation: data?.bot_order_confirmation_template ||
         '✅ *Order Confirmed!*\n\n🏢 {business_name}\n📦 {service_name}\n💰 {amount}\n🔑 Ref: *{reference_code}*\n\nWe\'ll notify you when it\'s ready!',
       paymentReceipt: data?.bot_payment_receipt_template ||

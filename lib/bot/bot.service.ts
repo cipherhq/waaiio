@@ -3170,7 +3170,7 @@ export class BotService {
         `🎟️ Ticket: *${ticketCode}*`,
         `👤 ${ticket.guest_name || 'Guest'}`,
         '',
-        `Welcome! Enjoy the event. 🎉`,
+        `Welcome! Enjoy the event.`,
       ].join('\n'));
     } catch (err) {
       logger.error('[BOT] Ticket check-in error:', err);
