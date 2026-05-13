@@ -473,7 +473,7 @@ export const ticketingFlow: FlowDefinition = {
             quantity: qty,
             totalAmount: total,
             referenceCode: booking.reference_code,
-          }) + `\n\n💡 *What you can do:*\n• Type *my bookings* to view your tickets\n• Type *receipt* to get your purchase receipt\n• Type *Hi* to buy more tickets`,
+          }),
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
@@ -541,7 +541,7 @@ export const ticketingFlow: FlowDefinition = {
                 quantity: d.ticket_quantity as number,
                 totalAmount: d.total_amount as number,
                 referenceCode: d.reference_code as string,
-              }) + `\n\n💡 *What you can do:*\n• Type *my bookings* to view your tickets\n• Type *receipt* to get your purchase receipt\n• Type *Hi* to buy more tickets`,
+              }),
             });
 
             // Send ticket PDF (non-blocking)

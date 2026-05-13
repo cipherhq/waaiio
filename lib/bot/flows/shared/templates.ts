@@ -218,7 +218,7 @@ export function getTicketConfirmationMessage(opts: {
     `💰 ${formatCurrency(opts.totalAmount, cc)}`,
     `🔑 Ref: *${opts.referenceCode}*`,
     '',
-    'See you there! 🎉',
+    'See you there!',
     '',
     `💡 *What you can do:*`,
     `• Type *my bookings* to view your tickets`,

@@ -1922,7 +1922,7 @@ export const schedulingFlow: FlowDefinition = {
               paidAmount > 0 ? `💰 ${formatCurrency(paidAmount, paidCC)}` : null,
               `🔑 Ref: *${d.reference_code as string}*`,
               '',
-              'See you there! 🎉',
+              'See you there!',
             ].filter(Boolean);
 
             const payTips = '\n\n💡 *What you can do:*\n• Type *my bookings* to view your appointments\n• Type *reschedule* to change the date/time\n• Type *cancel* to cancel\n• Type *receipt* to get your payment receipt';
