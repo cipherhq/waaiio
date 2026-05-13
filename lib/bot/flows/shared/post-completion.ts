@@ -22,6 +22,8 @@ interface PostCompletionParams {
   serviceName?: string;
   /** Reference code (e.g. BW-1234) for receipt */
   referenceCode?: string;
+  /** If true, skip loyalty points (e.g. giving/donation transactions) */
+  skipLoyalty?: boolean;
 }
 
 function generateReferralCode(): string {
@@ -38,7 +40,7 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty } = params;
 
   // Parallel: load capabilities + business data in one round-trip
   let capabilities: CapabilityId[];
@@ -129,8 +131,9 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     }
   }
 
-  // 1. Loyalty — award points
-  if (capabilities.includes('loyalty')) {
+  // 1. Loyalty — award points (skip for giving/donation, and require explicit opt-in)
+  const loyaltyEnabled = meta.loyalty_earning_enabled === true;
+  if (capabilities.includes('loyalty') && loyaltyEnabled && !skipLoyalty) {
     try {
       const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';
       const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;

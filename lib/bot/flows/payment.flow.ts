@@ -430,6 +430,7 @@ export const paymentFlow: FlowDefinition = {
             // Post-completion: auto-receipt, loyalty, feedback, referral
             if (ctx.business) {
               const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || null;
+              const isGiving = ctx.session.session_data.active_capability === 'giving';
               handlePostCompletion({
                 supabase: ctx.supabase,
                 businessId: ctx.business.id,
@@ -441,6 +442,7 @@ export const paymentFlow: FlowDefinition = {
                 amountPaid: d.amount as number,
                 serviceName: d.service_name as string,
                 referenceCode: d.reference_code as string,
+                skipLoyalty: isGiving,
               }).catch(err => console.error('[PAYMENT] Post-completion error:', err));
 
               // Notify owner: email + WhatsApp

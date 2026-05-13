@@ -25,6 +25,7 @@ interface LoyaltyTransaction {
 }
 
 interface LoyaltyConfig {
+  loyalty_earning_enabled: boolean;
   loyalty_points_mode: 'per_visit' | 'per_amount';
   loyalty_points_per_visit: number;
   loyalty_points_per_currency: number;
@@ -33,6 +34,7 @@ interface LoyaltyConfig {
 }
 
 const DEFAULT_CONFIG: LoyaltyConfig = {
+  loyalty_earning_enabled: false,
   loyalty_points_mode: 'per_visit',
   loyalty_points_per_visit: 10,
   loyalty_points_per_currency: 100,
@@ -60,6 +62,7 @@ export default function LoyaltyPage() {
   useEffect(() => {
     const meta = business.metadata || {};
     setConfig({
+      loyalty_earning_enabled: meta.loyalty_earning_enabled === true,
       loyalty_points_mode: (meta.loyalty_points_mode as string) === 'per_amount' ? 'per_amount' : 'per_visit',
       loyalty_points_per_visit:
         typeof meta.loyalty_points_per_visit === 'number'
@@ -128,6 +131,7 @@ export default function LoyaltyPage() {
     const supabase = createClient();
     const updatedMetadata = {
       ...(business.metadata || {}),
+      loyalty_earning_enabled: config.loyalty_earning_enabled,
       loyalty_points_mode: config.loyalty_points_mode,
       loyalty_points_per_visit: config.loyalty_points_per_visit,
       loyalty_points_per_currency: config.loyalty_points_per_currency,
@@ -178,101 +182,57 @@ export default function LoyaltyPage() {
         </p>
 
         <div className="mt-5 space-y-5">
-          {/* Points mode toggle */}
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-2">How do customers earn points?</label>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setConfig(c => ({ ...c, loyalty_points_mode: 'per_visit' }))}
-                className={`rounded-lg px-4 py-2 text-xs font-medium transition ${config.loyalty_points_mode === 'per_visit' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              >
-                Per Visit (flat)
-              </button>
-              <button
-                onClick={() => setConfig(c => ({ ...c, loyalty_points_mode: 'per_amount' }))}
-                className={`rounded-lg px-4 py-2 text-xs font-medium transition ${config.loyalty_points_mode === 'per_amount' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-              >
-                Per Amount Spent
-              </button>
+          {/* Enable/disable toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-gray-200 p-4">
+            <div>
+              <p className="text-sm font-medium text-gray-900">Enable Points Earning</p>
+              <p className="text-xs text-gray-400">When enabled, customers automatically earn points on bookings, orders, and payments. Giving/donations never earn points.</p>
             </div>
+            <button
+              onClick={() => setConfig(c => ({ ...c, loyalty_earning_enabled: !c.loyalty_earning_enabled }))}
+              className={`relative h-6 w-11 rounded-full transition ${config.loyalty_earning_enabled ? 'bg-brand' : 'bg-gray-300'}`}
+            >
+              <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${config.loyalty_earning_enabled ? 'translate-x-5' : ''}`} />
+            </button>
           </div>
 
-          <div className="grid gap-5 sm:grid-cols-3">
-          {config.loyalty_points_mode === 'per_visit' ? (
-          <div>
-            <label className="block text-xs font-medium text-gray-500">
-              Points Per Visit
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={config.loyalty_points_per_visit || ''}
-              onFocus={e => e.target.select()}
-              onChange={(e) =>
-                setConfig((c) => ({
-                  ...c,
-                  loyalty_points_per_visit: parseInt(e.target.value, 10) || 0,
-                }))
-              }
-              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </div>
-          ) : (
-          <div>
-            <label className="block text-xs font-medium text-gray-500">
-              Spend per 1 Point (e.g. 100 = 1 point per 100 spent)
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={config.loyalty_points_per_currency || ''}
-              onFocus={e => e.target.select()}
-              onChange={(e) =>
-                setConfig((c) => ({
-                  ...c,
-                  loyalty_points_per_currency: parseInt(e.target.value, 10) || 0,
-                }))
-              }
-              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </div>
+          {!config.loyalty_earning_enabled && (
+            <p className="text-xs text-amber-600 bg-amber-50 rounded-lg p-3">Points earning is currently off. Customers can still view and redeem existing points, but no new points will be awarded.</p>
           )}
-          <div>
-            <label className="block text-xs font-medium text-gray-500">
-              Reward Threshold (points)
-            </label>
-            <input
-              type="number"
-              min={1}
-              value={config.loyalty_reward_threshold || ''}
-              onFocus={e => e.target.select()}
-              onChange={(e) =>
-                setConfig((c) => ({
-                  ...c,
-                  loyalty_reward_threshold: parseInt(e.target.value, 10) || 0,
-                }))
-              }
-              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500">
-              Reward Description
-            </label>
-            <input
-              type="text"
-              value={config.loyalty_reward_description}
-              onChange={(e) =>
-                setConfig((c) => ({
-                  ...c,
-                  loyalty_reward_description: e.target.value,
-                }))
-              }
-              placeholder="e.g. a free service"
-              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-            />
-          </div>
-        </div>
+
+          {/* Points config — only shown when earning is enabled */}
+          {config.loyalty_earning_enabled && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-2">How do customers earn points?</label>
+                <div className="flex gap-2">
+                  <button onClick={() => setConfig(c => ({ ...c, loyalty_points_mode: 'per_visit' }))} className={`rounded-lg px-4 py-2 text-xs font-medium transition ${config.loyalty_points_mode === 'per_visit' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Per Visit (flat)</button>
+                  <button onClick={() => setConfig(c => ({ ...c, loyalty_points_mode: 'per_amount' }))} className={`rounded-lg px-4 py-2 text-xs font-medium transition ${config.loyalty_points_mode === 'per_amount' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Per Amount Spent</button>
+                </div>
+              </div>
+              <div className="grid gap-5 sm:grid-cols-3">
+                {config.loyalty_points_mode === 'per_visit' ? (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500">Points Per Visit</label>
+                    <input type="number" min={1} value={config.loyalty_points_per_visit || ''} onFocus={e => e.target.select()} onChange={e => setConfig(c => ({ ...c, loyalty_points_per_visit: parseInt(e.target.value, 10) || 0 }))} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500">Spend per 1 Point (e.g. 100 = 1 point per 100 spent)</label>
+                    <input type="number" min={1} value={config.loyalty_points_per_currency || ''} onFocus={e => e.target.select()} onChange={e => setConfig(c => ({ ...c, loyalty_points_per_currency: parseInt(e.target.value, 10) || 0 }))} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-medium text-gray-500">Reward Threshold (points)</label>
+                  <input type="number" min={1} value={config.loyalty_reward_threshold || ''} onFocus={e => e.target.select()} onChange={e => setConfig(c => ({ ...c, loyalty_reward_threshold: parseInt(e.target.value, 10) || 0 }))} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500">Reward Description</label>
+                  <input type="text" value={config.loyalty_reward_description} onChange={e => setConfig(c => ({ ...c, loyalty_reward_description: e.target.value }))} placeholder="e.g. a free service" className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </div>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-4 flex items-center gap-3">
