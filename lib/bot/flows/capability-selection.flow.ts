@@ -304,19 +304,11 @@ const myAccountMenuStep: FlowStepConfig = {
         .maybeSingle();
 
       if (profile?.id) {
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
         try {
-          const res = await fetch(`${baseUrl}/api/receipts/generate`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-internal-token': process.env.INTERNAL_API_TOKEN || '',
-            },
-            body: JSON.stringify({ userId: profile.id, type: 'receipt', phone: ctx.from }),
-          });
-          if (res.ok) {
-            const { url, filename } = await res.json();
-            await ctx.sender.sendDocument({ to: ctx.from, documentUrl: url, filename, caption: 'Your latest receipt' });
+          const { generateDocumentDirect } = await import('@/lib/receipts/generate-direct');
+          const result = await generateDocumentDirect(profile.id, 'receipt', ctx.from);
+          if (result) {
+            await ctx.sender.sendDocument({ to: ctx.from, documentUrl: result.url, filename: result.filename, caption: 'Your latest receipt' });
           } else {
             await ctx.sender.sendText({ to: ctx.from, text: 'No recent transactions found. Make a purchase first!' });
           }

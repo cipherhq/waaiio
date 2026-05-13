@@ -3019,39 +3019,18 @@ export class BotService {
     await this.sendText(from, `Generating your ${label}... 📄`);
 
     try {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL
-        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+      const { generateDocumentDirect } = await import('@/lib/receipts/generate-direct');
+      const result = await generateDocumentDirect(userId, type, from);
 
-      if (!baseUrl) {
-        throw new Error('NEXT_PUBLIC_APP_URL or VERCEL_URL must be set');
-      }
-
-      const response = await fetch(`${baseUrl}/api/receipts/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-internal-token': process.env.INTERNAL_API_TOKEN || '',
-        },
-        body: JSON.stringify({ userId, type, phone: from }),
-      });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        if (response.status === 404) {
-          await this.sendText(from, `No transactions found. Make a booking first, then come back for your ${label}!`);
-          return;
-        }
-        logger.error('[BOT] Receipt API error:', response.status, body);
-        await this.sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
+      if (!result) {
+        await this.sendText(from, `No transactions found. Make a booking first, then come back for your ${label}!`);
         return;
       }
 
-      const { url, filename } = await response.json();
-
       await this.messageSender.sendDocument({
         to: from,
-        documentUrl: url,
-        filename,
+        documentUrl: result.url,
+        filename: result.filename,
         caption: type === 'history'
           ? 'Your transaction history'
           : type === 'annual'
