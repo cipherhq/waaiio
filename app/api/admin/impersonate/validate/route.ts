@@ -4,14 +4,20 @@ import { cookies } from 'next/headers';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
+  const supabase = await createClient();
+
+  // Require authenticated session to validate impersonation tokens
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const body = await request.json();
   const { token } = body;
 
   if (!token || typeof token !== 'string') {
     return NextResponse.json({ error: 'Missing token' }, { status: 400 });
   }
-
-  const supabase = await createClient();
 
   try {
     // Look up the token — must not be expired and not already used
@@ -40,7 +46,7 @@ export async function POST(request: NextRequest) {
       .eq('id', tokenRecord.admin_id)
       .maybeSingle();
 
-    if (!adminProfile || !['admin', 'support'].includes(adminProfile.role)) {
+    if (!adminProfile || adminProfile.role !== 'admin') {
       return NextResponse.json({ error: 'Admin account is no longer valid' }, { status: 403 });
     }
 

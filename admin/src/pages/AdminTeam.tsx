@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -18,6 +19,9 @@ interface AdminProfile {
 }
 
 export default function AdminTeam() {
+  const session = useAdminSession();
+  const isFullAdmin = session?.role === 'admin';
+
   const [admins, setAdmins] = useState<AdminProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -57,6 +61,7 @@ export default function AdminTeam() {
 
   // Promote existing user to admin
   async function handleInvite() {
+    if (!isFullAdmin) { setInviteError('Only full admins can manage team members.'); return; }
     if (!inviteEmail.trim()) return;
 
     setInviting(true);
@@ -143,6 +148,7 @@ export default function AdminTeam() {
 
   // Remove admin role (demote to customer)
   async function handleRemoveAdmin() {
+    if (!isFullAdmin) return;
     if (!selected) return;
     if (!confirm(`Remove admin role from ${selected.email}? They will be demoted to "customer".`)) return;
 

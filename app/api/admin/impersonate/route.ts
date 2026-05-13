@@ -51,7 +51,8 @@ export async function POST(request: NextRequest) {
     .eq('id', user.id)
     .maybeSingle();
 
-  if (!profile || !['admin', 'support'].includes(profile.role)) {
+  // Impersonation is admin-only — support role cannot impersonate businesses
+  if (!profile || profile.role !== 'admin') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
   }
 
