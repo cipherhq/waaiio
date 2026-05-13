@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
+import { logger } from '@/lib/logger';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
@@ -131,7 +132,18 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   // 1. Loyalty — award points
   if (capabilities.includes('loyalty')) {
     try {
+      const pointsMode = (meta.loyalty_points_mode as string) || 'per_visit';
       const pointsPerVisit = (meta.loyalty_points_per_visit as number) || 10;
+      const pointsPerCurrency = (meta.loyalty_points_per_currency as number) || 0; // e.g. 1 point per 100 spent
+
+      // Calculate points: flat per-visit OR amount-based
+      let earnedPoints = pointsPerVisit;
+      let reason: string = 'visit';
+      if (pointsMode === 'per_amount' && pointsPerCurrency > 0 && amountPaid && amountPaid > 0) {
+        earnedPoints = Math.floor(amountPaid / pointsPerCurrency);
+        reason = 'purchase';
+        if (earnedPoints < 1) earnedPoints = 1; // minimum 1 point
+      }
 
       // Upsert loyalty_points
       const { data: existing } = await supabase
@@ -145,8 +157,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         await supabase
           .from('loyalty_points')
           .update({
-            points_balance: existing.points_balance + pointsPerVisit,
-            total_earned: existing.total_earned + pointsPerVisit,
+            points_balance: existing.points_balance + earnedPoints,
+            total_earned: existing.total_earned + earnedPoints,
             visit_count: existing.visit_count + 1,
             customer_name: customerName || undefined,
           })
@@ -158,8 +170,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
             business_id: businessId,
             customer_phone: customerPhone,
             customer_name: customerName,
-            points_balance: pointsPerVisit,
-            total_earned: pointsPerVisit,
+            points_balance: earnedPoints,
+            total_earned: earnedPoints,
             visit_count: 1,
           });
       }
@@ -168,20 +180,27 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       await supabase.from('loyalty_transactions').insert({
         business_id: businessId,
         customer_phone: customerPhone,
-        points_change: pointsPerVisit,
-        reason: 'visit',
+        points_change: earnedPoints,
+        reason,
         reference_id: referenceId || null,
         reference_type: serviceType || null,
       });
 
-      const newBalance = (existing?.points_balance || 0) + pointsPerVisit;
+      const newBalance = (existing?.points_balance || 0) + earnedPoints;
       const rewardThreshold = (meta.loyalty_reward_threshold as number) || 100;
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a special reward';
 
-      // Loyalty points updated silently — don't spam customer after payment
-      // Customer can check their points anytime by typing "my points"
+      // Notify customer about earned points
+      const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
+      let loyaltyMsg = `+${earnedPoints} points earned! Your balance: *${newBalance}* points.`;
+      if (pointsUntilReward === 0) {
+        loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`;
+      } else {
+        loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
+      }
+      sender.sendText({ to: customerPhone, text: loyaltyMsg }).catch(() => {});
     } catch (err) {
-      console.error('[POST-COMPLETION] Loyalty error:', err);
+      logger.error('[POST-COMPLETION] Loyalty error:', err);
     }
   }
 

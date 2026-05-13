@@ -3,6 +3,13 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
+function generateRedemptionCode(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = 'RW-';
+  for (let i = 0; i < 6; i++) code += chars.charAt(Math.floor(Math.random() * chars.length));
+  return code;
+}
+
 // ── Loyalty Menu ──
 const loyaltyMenuStep: FlowStepConfig = {
   id: 'loyalty_menu',
@@ -217,10 +224,48 @@ const loyaltyRedeemStep: FlowStepConfig = {
         .eq('id', loyaltyId);
 
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
+      const redemptionCode = generateRedemptionCode();
+
+      // Store redemption code in the transaction for staff verification
+      await ctx.supabase.from('loyalty_transactions')
+        .update({ reference_type: `code:${redemptionCode}` })
+        .eq('business_id', businessId)
+        .eq('customer_phone', phone)
+        .eq('reason', 'redemption')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
       await ctx.sender.sendText({
         to: ctx.from,
-        text: `✅ *Reward Redeemed!*\n\nYou've redeemed *${rewardDesc}*.\n\n${threshold} points have been deducted. Your new balance is *${balance - threshold}* points.\n\nScreenshot this message and show it at your next visit to claim your reward!\n\n💡 *What you can do:*\n• Type *my points* to check your balance\n• Type *Hi* to book or order`,
+        text: [
+          `*Reward Redeemed!*`,
+          '',
+          `You've redeemed *${rewardDesc}*.`,
+          '',
+          `Redemption code: *${redemptionCode}*`,
+          `Points used: ${threshold}`,
+          `New balance: *${balance - threshold}* points`,
+          '',
+          `Show this code to staff to claim your reward.`,
+          '',
+          `Type *my points* to check your balance`,
+          `Type *Hi* to book or order`,
+        ].join('\n'),
       });
+
+      // Notify business owner about redemption
+      if (ctx.business) {
+        const ownerNotifyMsg = `Loyalty reward redeemed by ${ctx.session.session_data.loyalty_customer_name || phone}.\n\nCode: *${redemptionCode}*\nReward: ${rewardDesc}`;
+        // Non-blocking — notify via alerts table
+        ctx.supabase.from('alerts').insert({
+          business_id: businessId,
+          type: 'loyalty_redemption',
+          severity: 'info',
+          title: `Loyalty reward redeemed: ${redemptionCode}`,
+          message: ownerNotifyMsg,
+          metadata: { redemption_code: redemptionCode, customer_phone: phone },
+        }).then(() => {});
+      }
     } catch (err) {
       logger.error('[LOYALTY] Redemption error:', err);
       await ctx.sender.sendText({

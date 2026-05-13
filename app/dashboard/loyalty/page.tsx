@@ -25,13 +25,17 @@ interface LoyaltyTransaction {
 }
 
 interface LoyaltyConfig {
+  loyalty_points_mode: 'per_visit' | 'per_amount';
   loyalty_points_per_visit: number;
+  loyalty_points_per_currency: number;
   loyalty_reward_threshold: number;
   loyalty_reward_description: string;
 }
 
 const DEFAULT_CONFIG: LoyaltyConfig = {
+  loyalty_points_mode: 'per_visit',
   loyalty_points_per_visit: 10,
+  loyalty_points_per_currency: 100,
   loyalty_reward_threshold: 100,
   loyalty_reward_description: 'a free service',
 };
@@ -56,10 +60,15 @@ export default function LoyaltyPage() {
   useEffect(() => {
     const meta = business.metadata || {};
     setConfig({
+      loyalty_points_mode: (meta.loyalty_points_mode as string) === 'per_amount' ? 'per_amount' : 'per_visit',
       loyalty_points_per_visit:
         typeof meta.loyalty_points_per_visit === 'number'
           ? meta.loyalty_points_per_visit
           : DEFAULT_CONFIG.loyalty_points_per_visit,
+      loyalty_points_per_currency:
+        typeof meta.loyalty_points_per_currency === 'number'
+          ? meta.loyalty_points_per_currency
+          : DEFAULT_CONFIG.loyalty_points_per_currency,
       loyalty_reward_threshold:
         typeof meta.loyalty_reward_threshold === 'number'
           ? meta.loyalty_reward_threshold
@@ -119,7 +128,9 @@ export default function LoyaltyPage() {
     const supabase = createClient();
     const updatedMetadata = {
       ...(business.metadata || {}),
+      loyalty_points_mode: config.loyalty_points_mode,
       loyalty_points_per_visit: config.loyalty_points_per_visit,
+      loyalty_points_per_currency: config.loyalty_points_per_currency,
       loyalty_reward_threshold: config.loyalty_reward_threshold,
       loyalty_reward_description: config.loyalty_reward_description,
     };
@@ -166,7 +177,28 @@ export default function LoyaltyPage() {
           Configure how points are earned and rewards are given
         </p>
 
-        <div className="mt-5 grid gap-5 sm:grid-cols-3">
+        <div className="mt-5 space-y-5">
+          {/* Points mode toggle */}
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-2">How do customers earn points?</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfig(c => ({ ...c, loyalty_points_mode: 'per_visit' }))}
+                className={`rounded-lg px-4 py-2 text-xs font-medium transition ${config.loyalty_points_mode === 'per_visit' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              >
+                Per Visit (flat)
+              </button>
+              <button
+                onClick={() => setConfig(c => ({ ...c, loyalty_points_mode: 'per_amount' }))}
+                className={`rounded-lg px-4 py-2 text-xs font-medium transition ${config.loyalty_points_mode === 'per_amount' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+              >
+                Per Amount Spent
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-3">
+          {config.loyalty_points_mode === 'per_visit' ? (
           <div>
             <label className="block text-xs font-medium text-gray-500">
               Points Per Visit
@@ -185,6 +217,26 @@ export default function LoyaltyPage() {
               className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
             />
           </div>
+          ) : (
+          <div>
+            <label className="block text-xs font-medium text-gray-500">
+              Spend per 1 Point (e.g. 100 = 1 point per 100 spent)
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={config.loyalty_points_per_currency || ''}
+              onFocus={e => e.target.select()}
+              onChange={(e) =>
+                setConfig((c) => ({
+                  ...c,
+                  loyalty_points_per_currency: parseInt(e.target.value, 10) || 0,
+                }))
+              }
+              className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+            />
+          </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-gray-500">
               Reward Threshold (points)
@@ -221,6 +273,7 @@ export default function LoyaltyPage() {
             />
           </div>
         </div>
+        </div>
 
         <div className="mt-4 flex items-center gap-3">
           <button
@@ -236,9 +289,12 @@ export default function LoyaltyPage() {
         </div>
 
         <p className="mt-3 text-xs text-gray-400">
-          Customers earn {config.loyalty_points_per_visit} points per visit. After{' '}
-          {config.loyalty_reward_threshold} points they receive{' '}
-          {config.loyalty_reward_description}.
+          {config.loyalty_points_mode === 'per_amount'
+            ? `Customers earn 1 point per ${config.loyalty_points_per_currency} spent.`
+            : `Customers earn ${config.loyalty_points_per_visit} points per visit.`
+          }{' '}
+          After {config.loyalty_reward_threshold} points they receive{' '}
+          {config.loyalty_reward_description}. Redemptions generate a unique code for staff verification.
         </p>
       </div>
 
