@@ -1680,6 +1680,18 @@ export const orderingFlow: FlowDefinition = {
     // ── Collect Name ──
     {
       id: 'collect_name',
+      async skipIf(ctx: FlowContext) {
+        if (ctx.session.user_id) {
+          const user = await findUserByPhone(ctx.supabase, ctx.from);
+          if (user?.first_name) {
+            ctx.session.session_data.first_name = user.first_name;
+            ctx.session.session_data.last_name = user.last_name;
+            ctx.session.session_data.email = user.email || '';
+            return true;
+          }
+        }
+        return false;
+      },
       async prompt(): Promise<PromptMessage[]> {
         return [{ type: 'text', text: 'What name should we put on the order?\n\nType your *full name*:' }];
       },
