@@ -1320,12 +1320,36 @@ export const orderingFlow: FlowDefinition = {
       async skipIf(ctx: FlowContext): Promise<boolean> {
         if (!ctx.business) return true;
         // Skip promo code step unless business has active promo codes
-        const { count } = await ctx.supabase
+        // that apply to the products in the cart (or are universal)
+        const { data: promos } = await ctx.supabase
           .from('promo_codes')
-          .select('id', { count: 'exact', head: true })
+          .select('id, applicable_services, applicable_flow_types')
           .eq('business_id', ctx.business.id)
-          .eq('is_active', true);
-        return (count || 0) === 0;
+          .eq('is_active', true)
+          .limit(20);
+
+        if (!promos || promos.length === 0) return true;
+
+        // Get product IDs in the cart
+        const cart = (ctx.session.session_data.cart || []) as Array<{ productId?: string }>;
+        const cartProductIds = cart.map(item => item.productId).filter(Boolean);
+
+        // Check if any promo applies: empty applicable_services = universal, otherwise must match cart items
+        const hasApplicablePromo = promos.some(p => {
+          const services = (p.applicable_services as string[]) || [];
+          const flows = (p.applicable_flow_types as string[]) || [];
+          // Universal promo (no restrictions)
+          if (services.length === 0 && flows.length === 0) return true;
+          // Flow-type restricted — check if 'ordering' is allowed
+          if (flows.length > 0 && !flows.includes('ordering')) return false;
+          // Service/product restricted — check if any cart item matches
+          if (services.length > 0) {
+            return cartProductIds.some(pid => pid && services.includes(pid));
+          }
+          return true;
+        });
+
+        return !hasApplicablePromo;
       },
       async prompt(): Promise<PromptMessage[]> {
         return [{

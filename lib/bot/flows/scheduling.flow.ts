@@ -768,16 +768,29 @@ export const schedulingFlow: FlowDefinition = {
       id: 'apply_promo',
       async skipIf(ctx: FlowContext) {
         if (!ctx.business) return true;
-        // Skip if service is free (no point asking for promo code)
+        // Skip if service is free
         const price = ctx.session.session_data.service_price as number || 0;
         if (price <= 0) return true;
-        // Skip if no active promo codes exist for this business
-        const { count } = await ctx.supabase
+        // Skip if no active promo codes apply to this service
+        const { data: promos } = await ctx.supabase
           .from('promo_codes')
-          .select('id', { count: 'exact', head: true })
+          .select('id, applicable_services, applicable_flow_types')
           .eq('business_id', ctx.business.id)
-          .eq('is_active', true);
-        return (count || 0) === 0;
+          .eq('is_active', true)
+          .limit(20);
+
+        if (!promos || promos.length === 0) return true;
+
+        const serviceId = ctx.session.session_data.service_id as string;
+        const hasApplicablePromo = promos.some(p => {
+          const services = (p.applicable_services as string[]) || [];
+          const flows = (p.applicable_flow_types as string[]) || [];
+          if (services.length === 0 && flows.length === 0) return true;
+          if (flows.length > 0 && !flows.includes('scheduling')) return false;
+          if (services.length > 0 && serviceId && !services.includes(serviceId)) return false;
+          return true;
+        });
+        return !hasApplicablePromo;
       },
       async prompt(): Promise<PromptMessage[]> {
         return [{
