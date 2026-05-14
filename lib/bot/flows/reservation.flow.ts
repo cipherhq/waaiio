@@ -169,16 +169,29 @@ export const reservationFlow: FlowDefinition = {
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
-        // Load blocked dates for this property
+        // Load blocked dates AND existing reservations for this property
         const propertyId = ctx.session.session_data.property_id as string | undefined;
         let blockedRanges: Array<{ from: string; to: string }> = [];
         if (propertyId) {
-          const { data: blocked } = await ctx.supabase
-            .from('property_blocked_dates')
-            .select('date_from, date_to')
-            .eq('property_id', propertyId)
-            .gte('date_to', new Date().toISOString().split('T')[0]);
-          blockedRanges = (blocked || []).map(b => ({ from: b.date_from, to: b.date_to }));
+          const todayStr = new Date().toISOString().split('T')[0];
+          const [{ data: blocked }, { data: booked }] = await Promise.all([
+            ctx.supabase.from('property_blocked_dates')
+              .select('date_from, date_to')
+              .eq('property_id', propertyId)
+              .gte('date_to', todayStr),
+            // Also block dates with existing confirmed/pending reservations
+            ctx.supabase.from('reservations')
+              .select('check_in, check_out')
+              .eq('business_id', ctx.business!.id)
+              .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
+              .in('status', ['pending', 'confirmed', 'checked_in'])
+              .gte('check_out', todayStr)
+              .limit(100),
+          ]);
+          blockedRanges = [
+            ...(blocked || []).map(b => ({ from: b.date_from, to: b.date_to })),
+            ...(booked || []).map(r => ({ from: r.check_in, to: r.check_out })),
+          ];
         }
 
         function isBlocked(dateStr: string): boolean {
@@ -252,16 +265,27 @@ export const reservationFlow: FlowDefinition = {
         const checkInStr = ctx.session.session_data.check_in as string;
         const checkInDate = new Date(checkInStr + 'T00:00');
 
-        // Load blocked dates for this property (same pattern as check-in step)
+        // Load blocked dates AND existing reservations (same pattern as check-in step)
         const propertyId = ctx.session.session_data.property_id as string | undefined;
         let blockedRanges: Array<{ from: string; to: string }> = [];
         if (propertyId) {
-          const { data: blocked } = await ctx.supabase
-            .from('property_blocked_dates')
-            .select('date_from, date_to')
-            .eq('property_id', propertyId)
-            .gte('date_to', checkInStr);
-          blockedRanges = (blocked || []).map(b => ({ from: b.date_from, to: b.date_to }));
+          const [{ data: blocked }, { data: booked }] = await Promise.all([
+            ctx.supabase.from('property_blocked_dates')
+              .select('date_from, date_to')
+              .eq('property_id', propertyId)
+              .gte('date_to', checkInStr),
+            ctx.supabase.from('reservations')
+              .select('check_in, check_out')
+              .eq('business_id', ctx.business!.id)
+              .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
+              .in('status', ['pending', 'confirmed', 'checked_in'])
+              .gte('check_out', checkInStr)
+              .limit(100),
+          ]);
+          blockedRanges = [
+            ...(blocked || []).map(b => ({ from: b.date_from, to: b.date_to })),
+            ...(booked || []).map(r => ({ from: r.check_in, to: r.check_out })),
+          ];
         }
 
         function isBlocked(dateStr: string): boolean {
