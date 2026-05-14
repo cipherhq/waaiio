@@ -604,6 +604,31 @@ export const reservationFlow: FlowDefinition = {
         const depositAmount = (d.service_deposit as number) || 0;
         const payableAmount = depositAmount > 0 ? depositAmount : totalAmount;
 
+        // Check availability FIRST — before T&C, so user doesn't accept terms for unavailable dates
+        const propertyId = (d.property_id as string) || null;
+        if (propertyId && !d._availability_checked) {
+          const { data: overlapping } = await ctx.supabase
+            .from('reservations')
+            .select('id')
+            .eq('business_id', ctx.business!.id)
+            .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
+            .in('status', ['pending', 'confirmed'])
+            .lt('check_in', d.check_out as string)
+            .gt('check_out', d.check_in as string)
+            .limit(1);
+
+          if (overlapping && overlapping.length > 0) {
+            await ctx.supabase.from('bot_sessions')
+              .update({ current_step: 'complete', is_active: false })
+              .eq('id', ctx.session.id);
+            return [{
+              type: 'text',
+              text: 'Sorry, this property is not available for the selected dates. Send *Hi* to try different dates.',
+            }];
+          }
+          d._availability_checked = true;
+        }
+
         // ── T&C gate ──
         if (!d._terms_accepted && payableAmount > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
           await ctx.supabase.from('bot_sessions')
@@ -616,27 +641,6 @@ export const reservationFlow: FlowDefinition = {
             .update({ current_step: 'complete', is_active: false })
             .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your reservation has been cancelled. Send *Hi* to start over.' }];
-        }
-
-        // Check availability — prevent double-booking same property on overlapping dates
-        const propertyId = (d.property_id as string) || null;
-        if (propertyId) {
-          const { data: overlapping } = await ctx.supabase
-            .from('reservations')
-            .select('id')
-            .eq('business_id', ctx.business!.id)
-            .or(`property_id.eq.${sanitizeFilterValue(propertyId)},service_id.eq.${sanitizeFilterValue(propertyId)}`)
-            .in('status', ['pending', 'confirmed'])
-            .lt('check_in', d.check_out as string)
-            .gt('check_out', d.check_in as string)
-            .limit(1);
-
-          if (overlapping && overlapping.length > 0) {
-            return [{
-              type: 'text',
-              text: 'Sorry, this property is not available for the selected dates. Please try different dates or another option. Send *Hi* to start over.',
-            }];
-          }
         }
 
         const insertPayload: Record<string, unknown> = {
