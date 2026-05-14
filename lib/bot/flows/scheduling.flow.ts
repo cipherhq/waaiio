@@ -65,57 +65,8 @@ function getStaffPrompt(category: string): string {
   }
 }
 
-/** Category-specific quick-reply buttons for special requests */
-function getSpecialRequestButtons(category: string): Array<{ id: string; title: string }> {
-  switch (category as BusinessCategoryKey) {
-    case 'restaurant':
-      return [
-        { id: 'req_birthday', title: 'Birthday 🎂' },
-        { id: 'req_window', title: 'Window seat' },
-      ];
-    case 'barber':
-      return [
-        { id: 'req_fade', title: 'Fade / Taper' },
-        { id: 'req_lineup', title: 'Line-up' },
-      ];
-    case 'spa':
-      return [
-        { id: 'req_deep_tissue', title: 'Deep tissue' },
-        { id: 'req_aroma', title: 'Aromatherapy' },
-      ];
-    case 'salon':
-      return [
-        { id: 'req_gentle', title: 'Sensitive scalp' },
-        { id: 'req_kids', title: 'Kids haircut' },
-      ];
-    case 'clinic':
-    case 'veterinary':
-      return [
-        { id: 'req_morning', title: 'Morning slot' },
-        { id: 'req_followup', title: 'Follow-up visit' },
-      ];
-    case 'gym':
-      return [
-        { id: 'req_morning', title: 'Morning slot' },
-        { id: 'req_quiet', title: 'Quiet area' },
-      ];
-    case 'hotel':
-      return [
-        { id: 'req_quiet', title: 'Quiet room' },
-        { id: 'req_highchair', title: 'High chair' },
-      ];
-    case 'tattoo':
-      return [
-        { id: 'req_gentle', title: 'First timer' },
-        { id: 'req_followup', title: 'Touch-up' },
-      ];
-    default:
-      return [
-        { id: 'req_birthday', title: 'Birthday 🎂' },
-        { id: 'req_urgent', title: 'Urgent' },
-      ];
-  }
-}
+/** Special request options are now fully business-driven via metadata.special_request_options */
+// Removed hardcoded category defaults — businesses configure their own options in dashboard
 
 export const schedulingFlow: FlowDefinition = {
   type: 'scheduling',
@@ -945,73 +896,54 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'special_requests',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        const category = ctx.business?.category || 'restaurant';
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        // Use business-configured special requests if available, else category defaults
-        const customOptions = meta.special_request_options as Array<{ id: string; title: string }> | undefined;
-        const quickReplies = customOptions && customOptions.length > 0
-          ? customOptions.slice(0, 2)
-          : getSpecialRequestButtons(category);
-        return [
-          {
+        const customOptions = (meta.special_request_options as Array<{ id: string; title: string }>) || [];
+
+        if (customOptions.length > 0) {
+          // Business has configured their own options — show as buttons
+          return [{
             type: 'buttons',
             body: 'Any special requests?',
             buttons: [
               { id: 'req_none', title: "No, I'm good" },
-              ...quickReplies,
+              ...customOptions.slice(0, 2).map(o => ({ id: `req_${o.id}`, title: o.title.slice(0, 20) })),
             ],
-          },
-          { type: 'text', text: 'Or type your own request:' },
-        ];
+          }];
+        }
+
+        // No custom options — just ask as free text
+        return [{
+          type: 'buttons',
+          body: 'Any special requests or notes for your booking?',
+          buttons: [
+            { id: 'req_none', title: "No, I'm good" },
+          ],
+        }];
       },
       async skipIf(ctx: FlowContext) {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
-        // If business explicitly disabled special requests
+        // Skip if business explicitly disabled special requests
         if (meta.special_requests_enabled === false) {
-          ctx.session.session_data.special_requests = '';
-          return true;
-        }
-        // If business has custom options, always show
-        if ((meta.special_request_options as unknown[])?.length > 0) return false;
-        // Fall back to category-based logic
-        const categoriesWithRequests = new Set([
-          'restaurant', 'barber', 'spa', 'salon', 'clinic', 'veterinary', 'gym', 'hotel', 'tattoo',
-        ]);
-        if (!categoriesWithRequests.has(ctx.business?.category || '')) {
           ctx.session.session_data.special_requests = '';
           return true;
         }
         return false;
       },
-      async validate(input: string): Promise<ValidationResult> {
-        const response = input.toLowerCase();
-        let request: string | undefined;
-        // Map all quick-reply IDs to human-readable text
-        const requestMap: Record<string, string> = {
-          req_birthday: 'Birthday celebration 🎂',
-          req_window: 'Window seat preferred',
-          req_outdoor: 'Outdoor seating preferred',
-          req_fade: 'Fade / taper requested',
-          req_lineup: 'Line-up / edge-up requested',
-          req_hot_towel: 'Hot towel service',
-          req_deep_tissue: 'Deep tissue preferred',
-          req_aroma: 'Aromatherapy add-on',
-          req_gentle: 'Gentle / sensitive treatment',
-          req_morning: 'Morning slot preferred',
-          req_urgent: 'Urgent / same-day if possible',
-          req_followup: 'Follow-up visit',
-          req_wheelchair: 'Wheelchair accessible',
-          req_highchair: 'High chair needed',
-          req_quiet: 'Quiet area preferred',
-          req_kids: 'Kids haircut',
-        };
-        if (requestMap[response]) {
-          request = requestMap[response];
-        } else if (response !== 'req_none') {
-          request = input;
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'req_none') {
+          return { valid: true, data: { special_requests: '' } };
         }
 
-        return { valid: true, data: { special_requests: request || '' } };
+        // Check if input matches a custom option button ID
+        const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const customOptions = (meta.special_request_options as Array<{ id: string; title: string }>) || [];
+        const matched = customOptions.find(o => input === `req_${o.id}`);
+        if (matched) {
+          return { valid: true, data: { special_requests: matched.title } };
+        }
+
+        // Free text input
+        return { valid: true, data: { special_requests: input } };
       },
       async next() { return 'collect_venue'; },
     },
