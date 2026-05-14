@@ -72,7 +72,7 @@ async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string): Pro
   let notifyWhatsApp = false;
   let notifyWhatsAppPhone: string | null = config?.notify_whatsapp_phone || null;
 
-  if (config?.notify_whatsapp_enabled && notifyWhatsAppPhone) {
+  if (config?.notify_whatsapp_enabled && notifyWhatsAppPhone && notifyWhatsAppPhone.length >= 10) {
     const tier = (biz.subscription_tier as string) || 'free';
     const limit = WHATSAPP_NOTIFY_LIMITS[tier] || 50;
     const now = new Date();
@@ -147,7 +147,7 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
       dashboardUrl,
     });
     sendEmail({ to: ownerEmail, subject, html }).catch(err =>
-      console.error('[NOTIFY-OWNER] Email error:', err),
+      logger.error('[NOTIFY-OWNER] Email error:', err),
     );
   }
 
@@ -178,7 +178,7 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
 
     const phone = notifyWhatsAppPhone.startsWith('+') ? notifyWhatsAppPhone.slice(1) : notifyWhatsAppPhone;
     sender.sendText({ to: phone, text: lines.join('\n') }).catch(err =>
-      console.error('[NOTIFY-OWNER] WhatsApp error:', err),
+      logger.error('[NOTIFY-OWNER] WhatsApp error:', err),
     );
   }
 }
