@@ -1189,6 +1189,11 @@ export default function ContractsPage() {
                     >
                       {sending ? 'Sending...' : 'Send via WhatsApp'}
                     </button>
+                    {(!title || !signerPhone) && (
+                      <p className="text-xs text-red-500 mt-1 text-center">
+                        {!title ? 'Document title is required (step 1).' : 'Enter a valid phone number.'}
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
