@@ -3,7 +3,8 @@ import * as Sentry from '@sentry/nextjs';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { getServerPostHog } from '@/lib/posthog/server';
 import { createAlert } from '@/lib/alerts/create-alert';
-import type { SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 /**
  * Shared webhook processing logic for both platform and BYO payment webhooks.
@@ -180,6 +181,140 @@ export async function processPaystackChargeSuccess(
         recordPlatformFeeForCampaign(supabase, existingPayment.campaign_id, campaign.business_id, existingPayment.amount).catch(() => {});
       }
     }
+  }
+
+  // ── Proactive confirmation: send WhatsApp message to customer after payment ──
+  // This ensures customers get confirmation even if they never tap "I've Paid"
+  sendPaymentConfirmation(supabase, existingPayment, reference).catch(err =>
+    logger.error('[WEBHOOK] Proactive confirmation error:', err),
+  );
+}
+
+/**
+ * Send a WhatsApp confirmation to the customer after successful payment.
+ * Runs as fire-and-forget from the webhook handler.
+ */
+async function sendPaymentConfirmation(
+  supabase: SupabaseClient,
+  payment: { id: string; booking_id: string | null; invoice_id: string | null; campaign_id: string | null; amount: number },
+  reference: string,
+): Promise<void> {
+  // Find the customer's phone and business from the booking, order, or session
+  let customerPhone: string | null = null;
+  let businessId: string | null = null;
+  let businessName = 'Business';
+  let serviceName = 'Payment';
+  let referenceCode = reference;
+  let countryCode: CountryCode = 'NG';
+
+  if (payment.booking_id) {
+    const { data: booking } = await supabase
+      .from('bookings')
+      .select('guest_phone, reference_code, business_id, businesses(name, country_code), services(name)')
+      .eq('id', payment.booking_id)
+      .single();
+
+    if (booking) {
+      customerPhone = booking.guest_phone;
+      businessId = booking.business_id;
+      referenceCode = booking.reference_code || reference;
+      const biz = booking.businesses as unknown as { name: string; country_code?: string } | null;
+      const svc = booking.services as unknown as { name: string } | null;
+      if (biz?.name) businessName = biz.name;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      if (svc?.name) serviceName = svc.name;
+    }
+  }
+
+  // Also check orders (ordering flow)
+  if (!customerPhone) {
+    const { data: order } = await supabase
+      .from('orders')
+      .select('delivery_phone, reference_code, business_id, businesses(name, country_code)')
+      .eq('id', payment.booking_id || '')
+      .maybeSingle();
+
+    if (!order) {
+      // Try matching by payment metadata
+      const { data: paymentFull } = await supabase
+        .from('payments')
+        .select('user_id, metadata')
+        .eq('id', payment.id)
+        .single();
+
+      if (paymentFull?.user_id) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('phone')
+          .eq('id', paymentFull.user_id)
+          .single();
+        customerPhone = profile?.phone || null;
+      }
+
+      const meta = (paymentFull?.metadata || {}) as Record<string, unknown>;
+      if (meta.order_id) {
+        const { data: orderByMeta } = await supabase
+          .from('orders')
+          .select('delivery_phone, reference_code, business_id, businesses(name, country_code)')
+          .eq('id', meta.order_id as string)
+          .maybeSingle();
+        if (orderByMeta) {
+          customerPhone = orderByMeta.delivery_phone || customerPhone;
+          businessId = orderByMeta.business_id;
+          referenceCode = orderByMeta.reference_code || reference;
+          const biz = orderByMeta.businesses as unknown as { name: string; country_code?: string } | null;
+          if (biz?.name) businessName = biz.name;
+          if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+          serviceName = 'Order';
+        }
+      }
+    } else {
+      customerPhone = order.delivery_phone;
+      businessId = order.business_id;
+      referenceCode = order.reference_code || reference;
+      const biz = order.businesses as unknown as { name: string; country_code?: string } | null;
+      if (biz?.name) businessName = biz.name;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      serviceName = 'Order';
+    }
+  }
+
+  if (!customerPhone || !businessId) return;
+
+  // Build confirmation message
+  const lines = [
+    `*Payment Confirmed!*`,
+    '',
+    `${businessName}`,
+    `${serviceName}`,
+    `Amount: ${formatCurrency(payment.amount, countryCode)}`,
+    `Ref: *${referenceCode}*`,
+    '',
+    'Thank you for your payment!',
+    '',
+    'Type *receipt* to get your receipt',
+    'Type *my bookings* to view your bookings',
+  ];
+
+  // Send via channel resolver
+  try {
+    const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
+    const resolver = new ChannelResolver(supabase);
+    const resolved = await resolver.resolveByBusinessId(businessId);
+    if (resolved) {
+      const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+      await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+
+      // Deactivate the bot session waiting for "I've Paid" since payment is confirmed
+      await supabase
+        .from('bot_sessions')
+        .update({ is_active: false })
+        .eq('whatsapp_number', customerPhone)
+        .eq('business_id', businessId)
+        .eq('is_active', true);
+    }
+  } catch (err) {
+    logger.error('[WEBHOOK] Failed to send confirmation:', err);
   }
 }
 
