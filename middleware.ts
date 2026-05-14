@@ -63,8 +63,11 @@ export async function middleware(request: NextRequest) {
   if (isStateMutating && isApiRoute && !isWebhook) {
     const origin = request.headers.get('origin');
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appOrigin = new URL(appUrl).origin;
     const allowedOrigins = [
-      new URL(appUrl).origin,
+      appOrigin,
+      // Include both www and non-www variants
+      appOrigin.includes('www.') ? appOrigin.replace('www.', '') : appOrigin.replace('://', '://www.'),
       process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
       'http://localhost:3000',
       'http://localhost:8083',
