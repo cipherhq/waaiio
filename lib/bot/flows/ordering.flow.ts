@@ -1693,13 +1693,13 @@ export const orderingFlow: FlowDefinition = {
       async next() { return 'ask_referral_code'; },
     },
 
-    // ── Ask Referral Code ──
+    // ── Ask Referral Code (skipIf checks referral capability below) ──
     {
       id: 'ask_referral_code',
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: '🎁 Got a referral code from a friend?',
+          body: 'Got a referral code from a friend?',
           buttons: [
             { id: 'enter_code', title: 'Enter Code' },
             { id: 'skip', title: 'Skip' },

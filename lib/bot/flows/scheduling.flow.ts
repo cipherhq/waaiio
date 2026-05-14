@@ -1232,7 +1232,7 @@ export const schedulingFlow: FlowDefinition = {
       },
     },
 
-    // ── Ask Referral Code ──
+    // ── Ask Referral Code (skipIf checks referral capability below) ──
     {
       id: 'ask_referral_code',
       async prompt(): Promise<PromptMessage[]> {
