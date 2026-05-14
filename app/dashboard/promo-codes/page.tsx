@@ -18,29 +18,27 @@ interface PromoCode {
   current_uses: number;
   valid_until: string | null;
   is_active: boolean;
+  applicable_services: string[];
   created_at: string;
 }
 
-const EMPTY_FORM: {
+interface ProductOption {
   id: string;
-  code: string;
-  description: string;
-  discount_type: 'percentage' | 'fixed';
-  discount_value: number;
-  min_order_amount: number;
-  max_uses: number | null;
-  valid_until: string;
-  is_active: boolean;
-} = {
+  name: string;
+}
+
+const EMPTY_FORM = {
   id: '',
   code: '',
   description: '',
-  discount_type: 'percentage',
+  discount_type: 'percentage' as 'percentage' | 'fixed',
   discount_value: 0,
   min_order_amount: 0,
-  max_uses: null,
+  max_uses: null as number | null,
   valid_until: '',
   is_active: true,
+  applies_to: 'all' as 'all' | 'specific',
+  applicable_services: [] as string[],
 };
 
 type ViewMode = 'list' | 'add' | 'edit';
@@ -55,12 +53,19 @@ export default function PromoCodesPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [products, setProducts] = useState<ProductOption[]>([]);
 
   const fetchCodes = useCallback(async () => {
     try {
-      const res = await fetch(`/api/promo-codes?businessId=${business.id}`);
+      const { createClient } = await import('@/lib/supabase/client');
+      const supabase = createClient();
+      const [res, { data: prods }] = await Promise.all([
+        fetch(`/api/promo-codes?businessId=${business.id}`),
+        supabase.from('products').select('id, name').eq('business_id', business.id).is('deleted_at', null).order('name').limit(100),
+      ]);
       const data = await res.json();
       setCodes(data.error ? [] : (data.codes || []) as PromoCode[]);
+      setProducts((prods || []) as ProductOption[]);
     } catch { setCodes([]); }
     finally { setLoading(false); }
   }, [business.id]);
@@ -84,6 +89,8 @@ export default function PromoCodesPage() {
       max_uses: promo.max_uses,
       valid_until: promo.valid_until ? promo.valid_until.split('T')[0] : '',
       is_active: promo.is_active,
+      applies_to: (promo.applicable_services?.length || 0) > 0 ? 'specific' : 'all',
+      applicable_services: promo.applicable_services || [],
     });
     setFormError(null);
     setView('edit');
@@ -105,6 +112,7 @@ export default function PromoCodesPage() {
         maxUses: form.max_uses,
         validUntil: form.valid_until || null,
         is_active: form.is_active,
+        applicableServices: form.applies_to === 'specific' ? form.applicable_services : [],
         ...(view === 'edit' ? { id: form.id } : {}),
       };
       const res = await fetch('/api/promo-codes', {
@@ -221,6 +229,27 @@ export default function PromoCodesPage() {
                 <label className="mb-1 block text-sm font-medium text-gray-700">Valid Until</label>
                 <input type="date" value={form.valid_until} onChange={e => setForm({ ...form, valid_until: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
+            </div>
+
+            {/* Applies to */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Applies To</label>
+              <div className="flex gap-2 mb-3">
+                <button type="button" onClick={() => setForm({ ...form, applies_to: 'all', applicable_services: [] })} className={`rounded-lg px-4 py-2 text-xs font-medium transition ${form.applies_to === 'all' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>All Products</button>
+                <button type="button" onClick={() => setForm({ ...form, applies_to: 'specific' })} className={`rounded-lg px-4 py-2 text-xs font-medium transition ${form.applies_to === 'specific' ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>Specific Products</button>
+              </div>
+              {form.applies_to === 'specific' && (
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-2">
+                  {products.length === 0 ? (
+                    <p className="py-4 text-center text-xs text-gray-400">No products found. Add products first.</p>
+                  ) : products.map(p => (
+                    <label key={p.id} className="flex items-center gap-2 rounded px-2 py-1.5 hover:bg-gray-50 cursor-pointer">
+                      <input type="checkbox" checked={form.applicable_services.includes(p.id)} onChange={() => { const next = form.applicable_services.includes(p.id) ? form.applicable_services.filter(id => id !== p.id) : [...form.applicable_services, p.id]; setForm({ ...form, applicable_services: next }); }} className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand" />
+                      <span className="text-sm text-gray-700">{p.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 

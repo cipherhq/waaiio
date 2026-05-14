@@ -838,6 +838,12 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._promo_entering) return 'enter_promo_code';
+        // Confirm promo applied
+        if (ctx.session.session_data._promo_code) {
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const discount = ctx.session.session_data._promo_discount as number;
+          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data._promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+        }
         return 'select_quantity';
       },
     },
@@ -875,9 +881,16 @@ export const schedulingFlow: FlowDefinition = {
 
         return { valid: true, data: { _promo_code: code, _promo_id: promo.id, _promo_discount: discount } };
       },
-      async next() { return 'select_quantity'; },
+      async next(ctx: FlowContext) {
+        // Confirm promo applied
+        if (ctx.session.session_data._promo_code) {
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const discount = ctx.session.session_data._promo_discount as number;
+          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data._promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+        }
+        return 'select_quantity';
+      },
       async skipIf(ctx: FlowContext) {
-        // Skip if user already entered a code in the previous step
         return !!ctx.session.session_data._promo_code;
       },
     },

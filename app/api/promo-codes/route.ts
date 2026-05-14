@@ -114,6 +114,7 @@ export async function PUT(request: NextRequest) {
     if (updates.maxUses !== undefined) updateData.max_uses = updates.maxUses;
     if (updates.validUntil !== undefined) updateData.valid_until = updates.validUntil;
     if (updates.isActive !== undefined) updateData.is_active = updates.isActive;
+    if (updates.applicableServices !== undefined) updateData.applicable_services = updates.applicableServices;
 
     const { error } = await supabase
       .from('promo_codes')

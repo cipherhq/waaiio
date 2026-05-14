@@ -1400,6 +1400,12 @@ export const orderingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._promo_action === 'enter') return 'enter_promo_code';
+        // Confirm promo applied
+        if (ctx.session.session_data._promo_action === 'applied' && ctx.session.session_data.promo_code) {
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const discount = ctx.session.session_data.discount_amount as number;
+          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+        }
         // Logistics mode: skip delivery zones, collect pickup+dropoff addresses
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         if (meta.logistics_mode) return 'collect_pickup_address';
@@ -1441,6 +1447,12 @@ export const orderingFlow: FlowDefinition = {
         return { valid: true, data: { promo_code_id: promo.id, discount_amount: discount, promo_code: code } };
       },
       async next(ctx: FlowContext) {
+        // Confirm promo applied
+        if (ctx.session.session_data.promo_code) {
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const discount = ctx.session.session_data.discount_amount as number;
+          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+        }
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         if (meta.logistics_mode) return 'collect_pickup_address';
         return 'select_delivery_zone';
