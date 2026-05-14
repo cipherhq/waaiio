@@ -1081,8 +1081,10 @@ export class BotService {
       let businessId: string | null = preResolvedBusinessId || null;
       logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
 
-      // Fallback: lookup by destination phone
+      // Determine the country of the shared number being messaged (for country scoping)
+      let sharedNumberCountry: string | null = null;
       if (!businessId && destinationPhone) {
+        // Check if this is a dedicated number for a specific business
         const { data: biz } = await this.supabase
           .from('businesses')
           .select('id')
@@ -1090,13 +1092,28 @@ export class BotService {
           .single();
         businessId = biz?.id || null;
         logger.debug('[BOT] destPhone lookup:', destinationPhone, '→', businessId);
+
+        // If not a dedicated business number, check if it's a shared channel
+        if (!businessId) {
+          const { data: channel } = await this.supabase
+            .from('whatsapp_channels')
+            .select('country_code, channel_type')
+            .eq('phone_number_id', destinationPhone)
+            .eq('channel_type', 'shared')
+            .eq('is_active', true)
+            .maybeSingle();
+          if (channel) {
+            sharedNumberCountry = channel.country_code;
+            logger.debug('[BOT] Shared number country:', sharedNumberCountry);
+          }
+        }
       }
 
       // Bot code routing + profile lookup in parallel (independent queries)
       let pendingSuggestions: { id: string; name: string; bot_code: string }[] | undefined;
       let isCategoryMatch = false;
       const detectionPromise = !businessId
-        ? this.detectBotCodeWithSuggestions(text, from)
+        ? this.detectBotCodeWithSuggestions(text, from, sharedNumberCountry)
         : Promise.resolve(null);
       const profilePromise = getProfile();
 
@@ -1110,8 +1127,9 @@ export class BotService {
       }
 
       // Returning customer: check past history if no business resolved yet
+      // Scope to the shared number's country to prevent cross-country routing
       if (!businessId) {
-        businessId = await this.findReturningCustomerBusiness(from, profile?.id || null);
+        businessId = await this.findReturningCustomerBusiness(from, profile?.id || null, sharedNumberCountry);
         if (businessId) logger.debug('[BOT] returning customer → business:', businessId);
       }
 
@@ -2039,7 +2057,7 @@ export class BotService {
    * Returns { businessId } for confident matches, or { suggestions } for fuzzy/partial matches.
    * suggestions include `confidence: 'fuzzy'` to trigger confirmation UI.
    */
-  private async detectBotCodeWithSuggestions(text: string, callerPhone?: string): Promise<{
+  private async detectBotCodeWithSuggestions(text: string, callerPhone?: string, countryFilter?: string | null): Promise<{
     businessId: string | null;
     suggestions?: { id: string; name: string; bot_code: string }[];
     isCategory?: boolean;
@@ -2324,8 +2342,8 @@ export class BotService {
    * If they've only interacted with one business, auto-route there.
    * If multiple, return the most recent one (they can always "switch" to another).
    */
-  private async findReturningCustomerBusiness(phone: string, userId: string | null): Promise<string | null> {
-    const result = await this.findReturningCustomerBusinesses(phone, userId);
+  private async findReturningCustomerBusiness(phone: string, userId: string | null, countryFilter?: string | null): Promise<string | null> {
+    const result = await this.findReturningCustomerBusinesses(phone, userId, countryFilter);
     // Auto-route to single business or most recent
     if (result.length > 0) return result[0].id;
     return null;
@@ -2335,7 +2353,7 @@ export class BotService {
    * Returns ALL recent businesses for a returning customer, ordered by recency.
    * Used for quick-pick lists when customer has multiple past businesses.
    */
-  private async findReturningCustomerBusinesses(phone: string, userId: string | null): Promise<{ id: string; name: string; bot_code: string }[]> {
+  private async findReturningCustomerBusinesses(phone: string, userId: string | null, countryFilter?: string | null): Promise<{ id: string; name: string; bot_code: string }[]> {
     // Parallel: past sessions + bookings lookup (independent queries)
     const [{ data: pastSessions }, bookingsResult] = await Promise.all([
       this.supabase
@@ -2378,13 +2396,19 @@ export class BotService {
 
     if (uniqueBusinessIds.length === 0) return [];
 
-    // Fetch business details for all unique IDs
-    const { data: businesses } = await this.supabase
+    // Fetch business details for all unique IDs, filtered by country if on a shared number
+    let bizQuery = this.supabase
       .from('businesses')
       .select('id, name, bot_code')
       .in('id', uniqueBusinessIds)
       .eq('status', 'active')
       .not('bot_code', 'is', null);
+
+    if (countryFilter) {
+      bizQuery = bizQuery.eq('country_code', countryFilter);
+    }
+
+    const { data: businesses } = await bizQuery;
 
     if (!businesses || businesses.length === 0) return [];
 
