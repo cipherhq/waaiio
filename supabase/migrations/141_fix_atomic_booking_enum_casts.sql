@@ -1,4 +1,5 @@
--- Fix: text params must be cast to enum types for flow_type, booking_channel, booking_status
+-- Fix ALL enum casts in book_slot_atomic
+-- Enum columns: flow_type, channel (booking_channel), deposit_status, status (reservation_status)
 CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid,
   p_date date, p_time text, p_party_size int, p_max_capacity int,
@@ -35,8 +36,12 @@ BEGIN
     addons_snapshot, promo_code_id, total_amount, quantity
   ) VALUES (
     p_business_id, p_user_id, p_service_id, p_staff_id, p_staff_name,
-    p_date, p_time::time, p_party_size, p_flow_type::flow_type, 'whatsapp'::booking_channel,
-    p_deposit_amount, p_deposit_status, p_status::booking_status,
+    p_date, p_time::time, p_party_size,
+    p_flow_type::flow_type,
+    'whatsapp'::booking_channel,
+    p_deposit_amount,
+    p_deposit_status::deposit_status,
+    p_status::reservation_status,
     p_guest_name, p_guest_phone, p_guest_email,
     p_special_requests, p_venue_address, p_end_date,
     p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size
