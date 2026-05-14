@@ -17,7 +17,8 @@ function formatResults(options: string[], votes: Record<number, number>, total: 
   return options.map((opt, i) => {
     const count = votes[i] || 0;
     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-    const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+    const filled = Math.min(10, Math.max(0, Math.round(pct / 10)));
+    const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
     return `${opt}\n${bar} ${pct}% (${count})`;
   }).join('\n\n');
 }

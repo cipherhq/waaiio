@@ -92,8 +92,8 @@ const campaignViewStep: FlowStepConfig = {
 
     // Text progress bar
     const barLength = 20;
-    const filled = Math.round((progress / 100) * barLength);
-    const bar = '█'.repeat(filled) + '░'.repeat(barLength - filled);
+    const filled = Math.min(barLength, Math.round((Math.min(progress, 100) / 100) * barLength));
+    const bar = '█'.repeat(filled) + '░'.repeat(Math.max(0, barLength - filled));
 
     const message = [
       `*${sd.campaign_title}*`,

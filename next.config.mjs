@@ -8,7 +8,10 @@ const nextConfig = {
   poweredBy: false,
   experimental: {
     outputFileTracingIncludes: {
-      '/api/**': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhook/whatsapp': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/receipts/generate': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhooks/route': ['./node_modules/pdfkit/js/data/**/*'],
     },
   },
   async headers() {
