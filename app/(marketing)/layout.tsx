@@ -39,7 +39,7 @@ export default function MarketingLayout({
       <Footer />
       {/* Floating WhatsApp contact button */}
       <a
-        href="https://wa.me/2349060009740?text=Hi%2C%20I%20have%20a%20question%20about%20Waaiio"
+        href="https://wa.me/15712746425?text=Hi%2C%20I%20have%20a%20question%20about%20Waaiio"
         target="_blank"
         rel="noopener noreferrer"
         className="fixed bottom-20 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg hover:bg-[#1ebe5d] transition sm:bottom-6"
