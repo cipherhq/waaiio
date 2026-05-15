@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
   }
 
   const ext = file.name.split('.').pop() || 'jpg';
-  const path = `services/${businessId}/${Date.now()}.${ext}`;
+  const path = `${businessId}/services/${Date.now()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadError } = await supabase.storage
