@@ -33,6 +33,7 @@
 12. **Engineered enough.** Not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity). Handle edge cases thoughtfully.
 13. **Explicit over clever.** Simple readable code beats clever one-liners. Name things clearly. Comment the "why" not the "what."
 14. **Present options, don't assume.** For non-trivial decisions, present 2-3 options with tradeoffs and ask which direction to go. Include "do nothing" as an option when relevant.
+15. **Log every change in CHANGELOG.md.** After every commit, add an entry to `CHANGELOG.md` with: date, what changed, which file(s), what it affects, and what could break. This is our institutional memory — it tracks bugs we fixed, decisions we made, and the ripple effects of each change. Before making a fix, CHECK the changelog to see if the area was recently changed and what assumptions were made. A fix in one place must not undo a fix logged elsewhere.
 
 ## Quick Start
 ```bash
