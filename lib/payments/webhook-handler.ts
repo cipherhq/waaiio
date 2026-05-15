@@ -301,21 +301,77 @@ async function sendPaymentConfirmation(
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
     const resolved = await resolver.resolveByBusinessId(businessId);
-    if (resolved) {
-      const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
-      await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+    if (!resolved) return;
 
-      // Deactivate the bot session waiting for "I've Paid" since payment is confirmed
-      await supabase
-        .from('bot_sessions')
-        .update({ is_active: false })
-        .eq('whatsapp_number', customerPhone)
-        .eq('business_id', businessId)
-        .eq('is_active', true);
+    const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+    await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+
+    // Run post-completion: loyalty, receipts, referral, owner notification
+    try {
+      const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
+      const customerName = await getCustomerName(supabase, customerPhone);
+
+      await handlePostCompletion({
+        supabase,
+        businessId,
+        customerPhone: customerPhone,
+        customerName,
+        serviceType: payment.booking_id ? 'booking' : 'order',
+        referenceId: payment.booking_id || undefined,
+        sender: resolved.sender,
+        amountPaid: payment.amount,
+        serviceName,
+        referenceCode,
+      });
+    } catch (pcErr) {
+      logger.error('[WEBHOOK] Post-completion error:', pcErr);
     }
+
+    // Notify business owner
+    try {
+      if (payment.booking_id) {
+        const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
+        const { data: booking } = await supabase.from('bookings')
+          .select('date, time, party_size, guest_name')
+          .eq('id', payment.booking_id).single();
+
+        if (booking) {
+          await notifyOwnerNewBooking({
+            supabase, sender: resolved.sender, businessId, businessName, countryCode,
+            referenceCode, customerName: booking.guest_name || 'Customer',
+            date: booking.date, time: booking.time,
+            quantity: booking.party_size || 1, quantityLabel: 'guest(s)',
+            amount: payment.amount,
+          });
+        }
+      }
+    } catch (notifyErr) {
+      logger.error('[WEBHOOK] Owner notification error:', notifyErr);
+    }
+
+    // Deactivate the bot session waiting for "I've Paid"
+    await supabase
+      .from('bot_sessions')
+      .update({ is_active: false })
+      .eq('whatsapp_number', customerPhone)
+      .eq('business_id', businessId)
+      .eq('is_active', true);
   } catch (err) {
     logger.error('[WEBHOOK] Failed to send confirmation:', err);
   }
+}
+
+async function getCustomerName(supabase: SupabaseClient, phone: string): Promise<string | null> {
+  const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
+  const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
+  const { data } = await supabase
+    .from('profiles')
+    .select('first_name, last_name')
+    .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+    .limit(1)
+    .maybeSingle();
+  if (data?.first_name) return `${data.first_name} ${data.last_name || ''}`.trim();
+  return null;
 }
 
 export async function processPaystackChargeFailed(
