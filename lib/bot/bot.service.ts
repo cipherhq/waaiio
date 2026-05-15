@@ -2611,6 +2611,12 @@ export class BotService {
       return;
     }
 
+    // Back to My Account menu
+    if (input === 'back_to_account') {
+      await this.routeToMyAccountMenu(session, from);
+      return;
+    }
+
     // Unrecognized input — re-show the bookings list
     await this.handleMyBookings(session, from, '');
   }
@@ -2650,7 +2656,7 @@ export class BotService {
       body: 'What would you like to do?',
       buttons: [
         { id: 'back_bookings', title: 'Back to Bookings' },
-        { id: 'get_receipt', title: 'Get Receipt' },
+        { id: 'back_to_account', title: 'My Account' },
       ],
     });
   }
@@ -2699,7 +2705,7 @@ export class BotService {
       body: 'What would you like to do?',
       buttons: [
         { id: 'back_bookings', title: 'Back to Bookings' },
-        { id: 'get_receipt', title: 'Get Receipt' },
+        { id: 'back_to_account', title: 'My Account' },
       ],
     });
   }
@@ -2998,8 +3004,13 @@ export class BotService {
 
     // Handle "track_my_order" postback from ordering flow
     if (input === 'track_my_order') {
-      // Re-show the orders list
       await this.handleMyOrders(session, from, '');
+      return;
+    }
+
+    // Back to My Account menu
+    if (input === 'back_to_account') {
+      await this.routeToMyAccountMenu(session, from);
       return;
     }
 
@@ -3067,6 +3078,7 @@ export class BotService {
       buttons.push({ id: 'refresh_order', title: 'Refresh Status' });
     }
     buttons.push({ id: 'back_orders', title: 'Back to Orders' });
+    buttons.push({ id: 'back_to_account', title: 'My Account' });
 
     await this.messageSender.sendButtons({
       to: from,
@@ -3098,12 +3110,36 @@ export class BotService {
       return;
     }
 
+    if (response === 'back_to_account') {
+      await this.routeToMyAccountMenu(session, from);
+      return;
+    }
+
     if (response === 'refresh_order') {
       await this.handleOrderDetail(session, from, orderId);
       return;
     }
 
     await this.sendText(from, 'Please tap one of the options above.');
+  }
+
+  // ── Route to My Account Menu ──────────────────────────
+  private async routeToMyAccountMenu(session: BotSession, from: string): Promise<void> {
+    await this.supabase.from('bot_sessions')
+      .update({ current_step: 'my_account_menu', session_data: { ...session.session_data, active_capability: 'my_account' } })
+      .eq('id', session.id);
+
+    // Load business for flow context
+    let biz = null;
+    if (session.business_id) {
+      const { data } = await this.supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .eq('id', session.business_id).single();
+      biz = data;
+    }
+
+    await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
   }
 
   // ── Transaction Document Handler ──────────────────────────
