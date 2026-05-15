@@ -7,6 +7,8 @@ import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { generateInvoicePdf, type InvoicePdfData } from '@/lib/pdf/invoice-pdf-generator';
+import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(48);
@@ -101,7 +103,7 @@ export async function POST(request: NextRequest) {
     // Verify ownership
     const { data: biz } = await supabase
       .from('businesses')
-      .select('id, name, owner_id, country_code')
+      .select('id, name, owner_id, country_code, logo_url, subscription_tier')
       .eq('id', invoice.business_id)
       .single();
 
@@ -165,6 +167,74 @@ export async function POST(request: NextRequest) {
           .from('invoices')
           .update({ wa_message_id: waMessageId, wa_delivery_status: 'sent' })
           .eq('id', invoice_id);
+      }
+
+      // Send PDF attachment (non-blocking — don't fail the whole send if PDF fails)
+      try {
+        const resolver = new ChannelResolver(service);
+        const resolved = await resolver.resolveByBusinessId(invoice.business_id);
+        if (resolved) {
+          const cc = (biz.country_code || 'NG') as CountryCode;
+          const tier = (biz.subscription_tier || 'free') as SubscriptionTier;
+          const isPaidTier = PRICING_TIERS[tier]?.whitelabel === true || tier !== 'free';
+
+          const pdfData: InvoicePdfData = {
+            businessName: biz.name,
+            referenceCode: invoice.reference_code,
+            issueDate: invoice.created_at,
+            dueDate: invoice.due_date,
+            customerName: invoice.customer_name,
+            customerPhone: invoice.customer_phone,
+            customerEmail: invoice.customer_email,
+            customerAddress: null,
+            items: (invoice.invoice_items || []).map((item: any) => ({
+              description: item.description,
+              quantity: item.quantity,
+              unitPrice: item.unit_price,
+              amount: item.amount,
+            })),
+            subtotal: invoice.subtotal || invoice.total_amount,
+            taxRate: invoice.tax_rate || 0,
+            taxAmount: invoice.tax_amount || 0,
+            discountType: invoice.discount_type || null,
+            discountValue: invoice.discount_value || 0,
+            discountAmount: invoice.discount_amount || 0,
+            totalAmount: invoice.total_amount,
+            amountPaid: invoice.amount_paid || 0,
+            currency: invoice.currency || 'USD',
+            notes: invoice.notes || null,
+            terms: invoice.terms || null,
+            status: invoice.status,
+            countryCode: cc,
+            whitelabel: isPaidTier,
+            logoUrl: isPaidTier ? (biz.logo_url || null) : null,
+          };
+
+          const pdfBuffer = await generateInvoicePdf(pdfData);
+
+          // Upload PDF to storage and get signed URL
+          const pdfPath = `invoices/${invoice.business_id}/${invoice.reference_code}.pdf`;
+          await service.storage.from('customer-reports').upload(pdfPath, pdfBuffer, {
+            contentType: 'application/pdf',
+            upsert: true,
+          });
+
+          const { data: signedUrl } = await service.storage
+            .from('customer-reports')
+            .createSignedUrl(pdfPath, 3600);
+
+          if (signedUrl?.signedUrl) {
+            const cleanPhone = invoice.customer_phone.replace(/\D/g, '');
+            await resolved.sender.sendDocument({
+              to: cleanPhone,
+              documentUrl: signedUrl.signedUrl,
+              filename: `${invoice.reference_code}.pdf`,
+              caption: `Invoice ${invoice.reference_code} from ${biz.name}`,
+            });
+          }
+        }
+      } catch (pdfErr) {
+        logger.error('[INVOICE] PDF send error (non-fatal):', pdfErr);
       }
     }
 
