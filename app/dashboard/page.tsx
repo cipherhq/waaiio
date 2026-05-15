@@ -64,6 +64,7 @@ export default function DashboardOverview() {
   const [recent, setRecent] = useState<RecentBooking[]>([]);
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [showPayoutBanner, setShowPayoutBanner] = useState(false);
   const [orderRevenue, setOrderRevenue] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
   const [monthlyBookings, setMonthlyBookings] = useState(0);
@@ -195,6 +196,15 @@ export default function DashboardOverview() {
       setMonthlyBookings(monthlyRes.count || 0);
       setLoading(false);
 
+      // Check if business has a payout account — show banner if revenue exists but no payout setup
+      if (revenue > 0) {
+        supabase.from('payout_accounts').select('id', { count: 'exact', head: true })
+          .eq('business_id', business.id).eq('is_active', true)
+          .then(({ count }) => {
+            if ((count || 0) === 0) setShowPayoutBanner(true);
+          });
+      }
+
       // Load recommendations in background
       fetch('/api/dashboard/recommendations')
         .then(r => r.json())
@@ -275,6 +285,22 @@ export default function DashboardOverview() {
 
   return (
     <div>
+      {/* Pending payout banner */}
+      {showPayoutBanner && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">💰</span>
+            <div>
+              <p className="text-sm font-semibold text-amber-900">You have pending earnings!</p>
+              <p className="text-xs text-amber-700">Set up your payout account to start receiving payments from customers.</p>
+            </div>
+          </div>
+          <a href="/dashboard/payouts" className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 transition">
+            Set Up Payouts
+          </a>
+        </div>
+      )}
+
       {/* Header — always first, no banners above */}
       <div className="flex items-start justify-between mb-6">
         <div>

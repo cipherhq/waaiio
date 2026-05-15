@@ -2457,6 +2457,7 @@ export const orderingFlow: FlowDefinition = {
             businessName: ctx.business?.name || 'Shop',
             phone: ctx.from,
             countryCode: cc,
+            gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
           });
 

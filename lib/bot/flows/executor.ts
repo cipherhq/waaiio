@@ -49,6 +49,7 @@ export class FlowExecutor {
       trial_ends_at: string;
       metadata: Record<string, unknown>;
       country_code?: CountryCode;
+      payment_gateway?: string | null;
     } | null,
     mediaUrl?: string,
     mediaType?: string,

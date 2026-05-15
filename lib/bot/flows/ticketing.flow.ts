@@ -391,6 +391,7 @@ export const ticketingFlow: FlowDefinition = {
             businessName: ctx.business?.name || 'Events',
             phone: ctx.from,
             countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+            gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
           });
 

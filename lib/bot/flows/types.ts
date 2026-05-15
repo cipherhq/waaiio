@@ -80,6 +80,8 @@ export interface FlowContext {
     metadata: Record<string, unknown>;
     operating_hours?: Record<string, { open?: string; close?: string; closed?: boolean }>;
     country_code?: CountryCode;
+    /** Preferred payment gateway override stored on the business record */
+    payment_gateway?: string | null;
   } | null;
   /** Current message media URL (image/audio/video/document from WhatsApp) */
   mediaUrl?: string;

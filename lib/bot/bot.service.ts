@@ -52,6 +52,7 @@ interface BusinessRecord {
   metadata: Record<string, unknown>;
   country_code?: CountryCode;
   is_whitelabel?: boolean;
+  payment_gateway?: string | null;
 }
 
 export class BotService {
@@ -584,7 +585,7 @@ export class BotService {
       // Load business for the executor
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
         .eq('id', resolvedBusinessId)
         .single();
 
@@ -630,7 +631,7 @@ export class BotService {
 
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
         .eq('id', resolvedBusinessId)
         .single();
 
@@ -677,7 +678,7 @@ export class BotService {
 
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
         .eq('id', resolvedBusinessId)
         .single();
 
@@ -938,7 +939,7 @@ export class BotService {
       if (resolvedBusinessId) {
         const { data } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
           .eq('id', resolvedBusinessId)
           .single();
         biz = data;
@@ -969,7 +970,7 @@ export class BotService {
         if (newSession) {
           const { data: biz } = await this.supabase
             .from('businesses')
-            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
             .eq('id', session.business_id).single();
 
           await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
@@ -1192,7 +1193,7 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, is_whitelabel')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel')
           .eq('id', businessId)
           .single();
         business = biz as BusinessRecord | null;
@@ -1694,7 +1695,7 @@ export class BotService {
             // Re-execute current step with empty input to show the prompt
             const { data: biz } = await this.supabase
               .from('businesses')
-              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, is_whitelabel')
+              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel')
               .eq('id', session.business_id)
               .single();
             await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
@@ -1724,7 +1725,7 @@ export class BotService {
     if (session.business_id) {
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
         .eq('id', session.business_id)
         .single();
       business = biz as BusinessRecord | null;
@@ -2824,7 +2825,7 @@ export class BotService {
 
       const { data: biz } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
         .eq('id', booking.business_id)
         .single();
 
@@ -3134,7 +3135,7 @@ export class BotService {
     if (session.business_id) {
       const { data } = await this.supabase
         .from('businesses')
-        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
         .eq('id', session.business_id).single();
       biz = data;
     }
@@ -3559,7 +3560,7 @@ export class BotService {
                 session.session_data.active_capability = 'queue';
                 const { data: biz } = await this.supabase
                   .from('businesses')
-                  .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+                  .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
                   .eq('id', session.business_id)
                   .single();
                 await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);
@@ -3598,7 +3599,7 @@ export class BotService {
             session.current_step = capFirstStep;
             const { data: biz } = await this.supabase
               .from('businesses')
-              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code')
+              .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
               .eq('id', session.business_id)
               .single();
             await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz as BusinessRecord | null);

@@ -273,6 +273,7 @@ const donationPaymentStep: FlowStepConfig = {
       businessName: ctx.business?.name || '',
       phone: ctx.from,
       countryCode: country,
+      gatewayOverride: ctx.business?.payment_gateway || null,
       businessId: ctx.business?.id,
       campaignId: sd.campaign_id as string,
       donorName,

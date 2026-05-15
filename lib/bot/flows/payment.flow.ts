@@ -288,6 +288,7 @@ export const paymentFlow: FlowDefinition = {
           businessName: ctx.business?.name || 'Business',
           phone: ctx.from,
           countryCode: cc,
+          gatewayOverride: ctx.business?.payment_gateway || null,
           businessId: ctx.business?.id,
         });
 

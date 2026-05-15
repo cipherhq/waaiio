@@ -1607,6 +1607,7 @@ export const schedulingFlow: FlowDefinition = {
             phone: ctx.from,
             userEmail: (d.email as string) || undefined,
             countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+            gatewayOverride: ctx.business?.payment_gateway || null,
             businessId: ctx.business?.id,
           });
 

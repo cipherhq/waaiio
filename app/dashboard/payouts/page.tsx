@@ -62,9 +62,37 @@ export default function PayoutsPage() {
   const business = useBusiness();
   const country = (business.country_code || 'NG') as CountryCode;
   const countryConfig = getCountry(country);
-  const gateway = countryConfig?.payment_gateway || 'paystack';
-  const isStripe = gateway === 'stripe';
+  const defaultGateway = countryConfig?.payment_gateway || 'paystack';
   const isFaith = business.category === 'church' || business.category === 'mosque';
+
+  // Gateway options per country
+  const gatewayOptions: Record<string, Array<{ id: string; name: string; desc: string; icon: string }>> = {
+    NG: [
+      { id: 'paystack', name: 'Paystack', desc: 'Most popular in Nigeria. Fast settlement.', icon: '🟢' },
+      { id: 'flutterwave', name: 'Flutterwave', desc: 'Supports multiple African countries.', icon: '🟡' },
+    ],
+    GH: [
+      { id: 'paystack', name: 'Paystack', desc: 'Available in Ghana. Fast settlement.', icon: '🟢' },
+      { id: 'flutterwave', name: 'Flutterwave', desc: 'Supports mobile money.', icon: '🟡' },
+    ],
+    US: [
+      { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
+      { id: 'square', name: 'Square', desc: 'Great for retail and restaurants.', icon: '⬛' },
+    ],
+    GB: [
+      { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
+    ],
+    CA: [
+      { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
+    ],
+  };
+
+  const availableGateways = gatewayOptions[country] || gatewayOptions['NG'];
+  const [selectedGateway, setSelectedGateway] = useState<string>(
+    (business as any).payment_gateway || defaultGateway,
+  );
+  const gateway = selectedGateway;
+  const isStripe = gateway === 'stripe';
 
   const [pageView, setPageView] = useState<PageView>('loading');
   const [existing, setExisting] = useState<PayoutAccount | null>(null);
@@ -873,6 +901,43 @@ export default function PayoutsPage() {
             ) : (
               <p className="mt-3 text-sm text-gray-500">No earnings yet. Connect a bank account to start receiving payouts.</p>
             )}
+          </div>
+        )}
+
+        {/* Gateway Selector */}
+        {availableGateways.length > 1 && (
+          <div className="mb-6 rounded-xl border border-gray-200 bg-white p-5">
+            <h3 className="text-sm font-semibold text-gray-900">Payment Provider</h3>
+            <p className="mt-1 text-xs text-gray-400">Choose how you want to accept payments. You can switch anytime.</p>
+            <div className="mt-3 grid gap-2">
+              {availableGateways.map(gw => (
+                <button
+                  key={gw.id}
+                  onClick={async () => {
+                    setSelectedGateway(gw.id);
+                    // Save to business record
+                    const supabase = createClient();
+                    await supabase.from('businesses').update({ payment_gateway: gw.id }).eq('id', business.id);
+                  }}
+                  className={`flex items-center gap-3 rounded-lg border-2 p-3 text-left transition ${
+                    selectedGateway === gw.id
+                      ? 'border-brand bg-brand-50/50'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <span className="text-xl">{gw.icon}</span>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-gray-900">{gw.name}</p>
+                    <p className="text-xs text-gray-500">{gw.desc}</p>
+                  </div>
+                  {selectedGateway === gw.id && (
+                    <svg className="h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
