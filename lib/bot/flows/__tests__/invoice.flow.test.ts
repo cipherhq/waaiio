@@ -23,7 +23,7 @@ describe('Invoice Flow', () => {
   describe('invoice_list step', () => {
     const step = getStep(invoiceFlow, 'invoice_list');
 
-    it('shows no invoices message when none found', async () => {
+    it('sends no invoices message and returns empty when none found', async () => {
       const mockChain = {
         select: vi.fn().mockReturnThis(),
         or: vi.fn().mockReturnThis(),
@@ -35,7 +35,9 @@ describe('Invoice Flow', () => {
       (ctx.supabase.from as any).mockReturnValueOnce(mockChain);
 
       const messages = await step.prompt(ctx);
-      expect((messages[0] as any).text).toContain('no outstanding invoices');
+      expect(messages).toHaveLength(0);
+      expect(ctx.session.session_data._invoice_empty).toBe(true);
+      expect(ctx.sender.sendText).toHaveBeenCalled();
     });
 
     it('shows invoice list with correct formatting', async () => {

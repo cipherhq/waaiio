@@ -25,7 +25,9 @@ export const recurringManageFlow: FlowDefinition = {
           .order('created_at', { ascending: false });
 
         if (!subs || subs.length === 0) {
-          return [{ type: 'text', text: 'You have no active recurring payments. Send *Hi* to start a new payment.' }];
+          ctx.session.session_data._recurring_empty = true;
+          await ctx.sender.sendText({ to: ctx.from, text: 'You have no active recurring payments. Send *Hi* to start a new payment.' });
+          return [];
         }
 
         // Load service names
@@ -56,12 +58,20 @@ export const recurringManageFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // If no subscriptions found, any input routes back
+        if (ctx.session.session_data._recurring_empty) {
+          return { valid: true };
+        }
+
         const subs = ctx.session.session_data._recurring_subs as Array<{ id: string; label: string }>;
         const selected = subs?.find(s => s.id === input);
         if (!selected) return { valid: false, errorMessage: 'Please select a recurring payment from the list.' };
         return { valid: true, data: { _selected_sub_id: selected.id, _selected_sub_label: selected.label } };
       },
-      async next() { return 'select_action'; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._recurring_empty) return 'my_account_menu';
+        return 'select_action';
+      },
     },
 
     // ── Select Action ──

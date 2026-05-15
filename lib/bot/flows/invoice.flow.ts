@@ -16,7 +16,9 @@ const invoiceListStep: FlowStepConfig = {
     const businessId = ctx.session.business_id || ctx.session.session_data.invoice_business_id as string;
 
     if (!businessId) {
-      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! ✅' }];
+      ctx.session.session_data._invoice_empty = true;
+      await ctx.sender.sendText({ to: ctx.from, text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705' });
+      return [];
     }
 
     const { data: invoices } = await ctx.supabase
@@ -29,7 +31,9 @@ const invoiceListStep: FlowStepConfig = {
       .limit(10);
 
     if (!invoices || invoices.length === 0) {
-      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! ✅' }];
+      ctx.session.session_data._invoice_empty = true;
+      await ctx.sender.sendText({ to: ctx.from, text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705' });
+      return [];
     }
 
     // Store invoice list for selection
@@ -58,6 +62,11 @@ const invoiceListStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    // If no invoices were found, any input just routes back
+    if (ctx.session.session_data._invoice_empty) {
+      return { valid: true };
+    }
+
     const list = (ctx.session.session_data._invoice_list as string[]) || [];
     const num = parseInt(input.trim(), 10);
 
@@ -68,7 +77,8 @@ const invoiceListStep: FlowStepConfig = {
     return { valid: true, data: { _selected_invoice_id: list[num - 1] } };
   },
 
-  async next() {
+  async next(ctx: FlowContext) {
+    if (ctx.session.session_data._invoice_empty) return 'my_account_menu';
     return 'invoice_detail';
   },
 };
