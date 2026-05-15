@@ -279,7 +279,12 @@ async function sendPaymentConfirmation(
     }
   }
 
-  if (!customerPhone || !businessId) return;
+  if (!customerPhone || !businessId) {
+    logger.warn('[WEBHOOK] Proactive confirmation skipped — no phone or business', { customerPhone: !!customerPhone, businessId: !!businessId, paymentId: payment.id });
+    return;
+  }
+
+  logger.info(`[WEBHOOK] Sending proactive confirmation to ${customerPhone} for business ${businessId}`);
 
   // Build confirmation message
   const lines = [
