@@ -1486,7 +1486,7 @@ export class BotService {
 
       // Marketplace greeting — no business found from bot code or past history
       // Check if this is a returning user with past businesses for quick-pick
-      const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null);
+      const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
       if (profile) {
         const { data: returningProfile } = await this.supabase
