@@ -896,6 +896,14 @@ export default function InvoicesPage() {
               <p className="text-xs text-amber-700">WhatsApp delivery requires the customer to have messaged your bot first. Use email for new contacts.</p>
             </div>
 
+            {!(business as any).logo_url && (
+              <div className="mt-2 rounded-lg bg-blue-50 border border-blue-200 p-2.5">
+                <p className="text-xs text-blue-700">
+                  Add your logo to invoices! <a href="/dashboard/settings" className="font-semibold underline">Go to Settings</a> to upload your business logo.
+                </p>
+              </div>
+            )}
+
             <div className="mt-4 space-y-2">
               <p className="text-sm font-medium text-gray-700">Send via:</p>
               {(['whatsapp', 'email', 'both'] as const).map(ch => (
