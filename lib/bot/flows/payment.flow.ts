@@ -383,6 +383,18 @@ export const paymentFlow: FlowDefinition = {
           if (verified) {
             const d = ctx.session.session_data;
 
+            // Check if webhook already confirmed this booking (avoid double-processing)
+            const { data: currentBooking } = await ctx.supabase
+              .from('bookings')
+              .select('status, deposit_status')
+              .eq('id', d.booking_id as string)
+              .single();
+
+            if (currentBooking?.deposit_status === 'paid') {
+              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              return { valid: true, data: { _action: 'already_confirmed' } };
+            }
+
             // Upsert customer_profiles so the member appears in the dashboard
             if (ctx.business?.id) {
               const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;

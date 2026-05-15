@@ -900,6 +900,18 @@ export const reservationFlow: FlowDefinition = {
             const d = ctx.session.session_data;
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
+            // Check if webhook already confirmed this reservation (avoid double-processing)
+            const { data: currentReservation } = await ctx.supabase
+              .from('reservations')
+              .select('status, deposit_status')
+              .eq('id', d.reservation_id as string)
+              .single();
+
+            if (currentReservation?.deposit_status === 'paid') {
+              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              return { valid: true, data: { _action: 'already_confirmed' } };
+            }
+
             // Record platform fee after confirmed payment
             if (ctx.business) {
               const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();

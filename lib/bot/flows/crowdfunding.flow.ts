@@ -371,6 +371,18 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         const amount = sd.donation_amount as number;
         const refCode = sd.donation_ref_code as string;
 
+        // Check if webhook already confirmed this donation (avoid double-processing)
+        const { data: currentDonation } = await ctx.supabase
+          .from('campaign_donations')
+          .select('status')
+          .eq('reference_code', refCode)
+          .maybeSingle();
+
+        if (currentDonation?.status === 'success') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+          return { valid: true, data: { _action: 'already_confirmed' } };
+        }
+
         // Webhook already updates campaign_donations status and campaign stats
         // Just send the confirmation message here
         await ctx.sender.sendText({

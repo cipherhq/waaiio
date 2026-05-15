@@ -2647,6 +2647,19 @@ export const orderingFlow: FlowDefinition = {
           const verified = await verifyPayment(ctx.supabase, ref, cc);
           if (verified) {
             const sd = ctx.session.session_data;
+
+            // Check if webhook already confirmed this order (avoid double-processing)
+            const { data: currentOrder } = await ctx.supabase
+              .from('orders')
+              .select('status')
+              .eq('id', sd.order_id as string)
+              .single();
+
+            if (currentOrder?.status === 'confirmed') {
+              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              return { valid: true, data: { _action: 'already_confirmed' } };
+            }
+
             const cart = (sd.cart as CartItem[]) || [];
             const totalAmount = (sd.total_amount as number) || 0;
             const zoneName = sd.delivery_zone_name as string | undefined;

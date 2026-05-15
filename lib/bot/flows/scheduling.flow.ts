@@ -2017,6 +2017,19 @@ export const schedulingFlow: FlowDefinition = {
           if (verified) {
             const d = ctx.session.session_data;
 
+            // Check if webhook already confirmed this booking (avoid double-processing)
+            const { data: currentBooking } = await ctx.supabase
+              .from('bookings')
+              .select('status, deposit_status')
+              .eq('id', d.booking_id as string)
+              .single();
+
+            if (currentBooking?.deposit_status === 'paid') {
+              // Webhook already handled — just confirm to user and exit
+              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              return { valid: true, data: { _action: 'already_confirmed' } };
+            }
+
             // Update booking status to confirmed
             await ctx.supabase
               .from('bookings')
