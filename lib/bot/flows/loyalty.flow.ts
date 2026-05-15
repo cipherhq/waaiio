@@ -21,7 +21,9 @@ const loyaltyMenuStep: FlowStepConfig = {
     // Find loyalty record for this customer + business
     const businessId = ctx.session.business_id || ctx.session.session_data.loyalty_business_id as string;
     if (!businessId) {
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! ⭐" }];
+      ctx.session.session_data._loyalty_empty = true;
+      await ctx.sender.sendText({ to: ctx.from, text: "You don't have any loyalty points yet. Start using our services to earn rewards!" });
+      return [];
     }
 
     const { data: loyalty } = await ctx.supabase
@@ -32,7 +34,9 @@ const loyaltyMenuStep: FlowStepConfig = {
       .maybeSingle();
 
     if (!loyalty) {
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! ⭐" }];
+      ctx.session.session_data._loyalty_empty = true;
+      await ctx.sender.sendText({ to: ctx.from, text: "You don't have any loyalty points yet. Start using our services to earn rewards!" });
+      return [];
     }
 
     // Store loyalty ID for later steps
@@ -68,9 +72,11 @@ const loyaltyMenuStep: FlowStepConfig = {
     ];
   },
 
-  async validate(input: string): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     if (input === 'view_history') return { valid: true, data: { _loyalty_action: 'history' } };
     if (input === 'redeem') return { valid: true, data: { _loyalty_action: 'redeem' } };
+    // If no loyalty record, any input routes back to my account
+    if (ctx.session.session_data._loyalty_empty) return { valid: true, data: { _loyalty_action: 'back' } };
     return { valid: false, errorMessage: 'Please select an option.' };
   },
 
@@ -78,6 +84,7 @@ const loyaltyMenuStep: FlowStepConfig = {
     const action = ctx.session.session_data._loyalty_action;
     if (action === 'history') return 'loyalty_history';
     if (action === 'redeem') return 'loyalty_redeem';
+    if (action === 'back') return 'my_account_menu';
     return null;
   },
 };
