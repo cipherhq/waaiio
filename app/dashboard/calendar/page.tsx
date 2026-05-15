@@ -25,6 +25,12 @@ interface Booking {
   channel: string | null;
   notes: string | null;
   payment_id: string | null;
+  checked_in_at: string | null;
+  check_in_notes: string | null;
+  checked_out_at: string | null;
+  checkout_notes: string | null;
+  no_show_at: string | null;
+  no_show_reason: string | null;
 }
 
 interface Reservation {
@@ -109,18 +115,18 @@ const entryTypeDotColors: Record<EntryType, string> = {
   blocked: 'bg-gray-400',
 };
 
-const nextActions: Record<string, { label: string; next: string; color: string }[]> = {
+const nextActions: Record<string, { label: string; next: string; color: string; needsInput?: 'notes' | 'reason' }[]> = {
   pending: [
     { label: 'Confirm', next: 'confirmed', color: 'text-green-600 hover:bg-green-50' },
     { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
   ],
   confirmed: [
-    { label: 'Start', next: 'in_progress', color: 'text-blue-600 hover:bg-blue-50' },
-    { label: 'No Show', next: 'no_show', color: 'text-orange-600 hover:bg-orange-50' },
+    { label: 'Check In', next: 'check_in', color: 'text-blue-600 hover:bg-blue-50', needsInput: 'notes' },
+    { label: 'No Show', next: 'no_show', color: 'text-orange-600 hover:bg-orange-50', needsInput: 'reason' },
     { label: 'Cancel', next: 'cancelled', color: 'text-red-600 hover:bg-red-50' },
   ],
   in_progress: [
-    { label: 'Complete', next: 'completed', color: 'text-gray-600 hover:bg-gray-50' },
+    { label: 'Check Out', next: 'check_out', color: 'text-green-600 hover:bg-green-50', needsInput: 'notes' },
   ],
 };
 
@@ -189,6 +195,16 @@ export default function CalendarPage() {
   const [staffList, setStaffList] = useState<Array<{id: string; name: string; color: string}>>([]);
   const [staffFilter, setStaffFilter] = useState<string>('all');
 
+  // Check-in/check-out/no-show action modal
+  const [actionModal, setActionModal] = useState<{
+    bookingId: string;
+    action: string;
+    inputType: 'notes' | 'reason' | null;
+    label: string;
+  } | null>(null);
+  const [actionInput, setActionInput] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+
   const hasReservations = hasCapability('reservation');
   const hasEvents = hasCapability('ticketing');
 
@@ -241,7 +257,7 @@ export default function CalendarPage() {
     // Fetch bookings
     const { data: bookingData } = await supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, flow_type, guest_name, guest_phone, guest_email, special_requests, staff_id, staff_name, deposit_amount, deposit_status, total_amount, channel, notes, payment_id')
+      .select('id, reference_code, date, time, party_size, status, flow_type, guest_name, guest_phone, guest_email, special_requests, staff_id, staff_name, deposit_amount, deposit_status, total_amount, channel, notes, payment_id, checked_in_at, check_in_notes, checked_out_at, checkout_notes, no_show_at, no_show_reason')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .gte('date', startStr)
@@ -449,12 +465,38 @@ export default function CalendarPage() {
     return map;
   }, [bookings]);
 
-  async function updateStatus(id: string, newStatus: string) {
+  async function updateStatus(id: string, newStatus: string, notes?: string) {
+    // Use the status API for check-in/check-out/no-show (captures timestamps, notes, notifications)
+    if (['check_in', 'check_out', 'no_show'].includes(newStatus)) {
+      setActionLoading(true);
+      try {
+        const res = await fetch(`/api/bookings/${id}/status`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: newStatus,
+            notes: newStatus !== 'no_show' ? notes : undefined,
+            reason: newStatus === 'no_show' ? notes : undefined,
+            notify_customer: true,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          alert(data.error || 'Failed to update');
+        }
+      } catch { alert('Something went wrong'); }
+      setActionLoading(false);
+      setActionModal(null);
+      setActionInput('');
+      setSelectedEntry(null);
+      fetchData();
+      return;
+    }
+
+    // Direct update for simple status changes (confirm, cancel)
     const supabase = createClient();
     const extra: Record<string, unknown> = {};
     if (newStatus === 'confirmed') extra.confirmed_at = new Date().toISOString();
-    if (newStatus === 'in_progress') extra.seated_at = new Date().toISOString();
-    if (newStatus === 'completed') extra.completed_at = new Date().toISOString();
     if (newStatus === 'cancelled') {
       extra.cancelled_at = new Date().toISOString();
       extra.cancelled_by = 'business';
@@ -741,13 +783,39 @@ export default function CalendarPage() {
                         {nextActions[selectedEntry.status].map((action) => (
                           <button
                             key={action.next}
-                            onClick={() => updateStatus(b.id, action.next)}
+                            onClick={() => {
+                              if (action.needsInput) {
+                                setActionModal({ bookingId: b.id, action: action.next, inputType: action.needsInput, label: action.label });
+                                setActionInput('');
+                              } else {
+                                updateStatus(b.id, action.next);
+                              }
+                            }}
                             className={`rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium ${action.color}`}
                           >
                             {action.label}
                           </button>
                         ))}
                       </div>
+                    </div>
+                  )}
+                  {/* Check-in/Check-out timestamps */}
+                  {b.checked_in_at && (
+                    <div className="rounded-lg bg-blue-50 p-3">
+                      <p className="text-xs font-medium text-blue-700">Checked in: {new Date(b.checked_in_at).toLocaleTimeString()}</p>
+                      {b.check_in_notes && <p className="mt-1 text-xs text-blue-600">{b.check_in_notes}</p>}
+                    </div>
+                  )}
+                  {b.checked_out_at && (
+                    <div className="rounded-lg bg-green-50 p-3">
+                      <p className="text-xs font-medium text-green-700">Checked out: {new Date(b.checked_out_at).toLocaleTimeString()}</p>
+                      {b.checkout_notes && <p className="mt-1 text-xs text-green-600">{b.checkout_notes}</p>}
+                    </div>
+                  )}
+                  {b.no_show_at && (
+                    <div className="rounded-lg bg-red-50 p-3">
+                      <p className="text-xs font-medium text-red-700">No-show: {new Date(b.no_show_at).toLocaleTimeString()}</p>
+                      {b.no_show_reason && <p className="mt-1 text-xs text-red-600">Reason: {b.no_show_reason}</p>}
                     </div>
                   )}
                 </>
@@ -1256,6 +1324,42 @@ export default function CalendarPage() {
 
       {/* Detail Modal */}
       {renderDetailModal()}
+
+      {/* Action Input Modal (check-in notes, no-show reason) */}
+      {actionModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setActionModal(null)}>
+          <div className="fixed inset-0 bg-black/40" />
+          <div className="relative z-10 w-full max-w-sm rounded-xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900">{actionModal.label}</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              {actionModal.inputType === 'reason' ? 'Why did the customer miss their appointment?' : 'Any notes for this visit? (optional)'}
+            </p>
+            <textarea
+              value={actionInput}
+              onChange={e => setActionInput(e.target.value)}
+              rows={3}
+              placeholder={actionModal.inputType === 'reason' ? 'e.g. No answer, cancelled last minute...' : 'e.g. Arrived 5 min early, brought a friend...'}
+              className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+              autoFocus
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setActionModal(null)}
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => updateStatus(actionModal.bookingId, actionModal.action, actionInput)}
+                disabled={actionLoading || (actionModal.inputType === 'reason' && !actionInput.trim())}
+                className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50"
+              >
+                {actionLoading ? 'Processing...' : actionModal.label}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
