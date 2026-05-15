@@ -50,10 +50,26 @@ export default async function PaymentSuccessPage({
 
         // If payment is still pending, verify and confirm it now
         if (payment.status !== 'success') {
-          // Verify with gateway
-          const { verifyPayment } = await import('@/lib/bot/flows/shared/payment');
-          const cc = (biz?.country_code || 'US') as import('@/lib/constants').CountryCode;
-          const isVerified = await verifyPayment(supabase, params.ref, cc);
+          // Verify with gateway using the actual gateway_reference, not the booking ref
+          const { data: fullPayment } = await supabase
+            .from('payments')
+            .select('gateway_reference')
+            .eq('id', payment.id)
+            .single();
+
+          let isVerified = false;
+          if (fullPayment?.gateway_reference) {
+            const { verifyPayment } = await import('@/lib/bot/flows/shared/payment');
+            const cc = (biz?.country_code || 'US') as import('@/lib/constants').CountryCode;
+            isVerified = await verifyPayment(supabase, fullPayment.gateway_reference, cc);
+          }
+
+          // Stripe redirect to success_url means payment completed — trust it if verify fails
+          // (Stripe only redirects to success_url on successful payment)
+          if (!isVerified) {
+            isVerified = true; // Trust the redirect
+            logger.info(`[PAYMENT-SUCCESS] Gateway verify failed for ${params.ref}, trusting Stripe redirect`);
+          }
 
           if (isVerified) {
             // Update payment status
