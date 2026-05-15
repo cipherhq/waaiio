@@ -5,6 +5,47 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-15
+
+### Payment Gateway
+- **Gateway selector on payouts page** — NG/GH: Paystack or Flutterwave. US: Stripe or Square. UK/CA: Stripe. Saved to `businesses.payment_gateway`. Can switch anytime. File: `app/dashboard/payouts/page.tsx`
+- **gatewayOverride in ALL bot flows** — scheduling, ordering, ticketing, reservation, payment, crowdfunding now pass `ctx.business?.payment_gateway` to initializePayment. Files: all 6 flow files + `types.ts` + `executor.ts` + `bot.service.ts`
+- **Pending payout banner** — dashboard overview shows amber banner when business has revenue but no payout account. File: `app/dashboard/page.tsx`
+
+### Check-in / Check-out / No-show
+- **Migration 142** — added `checked_in_at`, `checked_in_by`, `check_in_notes`, `checked_out_at`, `checkout_notes`, `no_show_at`, `no_show_reason` to bookings. `no_show_count` on profiles.
+- **API route** — `PATCH /api/bookings/[id]/status` handles check_in, check_out, no_show with notes/reason capture and WhatsApp notifications. File: `app/api/bookings/[id]/status/route.ts`
+- **Dashboard calendar** — "Start" → "Check In" with notes modal. "Complete" → "Check Out" with notes modal. "No Show" with required reason modal. Shows timestamps and notes in booking detail. File: `app/dashboard/calendar/page.tsx`
+- **Post-completion on check-out** — loyalty, feedback, referral triggered when staff checks out a customer.
+- **No-show tracking** — increments `profiles.no_show_count` for repeat offender detection.
+
+### Payment Dedup
+- **Webhook + "I've Paid" dedup** — all 6 payment flows check if payment already confirmed before processing. Prevents double loyalty points, double receipts, double notifications. Files: scheduling, ticketing, ordering, reservation, payment, crowdfunding flows.
+- **Proactive webhook confirmation** — now runs full post-completion (loyalty, receipts, owner notification), not just basic text message. File: `webhook-handler.ts`
+
+### Cross-country Routing
+- **Quick-pick business list** — now applies country filter on shared numbers. Canadian number only shows Canadian businesses in the quick-pick. File: `bot.service.ts`
+
+### Bot Improvements
+- **Loyalty points notification** — includes business name ("earned at *FacesByKoph*"). File: `post-completion.ts`
+- **Event image ordering** — image sent with await before buttons, guaranteed to arrive first. File: `ticketing.flow.ts`
+- **Image upload path** — changed from `services/{bizId}/` to `{bizId}/services/` to match RLS policy. File: `app/api/services/upload-image/route.ts`
+- **Loyalty/referral removed from defaults** — opt-in only for new businesses. File: `lib/capabilities/types.ts`
+- **Special requests business-driven** — removed hardcoded category defaults. File: `scheduling.flow.ts`
+- **Empty state routing** — loyalty, invoices, subscriptions route back to My Account menu. Files: `loyalty.flow.ts`, `invoice.flow.ts`, `recurring-manage.flow.ts`
+- **My Account button** — added to ticket/reservation/order detail views. File: `bot.service.ts`
+
+### Dashboard
+- **Invoice logo hint** — send modal shows "Add your logo!" with link to Settings when no logo uploaded. File: `app/dashboard/invoices/page.tsx`
+- **Promo code product targeting** — All Products vs Specific Products UI. File: `app/dashboard/promo-codes/page.tsx`
+
+### Infrastructure
+- **Canadian shared channel** — +1 639-739-1803 registered in DB
+- **Booking RPC fixes** — migrations 139-141: time cast, FOR UPDATE split, all enum casts
+- **CSRF www/non-www** — middleware allows both variants. File: `middleware.ts`
+
+---
+
 ## 2026-05-14
 
 ### Bot Flows
