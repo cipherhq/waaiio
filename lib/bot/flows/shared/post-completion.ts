@@ -195,7 +195,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
       // Notify customer about earned points
       const pointsUntilReward = Math.max(0, rewardThreshold - newBalance);
-      let loyaltyMsg = `+${earnedPoints} points earned! Your balance: *${newBalance}* points.`;
+      let loyaltyMsg = `+${earnedPoints} points earned at *${bizName}*! Your balance: *${newBalance}* points.`;
       if (pointsUntilReward === 0) {
         loyaltyMsg += `\n\nYou have enough points to redeem *${rewardDesc}*! Type *my points* to claim it.`;
       } else {
