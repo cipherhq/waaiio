@@ -1636,12 +1636,12 @@ export const schedulingFlow: FlowDefinition = {
                   `Pay here 👇`,
                   paymentResult.url,
                   '',
-                  `⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+                  `⚠️ Your confirmation will arrive automatically after payment.`,
                 ].join('\n'),
               },
               {
                 type: 'buttons',
-                body: "After paying, return here and tap *I've Paid* to confirm:",
+                body: "Paid already? Tap below to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'go_back', title: 'Cancel' },
@@ -1988,7 +1988,7 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Please complete your deposit payment using the link sent above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm, or *Cancel* to cancel.",
+          body: "Your confirmation will arrive automatically after payment.\n\nPaid already? Tap below to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },

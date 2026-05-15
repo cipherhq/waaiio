@@ -288,12 +288,12 @@ async function sendPaymentConfirmation(
 
   // Build confirmation message
   const lines = [
-    `*Payment Confirmed!*`,
+    `✅ *Payment Confirmed!*`,
     '',
-    `${businessName}`,
-    `${serviceName}`,
-    `Amount: ${formatCurrency(payment.amount, countryCode)}`,
-    `Ref: *${referenceCode}*`,
+    `🏢 ${businessName}`,
+    `📋 ${serviceName}`,
+    `💰 Amount: ${formatCurrency(payment.amount, countryCode)}`,
+    `🔑 Ref: *${referenceCode}*`,
     '',
     'Thank you for your payment!',
     '',

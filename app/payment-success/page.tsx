@@ -175,13 +175,16 @@ async function triggerWhatsAppConfirmation(
   if (!customerPhone || !businessId) return;
 
   const lines = [
-    `*Payment Confirmed!*`, '',
-    businessName, serviceName,
-    `Amount: ${formatCurrency(payment.amount, countryCode)}`,
-    referenceCode ? `Ref: *${referenceCode}*` : '',
+    `✅ *Payment Confirmed!*`, '',
+    `🏢 ${businessName}`,
+    `📋 ${serviceName}`,
+    `💰 Amount: ${formatCurrency(payment.amount, countryCode)}`,
+    referenceCode ? `🔑 Ref: *${referenceCode}*` : '',
     '', 'Thank you for your payment!',
-    '', 'Type *receipt* to get your receipt',
-    'Type *my bookings* to view your bookings',
+    '',
+    '💡 *What you can do:*',
+    '• Type *receipt* to get your receipt',
+    '• Type *my bookings* to view your bookings',
   ].filter(Boolean);
 
   const { ChannelResolver } = await import('@/lib/channels/channel-resolver');

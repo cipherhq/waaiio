@@ -547,12 +547,12 @@ async function sendStripePaymentConfirmation(
   logger.info(`[STRIPE WEBHOOK] Sending proactive confirmation to ${customerPhone} for ${businessName}`);
 
   const lines = [
-    `*Payment Confirmed!*`,
+    `✅ *Payment Confirmed!*`,
     '',
-    `${businessName}`,
-    `${serviceName}`,
-    `Amount: ${formatCurrency(payment.amount, countryCode)}`,
-    referenceCode ? `Ref: *${referenceCode}*` : '',
+    `🏢 ${businessName}`,
+    `📋 ${serviceName}`,
+    `💰 Amount: ${formatCurrency(payment.amount, countryCode)}`,
+    referenceCode ? `🔑 Ref: *${referenceCode}*` : '',
     '',
     'Thank you for your payment!',
     '',

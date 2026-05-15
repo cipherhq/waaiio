@@ -305,12 +305,12 @@ const donationPaymentStep: FlowStepConfig = {
           `Pay here 👇`,
           result.url,
           '',
-          `⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+          `⚠️ Your confirmation will arrive automatically after payment.`,
         ].join('\n'),
       },
       {
         type: 'buttons',
-        body: "After paying, return here and tap *I've Paid* to confirm:",
+        body: "Paid already? Tap below to confirm:",
         buttons: [
           { id: 'i_paid', title: "I've Paid" },
           { id: 'go_back', title: 'Cancel' },
@@ -334,7 +334,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
   async prompt(): Promise<PromptMessage[]> {
     return [{
       type: 'buttons',
-      body: "Complete your donation using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
+      body: "Complete your donation using the link above.\n\nPaid already? Tap below to confirm:",
       buttons: [
         { id: 'i_paid', title: "I've Paid" },
         { id: 'go_back', title: 'Cancel' },

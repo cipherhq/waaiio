@@ -313,12 +313,12 @@ export const paymentFlow: FlowDefinition = {
                 `Pay here 👇`,
                 paymentResult.url,
                 '',
-                `⚠️ After paying, *return to WhatsApp* and tap *I've Paid* to confirm.`,
+                `⚠️ Your confirmation will arrive automatically after payment.`,
               ].join('\n'),
             },
             {
               type: 'buttons',
-              body: "After paying, return here and tap *I've Paid* to confirm:",
+              body: "Paid already? Tap below to confirm:",
               buttons: [
                 { id: 'i_paid', title: "I've Paid" },
                 { id: 'go_back', title: 'Cancel' },
@@ -352,7 +352,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete your payment using the link above.\n\nAfter paying, *return to WhatsApp* and tap *I've Paid* to confirm:",
+          body: "Complete your payment using the link above.\n\nPaid already? Tap below to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },
