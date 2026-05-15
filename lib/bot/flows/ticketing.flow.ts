@@ -149,8 +149,6 @@ export const ticketingFlow: FlowDefinition = {
         const maxTickets = eventMax || bizMax;
         const maxShow = Math.min(available, maxTickets);
 
-        const messages: PromptMessage[] = [];
-
         const eventDetails = [
           `*${d.event_name}*`,
           `${new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' })}`,
@@ -159,17 +157,19 @@ export const ticketingFlow: FlowDefinition = {
           `${available} tickets available`,
         ].filter(Boolean).join('\n');
 
-        // Show event flyer with details as caption, or details as text if no image
+        // Send image first (directly, not via prompt) so it arrives before buttons
         if (d.event_image_url) {
-          messages.push({
-            type: 'image' as const,
+          await ctx.sender.sendImage({
+            to: ctx.from,
             imageUrl: d.event_image_url as string,
             caption: eventDetails,
           });
         } else {
-          messages.push({ type: 'text', text: eventDetails });
+          await ctx.sender.sendText({ to: ctx.from, text: eventDetails });
         }
 
+        // Return only the buttons as prompt — image already sent above
+        const messages: PromptMessage[] = [];
         messages.push(
           {
             type: 'buttons',
