@@ -151,26 +151,26 @@ export const ticketingFlow: FlowDefinition = {
 
         const messages: PromptMessage[] = [];
 
-        // Show event flyer if available
+        const eventDetails = [
+          `*${d.event_name}*`,
+          `${new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' })}`,
+          d.event_venue ? `${d.event_venue}` : '',
+          `${formatCurrency(d.event_price as number, (ctx.business?.country_code || 'NG') as CountryCode)} per ticket`,
+          `${available} tickets available`,
+        ].filter(Boolean).join('\n');
+
+        // Show event flyer with details as caption, or details as text if no image
         if (d.event_image_url) {
           messages.push({
             type: 'image' as const,
             imageUrl: d.event_image_url as string,
-            caption: d.event_name as string,
+            caption: eventDetails,
           });
+        } else {
+          messages.push({ type: 'text', text: eventDetails });
         }
 
         messages.push(
-          {
-            type: 'text',
-            text: [
-              `🎪 *${d.event_name}*`,
-              `📅 ${new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' })}`,
-              d.event_venue ? `📍 ${d.event_venue}` : '',
-              `🎟️ ${formatCurrency(d.event_price as number, (ctx.business?.country_code || 'NG') as CountryCode)} per ticket`,
-              `✅ ${available} tickets available`,
-            ].filter(Boolean).join('\n'),
-          },
           {
             type: 'buttons',
             body: `How many tickets? (max ${maxShow})`,
