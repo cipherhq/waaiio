@@ -543,7 +543,21 @@ export const ticketingFlow: FlowDefinition = {
               .single();
 
             if (currentBooking?.deposit_status === 'paid') {
-              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              const dedupDateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
+                weekday: 'long', day: 'numeric', month: 'long',
+              });
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: getTicketConfirmationMessage({
+                  eventName: d.event_name as string,
+                  dateLabel: dedupDateLabel,
+                  venue: (d.event_venue as string) || '',
+                  quantity: d.ticket_quantity as number,
+                  totalAmount: d.total_amount as number,
+                  referenceCode: d.reference_code as string,
+                  countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+                }),
+              });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 

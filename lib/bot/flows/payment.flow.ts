@@ -391,7 +391,22 @@ export const paymentFlow: FlowDefinition = {
               .single();
 
             if (currentBooking?.deposit_status === 'paid') {
-              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              const labels = getCategoryLabels(ctx.business?.category || 'church');
+              const isGivingFlow = d.active_capability === 'giving';
+              const dedupTips = isGivingFlow
+                ? `\n\n💡 *What you can do:*\n• Type *my giving* to see your giving history\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`
+                : `\n\n💡 *What you can do:*\n• Type *my bookings* to view your bookings\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`;
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: getPaymentReceiptMessage({
+                  emoji: labels.confirmationEmoji,
+                  businessName: ctx.business?.name || 'Business',
+                  categoryName: d.service_name as string,
+                  amount: d.amount as number,
+                  referenceCode: d.reference_code as string,
+                  countryCode: cc,
+                }) + dedupTips,
+              });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 

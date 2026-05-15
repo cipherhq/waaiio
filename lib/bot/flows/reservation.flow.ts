@@ -908,7 +908,33 @@ export const reservationFlow: FlowDefinition = {
               .single();
 
             if (currentReservation?.deposit_status === 'paid') {
-              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              const dedupCheckInLabel = new Date((d.check_in as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
+                weekday: 'short', day: 'numeric', month: 'short',
+              });
+              const dedupCheckOutLabel = new Date((d.check_out as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
+                weekday: 'short', day: 'numeric', month: 'short',
+              });
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: [
+                  `✅ *Payment Confirmed!*`,
+                  '',
+                  `Your reservation at *${ctx.business?.name}* is fully confirmed.`,
+                  `🏠 ${d.service_name}`,
+                  `📅 ${dedupCheckInLabel} → ${dedupCheckOutLabel}`,
+                  `🌙 ${d.nights} nights`,
+                  `👥 ${d.guests} guest${(d.guests as number) > 1 ? 's' : ''}`,
+                  `💰 ${formatCurrency(d.payable_amount as number, cc)}`,
+                  `🔑 Ref: *${d.reference_code as string}*`,
+                  '',
+                  'See you soon!',
+                  '',
+                  '💡 *What you can do:*',
+                  '• Type *my bookings* to view your reservation',
+                  '• Type *receipt* to get your receipt',
+                  '• Type *Hi* to make another booking',
+                ].join('\n'),
+              });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 

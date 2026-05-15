@@ -2025,8 +2025,26 @@ export const schedulingFlow: FlowDefinition = {
               .single();
 
             if (currentBooking?.deposit_status === 'paid') {
-              // Webhook already handled — just confirm to user and exit
-              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              // Webhook already handled DB + post-completion — just show full confirmation to user
+              const labels2 = getCategoryLabels(ctx.business?.category || 'restaurant');
+              const dateLabel2 = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' });
+              const paidCC2 = (ctx.business?.country_code || 'NG') as CountryCode;
+              const confirmLines2 = [
+                `*Payment Confirmed!*`,
+                '',
+                `Your ${labels2.entityName} at *${ctx.business?.name}* is fully confirmed.`,
+                d.service_name ? `${d.service_name as string}` : null,
+                `${dateLabel2} at ${d.time as string}`,
+                `${d.party_size as number} ${labels2.quantityLabel}`,
+                (d.deposit_amount as number) > 0 ? `${formatCurrency(d.deposit_amount as number, paidCC2)}` : null,
+                `Ref: *${d.reference_code as string}*`,
+                '',
+                'See you there!',
+                '',
+                'Type *my bookings* to view your appointments',
+                'Type *receipt* to get your payment receipt',
+              ].filter(Boolean);
+              await ctx.sender.sendText({ to: ctx.from, text: confirmLines2.join('\n') });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 

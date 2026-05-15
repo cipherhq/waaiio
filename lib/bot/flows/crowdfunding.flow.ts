@@ -379,7 +379,23 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           .maybeSingle();
 
         if (currentDonation?.status === 'success') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: [
+              `✅ *Donation Confirmed!*`,
+              '',
+              `🙏 Thank you for supporting *${sd.campaign_title}*`,
+              `💰 Amount: ${formatCurrency(amount, cc)}`,
+              `🔑 Ref: *${refCode}*`,
+              '',
+              `Your generosity makes a difference! ❤️`,
+              '',
+              '💡 *What you can do:*',
+              '• Type *my giving* to see your giving history',
+              '• Type *receipt* to get your donation receipt',
+              '• Type *Hi* to give again',
+            ].join('\n'),
+          });
           return { valid: true, data: { _action: 'already_confirmed' } };
         }
 

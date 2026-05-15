@@ -2656,7 +2656,29 @@ export const orderingFlow: FlowDefinition = {
               .single();
 
             if (currentOrder?.status === 'confirmed') {
-              await ctx.sender.sendText({ to: ctx.from, text: 'Your payment has been confirmed! Thank you.' });
+              const dedupCart = (sd.cart as CartItem[]) || [];
+              const dedupTotal = (sd.total_amount as number) || 0;
+              const dedupZoneName = sd.delivery_zone_name as string | undefined;
+              const dedupZonePrice = (sd.delivery_zone_price as number) || 0;
+              const dedupAddonsTotal = (sd._calc_addons_total as number) || 0;
+              const dedupVolumeDiscount = (sd._calc_volume_discount as number) || 0;
+              const dedupShipping = (sd.shipping_cost as number) || 0;
+              await ctx.sender.sendText({
+                to: ctx.from,
+                text: `✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
+                  businessName: ctx.business?.name || 'Shop',
+                  items: dedupCart,
+                  totalAmount: dedupTotal,
+                  referenceCode: sd.reference_code as string,
+                  deliveryAddress: sd.delivery_address as string | undefined,
+                  shippingCost: dedupZoneName ? undefined : (dedupShipping || undefined),
+                  deliveryZoneName: dedupZoneName,
+                  deliveryZonePrice: dedupZoneName ? dedupZonePrice : undefined,
+                  addonsTotal: dedupAddonsTotal || undefined,
+                  volumeDiscountAmount: dedupVolumeDiscount || undefined,
+                  countryCode: cc,
+                }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`,
+              });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 
