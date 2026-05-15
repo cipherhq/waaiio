@@ -21,13 +21,28 @@ export default async function PaymentSuccessPage({
   if (params.ref) {
     try {
       const supabase = createServiceClient();
-      const { data: payment } = await supabase
+      // ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
+      let payment = (await supabase
         .from('payments')
         .select('id, status, amount, booking_id, invoice_id, campaign_id, business_id, businesses(phone, name, country_code)')
         .eq('gateway_reference', params.ref)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
+
+      // Fallback: match by booking reference_code
+      if (!payment) {
+        const { data: booking } = await supabase
+          .from('bookings')
+          .select('id')
+          .eq('reference_code', params.ref)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (booking) {
+          payment = (await supabase
+            .from('payments')
+            .select('id, status, amount, booking_id, invoice_id, campaign_id, business_id, businesses(phone, name, country_code)')
+            .eq('booking_id', booking.id)
+            .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
+        }
+      }
 
       if (payment) {
         const biz = payment.businesses as unknown as { phone: string; name: string; country_code?: string } | null;
