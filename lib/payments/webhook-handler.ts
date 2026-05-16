@@ -354,6 +354,54 @@ async function sendPaymentConfirmation(
       logger.error('[WEBHOOK] Owner notification error:', notifyErr);
     }
 
+    // Send tickets (QR + PDF + email) for ticketing bookings
+    try {
+      if (payment.booking_id) {
+        const { data: ticketBooking } = await supabase
+          .from('bookings')
+          .select('flow_type, date, time, party_size, guest_name, guest_phone, notes')
+          .eq('id', payment.booking_id)
+          .single();
+
+        if (ticketBooking?.flow_type === 'ticketing') {
+          // Get event details
+          const { data: event } = await supabase
+            .from('events')
+            .select('id, name, date, time, venue')
+            .eq('business_id', businessId)
+            .eq('date', ticketBooking.date)
+            .limit(1)
+            .maybeSingle();
+
+          const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
+          const dateLabel = new Date(ticketBooking.date + 'T00:00').toLocaleDateString('en-US', {
+            weekday: 'long', day: 'numeric', month: 'long',
+          });
+
+          const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
+          await sendTicketsAfterPurchase({
+            supabase,
+            sender: resolved.sender,
+            businessId,
+            bookingId: payment.booking_id,
+            eventId: event?.id || '',
+            eventName,
+            eventDate: dateLabel,
+            eventTime: event?.time || ticketBooking.time || undefined,
+            venue: event?.venue || '',
+            guestName: ticketBooking.guest_name || 'Guest',
+            guestPhone: ticketBooking.guest_phone || customerPhone,
+            referenceCode,
+            quantity: ticketBooking.party_size || 1,
+            amount: payment.amount,
+            countryCode,
+          });
+        }
+      }
+    } catch (ticketErr) {
+      logger.error('[WEBHOOK] Ticket send error:', ticketErr);
+    }
+
     // Deactivate the bot session waiting for "I've Paid"
     await supabase
       .from('bot_sessions')

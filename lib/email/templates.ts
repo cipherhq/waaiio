@@ -509,3 +509,41 @@ export function invoiceEmail(details: {
     `),
   };
 }
+
+export function ticketConfirmationEmail(details: {
+  firstName: string;
+  businessName: string;
+  eventName: string;
+  eventDate: string;
+  eventTime?: string;
+  venue: string;
+  quantity: number;
+  referenceCode: string;
+  formattedAmount: string;
+  ticketCodes: string[];
+}) {
+  const { firstName, businessName, eventName, eventDate, eventTime, venue, quantity, referenceCode, formattedAmount, ticketCodes } = details;
+  const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
+  const ticketList = ticketCodes.map((code, i) => kv(`Ticket ${i + 1}`, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(code)}</code>`)).join('');
+
+  return {
+    subject: `Your ${ticketLabel} for ${eventName} 🎫`,
+    html: wrap(`
+      ${h(`Ticket Confirmed! 🎫`)}
+      ${p(`Hi ${esc(firstName)}, your ${quantity} ${ticketLabel} for <strong>${esc(eventName)}</strong> ${quantity === 1 ? 'is' : 'are'} confirmed!`)}
+      ${table(
+        kv('Event', `<strong>${esc(eventName)}</strong>`) +
+        kv('Organizer', esc(businessName)) +
+        kv('Date', esc(eventDate)) +
+        (eventTime ? kv('Time', esc(eventTime)) : '') +
+        (venue ? kv('Venue', esc(venue)) : '') +
+        kv('Tickets', String(quantity)) +
+        kv('Amount', esc(formattedAmount)) +
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
+      )}
+      ${ticketList ? `${p('<strong>Your Ticket Codes:</strong>')}${table(ticketList)}` : ''}
+      ${p('Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.')}
+      ${p('Enjoy the event! 🎉')}
+    `),
+  };
+}

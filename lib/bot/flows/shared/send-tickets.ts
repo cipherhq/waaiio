@@ -3,6 +3,9 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { generateTicketsPdf } from '@/lib/pdf/ticket-generator';
 import QRCode from 'qrcode';
 import { logger } from '@/lib/logger';
+import { sendEmail } from '@/lib/email/client';
+import { ticketConfirmationEmail } from '@/lib/email/templates';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export interface SendTicketsOptions {
   supabase: SupabaseClient;
@@ -16,8 +19,11 @@ export interface SendTicketsOptions {
   venue: string;
   guestName: string;
   guestPhone: string;
+  guestEmail?: string;
   referenceCode: string;
   quantity: number;
+  amount?: number;
+  countryCode?: CountryCode;
 }
 
 /** Generate a short unique ticket code like "TK-A3F8X2" */
@@ -160,4 +166,49 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   }
 
   logger.info('[TICKETS] PDF + QR codes sent to', phone, '| booking:', bookingId);
+
+  // 8. Send email confirmation if we have an email address
+  let email = opts.guestEmail;
+  if (!email) {
+    // Try to find email from profile
+    const phoneP = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
+    const phoneN = guestPhone.startsWith('+') ? guestPhone.slice(1) : guestPhone;
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('email')
+      .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+      .limit(1)
+      .maybeSingle();
+    email = profile?.email || undefined;
+  }
+
+  if (email) {
+    try {
+      const ticketCodes = tickets.map(t => t.ticketCode);
+      const firstName = guestName.split(' ')[0] || 'there';
+      const { data: biz } = await supabase
+        .from('businesses')
+        .select('name')
+        .eq('id', businessId)
+        .single();
+
+      const emailContent = ticketConfirmationEmail({
+        firstName,
+        businessName: biz?.name || 'Event',
+        eventName,
+        eventDate,
+        eventTime,
+        venue,
+        quantity,
+        referenceCode,
+        formattedAmount: opts.amount ? formatCurrency(opts.amount, opts.countryCode || 'US') : 'Paid',
+        ticketCodes,
+      });
+
+      await sendEmail({ to: email, ...emailContent });
+      logger.info('[TICKETS] Email sent to', email, '| booking:', bookingId);
+    } catch (emailErr) {
+      logger.error('[TICKETS] Email send error:', emailErr);
+    }
+  }
 }
