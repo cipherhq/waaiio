@@ -66,7 +66,7 @@ export interface RefundResult {
 }
 
 export interface PaymentGateway {
-  name: 'paystack' | 'stripe' | 'flutterwave' | 'square';
+  name: 'paystack' | 'stripe' | 'flutterwave' | 'square' | 'paypal';
   initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null>;
   verifyPayment(supabase: SupabaseClient, reference: string, byoSecretKey?: string): Promise<boolean>;
   refundPayment(opts: RefundPaymentOpts): Promise<RefundResult>;

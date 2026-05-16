@@ -5,6 +5,29 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-16
+
+### Payment Webhooks — Proactive Confirmation (All 5 Gateways)
+- **Flutterwave webhook** — added proactive WhatsApp confirmation + post-completion + session deactivation + platform fee recording + invoice/campaign handling. Was only updating payment/booking status. File: `app/api/webhooks/flutterwave/route.ts`
+- **Square webhook** — added proactive WhatsApp confirmation + post-completion + session deactivation. Was only updating payment/booking/platform fees. File: `app/api/payments/square-webhook/route.ts`
+- **PayPal integration — NEW** — full gateway from scratch:
+  - Gateway class: `lib/payments/paypal.ts` — initializePayment (Orders API v2 + payer-action redirect), verifyPayment (with auto-capture for APPROVED orders), refundPayment
+  - Webhook handler: `app/api/payments/paypal-webhook/route.ts` — CHECKOUT.ORDER.APPROVED (auto-capture), PAYMENT.CAPTURE.COMPLETED (success), PAYMENT.CAPTURE.DENIED (failure), with proactive WhatsApp confirmation + post-completion
+  - Signature verification via PayPal's `/v1/notifications/verify-webhook-signature` endpoint
+  - Split payments via `payment_instruction.platform_fees` on purchase units
+  - Added to factory.ts, types.ts, constants.ts (`PaymentGatewayName`)
+  - Dashboard gateway selector: PayPal option added for US, GB, CA. File: `app/dashboard/payouts/page.tsx`
+  - Migration 143: updated `customer_subscriptions.gateway` CHECK constraint to include 'square' and 'paypal'
+- **All 5 gateways now have**: webhook → payment/booking update → platform fee → invoice/campaign → proactive WhatsApp confirmation → post-completion (loyalty/feedback/referral) → session deactivation
+
+### Env Vars Needed for PayPal
+- `PAYPAL_CLIENT_ID` — PayPal REST API client ID
+- `PAYPAL_CLIENT_SECRET` — PayPal REST API client secret
+- `PAYPAL_WEBHOOK_ID` — webhook ID from PayPal developer dashboard (for signature verification)
+- `PAYPAL_ENVIRONMENT` — 'sandbox' or 'production' (defaults to sandbox)
+
+---
+
 ## 2026-05-15
 
 ### Payment Gateway

@@ -34,7 +34,7 @@ export const TIER_MARKETING_NAMES: Record<SubscriptionTier, string> = {
 };
 
 export type CountryCode = string;
-export type PaymentGatewayName = 'paystack' | 'stripe' | 'flutterwave' | 'square';
+export type PaymentGatewayName = 'paystack' | 'stripe' | 'flutterwave' | 'square' | 'paypal';
 
 // Re-export capability types for convenience
 export type { CapabilityId } from '@/lib/capabilities/types';

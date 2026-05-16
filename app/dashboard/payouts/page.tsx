@@ -78,12 +78,15 @@ export default function PayoutsPage() {
     US: [
       { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
       { id: 'square', name: 'Square', desc: 'Great for retail and restaurants.', icon: '⬛' },
+      { id: 'paypal', name: 'PayPal', desc: 'Trusted worldwide. PayPal, Venmo, credit cards.', icon: '🔵' },
     ],
     GB: [
       { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
+      { id: 'paypal', name: 'PayPal', desc: 'Trusted worldwide. PayPal balance and cards.', icon: '🔵' },
     ],
     CA: [
       { id: 'stripe', name: 'Stripe', desc: 'Industry standard. Cards, Apple Pay, Google Pay.', icon: '🟣' },
+      { id: 'paypal', name: 'PayPal', desc: 'Trusted worldwide. PayPal balance and cards.', icon: '🔵' },
     ],
   };
 
