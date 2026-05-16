@@ -1553,16 +1553,14 @@ export class BotService {
           'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
           '',
           '*How to get started:*',
-          '1️⃣ Get a *business code* from a business (on their website, card, or socials)',
-          '2️⃣ Send the code here to connect',
+          '1️⃣ Send a *business code* (from their website, card, or socials)',
+          '2️⃣ Or browse businesses at *waaiio.com/directory*',
           '',
           '*Useful commands:*',
           '• *switch <name>* — visit a different business',
           '• *my account* — view bookings, orders & receipts',
           '• *my bookings* — check upcoming appointments',
           '• *receipt* — get your last receipt',
-          '',
-          '_Example: send *facesbykoph* to connect to FacesByKoph_',
         ].join('\n'));
       } else {
         await this.sendText(from, [
@@ -1570,8 +1568,9 @@ export class BotService {
           '',
           'Try sending the exact *business code*, or type *switch* followed by a business name.',
           '',
+          'Browse businesses at *waaiio.com/directory*',
+          '',
           '_Example: switch FacesByKoph_',
-          '_Example: switch spa_',
           '',
           'Type *Hi* for help getting started.',
         ].join('\n'));
