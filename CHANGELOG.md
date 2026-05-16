@@ -46,6 +46,25 @@ If something breaks, check this log to find what changed and when.
 - **Payout generation tested** — manually generated 3 payout records for week of May 11-17. Norma: ₦2,989,800 net. Test Spa: $47,000. FacesByKoph: $165. All held pending business verification.
 - **Platform fees confirmed working** — trial businesses get 0%, out-of-trial business tier gets 1%, direct_split businesses have gateway-level split via Paystack subaccount.
 
+### Stripe Webhook Configured (Sandbox)
+- **Webhook registered** — `https://waaiio.com/api/payments/stripe-webhook` in Stripe sandbox. 5 events: checkout.session.completed, checkout.session.expired, invoice.paid, invoice.payment_failed, customer.subscription.deleted.
+- **`STRIPE_WEBHOOK_SECRET`** — set on Vercel production via CLI. Sandbox key — need to redo for live mode.
+
+### Bot Welcome Messages Revamp
+- **First-time users** — clear onboarding: what Waaiio does, how to connect via business code or browse `waaiio.com/directory`, useful commands (switch, my account, receipt). File: `lib/bot/bot.service.ts`
+- **Returning user with 1 business** — auto-routes directly instead of showing generic "send a business code". File: `lib/bot/bot.service.ts`
+- **Returning user with 2+ businesses** — quick-pick buttons + switch tip. File: `lib/bot/bot.service.ts`
+- **Help command** — type "help" anytime to see current business + available commands. File: `lib/bot/bot.service.ts`
+- **Directory link** — added to welcome and no-match messages. File: `lib/bot/bot.service.ts`
+
+### Contact Page
+- **Contact form** — name, email, subject, message. Sends to hello@waaiio.com with reply-to. Rate limited 5/min per IP. Files: `app/(marketing)/contact/page.tsx`, `app/(marketing)/contact/ContactForm.tsx`, `app/api/contact/route.ts`
+- **Email replyTo** — sendEmail now supports replyTo parameter. File: `lib/email/client.ts`
+
+### SEO Fixes
+- **OG image** — added logo.png to openGraph + twitter metadata. File: `app/layout.tsx`
+- **Canonical URL** — fixed from relative `./` to absolute `https://waaiio.com`. File: `app/layout.tsx`
+
 ---
 
 ## 2026-05-15
