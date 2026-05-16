@@ -12,12 +12,13 @@ interface SendEmailOptions {
   subject: string;
   html: string;
   from?: string;
+  replyTo?: string;
 }
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
 
-export async function sendEmail({ to, subject, html, from }: SendEmailOptions) {
+export async function sendEmail({ to, subject, html, from, replyTo }: SendEmailOptions) {
   if (!resend) {
     logger.debug(`[EMAIL-DEV] To: ${to} | Subject: ${subject}`);
     return { success: true, dev: true };
@@ -32,6 +33,7 @@ export async function sendEmail({ to, subject, html, from }: SendEmailOptions) {
         to: Array.isArray(to) ? to : [to],
         subject,
         html,
+        ...(replyTo ? { reply_to: replyTo } : {}),
       });
 
       if (error) {
