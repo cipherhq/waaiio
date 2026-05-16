@@ -19,12 +19,13 @@ export async function POST(request: NextRequest) {
     // Rate limit: simple in-memory (resets on deploy)
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
     const key = `contact:${ip}`;
-    const count = (globalThis as Record<string, number>)[key] || 0;
+    const store = globalThis as unknown as Record<string, number>;
+    const count = store[key] || 0;
     if (count >= 5) {
       return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 });
     }
-    (globalThis as Record<string, number>)[key] = count + 1;
-    setTimeout(() => { (globalThis as Record<string, number>)[key] = Math.max(0, ((globalThis as Record<string, number>)[key] || 0) - 1); }, 60_000);
+    store[key] = count + 1;
+    setTimeout(() => { store[key] = Math.max(0, (store[key] || 0) - 1); }, 60_000);
 
     const subjectLine = subject ? `[Waaiio Contact] ${subject}` : `[Waaiio Contact] New message from ${name}`;
 
