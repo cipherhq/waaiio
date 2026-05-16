@@ -478,7 +478,6 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '2% per transaction after trial',
     ],
   },
   growth: {
