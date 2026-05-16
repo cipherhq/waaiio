@@ -252,9 +252,9 @@ async function triggerWhatsAppConfirmation(
     } catch {}
   }
 
-  // Deactivate waiting session
+  // Reset session to capability selection so user stays with this business
   await supabase.from('bot_sessions')
-    .update({ is_active: false })
+    .update({ current_step: 'select_capability', session_data: {} })
     .eq('whatsapp_number', customerPhone)
     .eq('business_id', businessId)
     .eq('is_active', true);
