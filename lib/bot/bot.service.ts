@@ -1494,23 +1494,30 @@ export class BotService {
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
-      if (profile) {
-        const { data: returningProfile } = await this.supabase
-          .from('profiles')
-          .select('first_name')
-          .eq('id', profile.id)
-          .single();
-        if (returningProfile?.first_name) {
-          await this.sendText(from, `Welcome back, ${returningProfile.first_name}! 👋`);
-        } else {
-          await this.sendText(from, 'Welcome to Waaiio! 👋');
+      // ── Returning user with exactly 1 business — auto-route directly ──
+      if (recentBusinesses.length === 1) {
+        const onlyBiz = recentBusinesses[0];
+        const { data: returningProfile } = profile ? await this.supabase
+          .from('profiles').select('first_name').eq('id', profile.id).single()
+          : { data: null };
+
+        const name = (returningProfile as { first_name?: string } | null)?.first_name;
+        if (name) {
+          await this.sendText(from, `Welcome back, ${name}! 👋`);
         }
-      } else {
-        await this.sendText(from, 'Welcome to Waaiio! 👋\n\nAutomate bookings, payments, orders & more via WhatsApp.');
+        await this.handleMessage(from, onlyBiz.bot_code || 'Hi', messageType, destinationPhone, onlyBiz.id);
+        return;
       }
 
-      // Quick-pick for returning users with 2+ businesses
+      // ── Returning user with 2+ businesses — quick-pick ──
       if (recentBusinesses.length >= 2) {
+        const { data: returningProfile } = profile ? await this.supabase
+          .from('profiles').select('first_name').eq('id', profile.id).single()
+          : { data: null };
+
+        const name = (returningProfile as { first_name?: string } | null)?.first_name;
+        await this.sendText(from, name ? `Welcome back, ${name}! 👋` : 'Welcome back! 👋');
+
         // Clean up old sessions
         await this.supabase.from('bot_sessions').delete()
           .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
@@ -1528,7 +1535,7 @@ export class BotService {
 
         await this.messageSender.sendButtons({
           to: from,
-          body: `Which business would you like to visit?`,
+          body: 'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
           buttons: quickPick.map((s, i) => ({
             id: `biz_${i}`,
             title: s.name.slice(0, 20),
@@ -1537,12 +1544,37 @@ export class BotService {
         return;
       }
 
-      // Smart retry: different message if user typed something specific vs just "Hi"
-      const isGreeting = /^(hi|hello|hey|yo|start)$/i.test(text.trim());
+      // ── First-time user — onboarding message ──
+      const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {
-        await this.sendText(from, 'Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_\n_switch spa_');
+        await this.sendText(from, [
+          '*Welcome to Waaiio!* 👋',
+          '',
+          'I help you book appointments, buy tickets, place orders, and make payments — all through WhatsApp.',
+          '',
+          '*How to get started:*',
+          '1️⃣ Get a *business code* from a business (on their website, card, or socials)',
+          '2️⃣ Send the code here to connect',
+          '',
+          '*Useful commands:*',
+          '• *switch <name>* — visit a different business',
+          '• *my account* — view bookings, orders & receipts',
+          '• *my bookings* — check upcoming appointments',
+          '• *receipt* — get your last receipt',
+          '',
+          '_Example: send *facesbykoph* to connect to FacesByKoph_',
+        ].join('\n'));
       } else {
-        await this.sendText(from, `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔\n\nTry sending the exact *business code*, or type *switch* followed by a name.\n\nType *help* for more options.`);
+        await this.sendText(from, [
+          `I couldn't find a business matching "${text.trim().slice(0, 30)}". 🤔`,
+          '',
+          'Try sending the exact *business code*, or type *switch* followed by a business name.',
+          '',
+          '_Example: switch FacesByKoph_',
+          '_Example: switch spa_',
+          '',
+          'Type *Hi* for help getting started.',
+        ].join('\n'));
       }
       return;
     }
@@ -1550,7 +1582,7 @@ export class BotService {
     // Check session expiry — clean up and let user start fresh
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-      await this.sendText(from, 'Your previous session has expired. Send *Hi* to start again. 🙏');
+      await this.sendText(from, 'Your previous session has expired. Send *Hi* to start again or type *switch <business name>* to visit a business. 🙏');
       return;
     }
 
@@ -1574,6 +1606,32 @@ export class BotService {
           .eq('id', session.id);
         await this.sendText(from, 'No problem! I\'ll keep responding in English.');
       }
+      return;
+    }
+
+    // ── Help command (works in any session) ──
+    if (/^help$/i.test(text.trim())) {
+      const bizName = session.business_id
+        ? (await this.supabase.from('businesses').select('name').eq('id', session.business_id).single()).data?.name
+        : null;
+
+      const helpLines = [
+        '*How can I help?* 💡',
+        '',
+        bizName ? `You're currently with *${bizName}*.` : '',
+        '',
+        '*Commands you can use:*',
+        '• *Hi* — start over',
+        '• *my account* — bookings, orders & receipts',
+        '• *my bookings* — upcoming appointments',
+        '• *receipt* — get your last receipt',
+        '• *switch <name>* — visit another business',
+        '• *cancel* — cancel current action',
+        '',
+        '_Need human help? Type *chat* to reach the business owner._',
+      ].filter(Boolean);
+
+      await this.sendText(from, helpLines.join('\n'));
       return;
     }
 
