@@ -86,15 +86,20 @@ export class BotService {
       return;
     }
 
-    // Pre-check 2: Profanity
+    // Pre-check 2: Profanity (only block on repeated offenses)
     if (this.intelligence.containsProfanity(text)) {
       const abuse = this.intelligence.recordProfanity(from);
       if (abuse.timeout) {
         const existingSession = await this.getActiveSession(from);
         if (existingSession) await this.deactivateSession(existingSession.id);
+        await this.sendText(from, abuse.message);
+        return;
       }
-      await this.sendText(from, abuse.message);
-      return;
+      if (abuse.warn && abuse.message) {
+        await this.sendText(from, abuse.message);
+        return;
+      }
+      // First 1-2 offenses: let the message through (could be false positive on free-text input)
     }
 
     // Handle quote response button postbacks (accept_quote_{id} / reject_quote_{id})

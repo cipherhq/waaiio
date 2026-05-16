@@ -214,7 +214,7 @@ export class BotIntelligenceService {
     record.profanityCount++;
     record.lastProfanity = now;
 
-    if (record.profanityCount >= 4) {
+    if (record.profanityCount >= 5) {
       record.cooldownUntil = now + 30 * 60 * 1000; // 30 min cooldown
       return {
         timeout: true,
@@ -223,7 +223,7 @@ export class BotIntelligenceService {
       };
     }
 
-    if (record.profanityCount >= 2) {
+    if (record.profanityCount >= 3) {
       return {
         timeout: false,
         warn: true,
@@ -231,10 +231,11 @@ export class BotIntelligenceService {
       };
     }
 
+    // First 1-2 offenses: don't block, just note it
     return {
       timeout: false,
       warn: false,
-      message: "I understand you may be frustrated. I'm here to help you book a great dining experience. 😊",
+      message: '',
     };
   }
 
