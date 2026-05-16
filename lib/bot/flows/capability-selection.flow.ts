@@ -308,6 +308,8 @@ const myAccountMenuStep: FlowStepConfig = {
       { title: 'Subscriptions', description: 'Manage recurring payments', postbackText: 'acct_subscriptions', show: hasCapability('recurring') },
       // Get Receipt — always show
       { title: 'Get Receipt', description: 'Download your last receipt', postbackText: 'acct_receipt', show: true },
+      // Switch Business — always show (helps users discover how to change)
+      { title: 'Switch Business', description: 'Visit a different business', postbackText: 'acct_switch', show: true },
     ];
 
     const items = allItems
@@ -355,6 +357,19 @@ const myAccountMenuStep: FlowStepConfig = {
       // Return to menu
       ctx.session.session_data._my_account_route = 'select_capability';
       return { valid: true, data: { _my_account_route: 'select_capability' } };
+    }
+
+    // Handle switch business
+    if (action === 'acct_switch' || action === 'switch' || action === 'switch business') {
+      // Deactivate current session so user can start fresh
+      await ctx.supabase.from('bot_sessions')
+        .update({ is_active: false })
+        .eq('id', ctx.session.id);
+      await ctx.sender.sendText({
+        to: ctx.from,
+        text: 'To switch to a different business:\n\n• Type *switch <business name>*\n  _e.g. switch FacesByKoph_\n\n• Or type *Hi* to see your recent businesses\n\n• Or send the business code directly',
+      });
+      return { valid: true, data: {} };
     }
 
     // Handle giving history inline
