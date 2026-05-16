@@ -1494,23 +1494,8 @@ export class BotService {
       // Check if this is a returning user with past businesses for quick-pick
       const recentBusinesses = await this.findReturningCustomerBusinesses(from, profile?.id || null, sharedNumberCountry);
 
-      // ── Returning user with exactly 1 business — auto-route directly ──
-      if (recentBusinesses.length === 1) {
-        const onlyBiz = recentBusinesses[0];
-        const { data: returningProfile } = profile ? await this.supabase
-          .from('profiles').select('first_name').eq('id', profile.id).single()
-          : { data: null };
-
-        const name = (returningProfile as { first_name?: string } | null)?.first_name;
-        if (name) {
-          await this.sendText(from, `Welcome back, ${name}! 👋`);
-        }
-        await this.handleMessage(from, onlyBiz.bot_code || 'Hi', messageType, destinationPhone, onlyBiz.id);
-        return;
-      }
-
-      // ── Returning user with 2+ businesses — quick-pick ──
-      if (recentBusinesses.length >= 2) {
+      // ── Returning user with past businesses — quick-pick ──
+      if (recentBusinesses.length >= 1) {
         const { data: returningProfile } = profile ? await this.supabase
           .from('profiles').select('first_name').eq('id', profile.id).single()
           : { data: null };
