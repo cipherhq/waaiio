@@ -36,9 +36,9 @@ export async function GET(request: NextRequest) {
         .eq('deposit_status', 'paid'),
       supabase
         .from('orders')
-        .select('total_amount, payment_status')
+        .select('total_amount, status')
         .eq('business_id', businessId)
-        .eq('payment_status', 'paid'),
+        .in('status', ['confirmed', 'delivered']),
       supabase
         .from('invoices')
         .select('total_amount, status')
