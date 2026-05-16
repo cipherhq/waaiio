@@ -19,27 +19,43 @@ const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 const FAQ_DATA = [
   {
     question: 'What types of businesses can use Waaiio?',
-    answer: `Any business or organisation that wants WhatsApp automation — restaurants, barbers, spas, churches, mosques, schools, NGOs, clinics, shops, event companies, hotels, pharmacies, and much more. We support ${CATEGORY_COUNT}+ categories with 4 automation flows.`,
+    answer: `Any business or organisation that wants WhatsApp automation — salons, barbers, spas, churches, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ categories.`,
   },
   {
     question: 'Is there really a free plan?',
-    answer: 'Yes! Start with our Free plan — 30-day trial with zero fees, then a small per-transaction fee. No monthly subscription required.',
+    answer: 'Yes! Start with our Starter plan — 30-day free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.',
   },
   {
     question: 'How do payments work?',
-    answer: 'When a customer needs to pay, they receive a secure payment link in the chat via Paystack (Nigeria, Ghana), Square (US), or Stripe (UK, Canada). Funds go directly to your account.',
+    answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Paystack (Nigeria, Ghana), Stripe (US, UK, Canada), Square (US), Flutterwave (Africa), and PayPal (US, UK, Canada). Funds go directly to your account.',
+  },
+  {
+    question: 'Do I need a developer to set this up?',
+    answer: 'No. Sign up, add your services, and connect your WhatsApp — your bot is live in under 5 minutes. Everything is managed from a simple dashboard.',
+  },
+  {
+    question: 'Can I use my own WhatsApp number?',
+    answer: 'Yes! You can use your existing business WhatsApp number (dedicated) or use our shared number to get started instantly. Switch to your own number anytime.',
   },
   {
     question: 'Can I customise the messages?',
-    answer: 'Yes. You can set a custom assistant name, greeting, and personality that matches your brand. Business-tier users get full white-label.',
+    answer: 'Yes. You can set a custom assistant name, greeting, and personality that matches your brand. Premium-tier users get full white-label branding.',
   },
   {
     question: 'What happens outside operating hours?',
     answer: 'The automation works 24/7 — it will take bookings and orders even at 2 AM. You can set operating hours so only available time slots are offered.',
   },
   {
+    question: 'What languages does the bot support?',
+    answer: 'The bot speaks English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French. Customers can chat naturally in their preferred language — the AI understands and responds accordingly.',
+  },
+  {
     question: 'Is there a long-term contract?',
     answer: 'No. All plans are month-to-month with no lock-in. You can upgrade, downgrade, or cancel at any time.',
+  },
+  {
+    question: 'Is my data secure?',
+    answer: 'Yes. We use bank-grade encryption, all webhooks are signature-verified, and your data is isolated per business. We are a Meta Verified Technology Provider and follow GDPR-compliant data practices.',
   },
 ];
 
@@ -295,9 +311,9 @@ export default function HomePage() {
       <section className="border-b border-gray-100 bg-white py-6">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-6 px-4 sm:gap-10">
           {[
-            { value: '100+', label: 'Businesses' },
-            { value: '25K+', label: 'Transactions' },
-            { value: '6', label: 'Countries' },
+            { value: '25+', label: 'Active Businesses' },
+            { value: '95+', label: 'Payments Processed' },
+            { value: '5', label: 'Countries' },
             { value: '24/7', label: 'Always On' },
           ].map(s => (
             <div key={s.label} className="text-center">
@@ -305,6 +321,24 @@ export default function HomePage() {
               <p className="text-xs text-gray-400">{s.label}</p>
             </div>
           ))}
+        </div>
+      </section>
+
+      {/* ── Payment Partners Trust Bar ── */}
+      <section className="border-b border-gray-100 bg-white py-5">
+        <div className="mx-auto max-w-4xl px-4 text-center">
+          <p className="text-xs font-medium uppercase tracking-widest text-gray-400 mb-3">Payments powered by</p>
+          <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8">
+            {[
+              { name: 'Stripe', color: '#635BFF' },
+              { name: 'Paystack', color: '#00C3F7' },
+              { name: 'Square', color: '#3E4348' },
+              { name: 'Flutterwave', color: '#F5A623' },
+              { name: 'PayPal', color: '#003087' },
+            ].map(g => (
+              <span key={g.name} className="text-sm font-bold" style={{ color: g.color }}>{g.name}</span>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -324,6 +358,68 @@ export default function HomePage() {
             <Suspense fallback={<div className="mx-auto h-[400px] max-w-md animate-pulse rounded-2xl bg-gray-100" />}>
               <LiveBotDemo />
             </Suspense>
+          </AnimatedSection>
+        </div>
+      </section>
+
+      {/* ── How It Works — 3 Steps ── */}
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-5xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Simple setup</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Up and running in 5 minutes
+            </h2>
+            <p className="mx-auto mt-3 max-w-xl text-gray-600">
+              No developers needed. No app to download. Just your WhatsApp number and a browser.
+            </p>
+          </AnimatedSection>
+
+          <div className="mt-14 grid gap-8 lg:grid-cols-3">
+            {[
+              {
+                step: '1',
+                title: 'Sign up & add your services',
+                desc: 'Create your account, add your services, prices, and availability. Takes about 5 minutes.',
+                icon: '&#x1F4DD;',
+              },
+              {
+                step: '2',
+                title: 'Connect your WhatsApp',
+                desc: 'Use your own number or our shared number. Your bot is instantly live and ready to chat with customers.',
+                icon: '&#x1F4F1;',
+              },
+              {
+                step: '3',
+                title: 'Share & start earning',
+                desc: 'Share your business code or WhatsApp link. Customers book, pay, and order — all automated.',
+                icon: '&#x1F680;',
+              },
+            ].map((s, i) => (
+              <AnimatedSection key={s.step} delay={i * 0.1}>
+                <div className="relative rounded-2xl border border-gray-100 bg-white p-8 text-center">
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10">
+                    <span className="text-2xl" dangerouslySetInnerHTML={{ __html: s.icon }} />
+                  </div>
+                  <div className="mt-1 text-xs font-bold uppercase tracking-widest text-brand">Step {s.step}</div>
+                  <h3 className="mt-3 text-lg font-semibold text-gray-900">{s.title}</h3>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{s.desc}</p>
+                  {i < 2 && (
+                    <div className="absolute -right-4 top-1/2 hidden text-2xl text-gray-300 lg:block">&rarr;</div>
+                  )}
+                </div>
+              </AnimatedSection>
+            ))}
+          </div>
+
+          <AnimatedSection delay={0.3} className="mt-10 text-center">
+            <Link
+              href="/get-started"
+              className="inline-flex items-center gap-2 rounded-xl bg-brand px-8 py-3 text-sm font-bold text-white shadow-lg shadow-brand/25 transition hover:bg-brand-600"
+            >
+              Start Free — No Credit Card
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+            </Link>
           </AnimatedSection>
         </div>
       </section>
@@ -392,6 +488,52 @@ export default function HomePage() {
               </AnimatedSection>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* ── Comparison Table ── */}
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-4xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Compare</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Waaiio vs. doing it yourself
+            </h2>
+          </AnimatedSection>
+
+          <AnimatedSection delay={0.1}>
+            <div className="mt-12 overflow-hidden rounded-2xl border border-gray-200">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="px-6 py-4 font-medium text-gray-500">Feature</th>
+                    <th className="px-6 py-4 text-center font-medium text-gray-500">Manual / WhatsApp Business</th>
+                    <th className="px-6 py-4 text-center font-medium text-brand">Waaiio</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {[
+                    ['Accept bookings 24/7', false, true],
+                    ['Collect payments in chat', false, true],
+                    ['Send automatic reminders', false, true],
+                    ['Remember returning customers', false, true],
+                    ['Generate receipts & invoices', false, true],
+                    ['Loyalty & referral programs', false, true],
+                    ['Multi-language support', false, true],
+                    ['E-signatures & contracts', false, true],
+                    ['Queue & waitlist management', false, true],
+                    ['Works while you sleep', false, true],
+                  ].map(([feature, manual, waaiio], i) => (
+                    <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                      <td className="px-6 py-3 text-gray-700">{feature as string}</td>
+                      <td className="px-6 py-3 text-center">{manual ? <span className="text-green-500">&#10003;</span> : <span className="text-gray-300">&#10007;</span>}</td>
+                      <td className="px-6 py-3 text-center"><span className="text-green-500 font-bold">&#10003;</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </AnimatedSection>
         </div>
       </section>
 
@@ -528,7 +670,7 @@ export default function HomePage() {
                   Ready to automate your business on WhatsApp?
                 </h2>
                 <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-                  Join 100+ businesses already saving time and growing revenue
+                  Join businesses across 5 countries already saving time and growing revenue
                   with Waaiio.
                 </p>
                 <div className="mt-8 flex flex-wrap justify-center gap-3">
