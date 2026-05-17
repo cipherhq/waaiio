@@ -66,7 +66,6 @@ const PRICE_COUNTRIES = [
   { code: 'GB' as const, flag: '🇬🇧', label: 'UK' },
   { code: 'CA' as const, flag: '🇨🇦', label: 'Canada' },
   { code: 'GH' as const, flag: '🇬🇭', label: 'Ghana' },
-  { code: 'IN' as const, flag: '🇮🇳', label: 'India' },
 ];
 
 export default function HomeClient({ stats }: { stats?: { businesses: string; payments: string; countries: string } }) {
@@ -74,7 +73,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
   const { scrollYProgress } = useScroll();
   const heroY = useTransform(scrollYProgress, [0, 0.3], [0, 120]);
   const heroOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
-  const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH' | 'IN'>('NG');
+  const [priceCountry, setPriceCountry] = useState<'NG' | 'US' | 'GB' | 'CA' | 'GH'>('NG');
   const PRICING_TIERS = getPricingTiers(priceCountry);
 
   return (
@@ -855,22 +854,6 @@ function WhyCard({ number, title, desc, color }: { number: string; title: string
       <span className={`text-4xl font-black ${numColor} opacity-30`}>{number}</span>
       <h3 className="mt-4 text-xl font-bold text-gray-900">{title}</h3>
       <p className="mt-3 text-sm leading-relaxed text-gray-600">{desc}</p>
-    </motion.div>
-  );
-}
-
-function FlowCard({ emoji, title, description, industries, color }: { emoji: string; title: string; description: string; industries: string; color: string }) {
-  return (
-    <motion.div
-      whileHover={{ y: -4 }}
-      className={`rounded-2xl border ${color} p-6 transition`}
-    >
-      <div className="flex items-center gap-3">
-        <span className="text-2xl" dangerouslySetInnerHTML={{ __html: emoji }} />
-        <h3 className="text-base font-semibold text-gray-900">{title}</h3>
-      </div>
-      <p className="mt-2 text-sm text-gray-600">{description}</p>
-      <p className="mt-3 text-xs font-medium text-gray-400">{industries}</p>
     </motion.div>
   );
 }

@@ -67,13 +67,13 @@ export default function Footer() {
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-400">Solutions</h3>
             <ul className="mt-4 space-y-3">
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Scheduling</Link></li>
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Payments</Link></li>
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Ordering</Link></li>
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Ticketing</Link></li>
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Loyalty &amp; Referrals</Link></li>
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Broadcasts</Link></li>
-              <li><Link href="/features" className="text-sm text-gray-300 transition hover:text-white">Queue Management</Link></li>
+              <li><Link href="/features#scheduling" className="text-sm text-gray-300 transition hover:text-white">Scheduling</Link></li>
+              <li><Link href="/features#payments" className="text-sm text-gray-300 transition hover:text-white">Payments</Link></li>
+              <li><Link href="/features#payments" className="text-sm text-gray-300 transition hover:text-white">Ordering</Link></li>
+              <li><Link href="/features#payments" className="text-sm text-gray-300 transition hover:text-white">Ticketing</Link></li>
+              <li><Link href="/features#engagement" className="text-sm text-gray-300 transition hover:text-white">Loyalty &amp; Referrals</Link></li>
+              <li><Link href="/features#engagement" className="text-sm text-gray-300 transition hover:text-white">Broadcasts</Link></li>
+              <li><Link href="/features#scheduling" className="text-sm text-gray-300 transition hover:text-white">Queue Management</Link></li>
             </ul>
           </div>
 
@@ -104,7 +104,6 @@ export default function Footer() {
               { flag: '\ud83c\uddec\ud83c\udde7', name: 'UK' },
               { flag: '\ud83c\udde8\ud83c\udde6', name: 'Canada' },
               { flag: '\ud83c\uddec\ud83c\udded', name: 'Ghana' },
-              { flag: '\ud83c\uddee\ud83c\uddf3', name: 'India' },
             ].map((c) => (
               <span key={c.name} className="flex items-center gap-1 text-xs text-gray-500">
                 <span>{c.flag}</span> {c.name}

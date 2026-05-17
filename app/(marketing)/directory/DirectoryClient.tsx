@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import Link from 'next/link';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
@@ -81,7 +81,20 @@ export default function DirectoryClient() {
   const [country, setCountry] = useState('');
   const [category, setCategory] = useState('');
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Debounce search input by 300ms
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedSearch(search);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [search]);
 
   useEffect(() => {
     async function load() {
@@ -89,7 +102,7 @@ export default function DirectoryClient() {
       const params = new URLSearchParams();
       if (country) params.set('country', country);
       if (category) params.set('category', category);
-      if (search) params.set('search', search);
+      if (debouncedSearch) params.set('search', debouncedSearch);
 
       const res = await fetch(`/api/directory?${params}`);
       const data = await res.json();
@@ -97,7 +110,7 @@ export default function DirectoryClient() {
       setLoading(false);
     }
     load();
-  }, [country, category, search]);
+  }, [country, category, debouncedSearch]);
 
   // Group by country
   const grouped = new Map<string, Business[]>();

@@ -96,7 +96,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Payments & Payouts',
     question: 'What payment methods can my customers use?',
-    answer: 'In Nigeria and Ghana: bank transfer and card payments via Paystack. In the US: card, Apple Pay, Google Pay, and Cash App via Square or Stripe. In the UK and Canada: card payments via Stripe. In India: UPI, cards, and net banking via Razorpay.',
+    answer: 'In Nigeria and Ghana: bank transfer and card payments via Paystack. In the US: card, Apple Pay, Google Pay, and Cash App via Square or Stripe. In the UK and Canada: card payments via Stripe.',
   },
   {
     category: 'Payments & Payouts',

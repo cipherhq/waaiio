@@ -8,7 +8,7 @@ export const metadata: Metadata = {
     'Automate bookings, payments, orders, and customer engagement on WhatsApp — for any business, any industry, any country. AI-powered automation for 40+ industries with 20+ capabilities.',
   openGraph: {
     title: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
-    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp. 40+ industries, 6 countries, 25 capabilities.',
+    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp. 40+ industries, 5 countries, 25 capabilities.',
     url: '/',
     siteName: 'Waaiio',
     type: 'website',
@@ -39,7 +39,7 @@ export default function MarketingLayout({
       <Footer />
       {/* Floating WhatsApp contact button */}
       <a
-        href="https://wa.me/15712746425?text=Hi%2C%20I%20have%20a%20question%20about%20Waaiio"
+        href="https://wa.me/12029226251?text=Hi%2C%20I%20have%20a%20question%20about%20Waaiio"
         target="_blank"
         rel="noopener noreferrer"
         className="fixed bottom-20 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg hover:bg-[#1ebe5d] transition sm:bottom-6"

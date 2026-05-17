@@ -124,7 +124,7 @@ export default function FeaturesPage() {
       </section>
 
       {/* ── 3. Booking & Scheduling ── */}
-      <section className="bg-gray-50 py-20">
+      <section id="scheduling" className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
           <AnimatedSection delay={0.15}>
             <SectionHeading
@@ -172,7 +172,7 @@ export default function FeaturesPage() {
       </section>
 
       {/* ── 4. Payments & Commerce ── */}
-      <section className="bg-white py-20">
+      <section id="payments" className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4">
           <AnimatedSection delay={0.1}>
             <SectionHeading
@@ -237,7 +237,7 @@ export default function FeaturesPage() {
       </section>
 
       {/* ── 5. Customer Engagement ── */}
-      <section className="bg-gray-50 py-20">
+      <section id="engagement" className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
           <AnimatedSection delay={0.1}>
             <SectionHeading

@@ -52,7 +52,7 @@ type ConnectSubStep = 'choose' | 'warnings' | 'setup' | 'phone_select';
 
 const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets: string[]; visual: string }> = {
   auth: {
-    title: 'Join 100+ businesses',
+    title: 'Join businesses across 5 countries',
     subtitle: 'Create your account in seconds to get started with WhatsApp automation.',
     bullets: ['No credit card required', '30-day free trial', 'Setup in under 5 minutes'],
     visual: '&#x1F512;',
@@ -344,7 +344,7 @@ function OnboardingWizard() {
 
   // Plan & payment
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier>(
-    preselectedPlan && ['growth', 'business'].includes(preselectedPlan) ? preselectedPlan : 'growth'
+    preselectedPlan && ['growth', 'business'].includes(preselectedPlan) ? preselectedPlan : 'free'
   );
   const [businessId, setBusinessId] = useState('');
   const [botCode, setBotCode] = useState('');
