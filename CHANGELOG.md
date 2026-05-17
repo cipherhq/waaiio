@@ -16,6 +16,21 @@ If something breaks, check this log to find what changed and when.
 - **Impact**: All phone inputs now have consistent UX with country-aware formatting. Build passes.
 - **Could break**: Pages that read phone values before PhoneInput returns E.164 (only returns value when all digits filled). Payment request autocomplete UX slightly changed (search is now separate from phone entry).
 
+### RLS Security Hardening (Migration 144)
+- **5 overly permissive policies fixed** — all had `USING(true)` allowing any authenticated user to read all rows:
+  - `product_variants` — was exposing all variants. Dropped `product_variants_service_select`. Owner policies already existed.
+  - `event_tickets` — was exposing guest names, phones, ticket codes. Dropped `public_verify_ticket`. QR scan uses service_role via API.
+  - `event_invites` — was exposing guest phones, emails, invite tokens. Dropped `Guests view own invite`. RSVP uses service_role via API.
+  - `service_addons` — was exposing all add-on config. Replaced with `service_addons_owner_read` scoped to business owner.
+  - `site_pages` — any business owner could edit CMS (terms, privacy). Dropped `Authenticated users can manage pages`. Admin policies already existed.
+- **Zero `USING(true)` policies remain** on any table with PII or business data.
+- **All 95+ tables confirmed** to have RLS enabled. Service_role usage clean — no client-side leaks.
+
+### Global API Rate Limiting
+- **Middleware-level rate limiting** — all 159 API routes now protected. 60 write req/min, 120 read req/min per IP. File: `middleware.ts`
+- **Webhooks exempted** — Paystack, Stripe, Square, PayPal, Flutterwave, cron endpoints skip rate limiting (authenticated via signatures).
+- **Contact form migrated** — from ad-hoc `globalThis` to proper `rateLimitResponse` (5/min). File: `app/api/contact/route.ts`
+
 ### Code Consolidation (~1,250 lines of duplication eliminated)
 - **`lib/payments/process-success.ts`** — NEW shared pipeline: `processSuccessfulPayment()`, `recordPlatformFee()`, `processInvoicePayment()`, `processCampaignDonation()`, `confirmBookingPayment()`. Replaces 5 inline copies across all webhook handlers.
 - **`lib/payments/send-confirmation.ts`** — NEW shared `sendProactiveConfirmation()`. Replaces 6 copies of WhatsApp confirmation sender (phone lookup + channel resolution + message + post-completion + tickets + session reset).
