@@ -113,3 +113,10 @@ export async function findUserByPhone(
     .maybeSingle();
   return data || null;
 }
+
+/** Get a customer's display name by phone number. Returns "First Last" or null. */
+export async function getCustomerName(supabase: SupabaseClient, phone: string): Promise<string | null> {
+  const user = await findUserByPhone(supabase, phone);
+  if (user?.first_name) return `${user.first_name} ${user.last_name || ''}`.trim();
+  return null;
+}
