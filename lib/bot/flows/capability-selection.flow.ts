@@ -331,18 +331,18 @@ const myAccountMenuStep: FlowStepConfig = {
     // Map selections to built-in bot.service.ts handlers via session step
     // Handle receipt request directly — no flow step, uses bot.service.ts handler
     if (action === 'acct_receipt' || action === 'receipt' || action === 'my receipt') {
-      // Get user profile for receipt generation
-      const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
-      const { data: profile } = await ctx.supabase
-        .from('profiles')
-        .select('id')
-        .eq('phone', phone)
-        .maybeSingle();
+      // Use session user_id if available, fallback to phone lookup
+      let userId = ctx.session.user_id;
+      if (!userId) {
+        const { findUserByPhone } = await import('./shared/user');
+        const profile = await findUserByPhone(ctx.supabase, ctx.from);
+        userId = profile?.id || null;
+      }
 
-      if (profile?.id) {
+      if (userId) {
         try {
           const { generateDocumentDirect } = await import('@/lib/receipts/generate-direct');
-          const result = await generateDocumentDirect(profile.id, 'receipt', ctx.from);
+          const result = await generateDocumentDirect(userId, 'receipt', ctx.from);
           if (result) {
             await ctx.sender.sendDocument({ to: ctx.from, documentUrl: result.url, filename: result.filename, caption: 'Your latest receipt' });
           } else {
