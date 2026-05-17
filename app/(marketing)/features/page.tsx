@@ -178,7 +178,7 @@ export default function FeaturesPage() {
             <SectionHeading
               tag="Payments & Commerce"
               title="Accept payments everywhere"
-              desc="4 payment gateways covering 5 countries. Collect payments, process orders, and sell tickets — all inside WhatsApp."
+              desc="5 payment gateways covering 5 countries. Collect payments, process orders, and sell tickets — all inside WhatsApp."
             />
           </AnimatedSection>
 
@@ -187,8 +187,9 @@ export default function FeaturesPage() {
             <div className="mx-auto mt-10 grid max-w-3xl gap-3 sm:grid-cols-4">
               {[
                 { name: 'Paystack', region: 'Nigeria, Ghana', color: 'border-blue-200 bg-blue-50/50' },
+                { name: 'Stripe', region: 'US, UK, Canada', color: 'border-purple-200 bg-purple-50/50' },
                 { name: 'Square', region: 'United States', color: 'border-green-200 bg-green-50/50' },
-                { name: 'Stripe', region: 'UK, Canada', color: 'border-purple-200 bg-purple-50/50' },
+                { name: 'PayPal', region: 'US, UK, Canada', color: 'border-indigo-200 bg-indigo-50/50' },
                 { name: 'Flutterwave', region: 'Africa (alt)', color: 'border-amber-200 bg-amber-50/50' },
               ].map((gw) => (
                 <div key={gw.name} className={`rounded-xl border ${gw.color} p-4 text-center`}>

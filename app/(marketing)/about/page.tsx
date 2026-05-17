@@ -399,7 +399,7 @@ export default function AboutPage() {
               <p className="mt-1 text-sm text-gray-400">Countries Supported</p>
             </div>
             <div>
-              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={4} /></p>
+              <p className="text-3xl font-extrabold text-white"><CounterAnimation target={5} /></p>
               <p className="mt-1 text-sm text-gray-400">Payment Gateways</p>
             </div>
             <div>
@@ -412,6 +412,63 @@ export default function AboutPage() {
             </div>
           </div>
         </AnimatedSection>
+      </section>
+
+      {/* ── Founder ── */}
+      <section className="bg-gray-50 py-20 lg:py-24">
+        <div className="mx-auto max-w-4xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">The Team</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
+              Built by people who understand the problem
+            </h2>
+            <p className="mx-auto mt-4 max-w-2xl text-gray-600">
+              Waaiio was founded by Babajide Adepoju, a software engineer who saw firsthand how businesses
+              in Nigeria, Ghana, and the diaspora were losing customers to unanswered WhatsApp messages
+              and manual processes.
+            </p>
+            <p className="mx-auto mt-4 max-w-2xl text-gray-600">
+              After watching a barbershop lose 40% of after-hours booking requests and a church spend
+              5 hours a week reconciling offering payments, the mission became clear: give every business
+              the automation tools that only large enterprises could afford &mdash; on the app their customers
+              already use every day.
+            </p>
+            <p className="mx-auto mt-6 max-w-xl text-sm text-gray-500">
+              Waaiio is a Meta Verified Technology Provider, headquartered in the United States
+              with operations across West Africa.
+            </p>
+          </AnimatedSection>
+        </div>
+      </section>
+
+      {/* ── Security & Trust ── */}
+      <section className="bg-white py-20 lg:py-24">
+        <div className="mx-auto max-w-5xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">Security</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 lg:text-4xl">
+              Your data is safe with us
+            </h2>
+          </AnimatedSection>
+          <AnimatedSection delay={0.1}>
+            <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                { icon: '🔒', title: 'Bank-Grade Encryption', desc: 'All data encrypted in transit (TLS 1.3) and at rest. Payment credentials never touch our servers.' },
+                { icon: '🛡️', title: 'Row-Level Security', desc: 'Every database table is protected with row-level security. Your data is completely isolated from other businesses.' },
+                { icon: '✅', title: 'Webhook Verification', desc: 'All payment webhooks are verified with cryptographic signatures (HMAC-SHA256). No unsigned requests are processed.' },
+                { icon: '🌍', title: 'GDPR Compliant', desc: 'We follow GDPR-compliant data practices including data minimization, right to deletion, and transparent processing.' },
+                { icon: '🔑', title: 'Meta Verified Provider', desc: 'Waaiio is a verified Meta Technology Provider with approved access to the WhatsApp Business Platform.' },
+                { icon: '⚡', title: 'Rate Limited & Monitored', desc: 'All API endpoints are rate limited. Suspicious activity is flagged and blocked automatically.' },
+              ].map(item => (
+                <div key={item.title} className="rounded-2xl border border-gray-100 bg-white p-6 transition hover:shadow-md">
+                  <span className="text-2xl">{item.icon}</span>
+                  <h3 className="mt-3 text-base font-semibold text-gray-900">{item.title}</h3>
+                  <p className="mt-2 text-sm text-gray-600">{item.desc}</p>
+                </div>
+              ))}
+            </div>
+          </AnimatedSection>
+        </div>
       </section>
 
       {/* ── Final CTA ── */}

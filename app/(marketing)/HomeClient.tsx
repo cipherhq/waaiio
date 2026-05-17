@@ -497,8 +497,8 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
           </AnimatedSection>
 
           <AnimatedSection delay={0.1}>
-            <div className="mt-12 overflow-hidden rounded-2xl border border-gray-200">
-              <table className="w-full text-left text-sm">
+            <div className="mt-12 overflow-x-auto rounded-2xl border border-gray-200">
+              <table className="w-full min-w-[480px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
                     <th className="px-6 py-4 font-medium text-gray-500">Feature</th>
