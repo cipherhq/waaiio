@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
 import { createAlert } from '@/lib/alerts/create-alert';
@@ -13,17 +13,18 @@ export async function POST(request: NextRequest) {
     const signature = request.headers.get('x-paystack-signature') || '';
     const paystackKey = process.env.PAYSTACK_SECRET_KEY;
 
-    if (paystackKey) {
-      const hash = createHmac('sha512', paystackKey)
-        .update(rawBody)
-        .digest('hex');
+    // Fail-closed: reject if secret key is not configured
+    if (!paystackKey) {
+      return NextResponse.json({ message: 'Webhook not configured' }, { status: 500 });
+    }
 
-      if (hash !== signature) {
-        return NextResponse.json(
-          { message: 'Invalid signature' },
-          { status: 400 },
-        );
+    const hash = createHmac('sha512', paystackKey).update(rawBody).digest('hex');
+    try {
+      if (!timingSafeEqual(Buffer.from(hash), Buffer.from(signature))) {
+        return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
       }
+    } catch {
+      return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
 
     const body = JSON.parse(rawBody);

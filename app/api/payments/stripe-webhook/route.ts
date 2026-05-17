@@ -38,8 +38,11 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
     const signature = request.headers.get('stripe-signature') || '';
 
-    // Verify signature when secret is configured
-    if (stripeWebhookSecret && !verifyStripeSignature(rawBody, signature)) {
+    // Fail-closed: reject if webhook secret is not configured
+    if (!stripeWebhookSecret) {
+      return new Response(JSON.stringify({ message: 'Webhook not configured' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+    if (!verifyStripeSignature(rawBody, signature)) {
       return NextResponse.json({ message: 'Invalid signature' }, { status: 400 });
     }
 
