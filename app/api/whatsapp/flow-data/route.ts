@@ -1,6 +1,18 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
+
+const META_APP_SECRET = process.env.META_APP_SECRET || '';
+
+function verifyMetaSignature(rawBody: string, signature: string): boolean {
+  if (!META_APP_SECRET || !signature) return false;
+  const expected = createHmac('sha256', META_APP_SECRET).update(rawBody).digest('hex');
+  const sig = signature.replace('sha256=', '');
+  try {
+    return timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
+  } catch { return false; }
+}
 
 /**
  * POST /api/whatsapp/flow-data
@@ -14,7 +26,17 @@ import { logger } from '@/lib/logger';
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const rawBody = await request.text();
+
+    // Verify Meta signature
+    if (META_APP_SECRET) {
+      const signature = request.headers.get('x-hub-signature-256') || '';
+      if (!verifyMetaSignature(rawBody, signature)) {
+        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+      }
+    }
+
+    const body = JSON.parse(rawBody);
     const { flow_token, action, screen, data } = body;
 
     logger.debug('[FLOW-DATA] Request:', { flow_token, action, screen });
