@@ -492,37 +492,68 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Compare</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Waaiio vs. doing it yourself
+              WhatsApp Business vs. Waaiio
             </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-600">
+              WhatsApp Business gives you the basics. Waaiio gives you a full business operating system.
+            </p>
           </AnimatedSection>
 
           <AnimatedSection delay={0.1}>
             <div className="mt-12 overflow-x-auto rounded-2xl border border-gray-200">
-              <table className="w-full min-w-[480px] text-left text-sm">
+              <table className="w-full min-w-[520px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="px-6 py-4 font-medium text-gray-500">Feature</th>
-                    <th className="px-6 py-4 text-center font-medium text-gray-500">Manual / WhatsApp Business</th>
-                    <th className="px-6 py-4 text-center font-medium text-brand">Waaiio</th>
+                    <th className="px-5 py-4 font-medium text-gray-500">Feature</th>
+                    <th className="px-4 py-4 text-center font-medium text-gray-500">WhatsApp Business</th>
+                    <th className="px-4 py-4 text-center font-medium text-brand">Waaiio</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
+                  {/* What WhatsApp Business already does */}
                   {[
-                    ['Accept bookings 24/7', false, true],
-                    ['Collect payments in chat', false, true],
-                    ['Send automatic reminders', false, true],
-                    ['Remember returning customers', false, true],
-                    ['Generate receipts & invoices', false, true],
-                    ['Loyalty & referral programs', false, true],
-                    ['Multi-language support', false, true],
-                    ['E-signatures & contracts', false, true],
-                    ['Queue & waitlist management', false, true],
-                    ['Works while you sleep', false, true],
-                  ].map(([feature, manual, waaiio], i) => (
-                    <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                      <td className="px-6 py-3 text-gray-700">{feature as string}</td>
-                      <td className="px-6 py-3 text-center">{manual ? <span className="text-green-500">&#10003;</span> : <span className="text-gray-300">&#10007;</span>}</td>
-                      <td className="px-6 py-3 text-center"><span className="text-green-500 font-bold">&#10003;</span></td>
+                    ['Business profile & hours', true, true],
+                    ['Product catalog', true, true, 'Display only', '+ Cart & checkout'],
+                    ['Quick replies', true, true, 'Saved text', '+ AI-powered'],
+                    ['Away message', true, true, 'Single reply', '+ Full 24/7 AI'],
+                    ['Greeting message', true, true, 'Generic', '+ Personalized'],
+                    ['Broadcast lists', true, true, 'Max 256', 'Unlimited'],
+                  ].map(([feature, wa, waaiio, waNote, waaNote], i) => (
+                    <tr key={i} className="bg-green-50/30">
+                      <td className="px-5 py-3 text-gray-700">{feature as string}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-green-500">&#10003;</span>
+                        {waNote && <span className="block text-[10px] text-gray-400">{waNote as string}</span>}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="text-green-500 font-bold">&#10003;</span>
+                        {waaNote && <span className="block text-[10px] text-brand">{waaNote as string}</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {/* What only Waaiio does */}
+                  {[
+                    'AI conversation handling 24/7',
+                    'Accept bookings with calendar & slots',
+                    'Collect payments (5 gateways, 5 countries)',
+                    'Automatic reminders before appointments',
+                    'Customer memory & repeat booking',
+                    'Generate receipts & invoices',
+                    'E-signatures & contracts',
+                    'Loyalty & referral programs',
+                    'Event tickets with QR codes',
+                    'Queue & waitlist management',
+                    'Multi-language (7 languages)',
+                    'Order management & delivery tracking',
+                    'Recurring payments & subscriptions',
+                    'Dashboard with analytics',
+                    'Staff management',
+                    'Split payments & automated payouts',
+                  ].map((feature, i) => (
+                    <tr key={`w-${i}`} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                      <td className="px-5 py-3 text-gray-700">{feature}</td>
+                      <td className="px-4 py-3 text-center"><span className="text-gray-300">&#10007;</span></td>
+                      <td className="px-4 py-3 text-center"><span className="text-green-500 font-bold">&#10003;</span></td>
                     </tr>
                   ))}
                 </tbody>
