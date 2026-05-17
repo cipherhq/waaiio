@@ -117,6 +117,27 @@ export class ChannelResolver {
   }
 
   /**
+   * Resolve a specific channel by its ID.
+   * Used by webhooks to send on the same channel the customer was chatting on.
+   */
+  async resolveByChannelId(channelId: string): Promise<ResolvedChannel | null> {
+    if (!channelId) return null;
+
+    const { data } = await this.supabase
+      .from('whatsapp_channels')
+      .select('*')
+      .eq('id', channelId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (data) {
+      const record = data as ChannelRecord;
+      return { channel: record, sender: this.buildSender(record) };
+    }
+    return null;
+  }
+
+  /**
    * Resolve a channel by business_id.
    * Tries dedicated channel first, then falls back to the shared channel for the business's country.
    */

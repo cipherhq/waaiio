@@ -1089,6 +1089,7 @@ export class BotService {
 
       // Determine the country of the shared number being messaged (for country scoping)
       let sharedNumberCountry: string | null = null;
+      let inboundChannelId: string | null = null;
       if (!businessId && destinationPhone) {
         // Check if this is a dedicated number for a specific business
         const { data: biz } = await this.supabase
@@ -1103,15 +1104,25 @@ export class BotService {
         if (!businessId) {
           const { data: channel } = await this.supabase
             .from('whatsapp_channels')
-            .select('country_code, channel_type')
+            .select('id, country_code, channel_type')
             .eq('phone_number_id', destinationPhone)
             .eq('channel_type', 'shared')
             .eq('is_active', true)
             .maybeSingle();
           if (channel) {
             sharedNumberCountry = channel.country_code;
-            logger.debug('[BOT] Shared number country:', sharedNumberCountry);
+            inboundChannelId = channel.id;
+            logger.debug('[BOT] Shared number country:', sharedNumberCountry, 'channel:', inboundChannelId);
           }
+        } else {
+          // Dedicated number — find the channel ID
+          const { data: dedChannel } = await this.supabase
+            .from('whatsapp_channels')
+            .select('id')
+            .eq('phone_number_id', destinationPhone)
+            .eq('is_active', true)
+            .maybeSingle();
+          if (dedChannel) inboundChannelId = dedChannel.id;
         }
       }
 
@@ -1239,8 +1250,8 @@ export class BotService {
         : 'greeting';
 
       const sessionData: Record<string, unknown> = businessId && business
-        ? { business_id: businessId, business_name: business.name, business_category: business.category, capabilities }
-        : {};
+        ? { business_id: businessId, business_name: business.name, business_category: business.category, capabilities, ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) }
+        : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
       // Remove old inactive sessions for this phone+business to avoid unique constraint violation
       const cleanupQuery = this.supabase.from('bot_sessions')

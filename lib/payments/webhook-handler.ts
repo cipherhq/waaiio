@@ -301,11 +301,30 @@ async function sendPaymentConfirmation(
     'Type *my bookings* to view your bookings',
   ];
 
-  // Send via channel resolver
+  // Send via channel resolver — prefer the channel the customer was chatting on
   try {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
-    const resolved = await resolver.resolveByBusinessId(businessId);
+
+    // Look up the inbound channel from the active session
+    let resolved = null;
+    const { data: activeSession } = await supabase
+      .from('bot_sessions')
+      .select('session_data')
+      .eq('whatsapp_number', customerPhone)
+      .eq('business_id', businessId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    const inboundChannelId = (activeSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+    if (inboundChannelId) {
+      resolved = await resolver.resolveByChannelId(inboundChannelId);
+    }
+
+    // Fallback to business default
+    if (!resolved) {
+      resolved = await resolver.resolveByBusinessId(businessId);
+    }
     if (!resolved) return;
 
     const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;

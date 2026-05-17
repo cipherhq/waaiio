@@ -489,7 +489,14 @@ async function sendPayPalPaymentConfirmation(
   try {
     const { ChannelResolver } = await import('@/lib/channels/channel-resolver');
     const resolver = new ChannelResolver(supabase);
-    const resolved = await resolver.resolveByBusinessId(businessId);
+
+    let resolved = null;
+    const { data: activeSession } = await supabase
+      .from('bot_sessions').select('session_data')
+      .eq('whatsapp_number', customerPhone).eq('business_id', businessId).eq('is_active', true).maybeSingle();
+    const inboundChId = (activeSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+    if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
+    if (!resolved) resolved = await resolver.resolveByBusinessId(businessId);
     if (!resolved) return;
 
     const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
