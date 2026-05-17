@@ -55,6 +55,20 @@ If something breaks, check this log to find what changed and when.
 - **Impact**: All phone inputs now have consistent UX with country-aware formatting. Build passes.
 - **Could break**: Pages that read phone values before PhoneInput returns E.164 (only returns value when all digits filled). Payment request autocomplete UX slightly changed (search is now separate from phone entry).
 
+### Full Security Audit — 24 Issues Fixed
+- **DELETED `app/api/debug/stripe-test/route.ts`** — publicly accessible, no auth, exposed Stripe key prefix. Should never have existed in production.
+- **4 webhook handlers fail-closed** — Paystack, Stripe, Square, PayPal all now reject requests when signature secret is not configured (were processing without verification).
+- **Paystack webhooks timing-safe** — 3 files switched from `!==` to `timingSafeEqual` for HMAC comparison (main webhook, BYO webhook, transfer webhook).
+- **Open redirect fixed** — `/api/pay` now validates redirect URL against domain allowlist (Paystack, Stripe, Square, PayPal, Flutterwave, Waaiio).
+- **OTP rate limiting** — contract OTP send: 3/10min, OTP verify: 10/10min. Prevents WhatsApp flooding and brute force.
+- **Quote accept rate limited** — 10/min per IP. Was unauthenticated with no limits.
+- **Ticket verify GET rate limited** — 30/min per IP. Prevents ticket code enumeration.
+- **Error messages sanitized** — 9 API routes no longer return `error.message` to clients. Generic "Something went wrong" with real error logged server-side.
+- **LIKE injection prevented** — directory search and `/api/pay` ref param now escape `%_\` special chars before `.ilike()`.
+- **Cron balance-reminder** — replaced manual Bearer check with `verifyCronAuth()` (timing-safe).
+- **Health endpoint stripped** — no longer reveals which env vars are configured.
+- **Impact**: Zero business logic changes. Only attackers are affected.
+
 ### RLS Security Hardening (Migration 144)
 - **5 overly permissive policies fixed** — all had `USING(true)` allowing any authenticated user to read all rows:
   - `product_variants` — was exposing all variants. Dropped `product_variants_service_select`. Owner policies already existed.
