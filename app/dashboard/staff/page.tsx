@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface StaffMember {
   id: string;
@@ -454,12 +455,10 @@ export default function StaffPage() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
-                <input
-                  type="tel"
+                <PhoneInput
                   value={form.phone || ''}
-                  onChange={e => setForm({ ...form, phone: e.target.value })}
-                  placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  onChange={(val) => setForm({ ...form, phone: val })}
+                  countryCode={(business.country_code || 'US') as CountryCode}
                 />
               </div>
               <div>

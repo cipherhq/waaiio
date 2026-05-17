@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
@@ -364,13 +365,11 @@ export default function ConnectWhatsAppPage() {
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Enter your business phone number</h3>
 
           <div>
-            <label className="text-xs text-gray-500 mb-1 block">Phone Number (with country code)</label>
-            <input
-              type="tel"
+            <label className="text-xs text-gray-500 mb-1 block">Phone Number</label>
+            <PhoneInput
               value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="+1 234 567 8900"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              onChange={setPhone}
+              countryCode={business.country_code || 'US'}
             />
           </div>
 

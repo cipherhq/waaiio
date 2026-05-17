@@ -5,6 +5,21 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CONTRACT_TEMPLATES, fillTemplatePlaceholders } from '@/lib/contract-templates';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { COUNTRIES, type CountryCode } from '@/lib/constants';
+
+/** Detect country code from an E.164 phone number by matching dialing code prefixes */
+function detectCountryFromPhone(phone: string): CountryCode | null {
+  if (!phone || !phone.startsWith('+')) return null;
+  const digits = phone.slice(1); // remove '+'
+  // Try longest dialing codes first (3-digit, 2-digit, 1-digit)
+  for (const len of [3, 2, 1]) {
+    const prefix = '+' + digits.slice(0, len);
+    for (const [code, config] of Object.entries(COUNTRIES)) {
+      if (config.dialingCode === prefix) return code as CountryCode;
+    }
+  }
+  return null;
+}
 
 interface Contract {
   id: string;
@@ -1049,6 +1064,7 @@ export default function ContractsPage() {
                     <PhoneInput
                       value={signerPhone}
                       onChange={setSignerPhone}
+                      countryCode={(business.country_code as CountryCode) || 'US'}
                     />
                   </div>
                   <div>
@@ -1088,6 +1104,7 @@ export default function ContractsPage() {
                       <PhoneInput
                         value={s.phone}
                         onChange={val => setAdditionalSigners(prev => prev.map((x, j) => j === i ? { ...x, phone: val } : x))}
+                        countryCode={(business.country_code as CountryCode) || 'US'}
                       />
                       <input
                         type="text"
@@ -1155,6 +1172,7 @@ export default function ContractsPage() {
                         <PhoneInput
                           value={cc.phone}
                           onChange={val => setCcRecipients(prev => prev.map((x, j) => j === i ? { ...x, phone: val } : x))}
+                          countryCode={(business.country_code as CountryCode) || 'US'}
                         />
                       </div>
                       <button
@@ -1261,6 +1279,7 @@ export default function ContractsPage() {
                 <PhoneInput
                   value={editSignerPhone}
                   onChange={setEditSignerPhone}
+                  countryCode={detectCountryFromPhone(editingContract?.signer_phone || '') || (business.country_code as CountryCode) || 'US'}
                 />
               </div>
               <div>

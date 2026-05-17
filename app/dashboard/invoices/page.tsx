@@ -1,11 +1,12 @@
 'use client';
-import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
+import { type CountryCode } from '@/lib/constants';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface InvoiceItem {
   id: string;
@@ -632,13 +633,11 @@ export default function InvoicesPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Phone</label>
-                  <input
-                    type="tel"
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                  <PhoneInput
                     value={customerPhone}
-                    onChange={e => setCustomerPhone(e.target.value)}
-                    placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
-                    className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    onChange={setCustomerPhone}
+                    countryCode={(business.country_code || 'US') as CountryCode}
                   />
                 </div>
                 <div>

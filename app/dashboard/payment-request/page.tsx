@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface PaymentRequestRow {
   id: string;
@@ -339,64 +340,59 @@ export default function PaymentRequestPage() {
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Customer Phone <span className="text-red-400">*</span>
                   </label>
-                  <input
-                    ref={phoneInputRef}
-                    type="tel"
+                  {/* Customer search */}
+                  <div className="relative mb-2">
+                    <input
+                      ref={phoneInputRef}
+                      type="text"
+                      onFocus={() => {
+                        setSuggestions(customers.slice(0, 5));
+                        setShowSuggestions(true);
+                      }}
+                      onChange={e => {
+                        const q = e.target.value.toLowerCase();
+                        if (q.length > 0) {
+                          setSuggestions(
+                            customers.filter(c =>
+                              c.phone.includes(q) || c.name?.toLowerCase().includes(q)
+                            ).slice(0, 5)
+                          );
+                        } else {
+                          setSuggestions(customers.slice(0, 5));
+                        }
+                        setShowSuggestions(true);
+                      }}
+                      onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                      placeholder="Search existing customers..."
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                        {suggestions.map(c => (
+                          <button
+                            key={c.phone}
+                            type="button"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={() => {
+                              setPhone(c.phone);
+                              setName(c.name || '');
+                              setShowSuggestions(false);
+                              setSuggestions([]);
+                            }}
+                            className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
+                          >
+                            <span className="font-medium text-gray-900">{c.name || 'Unknown'}</span>
+                            <span className="font-mono text-xs text-gray-400">{c.phone}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <PhoneInput
                     value={phone}
-                    onChange={e => {
-                      const val = e.target.value;
-                      setPhone(val);
-                      const q = val.toLowerCase();
-                      if (q.length > 0) {
-                        setSuggestions(
-                          customers.filter(c =>
-                            c.phone.includes(q) || c.name?.toLowerCase().includes(q)
-                          ).slice(0, 5)
-                        );
-                        setShowSuggestions(true);
-                      } else {
-                        setSuggestions(customers.slice(0, 5));
-                        setShowSuggestions(true);
-                      }
-                    }}
-                    onFocus={() => {
-                      if (!phone) {
-                        setSuggestions(customers.slice(0, 5));
-                      } else {
-                        const q = phone.toLowerCase();
-                        setSuggestions(
-                          customers.filter(c =>
-                            c.phone.includes(q) || c.name?.toLowerCase().includes(q)
-                          ).slice(0, 5)
-                        );
-                      }
-                      setShowSuggestions(true);
-                    }}
-                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                    placeholder="Enter phone or search customer"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    onChange={setPhone}
+                    countryCode={country}
                   />
-                  {showSuggestions && suggestions.length > 0 && (
-                    <div className="absolute z-10 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
-                      {suggestions.map(c => (
-                        <button
-                          key={c.phone}
-                          type="button"
-                          onMouseDown={e => e.preventDefault()}
-                          onClick={() => {
-                            setPhone(c.phone);
-                            setName(c.name || '');
-                            setShowSuggestions(false);
-                            setSuggestions([]);
-                          }}
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-gray-50 first:rounded-t-lg last:rounded-b-lg"
-                        >
-                          <span className="font-medium text-gray-900">{c.name || 'Unknown'}</span>
-                          <span className="font-mono text-xs text-gray-400">{c.phone}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
 

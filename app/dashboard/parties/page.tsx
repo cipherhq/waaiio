@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { PhoneInput } from '@/components/auth/PhoneInput';
+import { type CountryCode } from '@/lib/constants';
 
 interface PartyItem {
   id: string;
@@ -496,7 +498,11 @@ export default function PartiesPage() {
             <h3 className="text-sm font-semibold text-gray-900">Send Invite</h3>
             <div className="mt-3">
               <label className="mb-1 block text-xs font-medium text-gray-500">Phone Number *</label>
-              <input type="tel" value={invitePhone} onChange={e => setInvitePhone(e.target.value)} placeholder="e.g. 2348012345678" className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+              <PhoneInput
+                value={invitePhone}
+                onChange={setInvitePhone}
+                countryCode={(business.country_code || 'US') as CountryCode}
+              />
             </div>
             <div className="mt-3 flex gap-2">
               <button onClick={handleSendInvite} disabled={sending || !invitePhone.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">{sending ? 'Sending...' : 'Send'}</button>

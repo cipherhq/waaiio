@@ -5,6 +5,8 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { PhoneInput } from '@/components/auth/PhoneInput';
+import { type CountryCode } from '@/lib/constants';
 
 interface EventOption {
   id: string;
@@ -280,12 +282,10 @@ export default function InvitesPage() {
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Phone Number *</label>
-              <input
-                type="tel"
+              <PhoneInput
                 value={invitePhone}
-                onChange={e => setInvitePhone(e.target.value)}
-                placeholder="e.g. 2348012345678"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                onChange={setInvitePhone}
+                countryCode={(business.country_code || 'US') as CountryCode}
               />
             </div>
             <div>

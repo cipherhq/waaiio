@@ -2747,12 +2747,10 @@ export default function SettingsPage() {
                     <div>
                       <label className="text-xs font-medium text-gray-700 dark:text-gray-300">Your personal WhatsApp number</label>
                       <p className="text-[11px] text-gray-400 mb-1">This must be different from your bot number. We&apos;ll send sale alerts here.</p>
-                      <input
-                        type="tel"
+                      <PhoneInput
                         value={notifWhatsAppPhone}
-                        onChange={e => setNotifWhatsAppPhone(e.target.value)}
-                        placeholder="+234 801 234 5678"
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                        onChange={setNotifWhatsAppPhone}
+                        countryCode={(business.country_code || 'US') as CountryCode}
                       />
                     </div>
                     {business.subscription_tier === 'free' && (
