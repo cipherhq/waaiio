@@ -422,12 +422,12 @@ async function sendPaymentConfirmation(
     }
 
     // Reset session to capability selection so user stays with this business
+    // Update both active and recently-deactivated sessions (flow's next()→null may have deactivated it already)
     await supabase
       .from('bot_sessions')
-      .update({ current_step: 'select_capability', session_data: {} })
+      .update({ current_step: 'select_capability', session_data: {}, is_active: true })
       .eq('whatsapp_number', customerPhone)
-      .eq('business_id', businessId)
-      .eq('is_active', true);
+      .eq('business_id', businessId);
   } catch (err) {
     logger.error('[WEBHOOK] Failed to send confirmation:', err);
   }

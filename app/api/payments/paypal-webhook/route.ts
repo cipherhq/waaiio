@@ -521,10 +521,9 @@ async function sendPayPalPaymentConfirmation(
     // Reset session to capability selection so user stays with this business
     await supabase
       .from('bot_sessions')
-      .update({ current_step: 'select_capability', session_data: {} })
+      .update({ current_step: 'select_capability', session_data: {}, is_active: true })
       .eq('whatsapp_number', customerPhone)
-      .eq('business_id', businessId)
-      .eq('is_active', true);
+      .eq('business_id', businessId);
   } catch (err) {
     logger.error('[PAYPAL WEBHOOK] Send confirmation error:', err);
   }
