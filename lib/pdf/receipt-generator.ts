@@ -14,6 +14,7 @@ export interface ReceiptData {
   customerPhone: string; // will be masked
   countryCode: CountryCode;
   whitelabel?: boolean;
+  logoUrl?: string;      // business logo URL — rendered at top of receipt
 }
 
 export interface HistoryRow {
@@ -71,18 +72,36 @@ export async function generateReceiptPdf(data: ReceiptData): Promise<Buffer> {
   const pageWidth = doc.page.width;
   const contentWidth = pageWidth - 80; // 40px margin each side
 
+  // Logo (if available)
+  let headerY = 40;
+  if (data.logoUrl) {
+    try {
+      const logoRes = await fetch(data.logoUrl, { signal: AbortSignal.timeout(5000) });
+      if (logoRes.ok) {
+        const logoBuffer = Buffer.from(await logoRes.arrayBuffer());
+        const logoSize = 50;
+        const logoX = (pageWidth - logoSize) / 2;
+        doc.image(logoBuffer, logoX, headerY, { width: logoSize, height: logoSize, fit: [logoSize, logoSize] });
+        headerY += logoSize + 8;
+      }
+    } catch {
+      // Logo fetch failed — skip silently
+    }
+  }
+
   // Header
   doc.fontSize(20).font('Helvetica-Bold')
-    .text('RECEIPT', 40, 40, { width: contentWidth, align: 'center' });
+    .text('RECEIPT', 40, headerY, { width: contentWidth, align: 'center' });
 
   doc.fontSize(11).font('Helvetica')
-    .text(data.businessName, 40, 65, { width: contentWidth, align: 'center' });
+    .text(data.businessName, 40, headerY + 25, { width: contentWidth, align: 'center' });
 
   // Divider
-  doc.moveTo(40, 90).lineTo(pageWidth - 40, 90).strokeColor('#cccccc').stroke();
+  const dividerY = headerY + 50;
+  doc.moveTo(40, dividerY).lineTo(pageWidth - 40, dividerY).strokeColor('#cccccc').stroke();
 
   // Details
-  let y = 105;
+  let y = dividerY + 15;
   const labelX = 40;
   const valueX = 180;
   const lineHeight = 22;

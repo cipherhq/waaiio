@@ -85,11 +85,11 @@ async function buildReceipt(
 ): Promise<Buffer | null> {
   const [{ data: recentBooking }, { data: recentCharge }, { data: recentPayment }] = await Promise.all([
     supabase.from('bookings')
-      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier)')
+      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('subscription_charges')
-      .select('id, reference_code, amount, status, created_at, services(name), businesses(name, country_code, subscription_tier)')
+      .select('id, reference_code, amount, status, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('payments')
@@ -109,7 +109,7 @@ async function buildReceipt(
   candidates.sort((a, b) => b.date.getTime() - a.date.getTime());
   const best = candidates[0];
   const d = best.data;
-  const biz = d.businesses as { name: string; country_code?: string; subscription_tier?: string } | null;
+  const biz = d.businesses as { name: string; country_code?: string; subscription_tier?: string; logo_url?: string } | null;
   const svc = d.services as { name: string } | null;
   const cc = (biz?.country_code || 'NG') as CountryCode;
 
@@ -134,6 +134,7 @@ async function buildReceipt(
     customerPhone,
     countryCode: cc,
     whitelabel: PRICING_TIERS[tier]?.whitelabel === true,
+    logoUrl: biz?.logo_url || undefined,
   });
 }
 

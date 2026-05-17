@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import HomeClient from './HomeClient';
 import { getCategoryList } from '@/lib/categoryConfig';
+import { createServiceClient } from '@/lib/supabase/service';
 
 const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
@@ -88,13 +89,30 @@ const JSON_LD_FAQ = {
   })),
 };
 
-export default function HomePage() {
+export default async function HomePage() {
+  // Fetch real stats from DB (server-side, cached for 5 min)
+  let stats = { businesses: '25+', payments: '95+', countries: '5' };
+  try {
+    const supabase = createServiceClient();
+    const [{ count: bizCount }, { count: payCount }, { data: countryData }] = await Promise.all([
+      supabase.from('businesses').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+      supabase.from('payments').select('id', { count: 'exact', head: true }).eq('status', 'success'),
+      supabase.from('businesses').select('country_code').eq('status', 'active'),
+    ]);
+    const uniqueCountries = new Set((countryData || []).map(b => b.country_code)).size;
+    stats = {
+      businesses: `${bizCount || 25}+`,
+      payments: `${payCount || 95}+`,
+      countries: String(uniqueCountries || 5),
+    };
+  } catch {}
+
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_ORG) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_APP) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_FAQ) }} />
-      <HomeClient />
+      <HomeClient stats={stats} />
     </>
   );
 }

@@ -185,6 +185,21 @@ export async function sendProactiveConfirmation(
           });
         }
       }
+      // Send email to business owner
+      try {
+        const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();
+        if (biz?.owner_id) {
+          const { data: ownerProfile } = await supabase.from('profiles').select('email').eq('id', biz.owner_id).single();
+          if (ownerProfile?.email) {
+            const { sendEmail } = await import('@/lib/email/client');
+            const { paymentReceivedEmail } = await import('@/lib/email/templates');
+            const emailContent = paymentReceivedEmail(businessName, formatCurrency(payment.amount, countryCode), serviceName);
+            await sendEmail({ to: ownerProfile.email, ...emailContent });
+          }
+        }
+      } catch (emailErr) {
+        logger.error(`${logPrefix} Owner email error:`, emailErr);
+      }
     } catch (notifyErr) {
       logger.error(`${logPrefix} Owner notification error:`, notifyErr);
     }
