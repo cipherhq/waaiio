@@ -418,6 +418,48 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
         </div>
       </section>
 
+      {/* ── The Problem — Why Businesses Need This ── */}
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-5xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-red-500">The problem</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
+              Your business is losing money right now
+            </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-600">
+              Every missed call, ignored DM, and forgotten follow-up is revenue walking out the door.
+            </p>
+          </AnimatedSection>
+
+          <div className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { stat: '40%', label: 'of booking requests come after hours', desc: 'Customers message at 11 PM. You reply at 9 AM. They already booked somewhere else.', icon: '🌙' },
+              { stat: '67%', label: 'of customers won\'t call back', desc: 'If they message and don\'t get an instant reply, they move on. No second chances.', icon: '📱' },
+              { stat: '5hrs', label: 'wasted weekly on manual booking', desc: 'Checking availability, confirming times, sending reminders, chasing payments — all by hand.', icon: '⏰' },
+              { stat: '30%', label: 'no-show rate without reminders', desc: 'Customers forget. Without automated reminders, nearly a third of appointments are wasted slots.', icon: '👻' },
+              { stat: '₦0', label: 'earned from dormant customers', desc: 'You have hundreds of past customers. Without follow-ups, they never come back.', icon: '💤' },
+              { stat: '3x', label: 'more effort to collect payments', desc: 'Invoicing, chasing bank transfers, reconciling manually. Payment should take 10 seconds, not 3 days.', icon: '💸' },
+            ].map((item, i) => (
+              <AnimatedSection key={item.label} delay={i * 0.06}>
+                <div className="rounded-2xl border border-red-100 bg-red-50/50 p-6">
+                  <span className="text-2xl">{item.icon}</span>
+                  <p className="mt-3 text-2xl font-extrabold text-red-600">{item.stat}</p>
+                  <p className="text-sm font-semibold text-gray-900">{item.label}</p>
+                  <p className="mt-2 text-sm text-gray-600">{item.desc}</p>
+                </div>
+              </AnimatedSection>
+            ))}
+          </div>
+
+          <AnimatedSection delay={0.4} className="mt-12 text-center">
+            <p className="text-lg font-semibold text-gray-900">
+              Waaiio fixes all of this — automatically, on WhatsApp, 24/7.
+            </p>
+            <p className="mt-2 text-sm text-gray-500">No app download. No website needed. Just WhatsApp.</p>
+          </AnimatedSection>
+        </div>
+      </section>
+
       {/* ── WHY WAAIIO — 3 Big Cards ── */}
       <section className="bg-gray-50 py-20">
         <div className="mx-auto max-w-6xl px-4">
