@@ -34,6 +34,39 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+// ── Rate Limiting (in-memory, per IP) ──
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+const RL_CLEANUP_INTERVAL = 60_000;
+let lastCleanup = Date.now();
+
+function checkMiddlewareRateLimit(ip: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  // Periodic cleanup
+  if (now - lastCleanup > RL_CLEANUP_INTERVAL) {
+    lastCleanup = now;
+    for (const [key, entry] of rateLimitStore) {
+      if (now > entry.resetAt) rateLimitStore.delete(key);
+    }
+    // Cap at 50k entries
+    if (rateLimitStore.size > 50_000) {
+      const excess = rateLimitStore.size - 50_000;
+      const iter = rateLimitStore.keys();
+      for (let i = 0; i < excess; i++) {
+        const next = iter.next();
+        if (!next.done) rateLimitStore.delete(next.value);
+      }
+    }
+  }
+
+  const entry = rateLimitStore.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(ip, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  entry.count++;
+  return entry.count <= limit;
+}
+
 export async function middleware(request: NextRequest) {
   // Handle CORS preflight for admin API routes (called from admin.waaiio.com)
   if (request.method === 'OPTIONS' && request.nextUrl.pathname.startsWith('/api/admin/')) {
@@ -77,6 +110,32 @@ export async function middleware(request: NextRequest) {
         status: 403,
         headers: { 'Content-Type': 'application/json' },
       });
+    }
+  }
+
+  // ── Global API rate limiting ──
+  if (isApiRoute) {
+    const forwarded = request.headers.get('x-forwarded-for');
+    const ip = forwarded?.split(',')[0]?.trim() || 'unknown';
+
+    // Exempt webhook endpoints (authenticated via signatures, not IP)
+    const isWebhookRoute = isWebhook
+      || request.nextUrl.pathname.startsWith('/api/payments/stripe-webhook')
+      || request.nextUrl.pathname.startsWith('/api/payments/square-webhook')
+      || request.nextUrl.pathname.startsWith('/api/payments/paypal-webhook')
+      || request.nextUrl.pathname.startsWith('/api/payments/byo-webhook')
+      || request.nextUrl.pathname.startsWith('/api/cron');
+
+    if (!isWebhookRoute) {
+      // POST/PUT/PATCH/DELETE: 60 req/min, GET: 120 req/min
+      const limit = isStateMutating ? 60 : 120;
+      const key = `api:${ip}:${isStateMutating ? 'write' : 'read'}`;
+      if (!checkMiddlewareRateLimit(key, limit, 60_000)) {
+        return new NextResponse(
+          JSON.stringify({ error: 'Too many requests. Please try again later.' }),
+          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '60' } },
+        );
+      }
     }
   }
 
