@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     });
 
   if (uploadError) {
-    return NextResponse.json({ error: 'Upload failed: ' + uploadError.message }, { status: 500 });
+    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 
   const { data: urlData } = supabase.storage
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     .eq('id', businessId);
 
   if (updateError) {
-    return NextResponse.json({ error: 'Failed to update logo: ' + updateError.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to update logo' }, { status: 500 });
   }
 
   return NextResponse.json({ success: true, url: urlData.publicUrl });

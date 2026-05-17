@@ -279,8 +279,9 @@ export async function POST(request: NextRequest) {
       flow_type: flowType,
     });
   } catch (error) {
+    logger.error('Onboarding register error:', error);
     return NextResponse.json(
-      { message: 'Internal server error', error: (error as Error).message },
+      { message: 'Something went wrong' },
       { status: 500 },
     );
   }

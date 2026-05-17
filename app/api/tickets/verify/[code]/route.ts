@@ -12,6 +12,9 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(req, 'ticket-verify'), 30, 60_000); // 30 per min
+  if (rateLimit) return rateLimit;
+
   const { code } = await params;
   const businessId = req.nextUrl.searchParams.get('business_id');
   const supabase = createServiceClient();

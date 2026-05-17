@@ -29,7 +29,10 @@ export async function GET(request: NextRequest) {
 
   if (country) query = query.eq('country_code', country);
   if (category) query = query.eq('category', category);
-  if (search) query = query.ilike('name', `%${search}%`);
+  if (search) {
+    const safeSearch = search.replace(/[%_\\]/g, '\\$&');
+    query = query.ilike('name', `%${safeSearch}%`);
+  }
 
   const [{ data, error }, { data: settingsData }] = await Promise.all([
     query,

@@ -176,8 +176,9 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    logger.error('Broadcast send error:', error);
     return NextResponse.json(
-      { message: 'Internal server error', error: (error as Error).message },
+      { message: 'Something went wrong' },
       { status: 500 },
     );
   }

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 export const maxDuration = 60;
 
@@ -14,11 +15,8 @@ export const maxDuration = 60;
  * Schedule: daily at 9 AM
  */
 export async function GET(request: NextRequest) {
-  // Verify cron secret
-  const authHeader = request.headers.get('authorization');
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const authError = verifyCronAuth(request);
+  if (authError) return authError;
 
   const supabase = createServiceClient();
   const tomorrow = new Date();

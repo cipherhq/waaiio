@@ -41,8 +41,12 @@ export async function POST(
         .update(rawBody)
         .digest('hex');
 
-      if (hash !== signature) {
-        return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
+      try {
+        if (!timingSafeEqual(Buffer.from(hash), Buffer.from(signature))) {
+          return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+        }
+      } catch {
+        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
     } else if (creds.gateway === 'flutterwave') {
       const verifyHash = request.headers.get('verif-hash') || '';

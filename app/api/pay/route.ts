@@ -10,17 +10,18 @@ import { createServiceClient } from '@/lib/supabase/service';
  */
 export async function GET(request: NextRequest) {
   const ref = request.nextUrl.searchParams.get('ref');
-  if (!ref) {
+  if (!ref || ref.length < 6) {
     return NextResponse.redirect(new URL('/', request.url));
   }
 
   const supabase = createServiceClient();
 
   // Look up payment by gateway_reference (full or partial match)
+  const safeRef = ref.replace(/[%_\\]/g, '\\$&');
   const { data: payment } = await supabase
     .from('payments')
     .select('gateway, gateway_reference, metadata')
-    .like('gateway_reference', `%${ref}`)
+    .like('gateway_reference', `%${safeRef}`)
     .eq('status', 'pending')
     .order('created_at', { ascending: false })
     .limit(1)
@@ -32,6 +33,15 @@ export async function GET(request: NextRequest) {
     // Use stored checkout URL if available (works for all gateways)
     const storedUrl = meta.checkout_url as string;
     if (storedUrl) {
+      const ALLOWED_DOMAINS = ['paystack.com', 'checkout.paystack.com', 'stripe.com', 'checkout.stripe.com', 'js.stripe.com', 'checkout.flutterwave.com', 'squareup.com', 'sandbox.paypal.com', 'paypal.com', 'waaiio.com'];
+      try {
+        const urlObj = new URL(storedUrl);
+        if (!ALLOWED_DOMAINS.some(d => urlObj.hostname === d || urlObj.hostname.endsWith('.' + d))) {
+          return NextResponse.json({ error: 'Invalid redirect' }, { status: 400 });
+        }
+      } catch {
+        return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
+      }
       return NextResponse.redirect(storedUrl);
     }
 

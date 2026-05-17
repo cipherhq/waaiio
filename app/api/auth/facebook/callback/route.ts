@@ -224,7 +224,7 @@ export async function POST(request: NextRequest) {
       if (insertError) {
         logger.error('Failed to create channel:', insertError);
         return NextResponse.json(
-          { message: 'Failed to create WhatsApp channel', error: insertError.message },
+          { message: 'Failed to create WhatsApp channel' },
           { status: 500 }
         );
       }
@@ -298,7 +298,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logger.error('Facebook callback error:', error);
     return NextResponse.json(
-      { message: 'Internal server error', error: (error as Error).message },
+      { message: 'Something went wrong' },
       { status: 500 }
     );
   }

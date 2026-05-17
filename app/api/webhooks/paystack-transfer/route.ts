@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { payoutPaidEmail, payoutFailedEmail } from '@/lib/email/templates';
@@ -30,7 +30,11 @@ export async function POST(request: NextRequest) {
 
     // Verify HMAC signature
     const hash = createHmac('sha512', paystackKey).update(rawBody).digest('hex');
-    if (hash !== signature) {
+    try {
+      if (!timingSafeEqual(Buffer.from(hash), Buffer.from(signature))) {
+        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+      }
+    } catch {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 

@@ -4,6 +4,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { GupshupService } from '@/lib/channels/gupshup';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 
@@ -15,6 +16,9 @@ function getDefaultGupshup() {
 
 export async function POST(request: NextRequest) {
   try {
+    const rl = rateLimitResponse(getRateLimitKey(request, 'quote-accept'), 10, 60_000); // 10 per min
+    if (rl) return rl;
+
     const body = await request.json();
     const { quote_id, action } = body;
 

@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
+    const rl = rateLimitResponse(getRateLimitKey(request, 'otp-verify'), 10, 600_000); // 10 per 10 min
+    if (rl) return rl;
+
     const body = await request.json();
     const { token, otp } = body;
 
