@@ -141,11 +141,26 @@ export async function sendProactiveConfirmation(
     const resolver = new ChannelResolver(supabase);
 
     // Prefer the channel the customer was chatting on
+    // Check active, inactive, and ANY session for this phone (not just this business)
     let resolved = null;
-    const { data: activeSession } = await supabase
+
+    // 1. Try session for this phone + business (active or recently inactive)
+    const { data: bizSession } = await supabase
       .from('bot_sessions').select('session_data')
-      .eq('whatsapp_number', customerPhone).eq('business_id', businessId).eq('is_active', true).maybeSingle();
-    const inboundChId = (activeSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+      .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    let inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+
+    // 2. Fallback: any recent session for this phone (may be on a different business)
+    if (!inboundChId) {
+      const { data: anySession } = await supabase
+        .from('bot_sessions').select('session_data')
+        .eq('whatsapp_number', customerPhone)
+        .not('session_data->_inbound_channel_id', 'is', null)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      inboundChId = (anySession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+    }
+
     if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
     if (!resolved) resolved = await resolver.resolveByBusinessId(businessId);
     if (!resolved) return;
