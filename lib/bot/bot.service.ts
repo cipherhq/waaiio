@@ -587,7 +587,6 @@ export class BotService {
         return;
       }
 
-      // Check if already saved
       const businessId = payment.business_id || session?.business_id;
       if (!businessId) {
         await this.sendText(from, 'Could not determine the business. Try again from within a business session.');
@@ -607,25 +606,28 @@ export class BotService {
         return;
       }
 
-      // Save with explicit consent
-      await this.supabase.from('saved_payment_methods').insert({
-        business_id: businessId,
-        customer_phone: phoneP,
-        gateway: payment.gateway || 'paystack',
-        authorization_code: auth.authorization_code as string,
-        customer_code: (auth.customer_code as string) || null,
-        card_last4: (auth.last4 as string) || null,
-        card_brand: (auth.brand as string) || null,
-        card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
-        card_exp_year: auth.exp_year ? Number(auth.exp_year) : null,
-        card_type: (auth.card_type as string) || null,
-        bank_name: (auth.bank as string) || null,
-        is_active: true,
-        last_used_at: new Date().toISOString(),
-      });
+      // Store card data in session and ask for PIN
+      const saveData = {
+        _save_card_pending: true,
+        _save_card_business_id: businessId,
+        _save_card_gateway: payment.gateway || 'paystack',
+        _save_card_auth: auth,
+      };
+
+      if (session) {
+        await this.supabase.from('bot_sessions')
+          .update({ current_step: 'save_card_pin', session_data: { ...session.session_data, ...saveData } })
+          .eq('id', session.id);
+      } else {
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from, user_id: null, business_id: businessId,
+          current_step: 'save_card_pin', session_data: saveData, is_active: true,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        });
+      }
 
       const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-      await this.sendText(from, `💳 Card saved! *${cardLabel}*\n\nNext time you pay, you'll see a one-tap option.\n\nType *remove card* anytime to delete it.`);
+      await this.sendText(from, `💳 Saving *${cardLabel}*\n\nCreate a *4-digit PIN* to secure this card.\nYou'll need this PIN every time you use the saved card.\n\nType your 4-digit PIN now:`);
       return;
     }
 
@@ -1771,7 +1773,7 @@ export class BotService {
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
-    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'].includes(step);
+    const isFreeTextStepForKeywords = isChatMode || ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin'].includes(step);
 
     if (!isFreeTextStepForKeywords) {
       // Use cached category from session_data (saved during session creation)
@@ -1784,6 +1786,78 @@ export class BotService {
         const handled = await this.executeKeywordAction(from, session, kwMatch);
         if (handled) return;
       }
+    }
+
+    // Handle save card PIN creation
+    if (step === 'save_card_pin') {
+      const pin = text.trim();
+
+      if (pin === 'cancel' || pin === 'exit') {
+        const updatedData = { ...session.session_data };
+        delete updatedData._save_card_pending;
+        delete updatedData._save_card_business_id;
+        delete updatedData._save_card_gateway;
+        delete updatedData._save_card_auth;
+        await this.supabase.from('bot_sessions')
+          .update({ current_step: 'select_capability', session_data: updatedData })
+          .eq('id', session.id);
+        await this.sendText(from, 'Card save cancelled.');
+        return;
+      }
+
+      if (!/^\d{4}$/.test(pin)) {
+        await this.sendText(from, 'Please enter exactly *4 digits* for your PIN (e.g. 1234):');
+        return;
+      }
+
+      const d = session.session_data;
+      const auth = d._save_card_auth as Record<string, unknown>;
+      const businessId = d._save_card_business_id as string;
+      const gateway = d._save_card_gateway as string;
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+
+      if (!auth?.authorization_code || !businessId) {
+        await this.sendText(from, 'Something went wrong. Please type *save card* again.');
+        await this.supabase.from('bot_sessions').update({ current_step: 'select_capability', session_data: {} }).eq('id', session.id);
+        return;
+      }
+
+      // Hash the PIN with SHA-256 + phone as salt (not reversible)
+      const { createHash } = await import('crypto');
+      const pinHash = createHash('sha256').update(`${pin}:${phoneP}`).digest('hex');
+
+      await this.supabase.from('saved_payment_methods').insert({
+        business_id: businessId,
+        customer_phone: phoneP,
+        gateway,
+        authorization_code: auth.authorization_code as string,
+        customer_code: (auth.customer_code as string) || null,
+        card_last4: (auth.last4 as string) || null,
+        card_brand: (auth.brand as string) || null,
+        card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
+        card_exp_year: auth.exp_year ? Number(auth.exp_year) : null,
+        card_type: (auth.card_type as string) || null,
+        bank_name: (auth.bank as string) || null,
+        is_active: true,
+        pin_hash: pinHash,
+        pin_attempts: 0,
+        last_used_at: new Date().toISOString(),
+      });
+
+      const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+
+      // Clear save data from session
+      const cleanData = { ...session.session_data };
+      delete cleanData._save_card_pending;
+      delete cleanData._save_card_business_id;
+      delete cleanData._save_card_gateway;
+      delete cleanData._save_card_auth;
+      await this.supabase.from('bot_sessions')
+        .update({ current_step: 'select_capability', session_data: cleanData })
+        .eq('id', session.id);
+
+      await this.sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 PIN set successfully. You'll need this PIN when using your saved card.\n\nType *remove card* anytime to delete it.`);
+      return;
     }
 
     // Handle "Did you mean?" business selection
