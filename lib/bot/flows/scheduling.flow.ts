@@ -622,10 +622,10 @@ export const schedulingFlow: FlowDefinition = {
         const staffId = ctx.session.session_data.staff_id as string | null;
         const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
 
-        // Fetch existing bookings for this date
+        // Fetch existing bookings for this date (include duration for overlap detection)
         let bookingsQuery = ctx.supabase
           .from('bookings')
-          .select('time, staff_id')
+          .select('time, staff_id, services(duration_minutes)')
           .eq('business_id', ctx.business!.id)
           .eq('date', dateStr)
           .in('status', ['confirmed', 'pending', 'in_progress']);
@@ -636,12 +636,24 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: existingBookings } = await bookingsQuery;
 
-        // Count bookings per time slot
+        // Count bookings per time slot — accounting for service duration overlap
+        // A 60-min booking at 8:00 blocks 8:00 AND 8:30 (with 30-min slot intervals)
         const slotCounts = new Map<string, number>();
         for (const b of existingBookings || []) {
           if (b.time) {
-            const t = b.time.slice(0, 5); // normalize to HH:MM
-            slotCounts.set(t, (slotCounts.get(t) || 0) + 1);
+            const bookingStart = timeToMinutes(b.time.slice(0, 5));
+            const svc = b.services as unknown as { duration_minutes?: number } | null;
+            const serviceDuration = (ctx.session.session_data._service_duration as number) || 30;
+            const bookingDuration = svc?.duration_minutes || serviceDuration;
+
+            // Block all slots that overlap with this booking's time range
+            for (const slot of allSlots) {
+              const slotStart = timeToMinutes(slot);
+              // Overlap: slot starts during the booking, OR booking starts during the slot
+              if (slotStart >= bookingStart && slotStart < bookingStart + bookingDuration) {
+                slotCounts.set(slot, (slotCounts.get(slot) || 0) + 1);
+              }
+            }
           }
         }
 
