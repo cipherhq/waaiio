@@ -367,8 +367,25 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_date',
       async skipIf(ctx: FlowContext) {
-        // Skip if smart intent already extracted a date
-        return !!ctx.session.session_data.date;
+        const preDate = ctx.session.session_data.date as string | undefined;
+        if (!preDate) return false;
+
+        // Validate: must be in the future, business must be open, not fully booked
+        const selected = new Date(preDate + 'T00:00');
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        if (selected < today) { delete ctx.session.session_data.date; return false; }
+
+        // Check business is open on this day
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const dayName = dayNames[selected.getDay()];
+        const opHours = (ctx.business?.operating_hours || {}) as Record<string, { closed?: boolean }>;
+        if (opHours[dayName]?.closed) { delete ctx.session.session_data.date; return false; }
+
+        // Check available days for this service
+        const availDays = (ctx.session.session_data._service_available_days as string[]) || [];
+        if (availDays.length > 0 && !availDays.includes(dayName)) { delete ctx.session.session_data.date; return false; }
+
+        return true;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const messages: PromptMessage[] = [];
@@ -527,8 +544,38 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_time',
       async skipIf(ctx: FlowContext) {
-        // Skip if smart intent already extracted a specific time
-        return !!ctx.session.session_data.time;
+        const preTime = ctx.session.session_data.time as string | undefined;
+        const dateStr = ctx.session.session_data.date as string | undefined;
+        if (!preTime || !dateStr) return false;
+
+        // Validate: time must be within business operating hours for this day
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const selectedDay = dayNames[new Date(dateStr + 'T00:00').getDay()];
+        const opHours = (ctx.business?.operating_hours || {}) as Record<string, { open?: string; close?: string; closed?: boolean }>;
+        const dayHours = opHours[selectedDay];
+
+        const openTime = (dayHours && !dayHours.closed && dayHours.open) ? dayHours.open : '08:00';
+        const closeTime = (dayHours && !dayHours.closed && dayHours.close) ? dayHours.close : '22:00';
+
+        const preMinutes = timeToMinutes(preTime);
+        const openMinutes = timeToMinutes(openTime);
+        const closeMinutes = timeToMinutes(closeTime);
+
+        // If time is outside operating hours, clear it and show the picker
+        if (preMinutes < openMinutes || preMinutes >= closeMinutes) {
+          delete ctx.session.session_data.time;
+          return false;
+        }
+
+        // If time is in the past (today), clear it
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        if (dateStr === todayStr) {
+          const nowMinutes = now.getHours() * 60 + now.getMinutes();
+          if (preMinutes <= nowMinutes) { delete ctx.session.session_data.time; return false; }
+        }
+
+        return true;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const dateStr = ctx.session.session_data.date as string;
