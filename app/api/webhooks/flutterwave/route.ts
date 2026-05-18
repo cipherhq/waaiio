@@ -115,9 +115,11 @@ export async function POST(request: NextRequest) {
     await processSuccessfulPayment(supabase, paymentForShared);
 
     // Proactive confirmation: send WhatsApp message + post-completion
-    sendProactiveConfirmation(supabase, paymentForShared, '[FLUTTERWAVE WEBHOOK]').catch(err =>
-      logger.error('[FLUTTERWAVE WEBHOOK] Proactive confirmation error:', err),
-    );
+    try {
+      await sendProactiveConfirmation(supabase, paymentForShared, '[FLUTTERWAVE WEBHOOK]');
+    } catch (confirmErr) {
+      logger.error('[FLUTTERWAVE WEBHOOK] Proactive confirmation error:', confirmErr);
+    }
 
     return NextResponse.json({ message: 'OK' }, { status: 200 });
   } catch (error) {

@@ -99,9 +99,11 @@ export async function processPaystackChargeSuccess(
 
   // Proactive confirmation: send WhatsApp message to customer after payment
   // This ensures customers get confirmation even if they never tap "I've Paid"
-  sendProactiveConfirmation(supabase, existingPayment, '[PAYSTACK WEBHOOK]').catch(err =>
-    logger.error('[PAYSTACK WEBHOOK] Proactive confirmation error:', err),
-  );
+  try {
+    await sendProactiveConfirmation(supabase, existingPayment, '[PAYSTACK WEBHOOK]');
+  } catch (confirmErr) {
+    logger.error('[PAYSTACK WEBHOOK] Proactive confirmation error:', confirmErr);
+  }
 }
 
 export async function processPaystackChargeFailed(

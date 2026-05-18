@@ -105,15 +105,17 @@ export async function POST(request: NextRequest) {
           });
 
           // Proactive confirmation: send WhatsApp message + post-completion
-          sendProactiveConfirmation(supabase, {
-            id: payment.id,
-            amount: payment.amount,
-            booking_id: payment.booking_id,
-            invoice_id: payment.invoice_id || null,
-            campaign_id: null,
-          }, '[STRIPE WEBHOOK]').catch(err =>
-            logger.error('[STRIPE WEBHOOK] Proactive confirmation error:', err),
-          );
+          try {
+            await sendProactiveConfirmation(supabase, {
+              id: payment.id,
+              amount: payment.amount,
+              booking_id: payment.booking_id,
+              invoice_id: payment.invoice_id || null,
+              campaign_id: null,
+            }, '[STRIPE WEBHOOK]');
+          } catch (confirmErr) {
+            logger.error('[STRIPE WEBHOOK] Proactive confirmation error:', confirmErr);
+          }
         }
 
         // Handle subscription payments (business tier upgrades)

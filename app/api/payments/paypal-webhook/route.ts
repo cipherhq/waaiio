@@ -231,9 +231,11 @@ export async function POST(request: NextRequest) {
       await processSuccessfulPayment(supabase, paymentForShared);
 
       // Proactive confirmation: send WhatsApp message + post-completion
-      sendProactiveConfirmation(supabase, paymentForShared, '[PAYPAL WEBHOOK]').catch(err =>
-        logger.error('[PAYPAL WEBHOOK] Proactive confirmation error:', err),
-      );
+      try {
+        await sendProactiveConfirmation(supabase, paymentForShared, '[PAYPAL WEBHOOK]');
+      } catch (confirmErr) {
+        logger.error('[PAYPAL WEBHOOK] Proactive confirmation error:', confirmErr);
+      }
     }
 
     // PAYMENT.CAPTURE.DENIED — payment failed
