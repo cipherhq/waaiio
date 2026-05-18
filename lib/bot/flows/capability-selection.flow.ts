@@ -267,7 +267,7 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // Smart intent: extract date/time/service from natural language input
     // so the scheduling flow can fast-track (skip already-answered steps)
-    if ((capId === 'scheduling' || capId === 'reservation') && ctx.business) {
+    if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing') && ctx.business) {
       try {
         const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
         const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null);
@@ -290,6 +290,10 @@ const selectCapabilityStep: FlowStepConfig = {
           if (parsed.timePreference) ctx.session.session_data._time_preference = parsed.timePreference;
           if (parsed.quantity && parsed.quantity >= 1 && parsed.quantity <= 20) {
             ctx.session.session_data.party_size = parsed.quantity;
+            ctx.session.session_data.ticket_quantity = parsed.quantity;
+          }
+          if (parsed.amount && parsed.amount >= 1) {
+            ctx.session.session_data.amount = parsed.amount;
           }
 
           // Send acknowledgment

@@ -20,6 +20,7 @@ export interface SmartParseResult {
   timePreference: 'morning' | 'afternoon' | 'evening' | null;
   specificTime: string | null;  // HH:MM
   quantity: number | null;
+  amount: number | null;        // Extracted amount (e.g., 5000 from "pay tithe 5000")
 }
 
 // ── Intent patterns ──────────────────────────────────────
@@ -228,6 +229,26 @@ function extractQuantity(text: string): number | null {
   return null;
 }
 
+// ── Amount extraction ──────────────────────────────────
+
+function extractAmount(text: string): number | null {
+  const lower = text.toLowerCase().replace(/,/g, '');
+
+  // "pay 5000", "tithe 10000", "give 500", "donate 2000"
+  const amountMatch = lower.match(/\b(?:pay|tithe|offering|give|donate|sow|send|transfer)\s+(?:of\s+)?[\u20a6\u00a3$]?\s*(\d+(?:\.\d{1,2})?)\b/);
+  if (amountMatch) return parseFloat(amountMatch[1]);
+
+  // "5000 tithe", "10000 offering", "$500"
+  const prefixMatch = lower.match(/[\u20a6\u00a3$]\s*(\d+(?:\.\d{1,2})?)/);
+  if (prefixMatch) return parseFloat(prefixMatch[1]);
+
+  // "5000 naira", "500 dollars"
+  const currMatch = lower.match(/(\d+(?:\.\d{1,2})?)\s*(?:naira|cedis?|dollars?|pounds?|usd|ngn|ghs|gbp|cad)\b/);
+  if (currMatch) return parseFloat(currMatch[1]);
+
+  return null;
+}
+
 // ── Service keyword extraction ───────────────────────────
 
 function extractServiceKeywords(text: string): string[] {
@@ -402,6 +423,7 @@ export function parseSmartIntent(text: string): SmartParseResult {
   result.specificTime = timeResult.specific;
   result.timePreference = timeResult.preference;
   result.quantity = extractQuantity(text);
+  result.amount = extractAmount(text);
 
   // Mark understood if anything useful extracted
   result.understood = !!(
@@ -410,7 +432,8 @@ export function parseSmartIntent(text: string): SmartParseResult {
     result.specificTime ||
     result.timePreference ||
     result.serviceKeywords.length > 0 ||
-    result.quantity
+    result.quantity ||
+    result.amount
   );
 
   return result;
@@ -606,10 +629,19 @@ export function buildAcknowledgment(
   }
 
   if (parsed.quantity && parsed.quantity > 1) {
-    parts.push(`for *${parsed.quantity} people*`);
+    if (parsed.intent === 'ticketing') {
+      parts.push(`*${parsed.quantity} tickets*`);
+    } else {
+      parts.push(`for *${parsed.quantity} people*`);
+    }
+  }
+
+  if (parsed.amount) {
+    parts.push(`of *${parsed.amount.toLocaleString()}*`);
   }
 
   if (parts.length === 0) return null;
 
-  return `Got it! Looking up ${parts.join(' ')} for you... ✨`;
+  const verb = parsed.intent === 'payment' ? 'Processing' : 'Looking up';
+  return `Got it! ${verb} ${parts.join(' ')} for you... ✨`;
 }

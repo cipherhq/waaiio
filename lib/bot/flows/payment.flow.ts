@@ -85,9 +85,15 @@ export const paymentFlow: FlowDefinition = {
     {
       id: 'enter_amount',
       async skipIf(ctx: FlowContext): Promise<boolean> {
+        // Skip if service has a fixed price
         const price = ctx.session.session_data.service_price as number;
         if (price && price > 0) {
           ctx.session.session_data.amount = price;
+          return true;
+        }
+        // Skip if smart intent pre-filled an amount (e.g., "pay tithe 5000")
+        const preAmount = ctx.session.session_data.amount as number;
+        if (preAmount && preAmount >= 1) {
           return true;
         }
         return false;
