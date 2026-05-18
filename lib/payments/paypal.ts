@@ -133,10 +133,30 @@ export class PayPalGateway implements PaymentGateway {
         },
       };
 
-      const orderData = await paypalRequest('/v2/checkout/orders', orderBody);
+      let orderData: Record<string, unknown>;
+      try {
+        orderData = await paypalRequest('/v2/checkout/orders', orderBody);
+      } catch (fetchErr) {
+        logger.error('[PAYPAL] Order API fetch failed:', (fetchErr as Error).message);
+        // Store debug info for troubleshooting
+        (globalThis as Record<string, unknown>).__paypalDebug = {
+          error: (fetchErr as Error).message,
+          clientIdPresent: !!paypalClientId,
+          clientIdPrefix: paypalClientId?.slice(0, 10),
+          environment: paypalEnvironment,
+          currency: opts.currency,
+          amount: opts.amount,
+        };
+        return null;
+      }
 
       if (!orderData.id || orderData.status === 'error') {
         logger.error('[PAYPAL] Order creation failed:', JSON.stringify(orderData).slice(0, 500));
+        (globalThis as Record<string, unknown>).__paypalDebug = {
+          response: JSON.stringify(orderData).slice(0, 500),
+          currency: opts.currency,
+          amount: opts.amount,
+        };
         return null;
       }
 
@@ -179,7 +199,15 @@ export class PayPalGateway implements PaymentGateway {
 
       return { url: approveLink, reference: paypalOrderId };
     } catch (error) {
-      logger.error('[PAYPAL] init error:', (error as Error).message);
+      const err = error as Error;
+      logger.error('[PAYPAL] init error:', err.message, err.stack?.split('\n').slice(0, 3).join(' '));
+      (globalThis as Record<string, unknown>).__paypalDebug = {
+        error: err.message,
+        stack: err.stack?.split('\n').slice(0, 5),
+        clientIdPresent: !!paypalClientId,
+        secretPresent: !!paypalClientSecret,
+        environment: paypalEnvironment,
+      };
       return null;
     }
   }
