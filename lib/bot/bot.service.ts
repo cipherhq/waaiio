@@ -372,6 +372,9 @@ export class BotService {
       || /^check\s*in$/i.test(text)
       || /^(join|enter)\s+(the\s+)?(queue|line|waiting\s*list)$/i.test(text);
 
+    const isSaveCardQuery = /^save\s+card$/i.test(text) || /^save\s+my\s+card$/i.test(text);
+    const isRemoveCardQuery = /^remove\s+card$/i.test(text) || /^delete\s+card$/i.test(text) || /^remove\s+my\s+card$/i.test(text);
+
     let session = await this.getActiveSession(from);
 
     // Handle location query — send business address/location
@@ -538,6 +541,130 @@ export class BotService {
         return;
       }
       await this.handleTransactionDocument(from, profile.id, 'annual');
+      return;
+    }
+
+    // ── Save Card (consent-based) ──
+    if (isSaveCardQuery) {
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+
+      // Find the most recent successful payment with card authorization data
+      const { data: recentPayment } = await this.supabase
+        .from('payments')
+        .select('id, business_id, metadata, gateway')
+        .eq('status', 'success')
+        .or(`metadata->>customer_phone.eq.${phoneP},metadata->>customer_phone.eq.${phoneN}`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // Fallback: find via bookings
+      let payment = recentPayment;
+      if (!payment) {
+        const { data: booking } = await this.supabase
+          .from('bookings')
+          .select('id, business_id, payments(id, business_id, metadata, gateway)')
+          .or(`guest_phone.eq.${phoneP},guest_phone.eq.${phoneN}`)
+          .eq('deposit_status', 'paid')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const bp = (booking?.payments as unknown as Array<{ id: string; business_id: string; metadata: unknown; gateway: string }>) || [];
+        if (bp.length > 0) payment = bp[0];
+      }
+
+      if (!payment) {
+        await this.sendText(from, 'No recent payment found. Make a payment first, then type *save card*.');
+        return;
+      }
+
+      const meta = (payment.metadata || {}) as Record<string, unknown>;
+      const auth = meta._card_authorization as Record<string, unknown> | undefined;
+
+      if (!auth?.authorization_code) {
+        await this.sendText(from, 'Your last payment method cannot be saved for future use. This is usually because the payment gateway does not support card saving for this transaction type.');
+        return;
+      }
+
+      // Check if already saved
+      const businessId = payment.business_id || session?.business_id;
+      if (!businessId) {
+        await this.sendText(from, 'Could not determine the business. Try again from within a business session.');
+        return;
+      }
+
+      const { data: existing } = await this.supabase
+        .from('saved_payment_methods')
+        .select('id')
+        .eq('business_id', businessId)
+        .eq('customer_phone', phoneP)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (existing) {
+        await this.sendText(from, 'You already have a saved card for this business. Type *remove card* to remove it first.');
+        return;
+      }
+
+      // Save with explicit consent
+      await this.supabase.from('saved_payment_methods').insert({
+        business_id: businessId,
+        customer_phone: phoneP,
+        gateway: payment.gateway || 'paystack',
+        authorization_code: auth.authorization_code as string,
+        customer_code: (auth.customer_code as string) || null,
+        card_last4: (auth.last4 as string) || null,
+        card_brand: (auth.brand as string) || null,
+        card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
+        card_exp_year: auth.exp_year ? Number(auth.exp_year) : null,
+        card_type: (auth.card_type as string) || null,
+        bank_name: (auth.bank as string) || null,
+        is_active: true,
+        last_used_at: new Date().toISOString(),
+      });
+
+      const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
+      await this.sendText(from, `💳 Card saved! *${cardLabel}*\n\nNext time you pay, you'll see a one-tap option.\n\nType *remove card* anytime to delete it.`);
+      return;
+    }
+
+    // ── Remove Card ──
+    if (isRemoveCardQuery) {
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const businessId = session?.business_id;
+
+      // If in a business session, remove card for that business
+      // Otherwise, remove all saved cards for this phone
+      if (businessId) {
+        const { data: deleted } = await this.supabase
+          .from('saved_payment_methods')
+          .delete()
+          .eq('business_id', businessId)
+          .eq('customer_phone', phoneP)
+          .eq('is_active', true)
+          .select('card_last4, card_brand');
+
+        if (deleted && deleted.length > 0) {
+          const card = deleted[0];
+          await this.sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
+        } else {
+          await this.sendText(from, 'No saved card found for this business.');
+        }
+      } else {
+        const { data: deleted } = await this.supabase
+          .from('saved_payment_methods')
+          .delete()
+          .eq('customer_phone', phoneP)
+          .eq('is_active', true)
+          .select('card_last4');
+
+        if (deleted && deleted.length > 0) {
+          await this.sendText(from, `Removed ${deleted.length} saved card${deleted.length > 1 ? 's' : ''}. You'll need to enter card details for future payments.`);
+        } else {
+          await this.sendText(from, 'No saved cards found.');
+        }
+      }
       return;
     }
 

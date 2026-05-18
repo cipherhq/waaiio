@@ -49,31 +49,29 @@ export async function processPaystackChargeSuccess(
     })
     .eq('gateway_reference', reference);
 
-  // Save reusable payment method for future one-tap payments
+  // Card saving is consent-based — customer must type "save card" after payment.
+  // Store authorization data on the payment metadata so it's available for later opt-in.
   if (authorization?.reusable && authorization?.authorization_code) {
     const customer = data.customer as Record<string, string> | undefined;
-    const metadata = data.metadata as Record<string, string> | undefined;
-    const businessId = metadata?.business_id;
-    const phone = customer?.phone;
-
-    if (businessId && phone) {
-      await supabase.from('saved_payment_methods').upsert({
-        business_id: businessId,
-        customer_phone: phone,
-        gateway: 'paystack',
-        authorization_code: authorization.authorization_code as string,
-        customer_code: (customer?.customer_code as string) || null,
-        card_last4: (authorization.last4 as string) || null,
-        card_brand: (authorization.brand as string) || null,
-        card_exp_month: authorization.exp_month ? Number(authorization.exp_month) : null,
-        card_exp_year: authorization.exp_year ? Number(authorization.exp_year) : null,
-        card_type: (authorization.card_type as string) || null,
-        bank_name: (authorization.bank as string) || null,
-        is_active: true,
-        last_used_at: new Date().toISOString(),
-      }, { onConflict: 'business_id,customer_phone,gateway' });
-      // Non-blocking — ignore upsert errors
-    }
+    const { data: currentPayment } = await supabase
+      .from('payments').select('metadata').eq('gateway_reference', reference).single();
+    const existingMeta = (currentPayment?.metadata || {}) as Record<string, unknown>;
+    await supabase.from('payments').update({
+      metadata: {
+        ...existingMeta,
+        _card_authorization: {
+          authorization_code: authorization.authorization_code,
+          customer_code: (customer?.customer_code as string) || null,
+          last4: (authorization.last4 as string) || null,
+          brand: (authorization.brand as string) || null,
+          exp_month: authorization.exp_month ? Number(authorization.exp_month) : null,
+          exp_year: authorization.exp_year ? Number(authorization.exp_year) : null,
+          card_type: (authorization.card_type as string) || null,
+          bank: (authorization.bank as string) || null,
+          reusable: true,
+        },
+      },
+    }).eq('gateway_reference', reference);
   }
 
   // Track payment success

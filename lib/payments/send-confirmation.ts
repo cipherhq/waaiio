@@ -131,6 +131,8 @@ export async function sendProactiveConfirmation(
     '',
     'Type *receipt* to get your receipt',
     'Type *my bookings* to view your bookings',
+    'Type *save card* to save for faster checkout next time',
+    'Type *remove card* to delete a saved card',
   ].filter(Boolean);
 
   // ── 5. Resolve channel + send ──
