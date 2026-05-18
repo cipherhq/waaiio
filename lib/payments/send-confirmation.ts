@@ -119,10 +119,6 @@ export async function sendProactiveConfirmation(
   logger.info(`${logPrefix} Sending proactive confirmation to ${customerPhone} for ${businessName}`);
 
   // ── 4. Build confirmation message ──
-  // Check gateway for save card tip (only Paystack supports card saving currently)
-  const { data: paymentGw } = await supabase.from('payments').select('gateway').eq('id', payment.id).single();
-  const isPaystack = paymentGw?.gateway === 'paystack';
-
   const lines = [
     `✅ *Payment Confirmed!*`,
     '',
@@ -135,8 +131,37 @@ export async function sendProactiveConfirmation(
     '',
     'Type *receipt* to get your receipt',
     'Type *my bookings* to view your bookings',
-    isPaystack ? 'Type *save card* to save for faster checkout next time' : '',
   ].filter(Boolean);
+
+  // Show "save card" tip only for Paystack + first payment or new card (not on every confirmation)
+  let showSaveCardTip = false;
+  if (businessId) {
+    const { data: paymentGw } = await supabase.from('payments').select('gateway, metadata').eq('id', payment.id).single();
+    if (paymentGw?.gateway === 'paystack') {
+      const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
+      // Check if customer already has a saved card for this business
+      const { data: existingSaved } = await supabase
+        .from('saved_payment_methods')
+        .select('id, card_last4')
+        .eq('business_id', businessId)
+        .eq('customer_phone', phoneP)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      if (!existingSaved) {
+        // No saved card — check if this is their first payment or a new card
+        const auth = (paymentGw.metadata as Record<string, unknown>)?._card_authorization as Record<string, unknown> | undefined;
+        if (auth?.reusable) {
+          showSaveCardTip = true;
+        }
+      }
+    }
+  }
+
+  if (showSaveCardTip) {
+    lines.push('');
+    lines.push('💳 Type *save card* to save this card for faster checkout next time');
+  }
 
   // ── 5. Resolve channel + send ──
   try {
