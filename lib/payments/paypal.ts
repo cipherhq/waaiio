@@ -73,6 +73,7 @@ export class PayPalGateway implements PaymentGateway {
 
   async initializePayment(opts: InitPaymentOpts): Promise<InitPaymentResult | null> {
     try {
+      logger.info(`[PAYPAL] Init: clientId=${paypalClientId ? 'SET' : 'MISSING'}, secret=${paypalClientSecret ? 'SET' : 'MISSING'}, env=${paypalEnvironment}, amount=${opts.amount}, currency=${opts.currency}`);
       if (!paypalClientId || !paypalClientSecret) {
         if (process.env.NODE_ENV === 'production') {
           throw new Error('Payment gateway not configured: missing PayPal credentials');
