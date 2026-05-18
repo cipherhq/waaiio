@@ -1224,7 +1224,12 @@ export class BotService {
 
     // Don't treat booking intent as a restart when user is already mid-flow
     // (e.g. typing "Haircut" at select_service step — they're already booking)
-    const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability';
+    // Also don't restart from select_capability when the text has rich booking intent
+    // (e.g. "book appointment for friday at 2pm" should fast-track, not restart)
+    const isAtCapabilitySelect = !!session?.business_id && currentStep === 'select_capability';
+    const hasRichBookingIntent = isBookingText && /\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\s*(am|pm)|morning|afternoon|evening|next\s+week)\b/i.test(normalizedForRestart);
+    const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability'
+      || (isAtCapabilitySelect && hasRichBookingIntent);
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
       isGreetingText ||

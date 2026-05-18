@@ -265,6 +265,46 @@ const selectCapabilityStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'Please select an option from the menu.' };
     }
 
+    // Smart intent: extract date/time/service from natural language input
+    // so the scheduling flow can fast-track (skip already-answered steps)
+    if ((capId === 'scheduling' || capId === 'reservation') && ctx.business) {
+      try {
+        const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
+        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null);
+
+        if (parsed.understood) {
+          // Match service keywords
+          if (parsed.serviceKeywords.length > 0) {
+            const matched = await matchServiceFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            if (matched) {
+              ctx.session.session_data.service_id = matched.id;
+              ctx.session.session_data.service_name = matched.name;
+              ctx.session.session_data.service_price = matched.price;
+              ctx.session.session_data.service_duration = matched.duration_minutes;
+              ctx.session.session_data.service_deposit = matched.deposit_amount || 0;
+              ctx.session.session_data.skip_service = true;
+            }
+          }
+          if (parsed.date) ctx.session.session_data.date = parsed.date;
+          if (parsed.specificTime) ctx.session.session_data.time = parsed.specificTime;
+          if (parsed.timePreference) ctx.session.session_data._time_preference = parsed.timePreference;
+          if (parsed.quantity && parsed.quantity >= 1 && parsed.quantity <= 20) {
+            ctx.session.session_data.party_size = parsed.quantity;
+          }
+
+          // Send acknowledgment
+          const { buildAcknowledgment } = await import('@/lib/bot/smart-intent');
+          const { getLocale } = await import('@/lib/constants');
+          const ack = buildAcknowledgment(parsed, ctx.session.session_data.service_name as string | null, getLocale(ctx.business.country_code));
+          if (ack) {
+            await ctx.sender.sendText({ to: ctx.from, text: ack });
+          }
+        }
+      } catch {
+        // Non-fatal — flow continues normally without pre-fill
+      }
+    }
+
     return {
       valid: true,
       data: { active_capability: capId },
