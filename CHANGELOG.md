@@ -5,6 +5,36 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-18
+
+### Payment Confirmation Fixes
+- **Await sendProactiveConfirmation in ALL 5 webhook handlers** — was fire-and-forget (`.catch()`), Vercel killed serverless functions before confirmation finished. Now all handlers `await` the confirmation. Files: webhook-handler.ts, stripe-webhook, flutterwave, square-webhook, paypal-webhook
+- **Payment-success page awaits full pipeline** — was fire-and-forget too. Now awaits `processSuccessfulPayment` (fees, invoices, campaigns) + `sendProactiveConfirmation`. File: `app/payment-success/page.tsx`
+- **Stripe webhook URL fixed** — was `waaiio.com` (307 redirect stripped POST body). Changed to `www.waaiio.com` in Stripe Dashboard. 247 failed deliveries resolved.
+- **Channel lookup checks inactive sessions** — was filtering `is_active: true` but sessions are deactivated before webhook runs. Now checks most recent session regardless of status, falls back to any session with `_inbound_channel_id`. File: `lib/payments/send-confirmation.ts`
+
+### Save Card (Consent-Based with PIN)
+- **Paystack only** — Stripe/Square/PayPal require different APIs (SetupIntent/Vault), not built yet.
+- **Payment lookup fixed** — was querying `metadata.customer_phone` which doesn't exist. Now finds via booking `guest_phone` + fallback to `user_id`. File: `lib/bot/bot.service.ts`
+- **Gateway-aware messaging** — Stripe/Square/PayPal show "Card saving available for Paystack only". No save card tip in their confirmations.
+- **Save card tip shown conditionally** — only on first Paystack payment with reusable card + no existing saved card. Not on every confirmation.
+
+### Dashboard Bugs Fixed (6)
+- **Customers page hardcoded Naira** → uses `formatCurrency(amount, cc)` with business country_code
+- **Dead link `/dashboard/settings/billing`** → changed to `/dashboard/payouts`
+- **Orders page N+1 query** → single batch query with `.in('order_id', orderIds)`
+- **Supabase client every render** → `useMemo(() => createClient(), [])` on invoices + customers
+- **Calendar 8AM-8PM hardcoded** → derives from `business.operating_hours` with fallback
+- **Calendar local formatCurrency** → replaced with import from `@/lib/constants`
+
+### Admin Panel
+- **Support role restricted** — can now only query 20 customer-facing tables. Blocked from profiles, payments, payout_accounts, audit_logs, impersonation_logs, etc. File: `app/api/admin/query/route.ts`
+
+### Tests
+- **225/225 passing** — fixed My Account test (expected 9 items, now 10 with Switch Business)
+
+---
+
 ## 2026-05-15
 
 ### UI/UX fixes across marketing pages and onboarding
