@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { getLocale, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 
 interface Booking {
   id: string;
@@ -130,9 +130,7 @@ const nextActions: Record<string, { label: string; next: string; color: string; 
   ],
 };
 
-const HOUR_START = 8;
-const HOUR_END = 20;
-const HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, i) => HOUR_START + i);
+// HOUR_START, HOUR_END, and HOURS are now derived per-business inside the component via useMemo
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -173,12 +171,7 @@ function dateRange(from: string, to: string): string[] {
   return dates;
 }
 
-function formatCurrency(amount: number, countryCode: string): string {
-  const locale = getLocale((countryCode || 'NG') as CountryCode);
-  const currencyMap: Record<string, string> = { NG: 'NGN', GH: 'GHS', US: 'USD', GB: 'GBP', CA: 'CAD' };
-  const currency = currencyMap[countryCode] || 'NGN';
-  return new Intl.NumberFormat(locale, { style: 'currency', currency, minimumFractionDigits: 0 }).format(amount);
-}
+// formatCurrency is imported from @/lib/constants — handles all countries properly
 
 export default function CalendarPage() {
   const business = useBusiness();
@@ -207,6 +200,43 @@ export default function CalendarPage() {
 
   const hasReservations = hasCapability('reservation');
   const hasEvents = hasCapability('ticketing');
+
+  // Derive calendar hours from business operating_hours (earliest open, latest close across all days)
+  const { HOUR_START, HOUR_END, HOURS } = useMemo(() => {
+    let earliest = 8;
+    let latest = 20;
+    const oh = business.operating_hours;
+    if (oh && typeof oh === 'object') {
+      const entries = Object.values(oh);
+      if (entries.length > 0) {
+        let foundOpen = false;
+        for (const slot of entries) {
+          if (slot && typeof slot.open === 'string' && typeof slot.close === 'string') {
+            const openHour = parseInt(slot.open.split(':')[0], 10);
+            const closeHour = parseInt(slot.close.split(':')[0], 10);
+            if (!isNaN(openHour) && !isNaN(closeHour)) {
+              if (!foundOpen) {
+                earliest = openHour;
+                latest = closeHour;
+                foundOpen = true;
+              } else {
+                if (openHour < earliest) earliest = openHour;
+                if (closeHour > latest) latest = closeHour;
+              }
+            }
+          }
+        }
+      }
+    }
+    // Clamp to valid range
+    earliest = Math.max(0, Math.min(23, earliest));
+    latest = Math.max(earliest + 1, Math.min(24, latest));
+    return {
+      HOUR_START: earliest,
+      HOUR_END: latest,
+      HOURS: Array.from({ length: latest - earliest }, (_, i) => earliest + i),
+    };
+  }, [business.operating_hours]);
 
   // Load staff list for filter
   useEffect(() => {
@@ -868,14 +898,14 @@ export default function CalendarPage() {
                       <div>
                         <span className="text-gray-400">Amount</span>
                         <p className="font-medium text-gray-900">
-                          {formatCurrency(r.total_amount, business.country_code || 'NG')}
+                          {formatCurrency(r.total_amount, (business.country_code || 'NG') as CountryCode)}
                         </p>
                       </div>
                       {r.deposit_amount > 0 && (
                         <div>
                           <span className="text-gray-400">Deposit</span>
                           <p className="font-medium text-gray-900">
-                            {formatCurrency(r.deposit_amount, business.country_code || 'NG')}
+                            {formatCurrency(r.deposit_amount, (business.country_code || 'NG') as CountryCode)}
                             <span className="ml-1 text-xs text-gray-400 capitalize">({r.deposit_status})</span>
                           </p>
                         </div>

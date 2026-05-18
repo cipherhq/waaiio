@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { exportToCsv } from '@/lib/utils/csv-export';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
-import { getLocale, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
 /* ------------------------------------------------------------------ */
@@ -80,13 +80,7 @@ function relativeTime(dateStr: string | null): string {
   return `${Math.floor(months / 12)}y ago`;
 }
 
-function formatNaira(amount: number): string {
-  return new Intl.NumberFormat('en-NG', {
-    style: 'currency',
-    currency: 'NGN',
-    minimumFractionDigits: 0,
-  }).format(amount);
-}
+// formatCurrency is imported from @/lib/constants — uses business country_code
 
 function StarRating({ rating }: { rating: number }) {
   return (
@@ -123,9 +117,10 @@ function tagColor(tag: string): string {
 
 export default function CustomersPage() {
   const business = useBusiness();
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const { labels } = useCategoryConfig(business.category);
   const isGiving = labels.quantityLabel === 'amount';
+  const cc = (business.country_code || 'NG') as CountryCode;
 
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -375,11 +370,11 @@ export default function CustomersPage() {
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
           <p className="text-xs font-medium text-gray-500">{isGiving ? 'Total Received' : 'Total Revenue'}</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900">{formatNaira(totalRevenue)}</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900">{formatCurrency(totalRevenue, cc)}</p>
         </div>
         <div className="rounded-xl border border-gray-100 bg-white p-5">
           <p className="text-xs font-medium text-gray-500">{isGiving ? `Avg Giving / ${labels.personLabel}` : `Avg Spend / ${labels.personLabel}`}</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900">{formatNaira(Math.round(avgSpend))}</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900">{formatCurrency(Math.round(avgSpend), cc)}</p>
         </div>
       </div>
 
@@ -471,7 +466,7 @@ export default function CustomersPage() {
 
                   {/* Total Spent */}
                   <td className="px-4 py-3 text-gray-600">
-                    {c.total_spent > 0 ? formatNaira(c.total_spent) : '\u2014'}
+                    {c.total_spent > 0 ? formatCurrency(c.total_spent, cc) : '\u2014'}
                   </td>
 
                   {/* Avg Rating */}
@@ -704,7 +699,7 @@ export default function CustomersPage() {
                     <div className="rounded-lg bg-gray-50 p-3">
                       <p className="text-xs text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</p>
                       <p className="mt-1 text-xl font-bold text-gray-900">
-                        {selected.total_spent > 0 ? formatNaira(selected.total_spent) : '\u2014'}
+                        {selected.total_spent > 0 ? formatCurrency(selected.total_spent, cc) : '\u2014'}
                       </p>
                     </div>
                   </div>
@@ -715,7 +710,7 @@ export default function CustomersPage() {
                       <div className="rounded-lg bg-brand-50 p-3">
                         <p className="text-xs text-brand">Lifetime Value</p>
                         <p className="mt-1 text-lg font-bold text-brand">
-                          {selected.lifetime_value ? formatNaira(selected.lifetime_value) : '\u2014'}
+                          {selected.lifetime_value ? formatCurrency(selected.lifetime_value, cc) : '\u2014'}
                         </p>
                       </div>
                       <div className={`rounded-lg p-3 ${
@@ -792,7 +787,7 @@ export default function CustomersPage() {
                             <div className="ml-3 flex shrink-0 items-center gap-2">
                               {b.deposit_amount != null && b.deposit_amount > 0 && (
                                 <span className="text-xs font-medium text-gray-600">
-                                  {formatNaira(b.deposit_amount)}
+                                  {formatCurrency(b.deposit_amount, cc)}
                                 </span>
                               )}
                               <span
@@ -840,7 +835,7 @@ export default function CustomersPage() {
                             <div className="ml-3 flex shrink-0 items-center gap-2">
                               {o.total != null && o.total > 0 && (
                                 <span className="text-xs font-medium text-gray-600">
-                                  {formatNaira(o.total)}
+                                  {formatCurrency(o.total, cc)}
                                 </span>
                               )}
                               <span

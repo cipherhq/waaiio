@@ -220,7 +220,7 @@ export default function BroadcastsPage() {
             Upgrade to the Growth plan to send broadcast messages to up to 500 recipients per month, or go Business for unlimited broadcasts.
           </p>
           <Link
-            href="/dashboard/settings/billing"
+            href="/dashboard/payouts"
             className="mt-6 inline-flex items-center gap-2 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition"
           >
             Upgrade Plan
@@ -291,7 +291,7 @@ export default function BroadcastsPage() {
             <div className="mt-3 rounded-lg bg-red-50 px-3 py-2">
               <p className="text-xs font-medium text-red-700">
                 Monthly limit reached.{' '}
-                <Link href="/dashboard/settings/billing" className="underline hover:text-red-800">
+                <Link href="/dashboard/payouts" className="underline hover:text-red-800">
                   Upgrade your plan
                 </Link>{' '}
                 for more broadcasts.

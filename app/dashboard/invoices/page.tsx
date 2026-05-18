@@ -154,7 +154,7 @@ export default function InvoicesPage() {
   // Reset page on filter change
   useEffect(() => { setPage(1); }, [search, dateFrom, dateTo, statusFilter]);
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const loadInvoices = useCallback(async () => {
     const res = await fetch(`/api/invoices?business_id=${business.id}&status=${statusFilter}`);

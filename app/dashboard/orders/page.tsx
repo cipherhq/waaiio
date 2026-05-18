@@ -160,20 +160,28 @@ export default function OrdersPage() {
 
     const { data } = await query.limit(500);
 
-    // Fetch items for each order
-    const ordersWithItems: Order[] = [];
-    for (const order of (data || [])) {
-      const { data: items } = await supabase
-        .from('order_items')
-        .select('id, quantity, unit_price, variant_label, addons, product:products!order_items_product_id_fkey(name)')
-        .eq('order_id', order.id);
+    // Fetch all order items in a single batch query
+    const orderIds = (data || []).map((o: { id: string }) => o.id);
+    const itemsByOrder = new Map<string, OrderItem[]>();
 
-      ordersWithItems.push({
-        ...order,
-        user: Array.isArray(order.user) ? order.user[0] : order.user,
-        items: (items || []) as unknown as OrderItem[],
-      } as Order);
+    if (orderIds.length > 0) {
+      const { data: allItems } = await supabase
+        .from('order_items')
+        .select('id, quantity, unit_price, variant_label, addons, order_id, product:products!order_items_product_id_fkey(name)')
+        .in('order_id', orderIds);
+
+      for (const item of (allItems || [])) {
+        const oid = (item as unknown as { order_id: string }).order_id;
+        if (!itemsByOrder.has(oid)) itemsByOrder.set(oid, []);
+        itemsByOrder.get(oid)!.push(item as unknown as OrderItem);
+      }
     }
+
+    const ordersWithItems: Order[] = (data || []).map((order: Record<string, unknown>) => ({
+      ...order,
+      user: Array.isArray(order.user) ? (order.user as unknown[])[0] : order.user,
+      items: itemsByOrder.get(order.id as string) || [],
+    } as Order));
 
     setOrders(ordersWithItems);
     setLoading(false);
