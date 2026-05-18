@@ -273,16 +273,21 @@ const selectCapabilityStep: FlowStepConfig = {
         const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null);
 
         if (parsed.understood) {
-          // Match service keywords
+          // Match service keywords — single match skips, multiple shows picker
           if (parsed.serviceKeywords.length > 0) {
-            const matched = await matchServiceFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
-            if (matched) {
-              ctx.session.session_data.service_id = matched.id;
-              ctx.session.session_data.service_name = matched.name;
-              ctx.session.session_data.service_price = matched.price;
-              ctx.session.session_data.service_duration = matched.duration_minutes;
-              ctx.session.session_data.service_deposit = matched.deposit_amount || 0;
+            const { matchServicesFromKeywords } = await import('@/lib/bot/smart-intent');
+            const matches = await matchServicesFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            if (matches.length === 1) {
+              // Unambiguous — skip service picker
+              ctx.session.session_data.service_id = matches[0].id;
+              ctx.session.session_data.service_name = matches[0].name;
+              ctx.session.session_data.service_price = matches[0].price;
+              ctx.session.session_data.service_duration = matches[0].duration_minutes;
+              ctx.session.session_data.service_deposit = matches[0].deposit_amount || 0;
               ctx.session.session_data.skip_service = true;
+            } else if (matches.length > 1) {
+              // Ambiguous — store matched IDs so service picker shows only these
+              ctx.session.session_data._matched_service_ids = matches.map(m => m.id);
             }
           }
           if (parsed.date) ctx.session.session_data.date = parsed.date;

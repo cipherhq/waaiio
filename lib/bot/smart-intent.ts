@@ -546,12 +546,25 @@ export async function parseSmartIntentHybrid(
 
 // ── Service matcher ──────────────────────────────────────
 
+type ServiceMatch = { id: string; name: string; price: number; duration_minutes: number | null; deposit_amount: number | null; billing_type: string | null; recurring_interval: string | null };
+
 export async function matchServiceFromKeywords(
   supabase: SupabaseClient,
   businessId: string,
   keywords: string[],
-): Promise<{ id: string; name: string; price: number; duration_minutes: number | null; deposit_amount: number | null; billing_type: string | null; recurring_interval: string | null } | null> {
-  if (keywords.length === 0) return null;
+): Promise<ServiceMatch | null> {
+  const result = await matchServicesFromKeywords(supabase, businessId, keywords);
+  // Only return a single match if unambiguous (1 result)
+  return result.length === 1 ? result[0] : null;
+}
+
+/** Returns ALL matching services — used for disambiguation when multiple match */
+export async function matchServicesFromKeywords(
+  supabase: SupabaseClient,
+  businessId: string,
+  keywords: string[],
+): Promise<ServiceMatch[]> {
+  if (keywords.length === 0) return [];
 
   const { data: services } = await supabase
     .from('services')
@@ -560,11 +573,10 @@ export async function matchServiceFromKeywords(
     .eq('is_active', true)
     .order('sort_order');
 
-  if (!services || services.length === 0) return null;
+  if (!services || services.length === 0) return [];
 
-  // Score each service: higher score = better match
-  let bestMatch: (typeof services)[0] | null = null;
-  let bestScore = 0;
+  // Score each service
+  const scored: Array<{ service: (typeof services)[0]; score: number }> = [];
 
   for (const service of services) {
     const name = service.name.toLowerCase();
@@ -579,7 +591,6 @@ export async function matchServiceFromKeywords(
       } else if (kwLower.includes(name)) {
         score += 3; // reverse substring
       } else {
-        // Word-level match
         const nameWords = name.split(/\s+/);
         for (const nw of nameWords) {
           if (nw === kwLower || kwLower.includes(nw) || nw.includes(kwLower)) {
@@ -589,13 +600,17 @@ export async function matchServiceFromKeywords(
       }
     }
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = service;
-    }
+    if (score >= 2) scored.push({ service, score });
   }
 
-  return bestScore >= 2 ? bestMatch : null;
+  if (scored.length === 0) return [];
+
+  // Sort by score descending
+  scored.sort((a, b) => b.score - a.score);
+  const topScore = scored[0].score;
+
+  // Return all services that tied for the top score
+  return scored.filter(s => s.score === topScore).map(s => s.service);
 }
 
 // ── Smart acknowledgment builder ─────────────────────────

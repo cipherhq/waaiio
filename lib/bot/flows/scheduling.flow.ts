@@ -77,7 +77,7 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
-        const { data: services } = await ctx.supabase
+        let query = ctx.supabase
           .from('services')
           .select('id, name, price, duration_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
@@ -85,6 +85,14 @@ export const schedulingFlow: FlowDefinition = {
           .neq('service_type', 'giving')
           .is('deleted_at', null)
           .order('sort_order');
+
+        // If smart intent matched multiple services, only show those
+        const matchedIds = ctx.session.session_data._matched_service_ids as string[] | undefined;
+        if (matchedIds && matchedIds.length > 0) {
+          query = query.in('id', matchedIds);
+        }
+
+        const { data: services } = await query;
 
         if (!services || services.length === 0) {
           return [];
