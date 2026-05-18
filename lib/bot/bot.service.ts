@@ -549,29 +549,50 @@ export class BotService {
       const phoneP = from.startsWith('+') ? from : `+${from}`;
       const phoneN = from.startsWith('+') ? from.slice(1) : from;
 
-      // Find the most recent successful payment with card authorization data
-      const { data: recentPayment } = await this.supabase
-        .from('payments')
-        .select('id, business_id, metadata, gateway')
-        .eq('status', 'success')
-        .or(`metadata->>customer_phone.eq.${phoneP},metadata->>customer_phone.eq.${phoneN}`)
+      // Find the most recent paid booking for this phone, then get its payment
+      const { data: recentBooking } = await this.supabase
+        .from('bookings')
+        .select('id, business_id')
+        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .eq('deposit_status', 'paid')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      // Fallback: find via bookings
-      let payment = recentPayment;
-      if (!payment) {
-        const { data: booking } = await this.supabase
-          .from('bookings')
-          .select('id, business_id, payments(id, business_id, metadata, gateway)')
-          .or(`guest_phone.eq.${phoneP},guest_phone.eq.${phoneN}`)
-          .eq('deposit_status', 'paid')
+      let payment: { id: string; business_id: string | null; metadata: unknown; gateway: string } | null = null;
+
+      if (recentBooking) {
+        const { data: bookingPayment } = await this.supabase
+          .from('payments')
+          .select('id, business_id, metadata, gateway')
+          .eq('booking_id', recentBooking.id)
+          .eq('status', 'success')
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
-        const bp = (booking?.payments as unknown as Array<{ id: string; business_id: string; metadata: unknown; gateway: string }>) || [];
-        if (bp.length > 0) payment = bp[0];
+
+        if (bookingPayment) {
+          payment = {
+            ...bookingPayment,
+            business_id: bookingPayment.business_id || recentBooking.business_id,
+          };
+        }
+      }
+
+      // Also try direct payment lookup by user_id
+      if (!payment) {
+        const profile = await getProfile();
+        if (profile?.id) {
+          const { data: userPayment } = await this.supabase
+            .from('payments')
+            .select('id, business_id, metadata, gateway')
+            .eq('user_id', profile.id)
+            .eq('status', 'success')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (userPayment) payment = userPayment;
+        }
       }
 
       if (!payment) {
@@ -583,7 +604,12 @@ export class BotService {
       const auth = meta._card_authorization as Record<string, unknown> | undefined;
 
       if (!auth?.authorization_code) {
-        await this.sendText(from, 'Your last payment method cannot be saved for future use. This is usually because the payment gateway does not support card saving for this transaction type.');
+        const gateway = payment.gateway || 'unknown';
+        if (gateway === 'stripe' || gateway === 'square' || gateway === 'paypal') {
+          await this.sendText(from, `Card saving is currently available for Paystack payments only. ${gateway.charAt(0).toUpperCase() + gateway.slice(1)} support is coming soon.`);
+        } else {
+          await this.sendText(from, 'Your last payment method cannot be saved. Try again after your next payment.');
+        }
         return;
       }
 

@@ -119,6 +119,10 @@ export async function sendProactiveConfirmation(
   logger.info(`${logPrefix} Sending proactive confirmation to ${customerPhone} for ${businessName}`);
 
   // ── 4. Build confirmation message ──
+  // Check gateway for save card tip (only Paystack supports card saving currently)
+  const { data: paymentGw } = await supabase.from('payments').select('gateway').eq('id', payment.id).single();
+  const isPaystack = paymentGw?.gateway === 'paystack';
+
   const lines = [
     `✅ *Payment Confirmed!*`,
     '',
@@ -131,8 +135,7 @@ export async function sendProactiveConfirmation(
     '',
     'Type *receipt* to get your receipt',
     'Type *my bookings* to view your bookings',
-    'Type *save card* to save for faster checkout next time',
-    'Type *remove card* to delete a saved card',
+    isPaystack ? 'Type *save card* to save for faster checkout next time' : '',
   ].filter(Boolean);
 
   // ── 5. Resolve channel + send ──
