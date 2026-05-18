@@ -2,6 +2,7 @@ import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
+import { processSuccessfulPayment } from '@/lib/payments/process-success';
 
 export const metadata = {
   title: 'Payment Successful — Waaiio',
@@ -92,11 +93,25 @@ export default async function PaymentSuccessPage({
           confirmed = true;
         }
 
-        // Send WhatsApp confirmation (fire-and-forget)
+        // Process payment pipeline + send WhatsApp confirmation (awaited, not fire-and-forget)
         if (confirmed) {
-          triggerWhatsAppConfirmation(supabase, payment).catch(err =>
-            logger.error('[PAYMENT-SUCCESS] WhatsApp confirmation error:', err)
-          );
+          try {
+            await processSuccessfulPayment(supabase, {
+              id: payment.id,
+              amount: payment.amount,
+              booking_id: payment.booking_id,
+              invoice_id: payment.invoice_id,
+              campaign_id: payment.campaign_id,
+            });
+          } catch (pipeErr) {
+            logger.error('[PAYMENT-SUCCESS] Pipeline error:', pipeErr);
+          }
+
+          try {
+            await triggerWhatsAppConfirmation(supabase, payment);
+          } catch (waErr) {
+            logger.error('[PAYMENT-SUCCESS] WhatsApp confirmation error:', waErr);
+          }
         }
       }
     } catch (err) {
