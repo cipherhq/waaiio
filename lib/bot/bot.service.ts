@@ -250,8 +250,15 @@ export class BotService {
     }
 
     // Handle waitlist notification responses (yes/no after "a spot has opened up")
+    // ONLY check if user is NOT in an active mid-flow session — never hijack an active booking
     const isWaitlistReply = /^(yes|no|yep|nah|nope|yeah)$/i.test(text);
     if (isWaitlistReply) {
+      const activeFlowSession = await this.getActiveSession(from);
+      const isInActiveFlow = activeFlowSession?.business_id && activeFlowSession.is_active
+        && activeFlowSession.current_step !== 'select_capability' && activeFlowSession.current_step !== 'greeting';
+      if (isInActiveFlow) {
+        // User is mid-flow — don't hijack. Let the message reach the flow executor.
+      } else {
       const phoneP = from.startsWith('+') ? from : `+${from}`;
       const phoneN = from.startsWith('+') ? from.slice(1) : from;
       const { data: notifiedEntry } = await this.supabase
@@ -296,6 +303,7 @@ export class BotService {
           return;
         }
       }
+      } // end isInActiveFlow else
     }
 
     // ── Early profile lookup (cached for reuse across all query paths) ──
