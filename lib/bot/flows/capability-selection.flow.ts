@@ -267,7 +267,7 @@ const selectCapabilityStep: FlowStepConfig = {
 
     // Smart intent: extract date/time/service from natural language input
     // so the scheduling flow can fast-track (skip already-answered steps)
-    if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing') && ctx.business) {
+    if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
         const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
         const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null);
@@ -301,10 +301,33 @@ const selectCapabilityStep: FlowStepConfig = {
             ctx.session.session_data.amount = parsed.amount;
           }
 
+          // Match products for ordering flow
+          if (capId === 'ordering' && parsed.serviceKeywords.length > 0) {
+            const { matchProductsFromKeywords } = await import('@/lib/bot/smart-intent');
+            const productMatches = await matchProductsFromKeywords(ctx.supabase, ctx.business.id, parsed.serviceKeywords);
+            if (productMatches.length === 1) {
+              // Single match — pre-add to cart
+              const p = productMatches[0];
+              const qty = parsed.quantity || 1;
+              ctx.session.session_data.cart = [{
+                product_id: p.id, name: p.name, price: p.price,
+                quantity: qty, variant: null, variant_label: null,
+              }];
+              ctx.session.session_data._auto_added_to_cart = true;
+              ctx.session.session_data._skip_browse = true;
+            } else if (productMatches.length > 1) {
+              // Multiple matches — filter catalog
+              ctx.session.session_data._matched_product_ids = productMatches.map(m => m.id);
+            }
+          }
+
           // Send acknowledgment
+          const productName = ctx.session.session_data._auto_added_to_cart
+            ? ((ctx.session.session_data.cart as Array<{name: string}>)?.[0]?.name || null)
+            : null;
           const { buildAcknowledgment } = await import('@/lib/bot/smart-intent');
           const { getLocale } = await import('@/lib/constants');
-          const ack = buildAcknowledgment(parsed, ctx.session.session_data.service_name as string | null, getLocale(ctx.business.country_code));
+          const ack = buildAcknowledgment(parsed, ctx.session.session_data.service_name as string | null || productName, getLocale(ctx.business.country_code));
           if (ack) {
             await ctx.sender.sendText({ to: ctx.from, text: ack });
           }

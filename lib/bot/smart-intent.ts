@@ -613,6 +613,62 @@ export async function matchServicesFromKeywords(
   return scored.filter(s => s.score === topScore).map(s => s.service);
 }
 
+// ── Product matching (for ordering flow) ────────────────
+
+type ProductMatch = { id: string; name: string; price: number; has_variants: boolean };
+
+export async function matchProductsFromKeywords(
+  supabase: SupabaseClient,
+  businessId: string,
+  keywords: string[],
+): Promise<ProductMatch[]> {
+  if (keywords.length === 0) return [];
+
+  const { data: products } = await supabase
+    .from('products')
+    .select('id, name, price, has_variants')
+    .eq('business_id', businessId)
+    .eq('is_active', true)
+    .is('deleted_at', null)
+    .order('sort_order')
+    .limit(100);
+
+  if (!products || products.length === 0) return [];
+
+  const scored: Array<{ product: (typeof products)[0]; score: number }> = [];
+
+  for (const product of products) {
+    const name = product.name.toLowerCase();
+    let score = 0;
+
+    for (const kw of keywords) {
+      const kwLower = kw.toLowerCase();
+      if (name === kwLower) {
+        score += 10;
+      } else if (name.includes(kwLower)) {
+        score += 5;
+      } else if (kwLower.includes(name)) {
+        score += 3;
+      } else {
+        const nameWords = name.split(/\s+/);
+        for (const nw of nameWords) {
+          if (nw === kwLower || kwLower.includes(nw) || nw.includes(kwLower)) {
+            score += 2;
+          }
+        }
+      }
+    }
+
+    if (score >= 2) scored.push({ product, score });
+  }
+
+  if (scored.length === 0) return [];
+
+  scored.sort((a, b) => b.score - a.score);
+  const topScore = scored[0].score;
+  return scored.filter(s => s.score === topScore).map(s => s.product);
+}
+
 // ── Smart acknowledgment builder ─────────────────────────
 
 export function buildAcknowledgment(

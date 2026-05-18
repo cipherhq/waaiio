@@ -84,13 +84,17 @@ export const orderingFlow: FlowDefinition = {
     // ── Browse Catalog ──
     {
       id: 'browse_catalog',
+      async skipIf(ctx: FlowContext) {
+        // Skip if smart intent already added a product to cart
+        return !!ctx.session.session_data._skip_browse && !!ctx.session.session_data._auto_added_to_cart;
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
         const meta = (ctx.business.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
 
-        const { data: rawProducts } = await ctx.supabase
+        let query = ctx.supabase
           .from('products')
           .select('id, name, price, category, stock_quantity, track_inventory, low_stock_threshold, has_variants, image_url, variant_options, min_order_qty')
           .eq('business_id', ctx.business.id)
@@ -98,6 +102,14 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .order('sort_order')
           .limit(100);
+
+        // If smart intent matched specific products, only show those
+        const matchedIds = ctx.session.session_data._matched_product_ids as string[] | undefined;
+        if (matchedIds && matchedIds.length > 0) {
+          query = query.in('id', matchedIds);
+        }
+
+        const { data: rawProducts } = await query;
 
         // Filter out out-of-stock items that track inventory
         const products = (rawProducts || []).filter(p =>
@@ -213,6 +225,13 @@ export const orderingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+
+        // Smart intent auto-added product to cart → skip to checkout
+        if (d._auto_added_to_cart) {
+          delete d._auto_added_to_cart;
+          delete d._skip_browse;
+          return 'continue_or_checkout';
+        }
 
         // Category selected → show products in that category
         if (d._selected_category) {
