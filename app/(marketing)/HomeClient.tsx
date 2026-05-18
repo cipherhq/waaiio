@@ -100,7 +100,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
                   <span className="relative inline-flex h-2 w-2 rounded-full bg-green-400" />
                 </span>
-                Every message handled. Every opportunity captured.
+                Just message. It understands.
               </motion.span>
 
               <h1 className="mt-6 text-balance text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-[3.5rem]">
@@ -148,7 +148,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                 transition={{ delay: 0.9, duration: 0.6 }}
                 className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
               >
-                Automate bookings, payments, orders, and engagement on WhatsApp — for any business, any industry, any country.
+                Your customers type &ldquo;book me for Friday at 2pm&rdquo; and it just works. Bookings, payments, orders, tickets &mdash; all on WhatsApp, all automatic.
               </motion.p>
 
               <motion.div
@@ -332,20 +332,20 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
             {[
               {
                 step: '1',
-                title: 'Sign up & add your services',
-                desc: 'Create your account, add your services, prices, and availability. Takes about 5 minutes.',
+                title: 'Tell us about your business',
+                desc: 'Add your services, prices, and hours. We set up the bot to match your industry — salon, church, restaurant, clinic, or any of 40+ categories.',
                 icon: '&#x1F4DD;',
               },
               {
                 step: '2',
-                title: 'Connect your WhatsApp',
-                desc: 'Use your own number or our shared number. Your bot is instantly live and ready to chat with customers.',
+                title: 'Connect WhatsApp',
+                desc: 'Use your own number or start with ours. Your bot goes live instantly — no coding, no waiting, no approval needed.',
                 icon: '&#x1F4F1;',
               },
               {
                 step: '3',
-                title: 'Share & start earning',
-                desc: 'Share your business code or WhatsApp link. Customers book, pay, and order — all automated.',
+                title: 'Customers start messaging',
+                desc: 'They type naturally — "book me for Friday" or "I wan order food" — and the bot handles it. You just watch the bookings roll in.',
                 icon: '&#x1F680;',
               },
             ].map((s, i) => (
@@ -377,30 +377,70 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
         </div>
       </section>
 
+      {/* ── Talk Naturally — NL Examples ── */}
+      <section className="bg-gray-950 py-20">
+        <div className="mx-auto max-w-5xl px-4">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand-300">No menus. No buttons. Just talk.</p>
+            <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
+              Your customers already know how to use it
+            </h2>
+            <p className="mx-auto mt-3 max-w-2xl text-gray-400">
+              They just type what they want — in their own words, their own language. The bot figures out the rest.
+            </p>
+          </AnimatedSection>
+
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              { msg: 'Book me for Friday at 3pm', result: 'Service, date & time auto-filled → straight to confirmation', tag: 'Booking' },
+              { msg: 'I wan barb tomorrow morning', result: 'Pidgin understood → haircut matched → morning slots shown', tag: 'Pidgin' },
+              { msg: 'Pay tithe 5000', result: 'Category matched → amount filled → payment link sent', tag: 'Payment' },
+              { msg: 'Order 2 jollof rice', result: 'Product matched → quantity set → skips to checkout', tag: 'Ordering' },
+              { msg: 'Reorder', result: 'Last order loaded into cart → ready to pay', tag: 'Repeat' },
+              { msg: 'Buy 2 tickets for the concert', result: 'Event matched → 2 tickets → QR codes sent after payment', tag: 'Tickets' },
+            ].map((ex, i) => (
+              <AnimatedSection key={ex.msg} delay={i * 0.06}>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                  <span className="inline-block rounded-full bg-brand/20 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-brand-300">{ex.tag}</span>
+                  <p className="mt-3 text-base font-semibold text-white">&ldquo;{ex.msg}&rdquo;</p>
+                  <p className="mt-2 text-sm text-gray-400">{ex.result}</p>
+                </div>
+              </AnimatedSection>
+            ))}
+          </div>
+
+          <AnimatedSection delay={0.4} className="mt-10 text-center">
+            <p className="text-sm text-gray-500">
+              Works in English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French.
+            </p>
+          </AnimatedSection>
+        </div>
+      </section>
+
       {/* ── How Waaiio Empowers You ── */}
       <section className="bg-white py-20">
         <div className="mx-auto max-w-6xl px-4 text-center">
           <AnimatedSection>
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">Your invisible AI layer</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">What your bot can do</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Everything WhatsApp Business should have been
+              Customers just talk. It just works.
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-gray-600">
-              Use your own WhatsApp number. Customers think you just got really good at replying. Behind the scenes, AI handles everything.
+              No menus to learn. No apps to download. Your customers message in their own words &mdash; in English, Pidgin, Yoruba, or any of 7 languages &mdash; and the bot understands what they need.
             </p>
           </AnimatedSection>
 
           <div className="mt-14 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[
-              { icon: '&#x1F4C5;', title: 'Never Miss a Booking', desc: 'Accept bookings, payments, and orders 24/7 — even when you\'re closed. Your bot works while you sleep.' },
-              { icon: '&#x1F9E0;', title: 'Remembers Every Customer', desc: '"Welcome back! Last time you had a haircut + beard trim. Want the same?" Your bot personalizes every interaction based on history.' },
-              { icon: '&#x1F4B0;', title: 'Collect Money Instantly', desc: 'Payments, tithes, donations, fees — collected automatically in the chat via Paystack, Stripe, Square, or Flutterwave. Receipts sent instantly.' },
-              { icon: '&#x1F4C8;', title: 'AI Revenue Recommendations', desc: '"23 customers haven\'t returned in 30 days. Your evening slots are empty. Enable deposits to cut no-shows." One-click actions from your dashboard.' },
-              { icon: '&#x1F514;', title: '60% Fewer No-Shows', desc: 'Automatic reminders before every appointment. Smart follow-ups after every visit. Win-back campaigns for dormant customers.' },
-              { icon: '&#x1F30D;', title: '7 Languages, One Bot', desc: 'Speaks English, Pidgin, Yoruba, Igbo, Hausa, Twi, and French. Your customers talk naturally — the AI understands.' },
-              { icon: '&#x1F3C6;', title: 'Loyalty That Runs Itself', desc: 'Points awarded after every visit. Referral bonuses for bringing friends. All automated through WhatsApp — no app download needed.' },
-              { icon: '&#x1F4CB;', title: 'Smart Queue & Waitlist', desc: 'Customers join the queue from WhatsApp. Notified automatically when it\'s their turn. No more crowded waiting rooms.' },
-              { icon: '&#x1F4E2;', title: 'Targeted Broadcasts', desc: 'Send promos to VIP customers. Win-back offers to churning ones. Announcements to everyone. Unlimited broadcasts on Business tier.' },
+              { icon: '&#x1F4AC;', title: 'Understands How People Talk', desc: 'Customer types "book me for Friday at 3pm" or "I wan barb tomorrow morning" — the bot gets it. No buttons needed. Natural conversation in 7 languages.' },
+              { icon: '&#x1F4C5;', title: 'Books While You Sleep', desc: 'A customer messages at 11 PM? Booked. Paid. Confirmed. Receipt sent. You wake up to money in your account and a full schedule.' },
+              { icon: '&#x1F9E0;', title: 'Knows Your Regulars', desc: '"Welcome back, Chioma! Last time you had Full Grooming. Same thing?" The bot remembers every customer and picks up where they left off.' },
+              { icon: '&#x1F4B0;', title: 'Collects Payment in Chat', desc: '"Pay tithe 5000" → payment link → confirmed in seconds. Works with Paystack, Stripe, Square, Flutterwave, and PayPal across 5 countries.' },
+              { icon: '&#x1F504;', title: 'One-Word Reorders', desc: 'Returning customer types "reorder" → last order loaded → checkout. No browsing, no repeating. Two taps and done.' },
+              { icon: '&#x1F514;', title: 'Cuts No-Shows by 60%', desc: 'Automatic reminders the day before. Follow-ups after every visit. Win-back messages when regulars go quiet. All hands-free.' },
+              { icon: '&#x1F3C6;', title: 'Loyalty Without an App', desc: 'Points after every visit. Referral bonuses for bringing friends. Customers earn and redeem right in WhatsApp — no download, no sign-up.' },
+              { icon: '&#x1F3AB;', title: 'Tickets with QR Codes', desc: 'Sell event tickets on WhatsApp. Customers get instant QR codes + PDF tickets. Scan at the door. Real-time sales tracking on your dashboard.' },
+              { icon: '&#x1F4E2;', title: 'Broadcast to the Right People', desc: 'Promo to your VIPs. Win-back offer to customers who haven\'t returned. Announcement to everyone. You pick who hears what.' },
             ].map((f, i) => (
               <AnimatedSection key={f.title} delay={i * 0.06}>
                 <motion.div

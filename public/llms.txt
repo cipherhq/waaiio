@@ -8,16 +8,18 @@ Waaiio is a platform that automates bookings, payments, orders, donations, ticke
 
 ## Key Features
 
-- **WhatsApp Automation**: AI-powered bot handles bookings, payments, and orders 24/7
-- **Multi-Gateway Payments**: Paystack, Stripe, Square, Flutterwave, PayPal
+- **Natural Language Understanding**: Customers type "book me for Friday at 3pm" or "I wan barb tomorrow" in their own words — the bot understands intent, date, time, service, and quantity without menus or buttons
+- **7 Languages**: English, Pidgin, Yoruba, Igbo, Hausa, Twi, French — customers speak naturally in their preferred language
+- **Smart Booking**: Extracts date, time, and service from a single message. Validates against real availability. Falls back to guided selection when ambiguous.
+- **Smart Ordering**: "Order 2 jollof rice" matches products, sets quantity, skips to checkout. "Reorder" repeats the last order instantly.
+- **Smart Payments**: "Pay tithe 5000" matches the payment category and pre-fills the amount. Works with Paystack, Stripe, Square, Flutterwave, PayPal.
 - **40+ Industries**: Salons, churches, restaurants, clinics, schools, shops, events, hotels, etc.
-- **Multi-Language**: English, Pidgin, Yoruba, Igbo, Hausa, Twi, French
 - **Multi-Country**: US, Canada, Nigeria, Ghana, UK
 - **E-Signatures**: Send contracts and collect signatures via WhatsApp
-- **Loyalty & Referrals**: Automated points and referral programs
-- **Ticketing**: Event tickets with QR codes
+- **Event Tickets**: QR codes generated and sent instantly after purchase
+- **Loyalty & Referrals**: Points after every visit, referral bonuses — all in WhatsApp
 - **Queue Management**: Virtual queue with WhatsApp notifications
-- **Broadcast Messages**: Targeted promotions and announcements
+- **Broadcast Messages**: Targeted promotions to the right customers
 
 ## Pricing
 
