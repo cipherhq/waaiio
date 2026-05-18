@@ -430,6 +430,8 @@ export function parseSmartIntent(text: string): SmartParseResult {
     timePreference: null,
     specificTime: null,
     quantity: null,
+    amount: null,
+    variantKeywords: [],
   };
 
   // Detect intent
@@ -542,6 +544,8 @@ export async function parseSmartIntentHybrid(
       timePreference: (llmResult.entities.timePreference as SmartParseResult['timePreference']) || regexResult.timePreference,
       specificTime: regexResult.specificTime,
       quantity: llmResult.entities.quantity || regexResult.quantity,
+      amount: regexResult.amount,
+      variantKeywords: regexResult.variantKeywords,
     };
 
     logClassification(supabase, {
