@@ -1303,8 +1303,11 @@ export class BotService {
     // (e.g. "book appointment for friday at 2pm" should fast-track, not restart)
     const isAtCapabilitySelect = !!session?.business_id && currentStep === 'select_capability';
     const hasRichBookingIntent = isBookingText && /\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\s*(am|pm)|morning|afternoon|evening|next\s+week)\b/i.test(normalizedForRestart);
+    const hasRichPaymentIntent = /\b(pay|tithe|offering|donate|give|sow)\b/i.test(normalizedForRestart) && /\d{3,}/.test(normalizedForRestart);
+    const hasRichOrderIntent = /\b(order|buy|reorder)\b/i.test(normalizedForRestart) && /\b(\d+\s+\w|reorder|same\s+again)\b/i.test(normalizedForRestart);
+    const hasRichIntent = hasRichBookingIntent || hasRichPaymentIntent || hasRichOrderIntent;
     const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability'
-      || (isAtCapabilitySelect && hasRichBookingIntent);
+      || (isAtCapabilitySelect && hasRichIntent);
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
       isGreetingText ||
