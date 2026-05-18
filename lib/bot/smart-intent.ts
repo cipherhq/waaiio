@@ -21,6 +21,7 @@ export interface SmartParseResult {
   specificTime: string | null;  // HH:MM
   quantity: number | null;
   amount: number | null;        // Extracted amount (e.g., 5000 from "pay tithe 5000")
+  variantKeywords: string[];    // Size/variant hints (e.g., "large", "medium", "small")
 }
 
 // ── Intent patterns ──────────────────────────────────────
@@ -249,6 +250,27 @@ function extractAmount(text: string): number | null {
   return null;
 }
 
+// ── Variant keyword extraction ──────────────────────────
+
+function extractVariantKeywords(text: string): string[] {
+  const lower = text.toLowerCase();
+  const variants: string[] = [];
+
+  // Size keywords
+  const sizeMatch = lower.match(/\b(small|medium|large|x-?large|xl|xxl|xs|extra[\s-]?large|extra[\s-]?small|regular|mini|big|tall|grande|venti)\b/gi);
+  if (sizeMatch) variants.push(...sizeMatch.map(s => s.toLowerCase()));
+
+  // Color keywords
+  const colorMatch = lower.match(/\b(red|blue|green|black|white|pink|yellow|purple|orange|brown|grey|gray|gold|silver)\b/gi);
+  if (colorMatch) variants.push(...colorMatch.map(s => s.toLowerCase()));
+
+  // Spice/flavor
+  const flavorMatch = lower.match(/\b(mild|spicy|hot|extra[\s-]?hot|sweet|sour|plain|original|classic)\b/gi);
+  if (flavorMatch) variants.push(...flavorMatch.map(s => s.toLowerCase()));
+
+  return [...new Set(variants)];
+}
+
 // ── Service keyword extraction ───────────────────────────
 
 function extractServiceKeywords(text: string): string[] {
@@ -424,6 +446,7 @@ export function parseSmartIntent(text: string): SmartParseResult {
   result.timePreference = timeResult.preference;
   result.quantity = extractQuantity(text);
   result.amount = extractAmount(text);
+  result.variantKeywords = extractVariantKeywords(text);
 
   // Mark understood if anything useful extracted
   result.understood = !!(

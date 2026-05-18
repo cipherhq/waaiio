@@ -374,6 +374,7 @@ export class BotService {
 
     const isSaveCardQuery = /^save\s+card$/i.test(text) || /^save\s+my\s+card$/i.test(text);
     const isRemoveCardQuery = /^remove\s+card$/i.test(text) || /^delete\s+card$/i.test(text) || /^remove\s+my\s+card$/i.test(text);
+    const isReorderQuery = /^(reorder|re-order|same\s+again|order\s+(the\s+)?same(\s+thing)?|repeat\s+order|last\s+order)$/i.test(text);
 
     let session = await this.getActiveSession(from);
 
@@ -693,6 +694,80 @@ export class BotService {
           await this.sendText(from, 'No saved cards found.');
         }
       }
+      return;
+    }
+
+    // ── Reorder: repeat last order ──
+    if (isReorderQuery && session?.business_id) {
+      const phoneP = from.startsWith('+') ? from : `+${from}`;
+      const phoneN = from.startsWith('+') ? from.slice(1) : from;
+
+      // Find last completed order for this business
+      const { data: lastOrder } = await this.supabase
+        .from('orders')
+        .select('id, reference_code, total_amount')
+        .eq('business_id', session.business_id)
+        .or(`delivery_phone.eq.${sanitizeFilterValue(phoneP)},delivery_phone.eq.${sanitizeFilterValue(phoneN)}`)
+        .in('status', ['confirmed', 'delivered', 'ready'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!lastOrder) {
+        await this.sendText(from, "No previous orders found for this business. Type *order* to browse the menu.");
+        return;
+      }
+
+      // Get order items
+      const { data: items } = await this.supabase
+        .from('order_items')
+        .select('product_id, product_name, quantity, unit_price, variant_label')
+        .eq('order_id', lastOrder.id);
+
+      if (!items || items.length === 0) {
+        await this.sendText(from, "Couldn't load your last order. Type *order* to browse the menu.");
+        return;
+      }
+
+      // Pre-fill cart with last order items
+      const cart = items.map(i => ({
+        product_id: i.product_id,
+        name: i.product_name,
+        price: i.unit_price,
+        quantity: i.quantity,
+        variant: null,
+        variant_label: i.variant_label || null,
+      }));
+
+      const itemList = items.map(i => `• ${i.quantity}x ${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ''}`).join('\n');
+
+      // Start ordering flow with pre-filled cart
+      await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+
+      const { data: biz } = await this.supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
+        .eq('id', session.business_id)
+        .single();
+
+      const profile = await getProfile();
+      const caps = await getEnabledCapabilities(this.supabase, session.business_id);
+
+      const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+        whatsapp_number: from, user_id: profile?.id || null, business_id: session.business_id,
+        current_step: 'continue_or_checkout',
+        session_data: { active_capability: 'ordering', capabilities: caps, cart, _reorder: true },
+        is_active: true,
+        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }).select().single();
+
+      if (!newSession) {
+        await this.sendText(from, 'Something went wrong. Try again.');
+        return;
+      }
+
+      await this.sendText(from, `Reordering from your last order (${lastOrder.reference_code}):\n\n${itemList}\n\nReady to checkout?`);
+      await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz as BusinessRecord | null);
       return;
     }
 

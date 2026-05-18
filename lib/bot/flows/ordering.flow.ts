@@ -532,6 +532,38 @@ export const orderingFlow: FlowDefinition = {
     // ── Select Variant (single-axis / legacy flat) ──
     {
       id: 'select_variant',
+      async skipIf(ctx: FlowContext) {
+        const hints = ctx.session.session_data._variant_hints as string[] | undefined;
+        if (!hints || hints.length === 0) return false;
+
+        const productId = ctx.session.session_data.current_product_id as string;
+        if (!productId) return false;
+
+        const { data: variants } = await ctx.supabase
+          .from('product_variants')
+          .select('id, label, price, stock_quantity')
+          .eq('product_id', productId)
+          .eq('is_active', true)
+          .order('sort_order');
+
+        const available = (variants || []).filter(v => v.stock_quantity === null || v.stock_quantity > 0);
+        if (available.length === 0) return false;
+
+        // Try to match variant by hint keywords
+        const matched = available.find(v => {
+          const label = v.label.toLowerCase();
+          return hints.some(h => label.includes(h) || h.includes(label));
+        });
+
+        if (matched) {
+          ctx.session.session_data.current_variant_id = matched.id;
+          ctx.session.session_data.current_variant_label = matched.label;
+          ctx.session.session_data.current_product_price = matched.price;
+          return true;
+        }
+
+        return false; // No match — show picker
+      },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
         const productId = d.current_product_id as string;

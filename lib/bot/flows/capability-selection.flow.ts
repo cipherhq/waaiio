@@ -321,6 +321,11 @@ const selectCapabilityStep: FlowStepConfig = {
             }
           }
 
+          // Store variant hints for ordering flow auto-selection
+          if (capId === 'ordering' && parsed.variantKeywords.length > 0) {
+            ctx.session.session_data._variant_hints = parsed.variantKeywords;
+          }
+
           // Send acknowledgment
           const productName = ctx.session.session_data._auto_added_to_cart
             ? ((ctx.session.session_data.cart as Array<{name: string}>)?.[0]?.name || null)
