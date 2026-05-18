@@ -63,8 +63,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing table' }, { status: 400, headers: corsHeaders() });
     }
 
-    // Whitelist allowed tables
-    const ALLOWED_TABLES = [
+    // Whitelist allowed tables — admin gets full access, support gets restricted
+    const ADMIN_TABLES = [
       'profiles', 'businesses', 'bookings', 'payments', 'orders', 'order_items', 'services',
       'products', 'business_payouts', 'platform_fees', 'support_tickets', 'support_ticket_messages',
       'bot_sessions', 'business_capabilities', 'capability_overrides',
@@ -81,7 +81,17 @@ export async function POST(request: NextRequest) {
       'refund_requests', 'campaign_donations', 'reservations',
     ];
 
-    if (!ALLOWED_TABLES.includes(table)) {
+    // Support role: read-only access to non-sensitive tables only
+    const SUPPORT_TABLES = [
+      'businesses', 'bookings', 'orders', 'order_items', 'services', 'products',
+      'support_tickets', 'support_ticket_messages', 'events', 'event_tickets',
+      'feedback', 'invoices', 'quote_requests', 'campaigns', 'alerts',
+      'notifications', 'queue_entries', 'customer_subscriptions', 'surveys', 'survey_responses',
+    ];
+
+    const allowedTables = profile.role === 'admin' ? ADMIN_TABLES : SUPPORT_TABLES;
+
+    if (!allowedTables.includes(table)) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: corsHeaders() });
     }
 
