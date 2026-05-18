@@ -8,6 +8,18 @@
 
 import { MetaCloudService } from './meta-cloud';
 
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Promise<T> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === retries) throw err;
+      await new Promise(r => setTimeout(r, delay * (i + 1)));
+    }
+  }
+  throw new Error('Retry exhausted');
+}
+
 export interface MessageSender {
   sendText(msg: { to: string; text: string }): Promise<{ success?: boolean; messageId?: string }>;
   sendList(msg: {
@@ -77,7 +89,7 @@ export class MetaCloudSender implements MessageSender {
   constructor(private readonly cloud: MetaCloudService) {}
 
   async sendText(msg: { to: string; text: string }) {
-    const result = await this.cloud.sendText({ to: msg.to, text: msg.text });
+    const result = await withRetry(() => this.cloud.sendText({ to: msg.to, text: msg.text }));
     return { success: true, messageId: result.messageId };
   }
 
@@ -138,11 +150,11 @@ export class MetaCloudSender implements MessageSender {
     imageUrl: string;
     caption?: string;
   }) {
-    const result = await this.cloud.sendImage({
+    const result = await withRetry(() => this.cloud.sendImage({
       to: msg.to,
       imageUrl: msg.imageUrl,
       caption: msg.caption,
-    });
+    }));
     return { success: true, messageId: result.messageId };
   }
 
@@ -152,12 +164,12 @@ export class MetaCloudSender implements MessageSender {
     filename: string;
     caption?: string;
   }) {
-    const result = await this.cloud.sendDocument({
+    const result = await withRetry(() => this.cloud.sendDocument({
       to: msg.to,
       documentUrl: msg.documentUrl,
       filename: msg.filename,
       caption: msg.caption,
-    });
+    }));
     return { success: true, messageId: result.messageId };
   }
 
@@ -195,11 +207,11 @@ export class MetaCloudSender implements MessageSender {
       });
     }
 
-    const result = await this.cloud.sendTemplate({
+    const result = await withRetry(() => this.cloud.sendTemplate({
       to: msg.to,
       templateName: msg.templateName,
       components,
-    });
+    }));
     return { success: true, messageId: result.messageId };
   }
 

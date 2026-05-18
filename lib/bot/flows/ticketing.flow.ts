@@ -346,11 +346,14 @@ export const ticketingFlow: FlowDefinition = {
 
         if (rpcError) {
           // Fallback: manual increment
-          const { data: ev } = await ctx.supabase
+          const { data: ev, error: evError } = await ctx.supabase
             .from('events')
             .select('tickets_sold')
             .eq('id', d.event_id as string)
             .single();
+          if (evError) {
+            console.error('[TICKETING] Failed to fetch event for manual increment:', evError.message);
+          }
           if (ev) {
             await ctx.supabase
               .from('events')
@@ -361,11 +364,14 @@ export const ticketingFlow: FlowDefinition = {
 
         // Increment tickets_sold on the ticket type if one was selected
         if (d.ticket_type_id) {
-          const { data: tt } = await ctx.supabase
+          const { data: tt, error: ttError } = await ctx.supabase
             .from('event_ticket_types')
             .select('tickets_sold')
             .eq('id', d.ticket_type_id as string)
             .single();
+          if (ttError) {
+            console.error('[TICKETING] Failed to fetch ticket type for increment:', ttError.message);
+          }
           if (tt) {
             await ctx.supabase
               .from('event_ticket_types')
@@ -536,13 +542,18 @@ export const ticketingFlow: FlowDefinition = {
             const d = ctx.session.session_data;
 
             // Check if webhook already confirmed this booking (avoid double-processing)
-            const { data: currentBooking } = await ctx.supabase
+            const { data: currentBooking, error: bookingCheckErr } = await ctx.supabase
               .from('bookings')
               .select('status, deposit_status')
               .eq('id', d.booking_id as string)
               .single();
 
-            if (currentBooking?.deposit_status === 'paid') {
+            if (bookingCheckErr || !currentBooking) {
+              console.error('[TICKETING] Failed to check booking status:', bookingCheckErr?.message);
+              return { valid: false, errorMessage: 'Something went wrong. Try again.' };
+            }
+
+            if (currentBooking.deposit_status === 'paid') {
               const dedupDateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {
                 weekday: 'long', day: 'numeric', month: 'long',
               });

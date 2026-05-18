@@ -65,6 +65,7 @@ export default function OrdersPage() {
   const country = (business.country_code || 'NG') as CountryCode;
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -138,6 +139,8 @@ export default function OrdersPage() {
   }
 
   async function fetchOrders() {
+    setError(false);
+    try {
     const supabase = createClient();
 
     let query = supabase
@@ -185,6 +188,11 @@ export default function OrdersPage() {
 
     setOrders(ordersWithItems);
     setLoading(false);
+    } catch (err) {
+      console.error('[ORDERS] Failed to load data:', err);
+      setError(true);
+      setLoading(false);
+    }
   }
 
   useEffect(() => { fetchOrders(); }, [business.id, filterStatus]);
@@ -580,6 +588,12 @@ export default function OrdersPage() {
           countryCode={(business.country_code || 'NG') as CountryCode}
           onSuccess={() => { fetchOrders(); setSelectedOrder(null); }}
         />
+      )}
+
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchOrders(); }} className="font-medium underline">Try again</button>
+        </div>
       )}
 
       <h1 className="text-2xl font-bold text-gray-900">Orders</h1>

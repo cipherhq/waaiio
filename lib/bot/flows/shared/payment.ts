@@ -66,11 +66,15 @@ export async function initializePayment(
         // (connect_account_id may also be set to satisfy DB constraint, but we use subaccount split)
         subaccountCode = byoCreds.platform_subaccount_code;
 
-        const { data: business } = await supabase
+        const { data: business, error: bizError } = await supabase
           .from('businesses')
           .select('subscription_tier, trial_ends_at')
           .eq('id', opts.businessId)
           .single();
+
+        if (bizError) {
+          console.error('[PAYMENT] Failed to fetch business for subaccount split:', bizError.message);
+        }
 
         if (business) {
           const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
@@ -83,11 +87,15 @@ export async function initializePayment(
         connectAccountId = byoCreds.connect_account_id;
         byoBusinessId = opts.businessId;
 
-        const { data: business } = await supabase
+        const { data: business, error: bizError2 } = await supabase
           .from('businesses')
           .select('subscription_tier, trial_ends_at')
           .eq('id', opts.businessId)
           .single();
+
+        if (bizError2) {
+          console.error('[PAYMENT] Failed to fetch business for connect split:', bizError2.message);
+        }
 
         if (business) {
           const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
@@ -103,11 +111,15 @@ export async function initializePayment(
         byoBusinessId = opts.businessId;
 
         // Calculate platform fee based on business tier
-        const { data: business } = await supabase
+        const { data: business, error: bizError3 } = await supabase
           .from('businesses')
           .select('subscription_tier, trial_ends_at')
           .eq('id', opts.businessId)
           .single();
+
+        if (bizError3) {
+          console.error('[PAYMENT] Failed to fetch business for BYO split:', bizError3.message);
+        }
 
         if (business) {
           const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
@@ -117,11 +129,15 @@ export async function initializePayment(
         }
       } else {
         // Normal platform flow: check payout mode
-        const { data: biz } = await supabase
+        const { data: biz, error: bizError4 } = await supabase
           .from('businesses')
           .select('payout_mode')
           .eq('id', opts.businessId)
           .single();
+
+        if (bizError4) {
+          console.error('[PAYMENT] Failed to fetch business payout mode:', bizError4.message);
+        }
 
         const { data: payout } = await supabase
           .from('payout_accounts')

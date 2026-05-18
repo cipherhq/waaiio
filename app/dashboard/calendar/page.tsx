@@ -184,6 +184,7 @@ export default function CalendarPage() {
   const [events, setEvents] = useState<EventItem[]>([]);
   const [blockedDates, setBlockedDates] = useState<BlockedDate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState<CalendarEntry | null>(null);
   const [staffList, setStaffList] = useState<Array<{id: string; name: string; color: string}>>([]);
   const [staffFilter, setStaffFilter] = useState<string>('all');
@@ -280,6 +281,8 @@ export default function CalendarPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(false);
+    try {
     const supabase = createClient();
     const startStr = formatDateKey(viewDateRange.start);
     const endStr = formatDateKey(viewDateRange.end);
@@ -343,6 +346,11 @@ export default function CalendarPage() {
     }
 
     setLoading(false);
+    } catch (err) {
+      console.error('[CALENDAR] Failed to load data:', err);
+      setError(true);
+      setLoading(false);
+    }
   }, [business.id, viewDateRange.start, viewDateRange.end, hasReservations, hasEvents]);
 
   useEffect(() => {
@@ -1008,6 +1016,11 @@ export default function CalendarPage() {
 
   return (
     <div>
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchData(); }} className="font-medium underline">Try again</button>
+        </div>
+      )}
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold text-gray-900">Calendar</h1>

@@ -28,13 +28,16 @@ interface OwnerInfo {
 // because biz.phone might be the WABA number (which can't receive WhatsApp messages
 // since it's disconnected from the phone app once registered on the API).
 async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string): Promise<OwnerInfo | null> {
-  const { data: biz } = await supabase
+  const { data: biz, error: bizError } = await supabase
     .from('businesses')
     .select('phone, owner_id, wa_method, whatsapp_channel_id, subscription_tier, profiles:owner_id (email, phone)')
     .eq('id', businessId)
     .single();
 
-  if (!biz) return null;
+  if (bizError || !biz) {
+    if (bizError) logger.error('[NOTIFY-OWNER] Failed to fetch business:', bizError.message);
+    return null;
+  }
 
   const profile = biz.profiles as unknown as { email?: string; phone?: string } | null;
   const ownerEmail = profile?.email || null;

@@ -84,6 +84,7 @@ export default function InvoicesPage() {
   const business = useBusiness();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -157,10 +158,16 @@ export default function InvoicesPage() {
   const supabase = useMemo(() => createClient(), []);
 
   const loadInvoices = useCallback(async () => {
-    const res = await fetch(`/api/invoices?business_id=${business.id}&status=${statusFilter}`);
-    if (res.ok) {
-      const data = await res.json();
-      setInvoices(data.invoices || []);
+    setError(false);
+    try {
+      const res = await fetch(`/api/invoices?business_id=${business.id}&status=${statusFilter}`);
+      if (res.ok) {
+        const data = await res.json();
+        setInvoices(data.invoices || []);
+      }
+    } catch (err) {
+      console.error('[INVOICES] Failed to load data:', err);
+      setError(true);
     }
     setLoading(false);
   }, [business.id, statusFilter]);
@@ -345,6 +352,11 @@ export default function InvoicesPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadInvoices(); }} className="font-medium underline">Try again</button>
+        </div>
+      )}
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>

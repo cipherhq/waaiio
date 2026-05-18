@@ -1332,11 +1332,16 @@ export const schedulingFlow: FlowDefinition = {
           const rescheduleId = d._reschedule_booking_id as string;
 
           // Fetch current booking to preserve original date/time
-          const { data: originalBooking } = await ctx.supabase
+          const { data: originalBooking, error: origError } = await ctx.supabase
             .from('bookings')
             .select('date, time')
             .eq('id', rescheduleId)
             .single();
+
+          if (origError || !originalBooking) {
+            console.error('[SCHEDULING] Failed to fetch original booking for reschedule:', origError?.message);
+            return [{ type: 'text', text: 'Something went wrong. Send Hi to try again.' }];
+          }
 
           const { error: rescheduleError } = await ctx.supabase
             .from('bookings')
@@ -1406,11 +1411,14 @@ export const schedulingFlow: FlowDefinition = {
         // For restaurants: check business deposit_per_guest
         let depositPerGuest = 0;
         if (ctx.business) {
-          const { data: biz } = await ctx.supabase
+          const { data: biz, error: bizDepositErr } = await ctx.supabase
             .from('businesses')
             .select('deposit_per_guest')
             .eq('id', ctx.business.id)
             .single();
+          if (bizDepositErr) {
+            console.error('[SCHEDULING] Failed to fetch deposit_per_guest:', bizDepositErr.message);
+          }
           depositPerGuest = biz?.deposit_per_guest || 0;
         }
 
@@ -1534,11 +1542,14 @@ export const schedulingFlow: FlowDefinition = {
         if (isNewBooking) {
           // Increment promo code usage if applied
           if (d._promo_id) {
-            const { data: promoData } = await ctx.supabase
+            const { data: promoData, error: promoErr } = await ctx.supabase
               .from('promo_codes')
               .select('current_uses')
               .eq('id', d._promo_id as string)
               .single();
+            if (promoErr) {
+              console.error('[SCHEDULING] Failed to fetch promo code:', promoErr.message);
+            }
             if (promoData) {
               await ctx.supabase
                 .from('promo_codes')

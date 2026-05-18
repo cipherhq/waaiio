@@ -127,6 +127,7 @@ async function chargePaystackAuthorization(
           saved_method: true,
         },
       }),
+      signal: AbortSignal.timeout(15000),
     });
 
     const data = await res.json();
