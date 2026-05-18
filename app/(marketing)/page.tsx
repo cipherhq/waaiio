@@ -34,8 +34,9 @@ const JSON_LD_ORG = {
   '@type': 'Organization',
   name: 'Waaiio',
   url: baseUrl,
-  logo: `${baseUrl}/logo.png`,
+  logo: { '@type': 'ImageObject', url: `${baseUrl}/logo.png`, width: 512, height: 512 },
   description: 'AI-Powered WhatsApp Automation for Every Business',
+  foundingDate: '2026',
   award: 'Meta Verified Tech Provider',
   memberOf: {
     '@type': 'Organization',
@@ -47,7 +48,24 @@ const JSON_LD_ORG = {
     contactType: 'customer support',
     url: `${baseUrl}/contact`,
     email: 'hello@waaiio.com',
+    availableLanguage: ['English', 'French', 'Yoruba', 'Igbo', 'Hausa', 'Twi', 'Pidgin'],
   },
+  sameAs: [
+    'https://www.instagram.com/waaiiobot',
+    'https://www.tiktok.com/@waaiiobot',
+    'https://x.com/waaiiobot',
+  ],
+  areaServed: [
+    { '@type': 'Country', name: 'United States' },
+    { '@type': 'Country', name: 'Canada' },
+    { '@type': 'Country', name: 'Nigeria' },
+    { '@type': 'Country', name: 'Ghana' },
+    { '@type': 'Country', name: 'United Kingdom' },
+  ],
+  knowsAbout: [
+    'WhatsApp Business API', 'Business automation', 'AI chatbots',
+    'Payment processing', 'Appointment scheduling', 'Online ordering',
+  ],
 };
 
 const JSON_LD_APP = {
@@ -55,15 +73,17 @@ const JSON_LD_APP = {
   '@type': 'SoftwareApplication',
   name: 'Waaiio',
   applicationCategory: 'BusinessApplication',
+  applicationSubCategory: 'WhatsApp Automation Platform',
   operatingSystem: 'Web',
   url: baseUrl,
   description: `Automate bookings, payments, orders, donations, and tickets on WhatsApp for ${CATEGORY_COUNT}+ industries`,
-  offers: {
-    '@type': 'Offer',
-    price: '0',
-    priceCurrency: 'USD',
-    description: 'Free plan with 30-day trial',
-  },
+  featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Donation collection, Customer chat, Feedback surveys, Loyalty programs, Queue management, Invoice generation, E-signatures',
+  offers: [
+    { '@type': 'Offer', name: 'Starter', price: '0', priceCurrency: 'USD', description: 'Free plan with 30-day trial', availability: 'https://schema.org/InStock' },
+    { '@type': 'Offer', name: 'Pro', price: '14.99', priceCurrency: 'USD', description: 'Growth plan for scaling businesses', availability: 'https://schema.org/InStock' },
+    { '@type': 'Offer', name: 'Premium', price: '39.99', priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
+  ],
+  creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },
 };
 
 const FAQ_DATA = [
@@ -89,6 +109,19 @@ const JSON_LD_FAQ = {
   })),
 };
 
+const JSON_LD_WEBSITE = {
+  '@context': 'https://schema.org',
+  '@type': 'WebSite',
+  name: 'Waaiio',
+  url: baseUrl,
+  description: 'AI-Powered WhatsApp Automation for Every Business',
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: { '@type': 'EntryPoint', urlTemplate: `${baseUrl}/directory?search={search_term_string}` },
+    'query-input': 'required name=search_term_string',
+  },
+};
+
 export default async function HomePage() {
   // Fetch real stats from DB (server-side, cached for 5 min)
   let stats = { businesses: '25+', payments: '95+', countries: '5' };
@@ -112,6 +145,7 @@ export default async function HomePage() {
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_ORG) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_APP) }} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_FAQ) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD_WEBSITE) }} />
       <HomeClient stats={stats} />
     </>
   );

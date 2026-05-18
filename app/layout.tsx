@@ -8,7 +8,7 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   title: {
-    default: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
+    default: 'Waaiio — WhatsApp Automation for Every Business',
     template: '%s | Waaiio',
   },
   description:
