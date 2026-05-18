@@ -16,6 +16,7 @@ interface Service {
   price: number;
   price_is_variable: boolean;
   duration_minutes: number | null;
+  buffer_minutes: number;
   deposit_amount: number;
   is_active: boolean;
   sort_order: number;
@@ -91,6 +92,7 @@ export default function ServicesPage() {
     price: 0,
     price_is_variable: false,
     duration_minutes: isScheduling ? 30 : null,
+    buffer_minutes: 0,
     deposit_amount: 0,
     is_active: true,
     sort_order: 0,
@@ -263,6 +265,7 @@ export default function ServicesPage() {
       price: form.price,
       price_is_variable: form.price_is_variable,
       duration_minutes: form.duration_minutes,
+      buffer_minutes: form.buffer_minutes || 0,
       deposit_amount: form.deposit_amount,
       is_active: form.status === 'active',
       sort_order: form.sort_order,
@@ -572,10 +575,18 @@ export default function ServicesPage() {
                 </button>
               </div>
               {showDuration && (
-                <div className="ml-1 pb-2">
-                  <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
-                    placeholder="e.g. 30" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                  <span className="ml-2 text-xs text-gray-400">minutes</span>
+                <div className="ml-1 pb-2 space-y-2">
+                  <div>
+                    <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
+                      placeholder="e.g. 30" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    <span className="ml-2 text-xs text-gray-400">minutes</span>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1">Buffer time between appointments</p>
+                    <input type="number" min={0} step={5} value={form.buffer_minutes || ''} onChange={(e) => setForm({ ...form, buffer_minutes: Number(e.target.value) || 0 })}
+                      placeholder="e.g. 10" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    <span className="ml-2 text-xs text-gray-400">min cleanup/prep</span>
+                  </div>
                 </div>
               )}
 

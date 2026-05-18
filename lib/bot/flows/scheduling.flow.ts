@@ -79,7 +79,7 @@ export const schedulingFlow: FlowDefinition = {
 
         let query = ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -181,6 +181,7 @@ export const schedulingFlow: FlowDefinition = {
             _service_available_from: (matched as Record<string, unknown>).available_from || null,
             _service_available_to: (matched as Record<string, unknown>).available_to || null,
             _service_max_capacity: (matched as Record<string, unknown>).max_capacity || 1,
+            _service_buffer_minutes: (matched as Record<string, unknown>).buffer_minutes || 0,
             _auto_approve: (matched as Record<string, unknown>).auto_approve !== false,
             _service_requires_staff: (matched as Record<string, unknown>).requires_staff || false,
             _service_staff_ids: (matched as Record<string, unknown>).staff_ids || [],
@@ -195,7 +196,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -220,6 +221,7 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data._service_available_from = s.available_from || null;
           ctx.session.session_data._service_available_to = s.available_to || null;
           ctx.session.session_data._service_max_capacity = s.max_capacity || 1;
+          ctx.session.session_data._service_buffer_minutes = s.buffer_minutes || 0;
           ctx.session.session_data._auto_approve = s.auto_approve !== false;
           ctx.session.session_data._service_requires_staff = s.requires_staff || false;
           ctx.session.session_data._service_staff_ids = s.staff_ids || [];
@@ -622,10 +624,10 @@ export const schedulingFlow: FlowDefinition = {
         const staffId = ctx.session.session_data.staff_id as string | null;
         const maxCapacity = (ctx.session.session_data._service_max_capacity as number) || 1;
 
-        // Fetch existing bookings for this date (include duration for overlap detection)
+        // Fetch existing bookings for this date (include duration + buffer for overlap detection)
         let bookingsQuery = ctx.supabase
           .from('bookings')
-          .select('time, staff_id, services(duration_minutes)')
+          .select('time, staff_id, services(duration_minutes, buffer_minutes)')
           .eq('business_id', ctx.business!.id)
           .eq('date', dateStr)
           .in('status', ['confirmed', 'pending', 'in_progress']);
@@ -636,20 +638,19 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: existingBookings } = await bookingsQuery;
 
-        // Count bookings per time slot — accounting for service duration overlap
-        // A 60-min booking at 8:00 blocks 8:00 AND 8:30 (with 30-min slot intervals)
+        // Count bookings per time slot — accounting for service duration + buffer overlap
+        // A 60-min booking with 10-min buffer at 8:00 blocks 8:00, 8:30, 9:00 (70 min total)
         const slotCounts = new Map<string, number>();
         for (const b of existingBookings || []) {
           if (b.time) {
             const bookingStart = timeToMinutes(b.time.slice(0, 5));
-            const svc = b.services as unknown as { duration_minutes?: number } | null;
-            const serviceDuration = (ctx.session.session_data._service_duration as number) || 30;
-            const bookingDuration = svc?.duration_minutes || serviceDuration;
+            const svc = b.services as unknown as { duration_minutes?: number; buffer_minutes?: number } | null;
+            const fallbackDuration = (ctx.session.session_data.service_duration as number) || 30;
+            const bookingDuration = (svc?.duration_minutes || fallbackDuration) + (svc?.buffer_minutes || 0);
 
-            // Block all slots that overlap with this booking's time range
+            // Block all slots that overlap with this booking's time range (duration + buffer)
             for (const slot of allSlots) {
               const slotStart = timeToMinutes(slot);
-              // Overlap: slot starts during the booking, OR booking starts during the slot
               if (slotStart >= bookingStart && slotStart < bookingStart + bookingDuration) {
                 slotCounts.set(slot, (slotCounts.get(slot) || 0) + 1);
               }
