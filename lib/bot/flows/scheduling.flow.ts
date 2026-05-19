@@ -79,7 +79,7 @@ export const schedulingFlow: FlowDefinition = {
 
         let query = ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -119,9 +119,25 @@ export const schedulingFlow: FlowDefinition = {
               } else {
                 desc = priceStr;
               }
-              if (s.duration_minutes) desc += ` \u2022 ${s.duration_minutes}min`;
-            } else if (s.duration_minutes) {
-              desc = `${s.duration_minutes}min`;
+              const meta = (s as Record<string, unknown>).metadata as Record<string, unknown> | null;
+              const turnaround = meta?.turnaround_days as number | undefined;
+              if (turnaround) {
+                desc += ` \u2022 ${turnaround} day${turnaround > 1 ? 's' : ''}`;
+              } else if (s.duration_minutes) {
+                desc += s.duration_minutes >= 60
+                  ? ` \u2022 ${Math.floor(s.duration_minutes / 60)}hr${s.duration_minutes % 60 ? ` ${s.duration_minutes % 60}min` : ''}`
+                  : ` \u2022 ${s.duration_minutes}min`;
+              }
+            } else {
+              const meta = (s as Record<string, unknown>).metadata as Record<string, unknown> | null;
+              const turnaround = meta?.turnaround_days as number | undefined;
+              if (turnaround) {
+                desc = `${turnaround} day${turnaround > 1 ? 's' : ''}`;
+              } else if (s.duration_minutes) {
+                desc = s.duration_minutes >= 60
+                  ? `${Math.floor(s.duration_minutes / 60)}hr${s.duration_minutes % 60 ? ` ${s.duration_minutes % 60}min` : ''}`
+                  : `${s.duration_minutes}min`;
+              }
             }
             return { title: s.name.slice(0, 24), description: desc, postbackText: s.id };
           }),
