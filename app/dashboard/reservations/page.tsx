@@ -230,7 +230,7 @@ export default function BookingsPage() {
     // Query bookings table (appointments + on-demand services)
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, refund_amount')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .order('date', { ascending: false })
