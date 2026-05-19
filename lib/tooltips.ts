@@ -77,3 +77,52 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   forms: 'Build custom forms and send them to customers via WhatsApp. Collect information, applications, or feedback.',
   members: 'Invite team members with specific roles to access your dashboard.',
 };
+
+/**
+ * Field-level tooltips for form inputs.
+ * Used alongside form labels to explain what a field does.
+ */
+export const FIELD_TOOLTIPS: Record<string, string> = {
+  // Services
+  'service.duration': 'How long the appointment takes. Used to calculate available time slots and prevent overlapping bookings.',
+  'service.buffer': 'Cleanup or prep time between appointments. A 30-min service with 10-min buffer blocks 40 minutes total.',
+  'service.deposit': 'Amount collected upfront when a customer books. Can be the full price or a partial deposit.',
+  'service.deposit_percentage': 'Percentage of the service price to collect as a deposit. For example, 50% of a $100 service = $50 deposit.',
+  'service.max_capacity': 'How many customers can book the same time slot. Set to 1 for one-on-one services, higher for classes or group sessions.',
+  'service.auto_approve': 'When on, bookings are confirmed instantly. When off, you must manually approve each booking from the calendar.',
+  'service.available_days': 'Which days this service is available. Customers can only book on these days.',
+  'service.staff_selection': 'When on, customers can choose which staff member they want. When off, the system assigns the least busy staff.',
+  'service.quote_enabled': 'When on, customers can request a price quote instead of booking directly. You review and send your price.',
+  'service.variable_price': 'When on, you set a starting price but the final amount can vary. Useful for "starting from" pricing.',
+
+  // Products
+  'product.variants': 'Different options for the same product — like sizes (S, M, L) or colors. Each variant can have its own price and stock.',
+  'product.track_inventory': 'When on, stock decreases with each order. Products auto-hide when stock reaches zero.',
+  'product.min_order_qty': 'Minimum quantity a customer must order. Useful for wholesale or bulk items.',
+
+  // Business settings
+  'settings.operating_hours': 'When your business is open. The bot only shows time slots within these hours.',
+  'settings.payment_gateway': 'Which payment provider handles your transactions. Choose based on your country and preference.',
+  'settings.payout_mode': 'Direct Split: payment is split automatically at checkout. Platform Managed: we collect 100% and pay you weekly.',
+  'settings.bot_persona': 'Give your bot a name and personality. Customers see this name instead of "Waaiio" when chatting.',
+  'settings.auto_reply': 'Automatic response when a customer messages outside your operating hours or when the bot doesn\'t understand.',
+
+  // Events
+  'event.ticket_types': 'Different ticket categories — like Regular, VIP, or Early Bird. Each can have its own price and quantity limit.',
+  'event.venue': 'Where the event takes place. This is shown on the ticket and in the booking confirmation.',
+
+  // Invoices
+  'invoice.partial_payment': 'When enabled, customers can pay part of the invoice now and the rest later.',
+  'invoice.due_date': 'Deadline for payment. The bot sends reminders as the due date approaches.',
+
+  // Payouts
+  'payout.subaccount': 'Your bank account linked to the payment gateway. Earnings are deposited here.',
+  'payout.platform_fee': 'The percentage Waaiio takes per transaction. Depends on your subscription tier: Starter 2%, Pro 1.5%, Premium 1%.',
+
+  // Loyalty
+  'loyalty.points_per_visit': 'How many points a customer earns per booking or purchase. More points = faster rewards.',
+  'loyalty.redemption_value': 'What points are worth in your currency. For example, 100 points = $1 off.',
+
+  // Broadcasts
+  'broadcast.segment': 'Who receives the message. "All" sends to everyone. "VIP" sends to your top spenders. "Dormant" targets customers who haven\'t visited recently.',
+};

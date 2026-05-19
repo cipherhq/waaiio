@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { Tooltip } from '@/components/dashboard/Tooltip';
+import { FIELD_TOOLTIPS } from '@/lib/tooltips';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -507,7 +509,7 @@ export default function ServicesPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
-                    Deposit ({curr})
+                    Deposit ({curr}) <Tooltip text={FIELD_TOOLTIPS['service.deposit']} />
                   </label>
                   <input
                     type="number"
@@ -566,7 +568,7 @@ export default function ServicesPage() {
               {/* Duration toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Duration</p>
+                  <p className="text-sm font-medium text-gray-700">Duration <Tooltip text={FIELD_TOOLTIPS['service.duration']} /></p>
                   <p className="text-xs text-gray-400">This service takes a specific amount of time</p>
                 </div>
                 <button type="button" onClick={() => { setShowDuration(!showDuration); if (showDuration) setForm({ ...form, duration_minutes: null }); }}
@@ -582,7 +584,7 @@ export default function ServicesPage() {
                     <span className="ml-2 text-xs text-gray-400">minutes</span>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 mb-1">Buffer time between appointments</p>
+                    <p className="text-xs text-gray-500 mb-1">Buffer time <Tooltip text={FIELD_TOOLTIPS['service.buffer']} /></p>
                     <input type="number" min={0} step={5} value={form.buffer_minutes || ''} onChange={(e) => setForm({ ...form, buffer_minutes: Number(e.target.value) || 0 })}
                       placeholder="e.g. 10" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
                     <span className="ml-2 text-xs text-gray-400">min cleanup/prep</span>
