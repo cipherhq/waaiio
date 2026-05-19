@@ -2254,6 +2254,10 @@ export const schedulingFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
               .eq('id', bookingId);
           }
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: `Booking at *${ctx.business?.name || 'business'}* has been cancelled. No payment was taken.\n\nSend *Hi* to start again.`,
+          });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
