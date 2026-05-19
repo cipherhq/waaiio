@@ -198,6 +198,7 @@ export const schedulingFlow: FlowDefinition = {
             _service_available_to: (matched as Record<string, unknown>).available_to || null,
             _service_max_capacity: (matched as Record<string, unknown>).max_capacity || 1,
             _service_buffer_minutes: (matched as Record<string, unknown>).buffer_minutes || 0,
+            _service_metadata: (matched as Record<string, unknown>).metadata || null,
             _auto_approve: (matched as Record<string, unknown>).auto_approve !== false,
             _service_requires_staff: (matched as Record<string, unknown>).requires_staff || false,
             _service_staff_ids: (matched as Record<string, unknown>).staff_ids || [],
@@ -238,6 +239,7 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data._service_available_to = s.available_to || null;
           ctx.session.session_data._service_max_capacity = s.max_capacity || 1;
           ctx.session.session_data._service_buffer_minutes = s.buffer_minutes || 0;
+          ctx.session.session_data._service_metadata = s.metadata || null;
           ctx.session.session_data._auto_approve = s.auto_approve !== false;
           ctx.session.session_data._service_requires_staff = s.requires_staff || false;
           ctx.session.session_data._service_staff_ids = s.staff_ids || [];
@@ -393,6 +395,13 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_date',
       async skipIf(ctx: FlowContext) {
+        // Drop-off services (wig revamp, styling) don't need date/time
+        const svcMeta = ctx.session.session_data._service_metadata as Record<string, unknown> | undefined;
+        if (svcMeta?.is_dropoff) {
+          ctx.session.session_data.date = new Date().toISOString().split('T')[0];
+          return true;
+        }
+
         const preDate = ctx.session.session_data.date as string | undefined;
         if (!preDate) return false;
 
@@ -570,6 +579,13 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_time',
       async skipIf(ctx: FlowContext) {
+        // Drop-off services don't need time selection
+        const svcMeta = ctx.session.session_data._service_metadata as Record<string, unknown> | undefined;
+        if (svcMeta?.is_dropoff) {
+          ctx.session.session_data.time = 'Drop-off';
+          return true;
+        }
+
         const preTime = ctx.session.session_data.time as string | undefined;
         const dateStr = ctx.session.session_data.date as string | undefined;
         if (!preTime || !dateStr) return false;
