@@ -194,7 +194,10 @@ export default function BookingsPage() {
       if (dateFrom) rQuery = rQuery.gte('check_in', dateFrom);
       if (dateTo) rQuery = rQuery.lte('check_in', dateTo);
 
-      const { data } = await rQuery;
+      const { data, error: rError } = await rQuery;
+      if (rError) {
+        console.error('[RESERVATIONS] Reservations query failed:', rError.message, rError.code);
+      }
       const mapped = (data || []).map(r => {
         const prop = r.property as unknown as { name: string } | null;
         return {
@@ -238,7 +241,10 @@ export default function BookingsPage() {
     if (dateFrom) query = query.gte('date', dateFrom);
     if (dateTo) query = query.lte('date', dateTo);
 
-    const { data } = await query;
+    const { data, error: bookingsError } = await query;
+    if (bookingsError) {
+      console.error('[RESERVATIONS] Bookings query failed:', bookingsError.message, bookingsError.code);
+    }
     let results = data || [];
 
     if (search) {
