@@ -6,6 +6,8 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { Tooltip } from '@/components/dashboard/Tooltip';
+import { FIELD_TOOLTIPS } from '@/lib/tooltips';
 
 interface Appointment {
   id: string;
@@ -14,6 +16,7 @@ interface Appointment {
   price: number;
   price_is_variable: boolean;
   duration_minutes: number;
+  buffer_minutes: number;
   deposit_amount: number;
   max_capacity: number;
   requires_staff: boolean;
@@ -23,6 +26,9 @@ interface Appointment {
   auto_approve: boolean;
   sort_order: number;
   image_url: string | null;
+  available_days: string[];
+  available_from: string | null;
+  available_to: string | null;
 }
 
 interface StaffMember {
@@ -53,6 +59,7 @@ export default function AppointmentsManagementPage() {
     price: 0,
     price_is_variable: false,
     duration_minutes: 30,
+    buffer_minutes: 0,
     deposit_amount: 0,
     max_capacity: 1,
     requires_staff: false,
@@ -60,6 +67,9 @@ export default function AppointmentsManagementPage() {
     allow_staff_selection: false,
     is_active: true,
     auto_approve: true,
+    available_days: [] as string[],
+    available_from: '' as string,
+    available_to: '' as string,
   });
 
   const loadData = useCallback(async () => {
@@ -78,8 +88,9 @@ export default function AppointmentsManagementPage() {
   function openAdd() {
     setForm({
       id: '', name: '', description: '', price: 0, price_is_variable: false,
-      duration_minutes: 30, deposit_amount: 0, max_capacity: 1,
+      duration_minutes: 30, buffer_minutes: 0, deposit_amount: 0, max_capacity: 1,
       requires_staff: false, staff_ids: [], allow_staff_selection: false, is_active: true, auto_approve: true,
+      available_days: [], available_from: '', available_to: '',
     });
     setView('add');
   }
@@ -88,9 +99,13 @@ export default function AppointmentsManagementPage() {
     setForm({
       id: a.id, name: a.name, description: a.description || '', price: a.price,
       price_is_variable: a.price_is_variable, duration_minutes: a.duration_minutes,
-      deposit_amount: a.deposit_amount, max_capacity: a.max_capacity,
+      buffer_minutes: a.buffer_minutes ?? 0,
+      deposit_amount: a.deposit_amount, max_capacity: a.max_capacity ?? 1,
       requires_staff: a.requires_staff, staff_ids: a.staff_ids || [],
       allow_staff_selection: a.allow_staff_selection, is_active: a.is_active, auto_approve: a.auto_approve !== false,
+      available_days: a.available_days || [],
+      available_from: a.available_from || '',
+      available_to: a.available_to || '',
     });
     setView('edit');
   }
@@ -106,6 +121,7 @@ export default function AppointmentsManagementPage() {
       price: form.price,
       price_is_variable: form.price_is_variable,
       duration_minutes: form.duration_minutes,
+      buffer_minutes: form.buffer_minutes,
       deposit_amount: form.deposit_amount,
       max_capacity: form.max_capacity,
       requires_staff: form.requires_staff,
@@ -113,6 +129,9 @@ export default function AppointmentsManagementPage() {
       allow_staff_selection: form.requires_staff ? form.allow_staff_selection : false,
       is_active: form.is_active,
       auto_approve: form.auto_approve,
+      available_days: form.available_days,
+      available_from: form.available_from || null,
+      available_to: form.available_to || null,
     };
 
     if (view === 'add') {
@@ -200,6 +219,109 @@ export default function AppointmentsManagementPage() {
                   placeholder="0"
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                  Buffer time (min)
+                  <Tooltip text={FIELD_TOOLTIPS['service.buffer']} />
+                </label>
+                <input type="number" min={0} step={5} value={form.buffer_minutes === 0 ? '0' : form.buffer_minutes || ''}
+                  onChange={e => setForm({ ...form, buffer_minutes: Number(e.target.value) })}
+                  placeholder="0"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                  Max Capacity
+                  <Tooltip text={FIELD_TOOLTIPS['service.max_capacity']} />
+                </label>
+                <input type="number" min={1} value={form.max_capacity || ''}
+                  onChange={e => setForm({ ...form, max_capacity: Number(e.target.value) })}
+                  placeholder="1"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+              </div>
+            </div>
+
+            {/* Available Days */}
+            <div>
+              <label className="mb-2 flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                Available Days
+                <Tooltip text={FIELD_TOOLTIPS['service.available_days']} />
+              </label>
+              <div className="flex flex-wrap gap-2">
+                {(['monday','tuesday','wednesday','thursday','friday','saturday','sunday'] as const).map(day => {
+                  const selected = form.available_days.includes(day);
+                  return (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => setForm(f => ({
+                        ...f,
+                        available_days: selected
+                          ? f.available_days.filter(d => d !== day)
+                          : [...f.available_days, day],
+                      }))}
+                      className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
+                        selected
+                          ? 'border-brand bg-brand-50 text-brand'
+                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {day.charAt(0).toUpperCase() + day.slice(1, 3)}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1.5 text-xs text-gray-400">
+                {form.available_days.length === 0 ? 'Empty = all days available' : `${form.available_days.length} day${form.available_days.length === 1 ? '' : 's'} selected`}
+              </p>
+            </div>
+
+            {/* Available Hours */}
+            <div>
+              <label className="mb-2 block text-sm font-medium text-gray-700">Available Hours</label>
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-gray-500">From</label>
+                  <input
+                    type="time"
+                    value={form.available_from}
+                    onChange={e => setForm({ ...form, available_from: e.target.value })}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+                <span className="mt-5 text-gray-400">–</span>
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs text-gray-500">To</label>
+                  <input
+                    type="time"
+                    value={form.available_to}
+                    onChange={e => setForm({ ...form, available_to: e.target.value })}
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  />
+                </div>
+              </div>
+              <p className="mt-1.5 text-xs text-gray-400">Leave empty to follow business operating hours</p>
+            </div>
+
+            {/* Variable Pricing */}
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+              <div className="mr-3">
+                <label className="flex items-center gap-1.5 text-sm font-medium text-gray-800">
+                  Variable pricing
+                  <Tooltip text={FIELD_TOOLTIPS['service.variable_price']} />
+                </label>
+                <p className="text-xs text-gray-400">Starting price — final amount may vary</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, price_is_variable: !form.price_is_variable })}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.price_is_variable ? 'bg-brand' : 'bg-gray-200'}`}
+              >
+                <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.price_is_variable ? '22px' : '2px' }} />
+              </button>
             </div>
 
             {/* Staff Assignment */}
