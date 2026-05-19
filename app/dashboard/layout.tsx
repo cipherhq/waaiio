@@ -103,14 +103,16 @@ export default async function DashboardLayout({
   }
 
   // Normal (non-impersonation) flow
-  const { data: business, error: bizError } = await supabase
+  // Use array query (not maybeSingle) to handle users with multiple businesses
+  const { data: businesses, error: bizError } = await supabase
     .from('businesses')
     .select('*')
     .eq('owner_id', user.id)
     .in('status', ['active', 'pending'])
     .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+
+  const business = businesses?.[0] || null;
 
   if (!business) {
     console.error('Dashboard: no business found for user', user.id, bizError?.message);
