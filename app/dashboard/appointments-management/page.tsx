@@ -29,6 +29,7 @@ interface Appointment {
   available_days: string[];
   available_from: string | null;
   available_to: string | null;
+  metadata: Record<string, unknown>;
 }
 
 interface StaffMember {
@@ -90,7 +91,7 @@ export default function AppointmentsManagementPage() {
       id: '', name: '', description: '', price: 0, price_is_variable: false,
       duration_minutes: 30, buffer_minutes: 0, deposit_amount: 0, max_capacity: 1,
       requires_staff: false, staff_ids: [], allow_staff_selection: false, is_active: true, auto_approve: true,
-      available_days: [], available_from: '', available_to: '',
+      available_days: [], available_from: '', available_to: '', metadata: {},
     });
     setView('add');
   }
@@ -106,6 +107,7 @@ export default function AppointmentsManagementPage() {
       available_days: a.available_days || [],
       available_from: a.available_from || '',
       available_to: a.available_to || '',
+      metadata: (a as any).metadata || {},
     });
     setView('edit');
   }
@@ -132,6 +134,7 @@ export default function AppointmentsManagementPage() {
       available_days: form.available_days,
       available_from: form.available_from || null,
       available_to: form.available_to || null,
+      metadata: form.metadata,
     };
 
     if (view === 'add') {
@@ -220,6 +223,27 @@ export default function AppointmentsManagementPage() {
                   className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
               </div>
             </div>
+
+            {/* Drop-off Service */}
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Drop-off Service <Tooltip text="Skip date/time — customer just pays and drops off (e.g. wig revamp, laundry)" /></p>
+                <p className="text-xs text-gray-400">No scheduling needed</p>
+              </div>
+              <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, is_dropoff: !form.metadata?.is_dropoff } })}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.is_dropoff ? 'bg-brand' : 'bg-gray-200'}`}>
+                <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.metadata?.is_dropoff ? '22px' : '2px' }} />
+              </button>
+            </div>
+            {form.metadata?.is_dropoff && (
+              <div className="ml-1 pb-2">
+                <p className="text-xs text-gray-500 mb-1">Turnaround time (days)</p>
+                <input type="number" min={1} step={1} value={(form.metadata?.turnaround_days as number) || ''}
+                  onChange={(e) => setForm({ ...form, metadata: { ...form.metadata, turnaround_days: Number(e.target.value) || null } })}
+                  placeholder="e.g. 3" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                <span className="ml-2 text-xs text-gray-400">days until ready</span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
