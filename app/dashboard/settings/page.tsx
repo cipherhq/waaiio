@@ -1188,6 +1188,36 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              {/* Time Display Format */}
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-sm font-medium text-gray-700">Time Format</label>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2">
+                  {[
+                    { value: '12hr', label: '12-hour (2:00 PM)' },
+                    { value: '24hr', label: '24-hour (14:00)' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={async () => {
+                        const supabase = (await import('@/lib/supabase/client')).createClient();
+                        const meta = (business as any).metadata || {};
+                        await supabase.from('businesses').update({ metadata: { ...meta, time_format: opt.value } }).eq('id', business.id);
+                        window.location.reload();
+                      }}
+                      className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                        ((business as any).metadata?.time_format || '12hr') === opt.value
+                          ? 'bg-brand text-white'
+                          : 'border border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Max Advance Days */}
               <div>
                 <div className="flex items-center gap-1.5">

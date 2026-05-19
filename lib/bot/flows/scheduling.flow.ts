@@ -18,6 +18,15 @@ function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
   return (h || 0) * 60 + (m || 0);
 }
+
+/** Format time for display — 12hr or 24hr based on business preference */
+function formatTime(time: string, use12hr: boolean): string {
+  if (!use12hr) return time;
+  const [h, m] = time.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+}
 import type { BusinessCategoryKey } from '@/lib/constants';
 
 /** Category-aware date prompt */
@@ -714,15 +723,18 @@ export const schedulingFlow: FlowDefinition = {
         const prefLabel = pref ? ` ${pref}` : '';
         // WhatsApp list messages support max 10 items per section
         const displaySlots = availableSlots.slice(0, 10);
+        const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        const use12hr = bizMeta.time_format !== '24hr'; // default to 12hr
+
         return [{
           type: 'list',
           title: 'Select Time',
           body: `Available${prefLabel} times for ${dateLabel}:`,
           buttonLabel: 'Choose Time',
           items: displaySlots.map(s => ({
-            title: s.time,
+            title: formatTime(s.time, use12hr),
             description: maxCapacity > 1 ? `${s.remaining} spot${s.remaining !== 1 ? 's' : ''} left` : undefined,
-            postbackText: s.time,
+            postbackText: s.time, // always send 24hr format as postback value
           })),
         }];
       },
@@ -1229,7 +1241,9 @@ export const schedulingFlow: FlowDefinition = {
           } else {
             lines.push(`📅 ${dateLabel}`);
           }
-          lines.push(`🕐 ${d.time as string}`);
+          const confirmBizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+          const confirmUse12hr = confirmBizMeta.time_format !== '24hr';
+          lines.push(`🕐 ${formatTime(d.time as string, confirmUse12hr)}`);
         }
 
         // Only show quantity if > 1 or not a drop-off
