@@ -1204,15 +1204,44 @@ export const schedulingFlow: FlowDefinition = {
         ];
         if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
         if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
-        const endDateStr = d.end_date as string | undefined;
-        if (endDateStr) {
-          const endLabel = new Date(endDateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
-          lines.push(`📅 ${dateLabel} — ${endLabel}`);
+
+        const svcMeta = d._service_metadata as Record<string, unknown> | undefined;
+        const isDropoff = svcMeta?.is_dropoff === true;
+
+        if (isDropoff) {
+          // Drop-off service: show turnaround, not date/time
+          const turnaround = svcMeta?.turnaround_days as number | undefined;
+          if (turnaround) {
+            lines.push(`⏱️ Ready in ${turnaround} day${turnaround > 1 ? 's' : ''}`);
+          }
         } else {
-          lines.push(`📅 ${dateLabel}`);
+          // Regular appointment: show date and time
+          const endDateStr = d.end_date as string | undefined;
+          if (endDateStr) {
+            const endLabel = new Date(endDateStr + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' });
+            lines.push(`📅 ${dateLabel} — ${endLabel}`);
+          } else {
+            lines.push(`📅 ${dateLabel}`);
+          }
+          lines.push(`🕐 ${d.time as string}`);
         }
-        lines.push(`🕐 ${d.time as string}`);
-        lines.push(`👥 ${d.party_size as number} ${labels.quantityLabel}`);
+
+        // Only show quantity if > 1 or not a drop-off
+        if (!isDropoff || (d.party_size as number) > 1) {
+          lines.push(`👥 ${d.party_size as number} ${labels.quantityLabel}`);
+        }
+
+        // Show price in confirmation
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        const servicePrice = d.service_price as number || 0;
+        const deposit = d.service_deposit as number || 0;
+        if (servicePrice > 0) {
+          if (deposit > 0 && deposit < servicePrice) {
+            lines.push(`💰 Total: ${formatCurrency(servicePrice, cc)} (Deposit: ${formatCurrency(deposit, cc)})`);
+          } else {
+            lines.push(`💰 ${formatCurrency(servicePrice, cc)}`);
+          }
+        }
         // Show add-ons
         const selectedAddons = d._selected_addons as Array<{ name: string; price: number }> | undefined;
         if (selectedAddons && selectedAddons.length > 0) {
