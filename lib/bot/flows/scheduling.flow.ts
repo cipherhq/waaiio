@@ -1086,6 +1086,69 @@ export const schedulingFlow: FlowDefinition = {
         // Free text input
         return { valid: true, data: { special_requests: input } };
       },
+      async next() { return 'select_delivery'; },
+    },
+
+    // ── Select Delivery/Pickup for drop-off services ──
+    {
+      id: 'select_delivery',
+      async skipIf(ctx: FlowContext) {
+        const svcMeta = ctx.session.session_data._service_metadata as Record<string, unknown> | undefined;
+        if (!svcMeta?.is_dropoff) return true; // only for drop-off services
+
+        // Check if business has delivery zones
+        const { data: zones } = await ctx.supabase
+          .from('delivery_zones')
+          .select('id')
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
+          .limit(1);
+
+        if (!zones || zones.length === 0) return true; // no zones configured
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const { data: zones } = await ctx.supabase
+          .from('delivery_zones')
+          .select('id, name, price, is_pickup')
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
+          .order('sort_order');
+
+        if (!zones || zones.length === 0) return [];
+
+        const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+        return [{
+          type: 'list',
+          title: 'Pickup or Drop-off',
+          body: 'How would you like to get your item to us?',
+          buttonLabel: 'Choose Option',
+          items: zones.map(z => ({
+            title: z.name.slice(0, 24),
+            description: z.price > 0 ? `${formatCurrency(z.price, cc)} pickup fee` : 'Free',
+            postbackText: z.id,
+          })),
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const { data: zone } = await ctx.supabase
+          .from('delivery_zones')
+          .select('id, name, price')
+          .eq('id', input)
+          .eq('business_id', ctx.business!.id)
+          .maybeSingle();
+
+        if (!zone) return { valid: false, errorMessage: 'Please select an option.' };
+
+        return {
+          valid: true,
+          data: {
+            _delivery_zone_id: zone.id,
+            _delivery_zone_name: zone.name,
+            _delivery_zone_price: zone.price,
+          },
+        };
+      },
       async next() { return 'collect_venue'; },
     },
 
@@ -1251,9 +1314,17 @@ export const schedulingFlow: FlowDefinition = {
           lines.push(`👥 ${d.party_size as number} ${labels.quantityLabel}`);
         }
 
+        // Show delivery/pickup option
+        const deliveryName = d._delivery_zone_name as string | undefined;
+        const deliveryPrice = (d._delivery_zone_price as number) || 0;
+        if (deliveryName) {
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          lines.push(`🚚 ${deliveryName}${deliveryPrice > 0 ? ` (${formatCurrency(deliveryPrice, cc)})` : ' (Free)'}`);
+        }
+
         // Show price in confirmation
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-        const servicePrice = d.service_price as number || 0;
+        const servicePrice = (d.service_price as number || 0) + deliveryPrice;
         const deposit = d.service_deposit as number || 0;
         if (servicePrice > 0) {
           if (deposit > 0 && deposit < servicePrice) {
