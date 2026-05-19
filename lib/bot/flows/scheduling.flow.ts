@@ -951,7 +951,30 @@ export const schedulingFlow: FlowDefinition = {
       id: 'select_quantity',
       async skipIf(ctx: FlowContext) {
         // Skip if smart intent already extracted quantity
-        return !!ctx.session.session_data.party_size;
+        if (ctx.session.session_data.party_size) return true;
+
+        // Skip for drop-off services (always 1)
+        const svcMeta = ctx.session.session_data._service_metadata as Record<string, unknown> | undefined;
+        if (svcMeta?.is_dropoff) {
+          ctx.session.session_data.party_size = 1;
+          return true;
+        }
+
+        // Skip if business disabled quantity selection
+        const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+        if (bizMeta.skip_quantity === true) {
+          ctx.session.session_data.party_size = 1;
+          return true;
+        }
+
+        // Skip if max capacity is 1 (single-person service)
+        const maxCap = ctx.session.session_data._service_max_capacity as number | undefined;
+        if (maxCap === 1) {
+          ctx.session.session_data.party_size = 1;
+          return true;
+        }
+
+        return false;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const category = ctx.business?.category || 'restaurant';
