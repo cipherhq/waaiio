@@ -585,6 +585,18 @@ export default function ServicesPage() {
                 </div>
               )}
 
+              {/* Skip quantity toggle */}
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Skip quantity <Tooltip text="When on, the bot won't ask 'How many people?' — auto-sets to 1. Use for individual services like haircuts, consultations, or wig services." /></p>
+                  <p className="text-xs text-gray-400">Don't ask "How many people?"</p>
+                </div>
+                <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, skip_quantity: !form.metadata?.skip_quantity } })}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.skip_quantity ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.metadata?.skip_quantity ? '22px' : '2px' }} />
+                </button>
+              </div>
+
               {/* Duration toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>

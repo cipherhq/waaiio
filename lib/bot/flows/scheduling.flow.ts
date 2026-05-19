@@ -960,7 +960,13 @@ export const schedulingFlow: FlowDefinition = {
           return true;
         }
 
-        // Skip if business disabled quantity selection
+        // Skip if service has "ask quantity" disabled
+        if (svcMeta?.skip_quantity === true) {
+          ctx.session.session_data.party_size = 1;
+          return true;
+        }
+
+        // Skip if business disabled quantity selection globally
         const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         if (bizMeta.skip_quantity === true) {
           ctx.session.session_data.party_size = 1;
