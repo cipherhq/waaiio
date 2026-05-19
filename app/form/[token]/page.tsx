@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface FormField {
   id: string;
@@ -197,10 +198,11 @@ export default function PublicFormPage() {
                     className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
                 )}
                 {field.type === 'phone' && (
-                  <input type="tel" value={(answers[field.id] as string) || ''}
-                    onChange={e => updateAnswer(field.id, e.target.value)}
-                    placeholder="Phone number"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500" />
+                  <PhoneInput
+                    value={(answers[field.id] as string) || ''}
+                    onChange={val => updateAnswer(field.id, val)}
+                    countryCode="US"
+                  />
                 )}
                 {field.type === 'date' && (
                   <input type="date" value={(answers[field.id] as string) || ''}

@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface Subscription {
   id: string;
@@ -119,12 +120,10 @@ function ManageRecurringContent() {
           <div className="space-y-4 rounded-2xl bg-white p-6 shadow-sm">
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">WhatsApp Number</label>
-              <input
-                type="tel"
+              <PhoneInput
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="Phone number"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+                onChange={setPhone}
+                countryCode="US"
               />
             </div>
             {error && <p className="text-sm text-red-600">{error}</p>}

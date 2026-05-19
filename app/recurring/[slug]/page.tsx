@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
+import { PhoneInput } from '@/components/auth/PhoneInput';
+import { type CountryCode } from '@/lib/constants';
 
 interface Business {
   id: string;
@@ -254,13 +256,10 @@ export default function RecurringSetupPage() {
           {/* Phone */}
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">WhatsApp Number</label>
-            <input
-              type="tel"
+            <PhoneInput
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              required
-              placeholder="Phone number"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+              onChange={setPhone}
+              countryCode={(business.country_code as CountryCode) || 'US'}
             />
           </div>
 
