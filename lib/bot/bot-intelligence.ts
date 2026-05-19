@@ -290,10 +290,11 @@ export class BotIntelligenceService {
 
   // ── 1E. Persona ───────────────────────────────────────
 
-  getPersonaGreeting(alias: string | null, restaurantName: string): string {
+  getPersonaGreeting(alias: string | null, businessName: string, categoryEmoji?: string): string {
+    const emoji = categoryEmoji || '✨';
     if (alias) {
-      return `Hi! I'm ${alias}, your booking assistant at ${restaurantName}. 🍽️ How can I help?`;
+      return `Hi! I'm ${alias}, your assistant at ${businessName}. ${emoji} How can I help?`;
     }
-    return `Welcome to ${restaurantName}! 🍽️\n\nLet's book you a table.`;
+    return `Welcome to ${businessName}! ${emoji} How can we serve you today?`;
   }
 }

@@ -7,6 +7,7 @@ import { BotIntelligenceService } from './bot-intelligence';
 import { FlowExecutor } from './flows/executor';
 import { getLocale, formatCurrency, type BusinessCategoryKey, type FlowType, type CountryCode } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { translateBotResponse, detectLanguage, getLanguageName, setTranslationContext } from './translate';
@@ -1566,7 +1567,8 @@ export class BotService {
         // Standalone bot greeting — use pre-fetched config (no extra queries)
         let greeting: string;
         if (waConfig.alias) {
-          greeting = this.intelligence.getPersonaGreeting(waConfig.alias, business.name);
+          const catLabels = getCategoryLabels(business.category);
+          greeting = this.intelligence.getPersonaGreeting(waConfig.alias, business.name, catLabels.confirmationEmoji);
         } else {
           greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
             restaurant_name: business.name,
