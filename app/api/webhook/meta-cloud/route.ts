@@ -5,7 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
-import { logger } from '@/lib/logger';
+import { logger, generateRequestId } from '@/lib/logger';
 import { transcribeAudio } from '@/lib/bot/transcription';
 import { checkAIFeature, incrementAIUsage, getVoiceNotSupportedMessage } from '@/lib/bot/ai-tier-guard';
 
@@ -35,6 +35,9 @@ function getChannelResolver() {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = request.headers.get('x-request-id') || generateRequestId();
+  const log = logger.withContext({ requestId });
+
   try {
     // Read raw body for signature verification
     const rawBody = await request.text();
@@ -44,12 +47,12 @@ export async function POST(request: NextRequest) {
     const appSecret = process.env.META_APP_SECRET;
 
     if (!appSecret) {
-      logger.error('[META-WEBHOOK] META_APP_SECRET not configured — rejecting webhook');
+      log.error('[META-WEBHOOK] META_APP_SECRET not configured — rejecting webhook');
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
     }
 
     if (!signature) {
-      logger.error('[META-WEBHOOK] Missing x-hub-signature-256 header — rejecting webhook');
+      log.error('[META-WEBHOOK] Missing x-hub-signature-256 header — rejecting webhook');
       return NextResponse.json({ error: 'Missing signature' }, { status: 401 });
     }
 
@@ -167,9 +170,9 @@ export async function POST(request: NextRequest) {
 
         // Resolve channel by phone_number_id
         const resolved = await resolver.resolveByPhoneNumberId(phoneNumberId);
-        logger.debug('[META-WEBHOOK] Resolved channel:', resolved ? { channelId: resolved.channel.id, provider: resolved.channel.provider, phoneNumberId: resolved.channel.phone_number_id, hasToken: !!(resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN) } : 'NULL');
+        log.debug('[META-WEBHOOK] Resolved channel:', resolved ? { channelId: resolved.channel.id, provider: resolved.channel.provider, phoneNumberId: resolved.channel.phone_number_id, hasToken: !!(resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN) } : 'NULL');
         if (!resolved) {
-          logger.debug('[META-WEBHOOK] No channel found for phone_number_id:', phoneNumberId);
+          log.debug('[META-WEBHOOK] No channel found for phone_number_id:', phoneNumberId);
           continue;
         }
 
@@ -177,6 +180,7 @@ export async function POST(request: NextRequest) {
 
         for (const msg of messages) {
           const source = msg.from;
+          const msgLog = log.withContext({ from: source });
 
           // Extract text based on message type
           let text = '';
@@ -241,10 +245,10 @@ export async function POST(request: NextRequest) {
                       if (transcript) {
                         text = transcript;
                         await incrementAIUsage(supabase, preResolvedBusinessId, 'voice_transcription');
-                        logger.debug('[META-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+                        msgLog.debug('[META-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
                       }
                     } catch (transcribeErr) {
-                      logger.error('[META-WEBHOOK] Transcription error:', transcribeErr);
+                      msgLog.error('[META-WEBHOOK] Transcription error:', transcribeErr);
                     }
                   } else {
                     // Free tier: tell customer to type instead
@@ -255,7 +259,7 @@ export async function POST(request: NextRequest) {
                 }
               }
             } catch (err) {
-              logger.error('[META-WEBHOOK] Audio download/upload error:', err);
+              msgLog.error('[META-WEBHOOK] Audio download/upload error:', err);
             }
             if (!text) text = '[Voice message]';
           }
@@ -273,21 +277,21 @@ export async function POST(request: NextRequest) {
             .select('id');
 
           if (!dedupInserted || dedupInserted.length === 0) {
-            logger.debug('[META-WEBHOOK] Duplicate message, skipping:', metaMsgId);
+            msgLog.debug('[META-WEBHOOK] Duplicate message, skipping:', metaMsgId);
             continue;
           }
 
-          logger.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
+          msgLog.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
 
           const standalone = new StandaloneService(supabase);
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
           try {
-            logger.debug('[META-WEBHOOK] Calling bot.handleMessage for', source, 'text:', text, 'preResolvedBiz:', preResolvedBusinessId);
+            msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for', source, 'text:', text, 'preResolvedBiz:', preResolvedBusinessId);
             await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
-            logger.debug('[META-WEBHOOK] bot.handleMessage completed for', source);
+            msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for', source);
           } catch (botErr) {
-            logger.error('[META-WEBHOOK] Bot handling failed for', source, ':', (botErr as Error)?.message || botErr);
+            msgLog.error('[META-WEBHOOK] Bot handling failed for', source, ':', (botErr as Error)?.message || botErr);
             // Try to send error message to user so they know something went wrong
             try {
               await resolved.sender.sendText({
@@ -295,7 +299,7 @@ export async function POST(request: NextRequest) {
                 text: 'Sorry, we encountered an error processing your message. Please try again.',
               });
             } catch (fallbackErr) {
-              logger.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
+              msgLog.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
             }
           }
 
@@ -306,7 +310,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
-    logger.error('[META-WEBHOOK] Error:', error);
+    log.error('[META-WEBHOOK] Error:', error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
 }

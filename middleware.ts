@@ -139,6 +139,9 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // Attach request ID for tracing (reuse incoming or generate new)
+  const requestId = request.headers.get('x-request-id') || crypto.randomUUID().slice(0, 8);
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -201,6 +204,8 @@ export async function middleware(request: NextRequest) {
       supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     }
   }
+
+  supabaseResponse.headers.set('x-request-id', requestId);
 
   return applySecurityHeaders(supabaseResponse);
 }

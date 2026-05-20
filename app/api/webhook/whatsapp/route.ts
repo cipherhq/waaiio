@@ -8,7 +8,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { BotService } from '@/lib/bot/bot.service';
 import { BotIntelligenceService } from '@/lib/bot/bot-intelligence';
 import { StandaloneService } from '@/lib/bot/standalone.service';
-import { logger } from '@/lib/logger';
+import { logger, generateRequestId } from '@/lib/logger';
 import { transcribeAudio } from '@/lib/bot/transcription';
 
 // Allow up to 60s for bot processing on Vercel Pro
@@ -35,6 +35,9 @@ function getChannelResolver() {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = request.headers.get('x-request-id') || generateRequestId();
+  const log = logger.withContext({ requestId });
+
   try {
     // Webhook secret verification (required in production)
     const webhookSecret = request.headers.get('x-webhook-secret');
@@ -51,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     const rawBody = await request.text();
-    logger.debug('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
+    log.debug('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
 
     let body: Record<string, unknown>;
     // Gupshup may send URL-encoded form data instead of JSON
@@ -69,12 +72,12 @@ export async function POST(request: NextRequest) {
       body = JSON.parse(rawBody);
     }
 
-    logger.debug('[WEBHOOK] Parsed type:', body.type, 'payload keys:', body.payload ? Object.keys(body.payload as object) : 'none');
+    log.debug('[WEBHOOK] Parsed type:', body.type, 'payload keys:', body.payload ? Object.keys(body.payload as object) : 'none');
 
     // Only process message events
     const eventType = (body.type || body.eventType || '') as string;
     if (eventType && eventType !== 'message' && eventType !== 'message-event') {
-      logger.debug('[WEBHOOK] Skipping event type:', eventType);
+      log.debug('[WEBHOOK] Skipping event type:', eventType);
       return NextResponse.json({ status: 'ok', message: 'Non-message event' });
     }
 
@@ -125,14 +128,14 @@ export async function POST(request: NextRequest) {
             const transcript = await transcribeAudio(audioBuffer, contentType, `gupshup-${source}-${Date.now()}`);
             if (transcript) {
               text = transcript;
-              logger.debug('[GUPSHUP-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+              log.debug('[GUPSHUP-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
             }
           } catch (transcribeErr) {
-            logger.error('[GUPSHUP-WEBHOOK] Transcription error:', transcribeErr);
+            log.error('[GUPSHUP-WEBHOOK] Transcription error:', transcribeErr);
           }
         }
       } catch (err) {
-        logger.error('[WEBHOOK] Gupshup audio download/upload error:', err);
+        log.error('[WEBHOOK] Gupshup audio download/upload error:', err);
         // Fallback: use the expiring Gupshup URL directly
         mediaUrl = innerPayload.url as string;
       }
@@ -141,10 +144,12 @@ export async function POST(request: NextRequest) {
 
     const msgType = (innerPayload?.type || payload.type || 'text') as string;
 
-    logger.debug('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
+    // Enrich logger with sender phone once known
+    const logMsg = source ? log.withContext({ from: source }) : log;
+    logMsg.debug('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
 
     if (!source) {
-      logger.debug('[WEBHOOK] No source phone, skipping');
+      log.debug('[WEBHOOK] No source phone, skipping');
       return NextResponse.json({ status: 'ok', message: 'No source phone' });
     }
 
@@ -164,7 +169,7 @@ export async function POST(request: NextRequest) {
       .select('id');
 
     if (!inserted || inserted.length === 0) {
-      logger.debug('[WEBHOOK] Duplicate message, skipping:', messageId);
+      logMsg.debug('[WEBHOOK] Duplicate message, skipping:', messageId);
       return NextResponse.json({ success: true, duplicate: true });
     }
 
@@ -186,10 +191,10 @@ export async function POST(request: NextRequest) {
     // Process message
     await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId, mediaUrl);
 
-    logger.debug('[WEBHOOK] Message processed successfully');
+    logMsg.debug('[WEBHOOK] Message processed successfully');
     return NextResponse.json({ status: 'ok' });
   } catch (error) {
-    logger.error('[WEBHOOK] Error:', error);
+    log.error('[WEBHOOK] Error:', error);
     Sentry.captureException(error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });
   }
