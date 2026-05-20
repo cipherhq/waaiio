@@ -178,7 +178,7 @@ export async function handleOrderDetail(
 
   if (!order) {
     await sendText(from, 'Order not found. Type *my orders* to see your orders.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
     return;
   }
 
@@ -251,7 +251,7 @@ export async function handleOrderDetailAction(
 
   if (!orderId) {
     await sendText(from, 'Something went wrong. Type *my orders* to try again.');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
     return;
   }
 
@@ -259,7 +259,7 @@ export async function handleOrderDetailAction(
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
     await sendText(from, 'Action cancelled. Send *Hi* to start fresh or type *switch <business name>* to visit another business. 🙏');
-    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
     return;
   }
 

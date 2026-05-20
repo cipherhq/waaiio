@@ -39,7 +39,7 @@ export async function getActiveSession(supabase: SupabaseClient, phone: string):
 export async function deactivateSession(supabase: SupabaseClient, sessionId: string): Promise<void> {
   await supabase
     .from('bot_sessions')
-    .update({ is_active: false })
+    .update({ is_active: false, last_active_at: new Date().toISOString() })
     .eq('id', sessionId);
 }
 

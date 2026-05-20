@@ -429,7 +429,7 @@ export class FlowExecutor {
   private async deactivateSession(sessionId: string): Promise<void> {
     await this.supabase
       .from('bot_sessions')
-      .update({ is_active: false })
+      .update({ is_active: false, last_active_at: new Date().toISOString() })
       .eq('id', sessionId);
   }
 

@@ -440,7 +440,7 @@ const myAccountMenuStep: FlowStepConfig = {
     if (action === 'acct_switch' || action === 'switch' || action === 'switch business') {
       // Deactivate current session so user can start fresh
       await ctx.supabase.from('bot_sessions')
-        .update({ is_active: false })
+        .update({ is_active: false, last_active_at: new Date().toISOString() })
         .eq('id', ctx.session.id);
       await ctx.sender.sendText({
         to: ctx.from,

@@ -2265,7 +2265,7 @@ export const orderingFlow: FlowDefinition = {
         // End session
         await ctx.supabase
           .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
+          .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
           .eq('id', ctx.session.id);
 
         return [{
@@ -2326,7 +2326,7 @@ export const orderingFlow: FlowDefinition = {
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
           await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
+            .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
             .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your order has been cancelled. Send *Hi* to start over.' }];
         }
@@ -2566,7 +2566,7 @@ export const orderingFlow: FlowDefinition = {
         // Free order — confirm immediately
         await ctx.supabase
           .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
+          .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
           .eq('id', ctx.session.id);
 
         // Post-completion: loyalty, feedback, referral

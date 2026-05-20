@@ -257,6 +257,7 @@ const invoicePayStep: FlowStepConfig = {
       await ctx.supabase.from('bot_sessions').update({
         current_step: 'complete',
         is_active: false,
+        last_active_at: new Date().toISOString(),
       }).eq('id', ctx.session.id);
 
       return [{

@@ -404,7 +404,7 @@ export class BotService {
     // ── My Orders / Order Tracking ──
     if (isOrdersQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -440,7 +440,7 @@ export class BotService {
           .maybeSingle();
         if (order) {
           if (session) {
-            await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+            await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
           }
           await this.supabase.from('bot_sessions')
             .delete()
@@ -467,7 +467,7 @@ export class BotService {
         if (booking) {
           // Route to bookings
           if (session) {
-            await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+            await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
           }
           await this.supabase.from('bot_sessions')
             .delete()
@@ -491,7 +491,7 @@ export class BotService {
 
     if (isBookingsQuery || isRescheduleQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -517,7 +517,7 @@ export class BotService {
 
     if (isHistoryQuery || isReceiptQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -530,7 +530,7 @@ export class BotService {
 
     if (isAnnualQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -738,7 +738,7 @@ export class BotService {
       const itemList = items.map(i => `• ${i.quantity}x ${i.product_name}${i.variant_label ? ` (${i.variant_label})` : ''}`).join('\n');
 
       // Start ordering flow with pre-filled cart
-      await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
 
       const { data: biz } = await this.supabase
         .from('businesses')
@@ -771,7 +771,7 @@ export class BotService {
       // Need business context — use the current session's business, or find from recent payments
       const businessId = session?.business_id || null;
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
 
       const profile = await getProfile();
@@ -826,7 +826,7 @@ export class BotService {
 
     if (isLoyaltyQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -872,7 +872,7 @@ export class BotService {
 
     if (isInvoiceQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -1143,7 +1143,7 @@ export class BotService {
     // ── My Account — global shortcut from any step ──
     if (isMyAccountQuery) {
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
       const profile = await getProfile();
       if (!profile?.id) {
@@ -1186,7 +1186,7 @@ export class BotService {
       const { getEnabledCapabilities } = await import('@/lib/capabilities/service');
       const caps = await getEnabledCapabilities(this.supabase, session.business_id);
       if (caps.includes('queue')) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
         const profile = await getProfile();
 
         await this.supabase.from('bot_sessions').delete()
@@ -1215,7 +1215,7 @@ export class BotService {
     if (switchMatch) {
       const keyword = switchMatch[1].trim().toLowerCase();
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
 
       // Use the full fuzzy matching engine (same as bot code detection)
@@ -1314,7 +1314,7 @@ export class BotService {
     if (!session || isRestart) {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       if (session) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       }
 
       // Determine standalone business
@@ -1813,7 +1813,7 @@ export class BotService {
 
     // Check session expiry — clean up and let user start fresh
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
-      await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
       await this.sendText(from, 'Your previous session has expired. Send *Hi* to start again or type *switch <business name>* to visit a business. 🙏');
       return;
     }
@@ -1976,7 +1976,7 @@ export class BotService {
       // Check for "No" / rejection
       const isNo = /^(biz_no|no|nah|nope|wrong|not|cancel)$/i.test(text);
       if (isNo) {
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
         await this.sendText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
         return;
       }
@@ -2013,7 +2013,7 @@ export class BotService {
 
       if (selectedBiz) {
         // Deactivate the suggestion session, re-process as if they sent the bot code
-        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
         return this.handleMessage(from, selectedBiz.bot_code, messageType, destinationPhone);
       } else {
         await this.sendText(from, 'Please select one of the options above, or send a *business code* to connect.');

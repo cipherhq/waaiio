@@ -643,7 +643,7 @@ export const reservationFlow: FlowDefinition = {
 
           if (overlapping && overlapping.length > 0) {
             await ctx.supabase.from('bot_sessions')
-              .update({ current_step: 'complete', is_active: false })
+              .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
               .eq('id', ctx.session.id);
             return [{
               type: 'text',
@@ -656,7 +656,7 @@ export const reservationFlow: FlowDefinition = {
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
           await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
+            .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
             .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your reservation has been cancelled. Send *Hi* to start over.' }];
         }
@@ -789,7 +789,7 @@ export const reservationFlow: FlowDefinition = {
         // No payment needed — reservation confirmed
         await ctx.supabase
           .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
+          .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
           .eq('id', ctx.session.id);
 
         // Create notification + notify owner via email/WhatsApp
