@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
 interface Referral {
@@ -34,6 +34,7 @@ const statusColors: Record<string, string> = {
 
 export default function ReferralsPage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('referral');
   const meta = (business.metadata || {}) as Record<string, unknown>;
 
   const [referrals, setReferrals] = useState<Referral[]>([]);

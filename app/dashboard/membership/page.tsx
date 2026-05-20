@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
 interface MembershipTier {
@@ -53,6 +53,7 @@ const EMPTY_FORM: Omit<MembershipTier, 'id' | 'business_id' | 'created_at'> = {
 
 export default function MembershipPage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('membership');
   const cc = (business.country_code || 'NG') as CountryCode;
 
   const [tiers, setTiers] = useState<MembershipTier[]>([]);

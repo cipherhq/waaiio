@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -99,6 +100,9 @@ function isDemo(b: Business): boolean {
 }
 
 export default function Businesses() {
+  const adminSession = useAdminSession();
+  const isFullAdmin = adminSession?.role === 'admin';
+
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -199,7 +203,7 @@ export default function Businesses() {
   }, [selected]);
 
   async function handleTierChange() {
-    if (!selected || selectedTier === selected.subscription_tier) return;
+    if (!selected || selectedTier === selected.subscription_tier || !isFullAdmin) return;
     setTierSaving(true);
     try {
       const { error } = await adminDb
@@ -228,7 +232,7 @@ export default function Businesses() {
   }
 
   async function handleStatusChange() {
-    if (!selected || selectedStatus === selected.status) return;
+    if (!selected || selectedStatus === selected.status || !isFullAdmin) return;
     setStatusSaving(true);
     try {
       const { error } = await adminDb
@@ -256,7 +260,7 @@ export default function Businesses() {
   }
 
   async function handleEditSave() {
-    if (!selected || !editField) return;
+    if (!selected || !editField || !isFullAdmin) return;
     setEditSaving(true);
     try {
       const { error } = await adminDb

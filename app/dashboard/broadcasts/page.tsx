@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -31,6 +31,7 @@ interface BroadcastUsage {
 
 export default function BroadcastsPage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('broadcast');
   const [contacts, setContacts] = useState<BroadcastContact[]>([]);
   const [history, setHistory] = useState<BroadcastHistory[]>([]);
   const [loading, setLoading] = useState(true);

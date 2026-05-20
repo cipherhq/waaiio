@@ -238,7 +238,7 @@ export default function ProductsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('products')
-      .select('*')
+      .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options')
       .eq('business_id', business.id)
       .is('deleted_at', null)
       .order('sort_order', { ascending: true });
@@ -397,7 +397,7 @@ export default function ProductsPage() {
     // Fetch product-specific addons
     const { data: addonData } = await supabase
       .from('product_addons')
-      .select('*')
+      .select('id, product_id, name, description, price, price_type, unit_label, min_quantity, max_quantity, is_required, is_negotiable, is_active, sort_order')
       .eq('product_id', product.id)
       .order('sort_order', { ascending: true });
     const productAddons = (addonData as ProductAddon[]) || [];
@@ -407,7 +407,7 @@ export default function ProductsPage() {
     // Fetch product-specific volume discounts
     const { data: discountData } = await supabase
       .from('volume_discount_rules')
-      .select('*')
+      .select('id, product_id, name, min_quantity, max_quantity, discount_type, discount_value, is_active, sort_order')
       .eq('product_id', product.id)
       .order('sort_order', { ascending: true });
     const productDiscounts = (discountData as VolumeDiscountRule[]) || [];

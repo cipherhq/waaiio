@@ -2,7 +2,7 @@
 import { getLocale, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
 interface WaitlistEntry {
@@ -27,6 +27,7 @@ const statusColors: Record<string, string> = {
 
 export default function WaitlistPage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('waitlist');
   const [entries, setEntries] = useState<WaitlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);

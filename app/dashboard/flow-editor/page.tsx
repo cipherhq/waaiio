@@ -77,7 +77,7 @@ export default function FlowEditorPage() {
     setLoading(true);
     const { data, error } = await supabase
       .from('bot_step_overrides')
-      .select('*')
+      .select('id, business_id, flow_type, step_id, action, custom_prompt, custom_options, branch_conditions')
       .eq('business_id', business.id);
 
     if (!error && data) {

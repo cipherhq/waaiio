@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useCallback, useEffect, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { loadCountries } from '@/lib/countries';
 
@@ -92,4 +93,17 @@ export function useCapabilities() {
     [business.capabilities],
   );
   return { capabilities: business.capabilities, hasCapability };
+}
+
+/** Redirect to capabilities page if business lacks a required capability */
+export function useRequireCapability(...caps: CapabilityId[]) {
+  const { hasCapability } = useCapabilities();
+  const router = useRouter();
+  const missing = caps.find(cap => !hasCapability(cap));
+  useEffect(() => {
+    if (missing) {
+      router.replace(`/dashboard/capabilities?upgrade=${missing}`);
+    }
+  }, [missing, router]);
+  return !missing;
 }

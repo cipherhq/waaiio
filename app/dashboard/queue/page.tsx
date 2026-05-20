@@ -2,7 +2,7 @@
 import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constants';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 
 interface QueueEntry {
@@ -40,6 +40,7 @@ function showBrowserNotification(title: string, body: string) {
 
 export default function QueuePage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('queue');
   const [entries, setEntries] = useState<QueueEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);

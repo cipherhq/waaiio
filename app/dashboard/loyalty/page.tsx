@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { getLocale, type CountryCode } from '@/lib/constants';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
@@ -44,6 +44,7 @@ const DEFAULT_CONFIG: LoyaltyConfig = {
 
 export default function LoyaltyPage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('loyalty');
 
   const [config, setConfig] = useState<LoyaltyConfig>(DEFAULT_CONFIG);
   const [saving, setSaving] = useState(false);

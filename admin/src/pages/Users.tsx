@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -26,6 +27,9 @@ type RoleOption = 'customer' | 'provider' | 'business_owner' | 'admin';
 const ROLE_OPTIONS: RoleOption[] = ['customer', 'provider', 'business_owner', 'admin'];
 
 export default function UserManagement() {
+  const adminSession = useAdminSession();
+  const isFullAdmin = adminSession?.role === 'admin';
+
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -110,7 +114,7 @@ export default function UserManagement() {
 
   // Toggle user status
   async function handleToggleStatus() {
-    if (!selected) return;
+    if (!selected || !isFullAdmin) return;
     const currentStatus = getUserStatus(selected);
     const newStatus = currentStatus === 'suspended' ? 'active' : 'suspended';
 
@@ -151,7 +155,7 @@ export default function UserManagement() {
 
   // Change role
   async function handleChangeRole() {
-    if (!selected || selectedRole === selected.role) return;
+    if (!selected || selectedRole === selected.role || !isFullAdmin) return;
 
     if (!confirm(`Change role from "${selected.role}" to "${selectedRole}"?`)) return;
 

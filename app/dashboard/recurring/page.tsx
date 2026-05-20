@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
@@ -36,6 +36,7 @@ const statusColors: Record<string, string> = {
 
 export default function RecurringDashboardPage() {
   const business = useBusiness();
+  const capReady = useRequireCapability('recurring');
   const cc = (business.country_code || 'NG') as CountryCode;
 
   const [subs, setSubs] = useState<Sub[]>([]);

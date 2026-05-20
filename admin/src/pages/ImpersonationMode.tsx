@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { Search, LogOut, Pencil, Check, X, Building2, ExternalLink } from 'lucide-react';
@@ -43,6 +44,9 @@ interface Booking {
 type EditingField = 'name' | 'phone' | 'email' | 'category' | null;
 
 export default function ImpersonationMode() {
+  const session = useAdminSession();
+  const isFullAdmin = session?.role === 'admin';
+
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -300,6 +304,15 @@ export default function ImpersonationMode() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (!isFullAdmin) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
+        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
+        <p className="mt-1 text-sm text-gray-500">Only full admins can use impersonation mode.</p>
+      </div>
+    );
   }
 
   if (loading) {
