@@ -22,7 +22,9 @@ export async function GET() {
     if (!business) return NextResponse.json({ recommendations: [] });
 
     const recommendations = await generateRecommendations(supabase, business.id);
-    return NextResponse.json({ recommendations });
+    const response = NextResponse.json({ recommendations });
+    response.headers.set('Cache-Control', 'private, max-age=300, stale-while-revalidate=600');
+    return response;
   } catch (error) {
     logger.error('[RECOMMENDATIONS] Error:', error);
     return NextResponse.json({ recommendations: [] });

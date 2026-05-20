@@ -203,7 +203,7 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .single();
 
-        if (!product) return { valid: false, errorMessage: 'Please select a valid option.' };
+        if (!product) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
 
         if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
@@ -415,7 +415,7 @@ export const orderingFlow: FlowDefinition = {
         const axis = variantOptions[axisIndex];
 
         if (!axis) {
-          return [{ type: 'text', text: 'Something went wrong. Send *Hi* to start again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
         }
 
         const messages: PromptMessage[] = [];
@@ -614,7 +614,7 @@ export const orderingFlow: FlowDefinition = {
           .eq('id', input)
           .single();
 
-        if (!variant) return { valid: false, errorMessage: 'Please select a valid option.' };
+        if (!variant) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
 
         if (variant.stock_quantity !== null && variant.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${variant.label} is out of stock.` };
@@ -2241,7 +2241,7 @@ export const orderingFlow: FlowDefinition = {
 
         if (error || !quote) {
           logger.error('[ORDERING] Quote request creation failed:', error);
-          return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
         }
 
         // Notify business owner
@@ -2348,7 +2348,7 @@ export const orderingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
+        if (!userId) return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
 
         // Create order with new fields
         const orderPayload: Record<string, unknown> = {

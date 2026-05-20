@@ -423,7 +423,7 @@ export default function WhatsAppPage() {
                     onClick={() => setWelcomeButtons(welcomeButtons.filter((_, j) => j !== i))}
                     className="mt-5 rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
                   >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </button>
@@ -497,7 +497,7 @@ export default function WhatsAppPage() {
                     <p className="text-sm font-medium text-gray-900">{tmpl.label}</p>
                     <p className="text-xs text-gray-400">{tmpl.desc}</p>
                   </div>
-                  <svg className={`h-4 w-4 text-gray-400 transition ${expandedTemplate === tmpl.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className={`h-4 w-4 text-gray-400 transition ${expandedTemplate === tmpl.key ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                   </svg>
                 </button>
@@ -556,7 +556,7 @@ export default function WhatsAppPage() {
       <div className="mt-8">
         <div className="rounded-xl border border-blue-100 bg-blue-50 p-5">
           <div className="flex items-start gap-3">
-            <svg className="mt-0.5 h-5 w-5 shrink-0 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <div>
@@ -569,7 +569,7 @@ export default function WhatsAppPage() {
                 className="mt-3 inline-flex items-center gap-1 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition"
               >
                 Go to Keywords
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </a>

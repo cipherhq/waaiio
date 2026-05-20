@@ -206,12 +206,12 @@ export default function TicketsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Code</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Event</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Ticket #</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Scanned</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Code</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Event</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Ticket #</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Scanned</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

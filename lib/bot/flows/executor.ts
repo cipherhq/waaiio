@@ -94,7 +94,7 @@ export class FlowExecutor {
 
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
-      let errMsg = 'Something went wrong. Send "Hi" to start again.';
+      let errMsg = 'Oops, we hit a snag. Send *Hi* to start fresh.';
       errMsg = await this.maybeTranslate(errMsg, session);
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });

@@ -231,7 +231,7 @@ export default function FAQPage() {
             onClick={() => { resetForm(); setView('list'); }}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -252,7 +252,7 @@ export default function FAQPage() {
                 value={formQuestion}
                 onChange={(e) => setFormQuestion(e.target.value)}
                 placeholder="e.g., What are your hours?"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 autoFocus
               />
             </div>
@@ -266,7 +266,7 @@ export default function FAQPage() {
                 onChange={(e) => setFormAnswer(e.target.value)}
                 rows={4}
                 placeholder="The response that will be sent to the customer..."
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
 
@@ -479,7 +479,7 @@ export default function FAQPage() {
                 <div className="mt-4">
                   {alreadyExists ? (
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                       Already added

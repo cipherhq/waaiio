@@ -186,15 +186,15 @@ export default function RecurringDashboardPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Frequency</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Card</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Last Charged</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Next Charge</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Service</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Frequency</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Card</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Charged</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Next Charge</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

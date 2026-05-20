@@ -267,7 +267,7 @@ export default function KeywordsPage() {
             onClick={() => setView('list')}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -294,7 +294,7 @@ export default function KeywordsPage() {
                 value={form.keyword}
                 onChange={(e) => { setForm({ ...form, keyword: e.target.value }); checkConflict(e.target.value); }}
                 placeholder="e.g. hello, pricing, book"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 autoFocus
               />
               <p className="mt-1 text-xs text-gray-400">
@@ -313,7 +313,7 @@ export default function KeywordsPage() {
                 <select
                   value={form.match_type}
                   onChange={(e) => setForm({ ...form, match_type: e.target.value as BotKeyword['match_type'] })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 >
                   {MATCH_TYPE_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -326,7 +326,7 @@ export default function KeywordsPage() {
                 <select
                   value={form.action_type}
                   onChange={(e) => setForm({ ...form, action_type: e.target.value as BotKeyword['action_type'] })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 >
                   {ACTION_TYPE_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -344,7 +344,7 @@ export default function KeywordsPage() {
                 onChange={(e) => setForm({ ...form, payload: e.target.value })}
                 rows={4}
                 placeholder={actionPayloadPlaceholder(form.action_type)}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
               <p className="mt-1 text-xs text-gray-400">
                 {form.action_type === 'reply' && 'The reply text that will be sent to the customer.'}
@@ -384,7 +384,7 @@ export default function KeywordsPage() {
                 value={form.priority || ''}
                 onFocus={e => e.target.select()}
                 onChange={(e) => setForm({ ...form, priority: parseInt(e.target.value) || 0 })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
               <p className="mt-1 text-xs text-gray-400">
                 Higher priority keywords are matched first when multiple keywords match.
@@ -483,7 +483,7 @@ export default function KeywordsPage() {
               <p className="text-sm font-medium text-gray-900">System Defaults</p>
               <p className="text-xs text-gray-400">{systemKeywords.length} system keywords active. Your keywords override these when matching.</p>
             </div>
-            <svg className={`h-4 w-4 shrink-0 text-gray-400 transition ${showSystemDefaults ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className={`h-4 w-4 shrink-0 text-gray-400 transition ${showSystemDefaults ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
@@ -508,7 +508,7 @@ export default function KeywordsPage() {
       {keywords.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-6 w-6 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-6 w-6 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
             </svg>
           </div>
@@ -529,13 +529,13 @@ export default function KeywordsPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Keyword</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Match</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Action</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Payload</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Priority</th>
-                  <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Active</th>
-                  <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Actions</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Keyword</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Match</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Action</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-gray-500">Payload</th>
+                  <th scope="col" className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Priority</th>
+                  <th scope="col" className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-gray-500">Active</th>
+                  <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-gray-500">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -583,7 +583,7 @@ export default function KeywordsPage() {
                           className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
                           title="Edit"
                         >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
@@ -592,7 +592,7 @@ export default function KeywordsPage() {
                           className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
                           title="Delete"
                         >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>
@@ -646,7 +646,7 @@ export default function KeywordsPage() {
                       onClick={(e) => { e.stopPropagation(); handleDelete(kw.id); }}
                       className="rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500"
                     >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                       </svg>
                     </button>

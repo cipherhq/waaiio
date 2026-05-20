@@ -284,7 +284,7 @@ export default function PropertiesPage() {
       <div>
         <div className="flex items-center gap-3">
           <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -299,14 +299,14 @@ export default function PropertiesPage() {
               <label className="mb-1 block text-sm font-medium text-gray-700">{propertyLabel} Name <span className="text-red-400">*</span></label>
               <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
                 placeholder={labels?.namePlaceholder || `e.g. Studio Apartment`}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" autoFocus />
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" autoFocus />
             </div>
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
               <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
                 rows={2} placeholder="Describe this property..."
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -314,18 +314,18 @@ export default function PropertiesPage() {
                 <label className="mb-1 block text-sm font-medium text-gray-700">Nightly Rate</label>
                 <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })}
                   placeholder="0 = Free"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Deposit</label>
                 <input type="number" min={0} value={form.deposit_amount || ''} onChange={e => setForm({ ...form, deposit_amount: Number(e.target.value) })}
                   placeholder="0"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max Guests</label>
                 <input type="number" min={1} value={form.max_guests} onFocus={e => e.target.select()} onChange={e => setForm({ ...form, max_guests: Number(e.target.value) })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
             </div>
 
@@ -334,19 +334,19 @@ export default function PropertiesPage() {
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Type</label>
                   <select value={form.property_type} onChange={e => setForm({ ...form, property_type: e.target.value })}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand capitalize">
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand capitalize">
                     {types.map(t => <option key={t} value={t} className="capitalize">{t}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Bedrooms</label>
                   <input type="number" min={0} value={form.bedrooms || ''} onChange={e => setForm({ ...form, bedrooms: Number(e.target.value) })}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Bathrooms</label>
                   <input type="number" min={0} value={form.bathrooms || ''} onChange={e => setForm({ ...form, bathrooms: Number(e.target.value) })}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
                 </div>
               </div>
             )}
@@ -375,7 +375,7 @@ export default function PropertiesPage() {
               <label className="mb-1 block text-sm font-medium text-gray-700">Address / Location</label>
               <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
                 placeholder="e.g. 5 Marina Drive, Lekki"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
 
             {/* Photos */}
@@ -389,7 +389,7 @@ export default function PropertiesPage() {
                     <img src={url} alt="" className="h-full w-full object-cover" />
                     <button type="button" onClick={() => setPhotos(photos.filter((_, j) => j !== i))}
                       className="absolute right-1 top-1 hidden rounded-full bg-black/50 p-1 text-white group-hover:block">
-                      <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </button>
@@ -401,7 +401,7 @@ export default function PropertiesPage() {
                     {uploading ? (
                       <div className="h-5 w-5 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                     ) : (
-                      <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
                       </svg>
                     )}

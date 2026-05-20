@@ -459,7 +459,7 @@ export default function PayoutsPage() {
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <svg className={`h-5 w-5 ${payoutMode === 'direct_split' ? 'text-brand' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className={`h-5 w-5 ${payoutMode === 'direct_split' ? 'text-brand' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                     <span className="text-sm font-semibold text-gray-900">Direct Split</span>
@@ -475,7 +475,7 @@ export default function PayoutsPage() {
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <svg className={`h-5 w-5 ${payoutMode === 'platform_managed' ? 'text-brand' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className={`h-5 w-5 ${payoutMode === 'platform_managed' ? 'text-brand' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                     </svg>
                     <span className="text-sm font-semibold text-gray-900">Platform Managed</span>
@@ -566,7 +566,7 @@ export default function PayoutsPage() {
               ? 'bg-blue-100 text-blue-700'
               : 'bg-green-100 text-green-700'
           }`}>
-            <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 8 8">
+            <svg aria-hidden="true" className="h-3 w-3" fill="currentColor" viewBox="0 0 8 8">
               <circle cx="4" cy="4" r="3" />
             </svg>
             {isPlatformManaged ? 'Platform Managed (Weekly)' : 'Direct Split (Instant)'}
@@ -624,7 +624,7 @@ export default function PayoutsPage() {
         <div className="mt-6 max-w-lg rounded-xl border border-green-200 bg-green-50 p-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
-              <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
@@ -801,10 +801,10 @@ export default function PayoutsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
-                      <th className="pb-2 font-medium">Date</th>
-                      <th className="pb-2 font-medium">Period</th>
-                      <th className="pb-2 font-medium text-right">Net</th>
-                      <th className="pb-2 font-medium text-right">Status</th>
+                      <th scope="col" className="pb-2 font-medium">Date</th>
+                      <th scope="col" className="pb-2 font-medium">Period</th>
+                      <th scope="col" className="pb-2 font-medium text-right">Net</th>
+                      <th scope="col" className="pb-2 font-medium text-right">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -934,7 +934,7 @@ export default function PayoutsPage() {
                     <p className="text-xs text-gray-500">{gw.desc}</p>
                   </div>
                   {selectedGateway === gw.id && (
-                    <svg className="h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className="h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
                   )}
@@ -955,7 +955,7 @@ export default function PayoutsPage() {
           <div className="rounded-xl border border-gray-200 bg-white p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100">
-                <svg className="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-5 w-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                 </svg>
               </div>

@@ -78,55 +78,34 @@ export default function DashboardOverview() {
   const [whatsappLink, setWhatsappLink] = useState('');
   const [whatsappDisplayNumber, setWhatsappDisplayNumber] = useState('');
 
-  // Load the correct WhatsApp number for this business
+  // Load the correct WhatsApp number for this business (parallel queries, priority pick)
   useEffect(() => {
     async function loadWhatsAppLink() {
       const supabase = createClient();
-
-      // 1. Check assigned channel (assigned_channel_id takes priority, then whatsapp_channel_id)
       const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
-      if (channelId) {
-        const { data: ch } = await supabase
-          .from('whatsapp_channels')
-          .select('phone_number')
-          .eq('id', channelId)
-          .maybeSingle();
-        if (ch?.phone_number) {
-          const num = ch.phone_number.replace(/[^0-9]/g, '');
-          setWhatsappDisplayNumber(num);
-          setWhatsappLink(`https://wa.me/${num}`);
-          return;
-        }
-      }
 
-      // 2. Check dedicated channel
-      const { data: dedicated } = await supabase
-        .from('whatsapp_channels')
-        .select('phone_number')
-        .eq('business_id', business.id)
-        .eq('channel_type', 'dedicated')
-        .eq('is_active', true)
-        .maybeSingle();
+      // Fire all 3 queries in parallel instead of sequential waterfall
+      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
+        channelId
+          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase.from('whatsapp_channels').select('phone_number')
+          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
+        supabase.from('whatsapp_channels').select('phone_number')
+          .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle(),
+      ]);
 
-      if (dedicated?.phone_number) {
-        const num = dedicated.phone_number.replace(/[^0-9]/g, '');
-        setWhatsappDisplayNumber(num);
-        setWhatsappLink(`https://wa.me/${num}`);
-        return;
-      }
+      // Priority: assigned > dedicated > shared
+      const phone = assignedResult.data?.phone_number
+        || dedicatedResult.data?.phone_number
+        || sharedResult.data?.phone_number;
 
-      // 3. Shared channel — need bot code
-      const { data: shared } = await supabase
-        .from('whatsapp_channels')
-        .select('phone_number')
-        .eq('channel_type', 'shared')
-        .eq('is_active', true)
-        .limit(1)
-        .maybeSingle();
-
-      const num = shared?.phone_number?.replace(/[^0-9]/g, '') || '12029226251';
+      const num = phone?.replace(/[^0-9]/g, '') || '12029226251';
       setWhatsappDisplayNumber(num);
-      setWhatsappLink(business.bot_code
+
+      // Shared channels need bot code prefix
+      const isShared = !assignedResult.data?.phone_number && !dedicatedResult.data?.phone_number;
+      setWhatsappLink(isShared && business.bot_code
         ? `https://wa.me/${num}?text=${encodeURIComponent(business.bot_code)}`
         : `https://wa.me/${num}`);
     }
@@ -314,7 +293,7 @@ export default function DashboardOverview() {
             onClick={copyLink}
             className="flex items-center gap-2 rounded-lg bg-whatsapp px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-green-600 transition"
           >
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+            <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
               <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
             </svg>
             {linkCopied ? 'Copied!' : 'Share WhatsApp Link'}
@@ -331,7 +310,7 @@ export default function DashboardOverview() {
 
         {(!verificationLevel || verificationLevel === 'unverified') && (
           <div className="flex items-center gap-3 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3">
-            <svg className="h-4 w-4 text-yellow-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-4 w-4 text-yellow-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
             <p className="text-xs text-yellow-700 flex-1">
@@ -479,11 +458,11 @@ export default function DashboardOverview() {
                     step.done ? 'bg-green-100' : 'bg-white border border-gray-200'
                   }`}>
                     {step.done ? (
-                      <svg className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                       </svg>
                     ) : (
-                      <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={step.icon} />
                       </svg>
                     )}
@@ -495,7 +474,7 @@ export default function DashboardOverview() {
                     <p className="text-xs text-gray-500">{step.desc}</p>
                   </div>
                   {!step.done && (
-                    <svg className="h-4 w-4 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   )}
@@ -510,7 +489,7 @@ export default function DashboardOverview() {
           <div className="rounded-xl border border-gray-100 bg-gradient-to-br from-green-50 to-white p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-whatsapp/10">
-                <svg className="h-5 w-5 text-whatsapp" viewBox="0 0 24 24" fill="currentColor">
+                <svg aria-hidden="true" className="h-5 w-5 text-whatsapp" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
                 </svg>
               </div>
@@ -563,7 +542,7 @@ export default function DashboardOverview() {
                 </p>
                 <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-brand">
                   Download poster
-                  <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </span>
@@ -578,7 +557,7 @@ export default function DashboardOverview() {
               className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-4 transition hover:border-brand/20 hover:shadow-sm"
             >
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50">
-                <svg className="h-4 w-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                 </svg>
               </div>
@@ -592,7 +571,7 @@ export default function DashboardOverview() {
               className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-4 transition hover:border-brand/20 hover:shadow-sm"
             >
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50">
-                <svg className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
                 </svg>
               </div>
@@ -648,10 +627,10 @@ export default function DashboardOverview() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-50 bg-gray-50/50">
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -753,7 +732,7 @@ export default function DashboardOverview() {
         {recent.length === 0 && recentOrders.length === 0 ? (
           <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-8 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
-              <svg className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
             </div>
@@ -767,11 +746,11 @@ export default function DashboardOverview() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-50 bg-gray-50/50">
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -833,7 +812,7 @@ function StatCard({
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-gray-500">{label}</p>
         <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${colorMap[color]}`}>
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={icon} />
           </svg>
         </div>

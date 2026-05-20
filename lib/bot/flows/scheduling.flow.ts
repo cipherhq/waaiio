@@ -1528,7 +1528,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (origError || !originalBooking) {
             console.error('[SCHEDULING] Failed to fetch original booking for reschedule:', origError?.message);
-            return [{ type: 'text', text: 'Something went wrong. Send Hi to try again.' }];
+            return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
           }
 
           const { error: rescheduleError } = await ctx.supabase
@@ -1584,7 +1584,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: "Something went wrong creating your account. Send *Hi* to try again." }];
+          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to try again." }];
         }
 
         // Get payment amount

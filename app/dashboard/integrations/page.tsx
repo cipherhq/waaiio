@@ -511,16 +511,16 @@ export default function IntegrationsPage() {
                         <table className="w-full text-left text-sm">
                           <thead className="border-b border-gray-100 bg-gray-50/50">
                             <tr>
-                              <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">
+                              <th scope="col" className="px-4 py-2.5 text-xs font-semibold text-gray-500">
                                 Event Type
                               </th>
-                              <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">
+                              <th scope="col" className="px-4 py-2.5 text-xs font-semibold text-gray-500">
                                 Timestamp
                               </th>
-                              <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">
+                              <th scope="col" className="px-4 py-2.5 text-xs font-semibold text-gray-500">
                                 Response Status
                               </th>
-                              <th className="px-4 py-2.5 text-xs font-semibold text-gray-500">
+                              <th scope="col" className="px-4 py-2.5 text-xs font-semibold text-gray-500">
                                 Result
                               </th>
                             </tr>

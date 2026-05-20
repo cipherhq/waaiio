@@ -793,7 +793,7 @@ export default function ProductsPage() {
             onClick={() => setView('list')}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -821,7 +821,7 @@ export default function ProductsPage() {
                 </div>
               ) : (
                 <div className="flex h-36 flex-col items-center justify-center gap-2">
-                  <svg className="h-8 w-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className="h-8 w-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
@@ -848,7 +848,7 @@ export default function ProductsPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="e.g. Jollof Rice, Men's T-Shirt, Movie Ticket"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 autoFocus
               />
             </div>
@@ -880,7 +880,7 @@ export default function ProductsPage() {
                     value={form.stock_quantity ?? ''}
                     onChange={(e) => setForm({ ...form, stock_quantity: e.target.value ? Number(e.target.value) : null })}
                     placeholder="Unlimited"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                   <p className="mt-0.5 text-xs text-gray-400">Leave empty = unlimited</p>
                 </div>
@@ -902,7 +902,7 @@ export default function ProductsPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 rows={2}
                 placeholder="Brief description of the product (optional)"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
 
@@ -914,7 +914,7 @@ export default function ProductsPage() {
                 value={form.category || ''}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
                 placeholder="e.g. Food, Drinks, Tickets, Accessories"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 list="product-categories"
               />
               {categories.length > 0 && (
@@ -1104,7 +1104,7 @@ export default function ProductsPage() {
                           }}
                           className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
                         >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>
@@ -1269,7 +1269,7 @@ export default function ProductsPage() {
                           }}
                           className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
                         >
-                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
                         </button>
@@ -1351,7 +1351,7 @@ export default function ProductsPage() {
                             }}
                             className="mt-1.5 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
                           >
-                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                             </svg>
                           </button>
@@ -1486,7 +1486,7 @@ export default function ProductsPage() {
                               {v.image_url ? (
                                 <img src={v.image_url} alt="" className="h-full w-full object-cover" />
                               ) : (
-                                <svg className="mx-auto mt-1 h-5 w-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg aria-hidden="true" className="mx-auto mt-1 h-5 w-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                                 </svg>
@@ -1522,7 +1522,7 @@ export default function ProductsPage() {
                                 }}
                                 className="shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
                               >
-                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
                               </button>
@@ -1664,7 +1664,7 @@ export default function ProductsPage() {
       <div>
         <div className="flex items-center gap-3">
           <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -1675,7 +1675,7 @@ export default function ProductsPage() {
           {/* Drop zone */}
           <div className="rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-6">
             <div className="text-center">
-              <svg className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="mx-auto h-10 w-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
               </svg>
               <p className="mt-2 text-sm font-medium text-gray-700">Upload a CSV file or paste products below</p>
@@ -1723,11 +1723,11 @@ export default function ProductsPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 text-left text-xs text-gray-500">
                     <tr>
-                      <th className="px-4 py-2">#</th>
-                      <th className="px-4 py-2">Name</th>
-                      <th className="px-4 py-2">Price</th>
-                      <th className="px-4 py-2">Category</th>
-                      <th className="px-4 py-2">Stock</th>
+                      <th scope="col" className="px-4 py-2">#</th>
+                      <th scope="col" className="px-4 py-2">Name</th>
+                      <th scope="col" className="px-4 py-2">Price</th>
+                      <th scope="col" className="px-4 py-2">Category</th>
+                      <th scope="col" className="px-4 py-2">Stock</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1806,7 +1806,7 @@ export default function ProductsPage() {
       {/* Shipping config link */}
       {capabilities.includes('ordering') && (
         <div className="mt-3 flex items-center gap-2 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-4 py-2.5">
-          <svg className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg aria-hidden="true" className="h-4 w-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <p className="text-xs text-blue-700 dark:text-blue-400">
@@ -1922,7 +1922,7 @@ export default function ProductsPage() {
                 </div>
               ) : (
                 <div className="flex h-20 w-full items-center justify-center bg-gray-50">
-                  <svg className="h-6 w-6 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className="h-6 w-6 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
                 </div>
@@ -1995,7 +1995,7 @@ export default function ProductsPage() {
                     onClick={(e) => { e.stopPropagation(); handleDelete(product.id); }}
                     className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
                   >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                     </svg>
                   </button>

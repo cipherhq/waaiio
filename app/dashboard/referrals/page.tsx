@@ -204,7 +204,7 @@ export default function ReferralsPage() {
       {referrals.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
-            <svg className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
             </svg>
           </div>
@@ -221,10 +221,10 @@ export default function ReferralsPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Referrer</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Total Referrals</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Converted</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referrer</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Total Referrals</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Converted</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -266,11 +266,11 @@ export default function ReferralsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-50 bg-gray-50/50">
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Referrer</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Referee Phone</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Code</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referrer</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Referee Phone</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Code</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">

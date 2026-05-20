@@ -82,7 +82,7 @@ export const reservationFlow: FlowDefinition = {
           if (service) match = { ...service, deposit_amount: service.deposit_amount || 0 };
         }
 
-        if (!match) return { valid: false, errorMessage: 'Please select a valid option.' };
+        if (!match) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
 
         return {
           valid: true,
@@ -619,7 +619,7 @@ export const reservationFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: "Something went wrong creating your account. Send *Hi* to try again." }];
+          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to try again." }];
         }
 
         const nights = d.nights as number;

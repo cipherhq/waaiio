@@ -180,7 +180,7 @@ export default function AppointmentsManagementPage() {
       <div>
         <div className="flex items-center gap-3">
           <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -195,14 +195,14 @@ export default function AppointmentsManagementPage() {
               <label className="mb-1 block text-sm font-medium text-gray-700">{apptLabel} Name <span className="text-red-400">*</span></label>
               <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
                 placeholder={labels?.namePlaceholder || 'e.g. Consultation, Haircut'}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" autoFocus />
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" autoFocus />
             </div>
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
               <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}
                 rows={2} placeholder="What does this appointment include?"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
 
             <div className="grid grid-cols-3 gap-3">
@@ -210,18 +210,18 @@ export default function AppointmentsManagementPage() {
                 <label className="mb-1 block text-sm font-medium text-gray-700">Price</label>
                 <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })}
                   placeholder="0 = Free"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Duration (min)</label>
                 <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={e => setForm({ ...form, duration_minutes: Number(e.target.value) })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Deposit</label>
                 <input type="number" min={0} value={form.deposit_amount || ''} onChange={e => setForm({ ...form, deposit_amount: Number(e.target.value) })}
                   placeholder="0"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
             </div>
 
@@ -255,7 +255,7 @@ export default function AppointmentsManagementPage() {
                 <input type="number" min={0} step={5} value={form.buffer_minutes === 0 ? '0' : form.buffer_minutes || ''}
                   onChange={e => setForm({ ...form, buffer_minutes: Number(e.target.value) })}
                   placeholder="0"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
@@ -265,7 +265,7 @@ export default function AppointmentsManagementPage() {
                 <input type="number" min={1} value={form.max_capacity || ''}
                   onChange={e => setForm({ ...form, max_capacity: Number(e.target.value) })}
                   placeholder="1"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
             </div>
 
@@ -314,7 +314,7 @@ export default function AppointmentsManagementPage() {
                     type="time"
                     value={form.available_from}
                     onChange={e => setForm({ ...form, available_from: e.target.value })}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                 </div>
                 <span className="mt-5 text-gray-400">–</span>
@@ -324,7 +324,7 @@ export default function AppointmentsManagementPage() {
                     type="time"
                     value={form.available_to}
                     onChange={e => setForm({ ...form, available_to: e.target.value })}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                 </div>
               </div>

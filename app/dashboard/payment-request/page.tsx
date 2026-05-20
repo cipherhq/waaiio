@@ -407,7 +407,7 @@ export default function PaymentRequestPage() {
                     value={email}
                     onChange={e => setEmail(e.target.value)}
                     placeholder="customer@example.com"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                 </div>
               )}
@@ -419,7 +419,7 @@ export default function PaymentRequestPage() {
                   value={name}
                   onChange={e => setName(e.target.value)}
                   placeholder="Optional"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
               </div>
               <div>
@@ -443,7 +443,7 @@ export default function PaymentRequestPage() {
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   placeholder="e.g. Balance for catering order"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
               </div>
             </div>
@@ -475,7 +475,7 @@ export default function PaymentRequestPage() {
                   onChange={e => setBulkRecipients(e.target.value)}
                   placeholder={'One per line: phone number or email\ne.g.\n+2348012345678\ncustomer@email.com\n+1234567890'}
                   rows={5}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
                 <p className="text-xs text-gray-400 mt-1">Enter phone numbers or emails, one per line</p>
                 {(bulkPhoneCount > 0 || bulkEmailCount > 0) && (
@@ -505,7 +505,7 @@ export default function PaymentRequestPage() {
                   value={description}
                   onChange={e => setDescription(e.target.value)}
                   placeholder="e.g. Balance for catering order"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
               </div>
             </div>
@@ -549,12 +549,12 @@ export default function PaymentRequestPage() {
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
-                  <th className="pb-3 pr-4">Customer</th>
-                  <th className="pb-3 pr-4">Contact</th>
-                  <th className="pb-3 pr-4">Amount</th>
-                  <th className="pb-3 pr-4">Note</th>
-                  <th className="pb-3 pr-4">Status</th>
-                  <th className="pb-3">Date</th>
+                  <th scope="col" className="pb-3 pr-4">Customer</th>
+                  <th scope="col" className="pb-3 pr-4">Contact</th>
+                  <th scope="col" className="pb-3 pr-4">Amount</th>
+                  <th scope="col" className="pb-3 pr-4">Note</th>
+                  <th scope="col" className="pb-3 pr-4">Status</th>
+                  <th scope="col" className="pb-3">Date</th>
                 </tr>
               </thead>
               <tbody>

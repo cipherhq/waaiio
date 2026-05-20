@@ -348,7 +348,7 @@ export default function PropertyDetailPage() {
         <button onClick={() => router.push('/dashboard/properties')} className="hover:text-brand transition">
           {labels?.propertyNamePlural || 'Properties'}
         </button>
-        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
         <span className="font-medium text-gray-900">{property.name}</span>
@@ -466,15 +466,15 @@ export default function PropertyDetailPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-50 bg-gray-50/50">
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
-                    <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
+                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -550,7 +550,7 @@ export default function PropertyDetailPage() {
           <div className="flex items-center justify-between">
             <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))}
               className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
             </button>
@@ -559,7 +559,7 @@ export default function PropertyDetailPage() {
             </h3>
             <button onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))}
               className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </button>
@@ -691,7 +691,7 @@ export default function PropertyDetailPage() {
                 </span>
               </div>
               <button onClick={() => setSelectedReservation(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>

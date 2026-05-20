@@ -131,10 +131,10 @@ export default function TeamPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-700/50 border-b">
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Member</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Role</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Member</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Role</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
+                <th scope="col" className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">

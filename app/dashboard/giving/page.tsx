@@ -180,7 +180,7 @@ export default function GivingPage() {
       <PageHeader title="Giving Categories" tooltip={PAGE_TOOLTIPS.giving} description="Manage tithes, offerings, and donations">
         <button onClick={() => { resetForm(); setView('add'); }}
           className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           Add Giving Category
         </button>
       </PageHeader>

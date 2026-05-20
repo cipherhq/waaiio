@@ -26,12 +26,14 @@ export async function GET(request: NextRequest) {
 
     const { data: alerts, count } = await supabase
       .from('alerts')
-      .select('*', { count: 'exact' })
+      .select('id, type, message, is_read, created_at', { count: 'exact' })
       .eq('business_id', business.id)
       .order('created_at', { ascending: false })
       .range(from, to);
 
-    return NextResponse.json({ alerts: alerts || [], total: count || 0 });
+    const response = NextResponse.json({ alerts: alerts || [], total: count || 0 });
+    response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
+    return response;
   } catch (error) {
     logger.error('[ALERTS] GET error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -356,7 +356,7 @@ export default function ServicesPage() {
             onClick={() => setView('list')}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -417,7 +417,7 @@ export default function ServicesPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder={labels.namePlaceholder}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 autoFocus
               />
             </div>
@@ -429,7 +429,7 @@ export default function ServicesPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 rows={2}
                 placeholder="Brief description (optional)"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
 
@@ -481,7 +481,7 @@ export default function ServicesPage() {
                     <select
                       value={form.recurring_interval || 'monthly'}
                       onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                     >
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
@@ -504,7 +504,7 @@ export default function ServicesPage() {
                     value={form.price || ''}
                     onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
                     placeholder="0"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                 </div>
                 <div>
@@ -517,7 +517,7 @@ export default function ServicesPage() {
                     value={form.deposit_amount || ''}
                     onChange={(e) => setForm({ ...form, deposit_amount: Number(e.target.value) })}
                     placeholder="0"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                   <p className="mt-0.5 text-xs text-gray-400">0 = no deposit required</p>
                 </div>
@@ -539,7 +539,7 @@ export default function ServicesPage() {
                         recurring_interval: val === 'recurring' ? (form.recurring_interval || 'monthly') : null,
                       });
                     }}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   >
                     <option value="one_time">One-time</option>
                     <option value="recurring">Recurring</option>
@@ -551,7 +551,7 @@ export default function ServicesPage() {
                     <select
                       value={form.recurring_interval || 'monthly'}
                       onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                     >
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
@@ -721,7 +721,7 @@ export default function ServicesPage() {
                 onChange={(e) => setForm({ ...form, cancellation_policy: e.target.value })}
                 rows={2}
                 placeholder="e.g. Full refund if cancelled 24 hours before (optional)"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>}
 
@@ -1016,7 +1016,7 @@ export default function ServicesPage() {
                   </div>
                 </div>
 
-                <svg className="h-4 w-4 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>

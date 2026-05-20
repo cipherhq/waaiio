@@ -187,7 +187,7 @@ export default function CampaignsPage() {
             onClick={() => setView('list')}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -208,7 +208,7 @@ export default function CampaignsPage() {
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
                 placeholder="e.g. Building Fund 2024"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 autoFocus
               />
             </div>
@@ -220,7 +220,7 @@ export default function CampaignsPage() {
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 rows={3}
                 placeholder="Describe the purpose and goals of this campaign..."
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
 
@@ -232,7 +232,7 @@ export default function CampaignsPage() {
                 value={form.goal_amount || ''}
                 onChange={(e) => setForm({ ...form, goal_amount: Number(e.target.value) })}
                 placeholder="0"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
 
@@ -245,7 +245,7 @@ export default function CampaignsPage() {
                   value={form.min_donation ?? ''}
                   onChange={(e) => setForm({ ...form, min_donation: e.target.value ? Number(e.target.value) : null })}
                   placeholder="No minimum"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
                 <p className="mt-0.5 text-xs text-gray-400">Leave empty for no minimum</p>
               </div>
@@ -257,7 +257,7 @@ export default function CampaignsPage() {
                   value={form.max_donation ?? ''}
                   onChange={(e) => setForm({ ...form, max_donation: e.target.value ? Number(e.target.value) : null })}
                   placeholder="No maximum"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
                 <p className="mt-0.5 text-xs text-gray-400">Leave empty for no maximum</p>
               </div>
@@ -270,7 +270,7 @@ export default function CampaignsPage() {
                   type="date"
                   value={form.start_date}
                   onChange={(e) => setForm({ ...form, start_date: e.target.value })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
               </div>
               <div>
@@ -279,7 +279,7 @@ export default function CampaignsPage() {
                   type="date"
                   value={form.end_date}
                   onChange={(e) => setForm({ ...form, end_date: e.target.value })}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
               </div>
             </div>
@@ -318,10 +318,10 @@ export default function CampaignsPage() {
                       <table className="w-full text-sm">
                         <thead className="border-b border-gray-100 bg-gray-50">
                           <tr>
-                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Donor</th>
-                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500">Amount</th>
-                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
-                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
+                            <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Donor</th>
+                            <th scope="col" className="px-3 py-2 text-right text-xs font-medium text-gray-500">Amount</th>
+                            <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
+                            <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -422,7 +422,7 @@ export default function CampaignsPage() {
       {campaigns.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-50">
-            <svg className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-6 w-6 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
             </svg>
           </div>

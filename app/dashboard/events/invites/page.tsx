@@ -258,7 +258,7 @@ export default function InvitesPage() {
         <select
           value={selectedEventId}
           onChange={e => setSelectedEventId(e.target.value)}
-          className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+          className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
         >
           {events.map(e => (
             <option key={e.id} value={e.id}>
@@ -295,7 +295,7 @@ export default function InvitesPage() {
                 value={inviteName}
                 onChange={e => setInviteName(e.target.value)}
                 placeholder="Guest name"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
           </div>
@@ -324,7 +324,7 @@ export default function InvitesPage() {
             onChange={e => setBulkPhones(e.target.value)}
             rows={5}
             placeholder={"2348012345678\n2349087654321\n2347011111111"}
-            className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand font-mono"
+            className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand font-mono"
           />
           <div className="mt-3 flex gap-2">
             <button
@@ -402,12 +402,12 @@ export default function InvitesPage() {
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
-                <th className="pb-3 pr-4">Guest</th>
-                <th className="pb-3 pr-4">Phone</th>
-                <th className="pb-3 pr-4">Status</th>
-                <th className="pb-3 pr-4">Plus-ones</th>
-                <th className="pb-3 pr-4">Dietary</th>
-                <th className="pb-3">Responded</th>
+                <th scope="col" className="pb-3 pr-4">Guest</th>
+                <th scope="col" className="pb-3 pr-4">Phone</th>
+                <th scope="col" className="pb-3 pr-4">Status</th>
+                <th scope="col" className="pb-3 pr-4">Plus-ones</th>
+                <th scope="col" className="pb-3 pr-4">Dietary</th>
+                <th scope="col" className="pb-3">Responded</th>
               </tr>
             </thead>
             <tbody>

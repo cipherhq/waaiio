@@ -127,7 +127,7 @@ const selectAppointmentStep: FlowStepConfig = {
       }
     }
 
-    return { valid: false, errorMessage: 'Please select a valid option from the list.' };
+    return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
   },
 
   async next() {

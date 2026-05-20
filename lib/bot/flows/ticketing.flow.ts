@@ -311,7 +311,7 @@ export const ticketingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
+        if (!userId) return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
 
         // Create booking for ticket
         const { data: booking, error } = await ctx.supabase
@@ -337,7 +337,7 @@ export const ticketingFlow: FlowDefinition = {
           .single();
 
         if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
         }
 
         // Update tickets_sold

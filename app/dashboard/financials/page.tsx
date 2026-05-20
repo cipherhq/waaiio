@@ -301,15 +301,15 @@ export default function FinancialsPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
                 {availableTypes.length > 1 && (
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
                 )}
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Description</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Description</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

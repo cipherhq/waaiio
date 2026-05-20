@@ -555,28 +555,28 @@ export default function BookingsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+                <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
                 {bookingType === 'reservations' || (bookingType === 'all' && showReservations) ? (
                   <>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.propertyName || 'Property'}</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
-                    <th className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.propertyName || 'Property'}</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
+                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
                   </>
                 ) : (
                   <>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
-                    <th className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
                   </>
                 )}
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -742,7 +742,7 @@ export default function BookingsPage() {
                 </span>
               </div>
               <button onClick={() => setSelectedId(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
 

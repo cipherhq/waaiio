@@ -360,15 +360,15 @@ export default function QueuePage() {
         <table className="w-full text-left text-sm">
           <thead className="border-b border-gray-100 bg-gray-50/50">
             <tr>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">#</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Name</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Priority</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Channel</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Checked In</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Wait</th>
-              <th className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">#</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Name</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Priority</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Channel</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Checked In</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Wait</th>
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">

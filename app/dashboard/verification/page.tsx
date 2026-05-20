@@ -160,7 +160,7 @@ export default function VerificationPage() {
     <div>
       <div className="flex items-center gap-2">
         <Link href="/dashboard" className="text-gray-400 hover:text-gray-600">
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
         </Link>
@@ -310,10 +310,10 @@ export default function VerificationPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-50 bg-gray-50/50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Document</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">File</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Uploaded</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Document</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">File</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Uploaded</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">

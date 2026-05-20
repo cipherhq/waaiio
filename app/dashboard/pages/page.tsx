@@ -68,7 +68,7 @@ export default function PagesPage() {
             onClick={() => setEditing(null)}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -154,11 +154,11 @@ export default function PagesPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-50 bg-gray-50/50">
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Page</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Slug</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Last Updated</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Page</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Slug</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Updated</th>
+              <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">

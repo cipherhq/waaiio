@@ -161,12 +161,12 @@ export default function WaitlistPage() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-gray-100 bg-gray-50/50">
               <tr>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500">Customer Name</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500">Preferred Date</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500">Created At</th>
-                <th className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
+                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Customer Name</th>
+                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
+                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Preferred Date</th>
+                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Status</th>
+                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Created At</th>
+                <th scope="col" className="px-4 py-3 text-xs font-semibold text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">

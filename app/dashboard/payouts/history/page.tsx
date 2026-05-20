@@ -243,11 +243,11 @@ export default function PayoutHistoryPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Month</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Payouts</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Fees</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Net Paid</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Month</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Payouts</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Fees</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Net Paid</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -303,13 +303,13 @@ export default function PayoutHistoryPage() {
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Period</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Fees</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Reference</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Period</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Fees</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Reference</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -370,7 +370,7 @@ export default function PayoutHistoryPage() {
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">Payout Details</h3>
               <button onClick={() => setSelected(null)} className="text-gray-400 hover:text-gray-600">
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>

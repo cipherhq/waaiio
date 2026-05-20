@@ -406,13 +406,13 @@ export default function MembershipPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Min Spend</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Discount</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Points Multiplier</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Members</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                      <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Min Spend</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Discount</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Points Multiplier</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Members</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                      <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
@@ -485,11 +485,11 @@ export default function MembershipPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Total Spent</th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">Visits</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Customer</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Phone</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tier</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Total Spent</th>
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Visits</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">

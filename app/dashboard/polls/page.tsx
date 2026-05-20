@@ -140,7 +140,7 @@ export default function PollsPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-2">
           <button onClick={() => { setView('list'); setSelected(null); }} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
           <PageHeader title={selected.question} description={`${totalVotes} vote${totalVotes !== 1 ? 's' : ''}`} />
         </div>
@@ -166,7 +166,7 @@ export default function PollsPage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-2">
-          <button onClick={() => { setView('list'); setSelected(null); }} className="text-gray-500 hover:text-gray-700"><svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
+          <button onClick={() => { setView('list'); setSelected(null); }} className="text-gray-500 hover:text-gray-700"><svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
           <PageHeader title={`Send: ${selected.question}`} />
         </div>
         {sendResult ? (
@@ -204,7 +204,7 @@ export default function PollsPage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-2">
-          <button onClick={() => setView('list')} className="text-gray-500 hover:text-gray-700"><svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
+          <button onClick={() => setView('list')} className="text-gray-500 hover:text-gray-700"><svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
           <PageHeader title="Create Poll" />
         </div>
         <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-800 space-y-4">
@@ -258,7 +258,7 @@ export default function PollsPage() {
     <div className="space-y-6">
       <PageHeader title="Polls" tooltip={PAGE_TOOLTIPS.polls}>
         <button onClick={() => setView('create')} className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800">
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           New Poll
         </button>
       </PageHeader>
@@ -292,11 +292,11 @@ export default function PollsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-700/50 border-b">
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Poll</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Options</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500">Votes</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Poll</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Status</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Options</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500">Votes</th>
+                <th scope="col" className="text-right px-4 py-3 font-medium text-gray-500">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">

@@ -831,7 +831,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Business Logo</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Your logo appears on invoices and your public page. Paid plans only.</span>
                     </span>
                   </div>
@@ -845,7 +845,7 @@ export default function SettingsPage() {
                       />
                     ) : (
                       <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50">
-                        <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg aria-hidden="true" className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                       </div>
@@ -893,7 +893,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Business Name</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Displayed on invoices, receipts, and your booking page</span>
                     </span>
                   </div>
@@ -908,7 +908,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Description</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Shown on your public booking page to describe your business</span>
                     </span>
                   </div>
@@ -923,7 +923,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Phone</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Customer-facing contact number with country code</span>
                     </span>
                   </div>
@@ -937,7 +937,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Email</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Used for notifications and displayed on invoices</span>
                     </span>
                   </div>
@@ -952,7 +952,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Address</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Your business location shown on the booking page</span>
                     </span>
                   </div>
@@ -967,7 +967,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-1.5 mb-1">
                     <label className="text-sm font-medium text-gray-700">Deposit per {labels.personLabel} ({formatCurrency(0, country).charAt(0)})</label>
                     <span className="group relative">
-                      <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                      <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Upfront charge per guest when booking. Set to 0 to disable</span>
                     </span>
                   </div>
@@ -1162,7 +1162,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Time Slot Interval</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">How often time slots appear in the booking menu. E.g. 30 = every 30 minutes.</span>
                   </span>
                 </div>
@@ -1223,7 +1223,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Max Advance Booking</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">How far in the future customers can book. Set higher for venues (e.g. 365), lower for barbers (e.g. 7).</span>
                   </span>
                 </div>
@@ -1246,7 +1246,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Date Picker Range</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Number of upcoming days shown in the date selector. Max 10 (WhatsApp limit). Customers can also type a date.</span>
                   </span>
                 </div>
@@ -1269,7 +1269,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Max Party / Quantity</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Maximum guests/units a customer can book at once. Set based on your capacity.</span>
                   </span>
                 </div>
@@ -1299,7 +1299,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Max Tickets Per Order</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Maximum tickets a customer can purchase in a single order. Only applies to the ticketing/events flow.</span>
                   </span>
                 </div>
@@ -1321,7 +1321,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Payment Collection</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-56 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Auto = uses category defaults (salons charge full, restaurants use deposits). Full = always charge full price. Deposit Only = only charge explicit service deposits. Free = no upfront payment.</span>
                   </span>
                 </div>
@@ -1349,7 +1349,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Reminder Schedule</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Hours before appointment to send reminders. Comma-separated. E.g. &quot;24, 2&quot; sends reminders 24h and 2h before.</span>
                   </span>
                 </div>
@@ -1388,7 +1388,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Custom Options</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">One option per line (max 2). Leave blank to use category defaults. These become WhatsApp quick-reply buttons.</span>
                   </span>
                 </div>
@@ -1475,7 +1475,7 @@ export default function SettingsPage() {
                       selectedGateway === gw ? 'border-brand bg-brand' : 'border-gray-300'
                     }`}>
                       {selectedGateway === gw && (
-                        <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg aria-hidden="true" className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                         </svg>
                       )}
@@ -1530,7 +1530,7 @@ export default function SettingsPage() {
                     className="flex w-full items-center gap-3 p-4 text-left transition hover:bg-gray-50"
                   >
                     <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-blue-50">
-                      <svg className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-5 w-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                       </svg>
                     </div>
@@ -1538,7 +1538,7 @@ export default function SettingsPage() {
                       <p className="text-sm font-semibold text-gray-900">Connect with Paystack</p>
                       <p className="text-xs text-gray-500">Enter your bank details. Payments split automatically.</p>
                     </div>
-                    <svg className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showPaystackForm ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showPaystackForm ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
@@ -1607,7 +1607,7 @@ export default function SettingsPage() {
                   className="flex w-full items-center gap-3 rounded-lg border-2 border-gray-200 p-4 text-left transition hover:border-brand hover:bg-brand-50/30 disabled:opacity-60"
                 >
                   <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-purple-50">
-                    <svg className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                     </svg>
                   </div>
@@ -1617,7 +1617,7 @@ export default function SettingsPage() {
                     </p>
                     <p className="text-xs text-gray-500">One-click setup. Complete onboarding on Stripe to receive payments.</p>
                   </div>
-                  <svg className="h-5 w-5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className="h-5 w-5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
@@ -1629,7 +1629,7 @@ export default function SettingsPage() {
                     className="flex w-full items-center gap-3 p-4 text-left transition hover:bg-gray-50"
                   >
                     <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-orange-50">
-                      <svg className="h-5 w-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-5 w-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                       </svg>
                     </div>
@@ -1637,7 +1637,7 @@ export default function SettingsPage() {
                       <p className="text-sm font-semibold text-gray-900">Flutterwave</p>
                       <p className="text-xs text-gray-500">Enter your API keys manually from your Flutterwave dashboard.</p>
                     </div>
-                    <svg className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showFlutterwaveForm ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showFlutterwaveForm ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                     </svg>
                   </button>
@@ -1691,7 +1691,7 @@ export default function SettingsPage() {
                 {/* Connected state */}
                 <div className="rounded-lg border border-green-200 bg-green-50 p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg aria-hidden="true" className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <p className="text-sm font-semibold text-green-800">
@@ -1740,7 +1740,7 @@ export default function SettingsPage() {
               className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
             >
               Manage Capabilities
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
               </svg>
             </Link>
@@ -1757,7 +1757,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <p className="text-sm font-medium text-gray-700">Terms & Conditions</p>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">When enabled, customers must accept terms before paying. Applies to all flows (booking, ordering, ticketing, etc.)</span>
                   </span>
                 </div>
@@ -1784,7 +1784,7 @@ export default function SettingsPage() {
                 <div className="flex items-center gap-1.5">
                   <label className="text-sm font-medium text-gray-700">Custom Terms Text</label>
                   <span className="group relative">
-                    <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                     <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-56 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Custom message shown before payment. Leave blank for the default terms. Supports WhatsApp formatting (*bold*, _italic_).</span>
                   </span>
                 </div>
@@ -1803,7 +1803,7 @@ export default function SettingsPage() {
               <div className="flex items-center gap-1.5">
                 <label className="text-sm font-medium text-gray-700">Maximum Payment Amount</label>
                 <span className="group relative">
-                  <svg className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
+                  <svg aria-hidden="true" className="h-3.5 w-3.5 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" strokeWidth="2"/><path strokeLinecap="round" d="M12 16v-4m0-4h.01" strokeWidth="2"/></svg>
                   <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Maximum single payment a customer can make via WhatsApp. Prevents accidental large payments.</span>
                 </span>
               </div>
@@ -1913,7 +1913,7 @@ export default function SettingsPage() {
                 className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
               >
                 View Recurring Dashboard
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </Link>
@@ -2041,7 +2041,7 @@ export default function SettingsPage() {
                     shippingMode === opt.value ? 'border-brand bg-brand' : 'border-gray-300'
                   }`}>
                     {shippingMode === opt.value && (
-                      <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg aria-hidden="true" className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                       </svg>
                     )}
@@ -2246,7 +2246,7 @@ export default function SettingsPage() {
                         onClick={() => setDeliveryZones(deliveryZones.filter((_, i) => i !== idx))}
                         className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
                       >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                         </svg>
                       </button>
@@ -2568,7 +2568,7 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-2xl space-y-6">
           {arLoading ? (
             <div className="flex items-center justify-center py-12">
-              <svg className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+              <svg aria-hidden="true" className="h-6 w-6 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
@@ -2839,7 +2839,7 @@ export default function SettingsPage() {
 
             {verifying && (
               <div className="mt-4 flex items-center gap-2 rounded-lg bg-blue-50 p-3">
-                <svg className="h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>
@@ -2899,7 +2899,7 @@ export default function SettingsPage() {
                             <ul className="mt-3 space-y-1.5">
                               {t.features.slice(0, 4).map((f) => (
                                 <li key={f} className="flex items-start gap-1.5 text-xs text-gray-600">
-                                  <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <svg aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                   </svg>
                                   {f}
@@ -3036,7 +3036,7 @@ export default function SettingsPage() {
                   className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
                 >
                   Connect your own WhatsApp number
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </Link>
@@ -3118,7 +3118,7 @@ export default function SettingsPage() {
                 onClick={() => setShowCapModal(false)}
                 className="ml-4 rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
               >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>

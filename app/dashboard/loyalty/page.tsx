@@ -308,19 +308,19 @@ export default function LoyaltyPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Customer Name
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Phone
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Points Balance
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Visit Count
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Total Earned
                       </th>
                     </tr>
@@ -379,16 +379,16 @@ export default function LoyaltyPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-50 bg-gray-50/50">
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Date
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Customer Phone
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Points Change
                       </th>
-                      <th className="px-4 py-3 text-left font-medium text-gray-500">
+                      <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">
                         Reason
                       </th>
                     </tr>

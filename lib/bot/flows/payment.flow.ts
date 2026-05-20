@@ -65,7 +65,7 @@ export const paymentFlow: FlowDefinition = {
           .eq('business_id', ctx.business!.id)
           .single();
 
-        if (!service) return { valid: false, errorMessage: 'Please select a valid option.' };
+        if (!service) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
 
         return {
           valid: true,
@@ -241,7 +241,7 @@ export const paymentFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
         }
 
         // Create a booking record for payment tracking
@@ -269,7 +269,7 @@ export const paymentFlow: FlowDefinition = {
           .single();
 
         if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong. Send *Hi* to try again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
         }
 
         d.booking_id = booking.id;

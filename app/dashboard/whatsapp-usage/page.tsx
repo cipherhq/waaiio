@@ -475,7 +475,7 @@ function StatCard({
     <div className="rounded-xl border border-gray-100 bg-white p-5">
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-gray-500">{label}</p>
-        <svg className="h-5 w-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg aria-hidden="true" className="h-5 w-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={iconPath[icon]} />
         </svg>
       </div>

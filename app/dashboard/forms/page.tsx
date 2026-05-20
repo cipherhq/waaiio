@@ -257,7 +257,7 @@ export default function FormsPage() {
       <div>
         <div className="flex items-center gap-3">
           <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -276,13 +276,13 @@ export default function FormsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Respondent</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Respondent</th>
                   {selectedForm.fields.slice(0, 5).map(f => (
                     <th key={f.id} className="px-4 py-3 text-left font-medium text-gray-500">{f.label}</th>
                   ))}
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
-                  <th className="px-4 py-3 text-left font-medium text-gray-500">Notes</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Notes</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -352,7 +352,7 @@ export default function FormsPage() {
       <div>
         <div className="flex items-center gap-3">
           <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -364,13 +364,13 @@ export default function FormsPage() {
             <label className="mb-1 block text-sm font-medium text-gray-700">Form Title <span className="text-red-400">*</span></label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)}
               placeholder="e.g. Guest Registration, Patient Intake"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" autoFocus />
+              className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" autoFocus />
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
               placeholder="Brief description shown at the top of the form"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand" />
+              className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
           </div>
 
           {/* Fields list */}
@@ -384,10 +384,10 @@ export default function FormsPage() {
                     <div className="flex items-center gap-2 px-3 py-2">
                       <div className="flex flex-col gap-0.5">
                         <button onClick={() => moveField(i, 'up')} disabled={i === 0} className="text-gray-300 hover:text-gray-500 disabled:invisible">
-                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
+                          <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                         </button>
                         <button onClick={() => moveField(i, 'down')} disabled={i === fields.length - 1} className="text-gray-300 hover:text-gray-500 disabled:invisible">
-                          <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                          <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                         </button>
                       </div>
                       <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setEditingFieldId(editingFieldId === f.id ? null : f.id)}>
@@ -499,7 +499,7 @@ export default function FormsPage() {
       {forms.length === 0 ? (
         <div className="mt-12 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
-            <svg className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-8 w-8 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </div>

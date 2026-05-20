@@ -277,7 +277,7 @@ export default function SurveysPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-2">
           <button onClick={() => { setView('list'); setSelectedSurvey(null); }} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
           <PageHeader title={selectedSurvey.title} description={`${completedResponses.length} completed responses`} />
         </div>
@@ -386,11 +386,11 @@ export default function SurveysPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-gray-50 dark:bg-gray-700/50">
-                        <th className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Customer</th>
+                        <th scope="col" className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Customer</th>
                         {selectedSurvey.questions.map((q, i) => (
                           <th key={q.id} className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Q{i + 1}</th>
                         ))}
-                        <th className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Date</th>
+                        <th scope="col" className="text-left px-4 py-2 font-medium text-gray-500 dark:text-gray-400">Date</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -422,7 +422,7 @@ export default function SurveysPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-2">
           <button onClick={() => { setView('list'); setSelectedSurvey(null); }} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
           <PageHeader title={`Send: ${selectedSurvey.title}`} description={`${contacts.length} contacts available`} />
         </div>
@@ -492,7 +492,7 @@ export default function SurveysPage() {
       <div className="space-y-6">
         <div className="flex items-center gap-2">
           <button onClick={() => setView('list')} className="text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
           </button>
           <PageHeader title="Create Survey" />
         </div>
@@ -563,7 +563,7 @@ export default function SurveysPage() {
                   )}
                 </div>
                 <button onClick={() => removeQuestion(qi)} className="text-gray-400 hover:text-red-500 p-1">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                  <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                 </button>
               </div>
             </div>
@@ -617,7 +617,7 @@ export default function SurveysPage() {
           onClick={() => setView('create')}
           className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white rounded-lg text-sm font-medium hover:bg-gray-800"
         >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+          <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           New Survey
         </button>
       </PageHeader>
@@ -657,12 +657,12 @@ export default function SurveysPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-                <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Survey</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Questions</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Responses</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Created</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Actions</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Survey</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Status</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Questions</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Responses</th>
+                <th scope="col" className="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Created</th>
+                <th scope="col" className="text-right px-4 py-3 font-medium text-gray-500 dark:text-gray-400">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-700">

@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "skills": {
+    "cloudflare-troubleshooting": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "cloudflare-troubleshooting/SKILL.md",
+      "computedHash": "f7c5c15303dcfac58b6297a3df2836e9276d4b8c13d3a1bb774191c668ef92ab"
+    },
+    "critical-code-reviewer": {
+      "source": "posit-dev/skills",
+      "sourceType": "github",
+      "skillPath": "posit-dev/critical-code-reviewer/SKILL.md",
+      "computedHash": "fb5de7c324b8437491c9a7f696193cb617364dcbba258dac79470d075855e5a5"
+    },
+    "debugging-network-issues": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "debugging-network-issues/SKILL.md",
+      "computedHash": "23a6913ba61fb63f4af1f12859bdbd48cdf4071313d5a30cd9c34024cbb2ec98"
+    },
+    "describe-design": {
+      "source": "posit-dev/skills",
+      "sourceType": "github",
+      "skillPath": "posit-dev/describe-design/SKILL.md",
+      "computedHash": "1c92f3d79e85979ff642ffeb358847b2129374a65f0370f20a90d027002bcc0f"
+    },
+    "fact-checker": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "fact-checker/SKILL.md",
+      "computedHash": "0267df01a85fec4aafe1c729657ce76bfa97d20510e9522bc4b9e847d3b3f10d"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/find-skills/SKILL.md",
+      "computedHash": "9e1c8b3103f92fa8092568a44fe64858de7c5c9dc65ce4bea8f168080e889cfd"
+    },
+    "github-contributor": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "github-contributor/SKILL.md",
+      "computedHash": "69a00cc8c107f8cae4b142f6ede4bcf3adb96b2a794c9ffd87eb68eb5689c345"
+    },
+    "github-ops": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "github-ops/SKILL.md",
+      "computedHash": "03d359208695381fe511e4a805aa6ed0f89d604b7cf4e8496505674fdd55b5b9"
+    },
+    "implement": {
+      "source": "posit-dev/skills",
+      "sourceType": "github",
+      "skillPath": "posit-dev/implement/SKILL.md",
+      "computedHash": "95ce2a603faf23b82de6f7d763f1a402a69890f79be7138b2665fd877238b50e"
+    },
+    "pr-create": {
+      "source": "posit-dev/skills",
+      "sourceType": "github",
+      "skillPath": "github/pr-create/SKILL.md",
+      "computedHash": "fd3c4cc2bba07f54af4ee0fb59992dad1e1a9d01855bf7cdd573731a7909eec6"
+    },
+    "pr-threads-address": {
+      "source": "posit-dev/skills",
+      "sourceType": "github",
+      "skillPath": "github/pr-threads-address/SKILL.md",
+      "computedHash": "405b88b0e232b374dcf93b9fd7c41609f4bacf1c62bd475f235502af6921302e"
+    },
+    "product-analysis": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "product-analysis/SKILL.md",
+      "computedHash": "e2021b48c9426a2917eb32629145d963448ee1f08422c793f99ce1ee95baf812"
+    },
+    "qa-expert": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "qa-expert/SKILL.md",
+      "computedHash": "cb6fafeb55b7e3eeabb69568ca8b80c6ba828c66eeffb3bbcc301029117349d4"
+    },
+    "retrospective": {
+      "source": "glebis/claude-skills",
+      "sourceType": "github",
+      "skillPath": "retrospective/SKILL.md",
+      "computedHash": "1eb3ff24edee674a83b9064baefdcdbe53a116f25c75cc1f345af81daa4bae40"
+    },
+    "skill-creator": {
+      "source": "daymade/claude-code-skills",
+      "sourceType": "github",
+      "skillPath": "daymade-skill/skill-creator/SKILL.md",
+      "computedHash": "70256d9e0b88bbdaef08c530da01d317026510369b99705d36d90513949ee9a0"
+    },
+    "supabase": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase/SKILL.md",
+      "computedHash": "1bb189e255c0e91161f14c618dce0eccf68174ceb963664cef7761b2f90cb466"
+    },
+    "supabase-postgres-best-practices": {
+      "source": "supabase/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/supabase-postgres-best-practices/SKILL.md",
+      "computedHash": "292c93e5a86e2429204bc37abe26b3c9023c4760eb02418462887f2082f118ce"
+    },
+    "tdd": {
+      "source": "glebis/claude-skills",
+      "sourceType": "github",
+      "skillPath": "tdd/SKILL.md",
+      "computedHash": "6ac560dae2b20c6bc9328eeac3d3d93c7302cad487732e929d61c02e4eedc8de"
+    }
+  }
+}

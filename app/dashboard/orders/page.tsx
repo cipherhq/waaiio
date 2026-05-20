@@ -259,7 +259,7 @@ export default function OrdersPage() {
             onClick={() => setSelectedOrder(null)}
             className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
           >
-            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
@@ -643,7 +643,7 @@ export default function OrdersPage() {
       {/* Search, Date Range & CSV */}
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="relative flex-1">
-          <svg className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+          <svg aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
           <input
             type="text"
             placeholder="Search by reference, customer, phone..."
@@ -718,7 +718,7 @@ export default function OrdersPage() {
                 <span className="text-sm font-bold text-gray-900">
                   {formatCurrency(order.total_amount, country)}
                 </span>
-                <svg className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                 </svg>
               </div>
@@ -738,9 +738,19 @@ export default function OrdersPage() {
               const newStatus = e.target.value;
               if (!newStatus) return;
               setBulkUpdating(true);
-              for (const id of selectedIds) {
-                await updateOrderStatus(id, newStatus);
+              try {
+                await fetch('/api/orders/bulk-update-status', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ orderIds: Array.from(selectedIds), businessId: business.id, status: newStatus }),
+                });
+              } catch {
+                // Fallback to sequential if bulk endpoint fails
+                for (const id of selectedIds) {
+                  await updateOrderStatus(id, newStatus);
+                }
               }
+              await fetchOrders();
               setBulkUpdating(false);
               setSelectedIds(new Set());
               e.target.value = '';
