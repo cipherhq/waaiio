@@ -663,7 +663,7 @@ export const paymentFlow: FlowDefinition = {
         const userId = ctx.session.user_id;
 
         if (!ctx.business || !userId) {
-          return [{ type: 'text', text: 'Something went wrong setting up recurring payments. Send *Hi* to try again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag setting up recurring payments. Send *Hi* to start fresh.' }];
         }
 
         // Check for existing active subscription for same service + user

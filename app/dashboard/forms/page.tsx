@@ -256,7 +256,7 @@ export default function FormsPage() {
     return (
       <div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
+          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
@@ -351,7 +351,7 @@ export default function FormsPage() {
     return (
       <div>
         <div className="flex items-center gap-3">
-          <button onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
+          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>

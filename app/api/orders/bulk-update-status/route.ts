@@ -65,9 +65,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, updated: 0, notified: 0 });
     }
 
-    // Bulk update all orders in one query
+    // Bulk update all orders in one query (business_id filter for defense-in-depth)
     const updateIds = toUpdate.map(o => o.id);
-    await supabase.from('orders').update({ status }).in('id', updateIds);
+    const { error: updateError } = await supabase.from('orders').update({ status }).in('id', updateIds).eq('business_id', businessId);
+    if (updateError) {
+      logger.error('[ORDER-BULK-STATUS] Update failed:', updateError);
+      return NextResponse.json({ error: 'Failed to update orders' }, { status: 500 });
+    }
 
     // Send notifications in parallel (best-effort)
     const { data: biz } = await supabase
@@ -84,19 +88,15 @@ export async function POST(request: NextRequest) {
       const notifications = toUpdate
         .filter(o => o.delivery_phone)
         .map(async (order) => {
-          try {
-            const phone = order.delivery_phone!.startsWith('+')
-              ? order.delivery_phone!.slice(1)
-              : order.delivery_phone!;
-            const message = messageTemplate.replace('{ref}', order.reference_code).replace('{biz}', bizName);
-            await sender.sendText({ to: phone, text: message });
-            notified++;
-          } catch (err) {
-            logger.error('[ORDER-BULK-STATUS] Notification error for', order.id, err);
-          }
+          const phone = order.delivery_phone!.startsWith('+')
+            ? order.delivery_phone!.slice(1)
+            : order.delivery_phone!;
+          const message = messageTemplate.replace('{ref}', order.reference_code).replace('{biz}', bizName);
+          await sender.sendText({ to: phone, text: message });
         });
 
-      await Promise.allSettled(notifications);
+      const results = await Promise.allSettled(notifications);
+      notified = results.filter(r => r.status === 'fulfilled').length;
     }
 
     return NextResponse.json({ success: true, updated: toUpdate.length, notified });

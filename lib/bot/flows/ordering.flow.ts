@@ -2384,7 +2384,7 @@ export const orderingFlow: FlowDefinition = {
           .single();
 
         if (error || !order) {
-          return [{ type: 'text', text: 'Something went wrong creating your order. Send *Hi* to try again.' }];
+          return [{ type: 'text', text: 'Oops, we hit a snag creating your order. Send *Hi* to start fresh.' }];
         }
 
         // Create order items (with addons) and decrement stock

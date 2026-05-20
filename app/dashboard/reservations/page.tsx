@@ -741,7 +741,7 @@ export default function BookingsPage() {
                   {(selected._isReservation && reservationStatusLabels[selected.status]) || selected.status.replace('_', ' ')}
                 </span>
               </div>
-              <button onClick={() => setSelectedId(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
+              <button aria-label="Close" onClick={() => setSelectedId(null)} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100">
                 <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>

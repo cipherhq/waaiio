@@ -51,7 +51,7 @@ export function AISetupCard() {
             </Link>
           </div>
         </div>
-        <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1">
+        <button onClick={dismiss} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 p-1" aria-label="Close">
           <svg aria-hidden="true" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
       </div>

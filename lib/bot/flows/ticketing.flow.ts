@@ -552,7 +552,7 @@ export const ticketingFlow: FlowDefinition = {
 
             if (bookingCheckErr || !currentBooking) {
               console.error('[TICKETING] Failed to check booking status:', bookingCheckErr?.message);
-              return { valid: false, errorMessage: 'Something went wrong. Try again.' };
+              return { valid: false, errorMessage: 'Oops, we hit a snag. Try again.' };
             }
 
             if (currentBooking.deposit_status === 'paid') {
