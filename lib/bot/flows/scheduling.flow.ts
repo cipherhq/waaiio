@@ -156,7 +156,7 @@ export const schedulingFlow: FlowDefinition = {
         // Try exact ID match first (from list postback)
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .maybeSingle();
@@ -166,7 +166,7 @@ export const schedulingFlow: FlowDefinition = {
         if (!matched) {
           const { data: allServices } = await ctx.supabase
             .from('services')
-            .select('id, name, price, duration_minutes, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection')
+            .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
             .eq('business_id', ctx.business!.id)
             .eq('is_active', true)
             .neq('service_type', 'giving')
@@ -985,9 +985,9 @@ export const schedulingFlow: FlowDefinition = {
           return true;
         }
 
-        // Skip if max capacity is 1 (single-person service)
-        const maxCap = ctx.session.session_data._service_max_capacity as number | undefined;
-        if (maxCap === 1) {
+        // Skip if max capacity is 1 or not set (single-person service)
+        const maxCap = ctx.session.session_data._service_max_capacity as number | null | undefined;
+        if (!maxCap || maxCap <= 1) {
           ctx.session.session_data.party_size = 1;
           return true;
         }
