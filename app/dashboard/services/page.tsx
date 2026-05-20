@@ -571,15 +571,15 @@ export default function ServicesPage() {
                   <p className="text-sm font-medium text-gray-700">Drop-off Service <Tooltip text="Drop-off services skip date and time selection. Customer just pays and drops off their item (e.g. wig revamp, laundry, repairs). Turn off for regular appointments." /></p>
                   <p className="text-xs text-gray-400">No date/time picker — customer pays and drops off</p>
                 </div>
-                <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, is_dropoff: !form.metadata?.is_dropoff } })}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.is_dropoff ? 'bg-brand' : 'bg-gray-200'}`}>
-                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.metadata?.is_dropoff ? '22px' : '2px' }} />
+                <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, is_dropoff: !(form.metadata?.is_dropoff as boolean) } })}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${(form.metadata?.is_dropoff as boolean) ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: (form.metadata?.is_dropoff as boolean) ? '22px' : '2px' }} />
                 </button>
               </div>
-              {form.metadata?.is_dropoff && (
+              {(form.metadata?.is_dropoff as boolean) && (
                 <div className="ml-1 pb-2">
                   <p className="text-xs text-gray-500 mb-1">Turnaround time (days)</p>
-                  <input type="number" min={1} step={1} value={(form.metadata?.turnaround_days as number) || ''} onChange={(e) => setForm({ ...form, metadata: { ...form.metadata, turnaround_days: Number(e.target.value) || null } })}
+                  <input type="number" min={1} step={1} value={((form.metadata?.turnaround_days ?? '') as number) || ''} onChange={(e) => setForm({ ...form, metadata: { ...form.metadata, turnaround_days: Number(e.target.value) || null } })}
                     placeholder="e.g. 3" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
                   <span className="ml-2 text-xs text-gray-400">days until ready</span>
                 </div>
@@ -591,9 +591,9 @@ export default function ServicesPage() {
                   <p className="text-sm font-medium text-gray-700">Skip quantity <Tooltip text="When on, the bot won't ask 'How many people?' — auto-sets to 1. Use for individual services like haircuts, consultations, or wig services." /></p>
                   <p className="text-xs text-gray-400">Don't ask "How many people?"</p>
                 </div>
-                <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, skip_quantity: !form.metadata?.skip_quantity } })}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.skip_quantity ? 'bg-brand' : 'bg-gray-200'}`}>
-                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.metadata?.skip_quantity ? '22px' : '2px' }} />
+                <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, skip_quantity: !(form.metadata?.skip_quantity as boolean) } })}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${(form.metadata?.skip_quantity as boolean) ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: (form.metadata?.skip_quantity as boolean) ? '22px' : '2px' }} />
                 </button>
               </div>
 
