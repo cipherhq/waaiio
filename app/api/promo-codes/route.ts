@@ -40,7 +40,9 @@ export async function GET(request: NextRequest) {
       .order('created_at', { ascending: false });
 
     if (error) return NextResponse.json({ error: 'Failed to fetch promo codes' }, { status: 500 });
-    return NextResponse.json({ codes: data });
+    const response = NextResponse.json({ codes: data });
+    response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
+    return response;
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

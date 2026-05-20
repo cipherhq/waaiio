@@ -19,7 +19,9 @@ export async function GET(request: NextRequest) {
     .eq('business_id', businessId)
     .order('created_at', { ascending: false });
 
-  return NextResponse.json({ polls: polls || [] });
+  const response = NextResponse.json({ polls: polls || [] });
+  response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
+  return response;
 }
 
 export async function POST(request: NextRequest) {

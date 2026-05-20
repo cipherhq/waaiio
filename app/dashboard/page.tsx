@@ -119,7 +119,7 @@ export default function DashboardOverview() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
 
-      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes] = await Promise.all([
+      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes, outstandingInvCountRes] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
@@ -142,19 +142,14 @@ export default function DashboardOverview() {
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'completed'),
         // Server-side SUM via RPC — avoids fetching all invoice rows to the client
         supabase.rpc('get_outstanding_invoices', { p_business_id: business.id }),
+        // Outstanding invoice count (moved into Promise.all — was sequential before)
+        supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('business_id', business.id).in('status', ['sent', 'viewed', 'overdue']),
       ]);
 
       const revenue = Number(revenueRes.data ?? 0);
       const hours = business.operating_hours as Record<string, unknown> | null;
-
-      // get_outstanding_invoices returns the SUM only; count outstanding separately
       const outstandingInvoiceAmount = Number(outstandingInvRes.data ?? 0);
-      // We still need the count — fetch it cheaply with head:true
-      const { count: outstandingInvoiceCount } = await supabase
-        .from('invoices')
-        .select('id', { count: 'exact', head: true })
-        .eq('business_id', business.id)
-        .in('status', ['sent', 'viewed', 'overdue']);
+      const outstandingInvoiceCount = outstandingInvCountRes.count || 0;
 
       setStats({
         totalBookings: totalRes.count || 0,

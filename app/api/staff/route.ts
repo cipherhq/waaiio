@@ -52,7 +52,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch staff' }, { status: 500 });
     }
 
-    return NextResponse.json({ staff: data });
+    const response = NextResponse.json({ staff: data });
+    response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
+    return response;
   } catch (error) {
     logger.error('[STAFF] GET error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

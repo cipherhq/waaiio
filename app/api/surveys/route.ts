@@ -31,7 +31,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to fetch surveys' }, { status: 500 });
   }
 
-  return NextResponse.json({ surveys: surveys || [] });
+  const response = NextResponse.json({ surveys: surveys || [] });
+  response.headers.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
+  return response;
 }
 
 // POST /api/surveys — create a new survey

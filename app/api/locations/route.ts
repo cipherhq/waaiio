@@ -34,7 +34,9 @@ export async function GET(request: NextRequest) {
       .order('is_primary', { ascending: false });
 
     if (error) return NextResponse.json({ error: 'Failed to fetch locations' }, { status: 500 });
-    return NextResponse.json({ locations: data });
+    const response = NextResponse.json({ locations: data });
+    response.headers.set('Cache-Control', 'private, max-age=60, stale-while-revalidate=300');
+    return response;
   } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }

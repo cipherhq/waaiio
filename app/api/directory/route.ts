@@ -76,5 +76,7 @@ export async function GET(request: NextRequest) {
     is_featured: featuredIds.includes(b.id),
   }));
 
-  return NextResponse.json({ businesses });
+  const response = NextResponse.json({ businesses });
+  response.headers.set('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
+  return response;
 }
