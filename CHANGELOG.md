@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Extract 5 Handler Groups from bot.service.ts (Pure Refactor)
+
+- **bot-helpers.ts** — `getActiveSession`, `deactivateSession`, `sendBotText`, `forwardToBusinessOwner` extracted as standalone functions. File: `lib/bot/bot-helpers.ts`
+- **handlers/flow-routing.ts** — `getFirstStep`, `getFirstStepFromCapabilities`, `capabilityToFirstStep` extracted as pure functions. File: `lib/bot/handlers/flow-routing.ts`
+- **handlers/quote-response.ts** — `handleQuoteResponse` extracted. File: `lib/bot/handlers/quote-response.ts`
+- **handlers/ticket-checkin.ts** — `handleTicketCheckin` extracted. File: `lib/bot/handlers/ticket-checkin.ts`
+- **handlers/transaction-docs.ts** — `handleTransactionDocument`, `buildTextReceipt` extracted. File: `lib/bot/handlers/transaction-docs.ts`
+- Class methods in `bot.service.ts` remain as thin 1-line wrappers to avoid touching call sites
+- **No behavior changes** — bot.service.ts reduced from ~4072 to ~3699 lines
+- Build + 283 tests pass clean
+
 ### PageHelp Component Added to 5 Dashboard Pages
 
 - **Insights** — Added PageHelp banner with "Intelligence Hub" description. File: `app/dashboard/insights/page.tsx`
