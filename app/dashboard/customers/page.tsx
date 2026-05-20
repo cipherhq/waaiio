@@ -665,7 +665,7 @@ export default function CustomersPage() {
                   </div>
 
                   {/* Quick stats */}
-                  <div className="mt-6 grid grid-cols-2 gap-3">
+                  <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="rounded-lg bg-gray-50 p-3">
                       <p className="text-xs text-gray-500">First Seen</p>
                       <p className="mt-1 text-sm font-medium text-gray-900">
@@ -706,7 +706,7 @@ export default function CustomersPage() {
 
                   {/* Customer Intelligence */}
                   {(selected.lifetime_value || selected.churn_risk != null || selected.customer_segment) && (
-                    <div className="mt-4 grid grid-cols-3 gap-3">
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                       <div className="rounded-lg bg-brand-50 p-3">
                         <p className="text-xs text-brand">Lifetime Value</p>
                         <p className="mt-1 text-lg font-bold text-brand">
@@ -743,7 +743,7 @@ export default function CustomersPage() {
                   {loyalty && (
                     <div className="mt-6">
                       <h3 className="text-sm font-semibold text-gray-900">Loyalty Points</h3>
-                      <div className="mt-2 grid grid-cols-3 gap-3">
+                      <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div className="rounded-lg bg-green-50 p-3">
                           <p className="text-xs text-green-600">Balance</p>
                           <p className="mt-1 text-lg font-bold text-green-700">

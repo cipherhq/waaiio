@@ -428,7 +428,7 @@ export default function StaffPage() {
         <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
           {/* Left: Main fields */}
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">First Name <span className="text-red-400">*</span></label>
                 <input
@@ -452,7 +452,7 @@ export default function StaffPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Phone</label>
                 <PhoneInput

@@ -339,7 +339,7 @@ export default function AnalyticsPage() {
         {botSessions > 0 && (
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Bot Performance</h2>
-            <div className="mt-4 grid grid-cols-3 gap-4">
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <p className="text-2xl font-bold text-gray-900">{botSessions}</p>
                 <p className="text-xs text-gray-500">Total Sessions</p>
@@ -381,7 +381,7 @@ export default function AnalyticsPage() {
         {(paymentSuccess + paymentFailed) > 0 && (
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Payment Success Rate</h2>
-            <div className="mt-4 grid grid-cols-3 gap-4">
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <p className="text-2xl font-bold text-gray-900">{paymentSuccess + paymentFailed}</p>
                 <p className="text-xs text-gray-500">Total Payments</p>

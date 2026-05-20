@@ -396,7 +396,7 @@ export default function WhatsAppUsagePage() {
         <div className="rounded-xl border border-gray-100 bg-white p-6">
           <h2 className="text-sm font-semibold text-gray-900">Broadcasts This Month</h2>
           <p className="mt-0.5 text-xs text-gray-400">{new Date().toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { month: 'long', year: 'numeric' })}</p>
-          <div className="mt-4 grid grid-cols-2 gap-4">
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="rounded-lg bg-gray-50 p-4 text-center">
               <p className="text-2xl font-bold text-gray-900">{broadcastCount}</p>
               <p className="mt-1 text-xs text-gray-500">Broadcasts Sent</p>
@@ -412,7 +412,7 @@ export default function WhatsAppUsagePage() {
         <div className="rounded-xl border border-gray-100 bg-white p-6">
           <h2 className="text-sm font-semibold text-gray-900">Bot Sessions</h2>
           <p className="mt-0.5 text-xs text-gray-400">Automated conversations</p>
-          <div className="mt-4 grid grid-cols-3 gap-4">
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="rounded-lg bg-gray-50 p-4 text-center">
               <p className="text-2xl font-bold text-gray-900">{totalBotSessions}</p>
               <p className="mt-1 text-xs text-gray-500">Total</p>

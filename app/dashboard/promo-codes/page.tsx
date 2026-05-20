@@ -203,7 +203,7 @@ export default function PromoCodesPage() {
               <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
               <input type="text" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="e.g. Summer promotion - 20% off" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Discount Type</label>
                 <select value={form.discount_type} onChange={e => setForm({ ...form, discount_type: e.target.value as 'percentage' | 'fixed' })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand">
@@ -216,7 +216,7 @@ export default function PromoCodesPage() {
                 <input type="number" min={0} value={form.discount_value || ''} onChange={e => setForm({ ...form, discount_value: parseFloat(e.target.value) || 0 })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Min Order ({currSymbol})</label>
                 <input type="number" min={0} value={form.min_order_amount || ''} onChange={e => setForm({ ...form, min_order_amount: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
@@ -318,7 +318,7 @@ export default function PromoCodesPage() {
       />
 
       {/* Metrics */}
-      <div className="mt-6 grid grid-cols-3 gap-4">
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
           <p className="text-xs font-medium text-gray-500">Total Codes</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{codes.length}</p>

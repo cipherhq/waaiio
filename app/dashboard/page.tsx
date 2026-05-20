@@ -551,7 +551,7 @@ export default function DashboardOverview() {
           )}
 
           {/* Quick Actions */}
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Link
               href="/dashboard/whatsapp"
               className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white p-4 transition hover:border-brand/20 hover:shadow-sm"
@@ -636,7 +636,7 @@ export default function DashboardOverview() {
               <tbody className="divide-y divide-gray-50">
                 {recentOrders.map((o) => (
                   <tr key={o.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-3 font-mono text-xs text-gray-900">{o.reference_code}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-900 break-all">{o.reference_code}</td>
                     <td className="px-4 py-3 text-gray-600">
                       {new Date(o.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         day: 'numeric',
@@ -758,7 +758,7 @@ export default function DashboardOverview() {
                   <tr key={r.id} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3">
                       <p className="font-medium text-gray-900">{r.guest_name || '\u2014'}</p>
-                      <p className="text-xs text-gray-400">{r.guest_phone}</p>
+                      <p className="text-xs text-gray-400 break-all">{r.guest_phone}</p>
                     </td>
                     <td className="px-4 py-3 text-gray-600">
                       {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
@@ -777,7 +777,7 @@ export default function DashboardOverview() {
                         {r.status.replace('_', ' ')}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.reference_code}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-400 break-all">{r.reference_code}</td>
                   </tr>
                 ))}
               </tbody>

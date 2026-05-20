@@ -280,7 +280,7 @@ export default function GuestsPage() {
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-2 gap-4">
+              <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="rounded-lg bg-gray-50 p-4">
                   <p className="text-xs text-gray-500">Total {labels.entityNamePlural}</p>
                   <p className="mt-1 text-xl font-bold text-gray-900">{selectedGuest.booking_count}</p>

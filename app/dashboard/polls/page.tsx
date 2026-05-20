@@ -222,7 +222,7 @@ export default function PollsPage() {
             ))}
             {options.length < 10 && <button onClick={() => setOptions([...options, ''])} className="text-xs text-blue-600">+ Add option</button>}
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-500 mb-1">Show results</label>
               <select value={showResults} onChange={e => setShowResults(e.target.value)} className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700">

@@ -368,7 +368,7 @@ export default function WhatsAppPage() {
             <div className="mt-4 space-y-3">
               {welcomeButtons.map((btn, i) => (
                 <div key={i} className="flex items-start gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
-                  <div className="flex-1 grid grid-cols-3 gap-3">
+                  <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className="mb-1 block text-xs font-medium text-gray-500">Label</label>
                       <input

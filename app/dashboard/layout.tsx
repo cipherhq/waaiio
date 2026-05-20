@@ -90,7 +90,7 @@ export default async function DashboardLayout({
               <ImpersonationBanner businessName={impersonatedBusinessName} />
               <AlertBanner />
               <Sidebar />
-              <main className="lg:pl-64">
+              <main className="md:pl-64">
                 <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
                   {children}
                 </div>
@@ -154,7 +154,7 @@ export default async function DashboardLayout({
               <a href="#main-content" className="skip-link">Skip to content</a>
         <AlertBanner />
         <Sidebar />
-        <main className="lg:pl-64">
+        <main className="md:pl-64">
           <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}
             <FloatingHelp />

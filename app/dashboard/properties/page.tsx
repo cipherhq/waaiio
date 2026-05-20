@@ -309,7 +309,7 @@ export default function PropertiesPage() {
                 className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Nightly Rate</label>
                 <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })}
@@ -330,7 +330,7 @@ export default function PropertiesPage() {
             </div>
 
             {business.category !== 'car_rental' && (
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">Type</label>
                   <select value={form.property_type} onChange={e => setForm({ ...form, property_type: e.target.value })}

@@ -307,7 +307,7 @@ export default function KeywordsPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Match Type</label>
                 <select
@@ -457,7 +457,7 @@ export default function KeywordsPage() {
       </div>
 
       {/* Metrics */}
-      <div className="mt-6 grid grid-cols-3 gap-4">
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
           <p className="text-xs font-medium text-gray-500">Total Keywords</p>
           <p className="mt-2 text-2xl font-bold text-gray-900">{keywords.length}</p>

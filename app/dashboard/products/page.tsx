@@ -855,7 +855,7 @@ export default function ProductsPage() {
 
             {/* Price + Stock — side by side (hidden when variants enabled) */}
             {!form.has_variants && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Price ({curr}) <span className="text-red-400">*</span>
@@ -967,7 +967,7 @@ export default function ProductsPage() {
                 <div className="mt-4 space-y-3">
                   {addons.map((addon, idx) => (
                     <div key={addon.id || idx} className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="mb-0.5 block text-xs font-medium text-gray-600">Add-on Name</label>
                           <input
@@ -982,7 +982,7 @@ export default function ProductsPage() {
                             className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
                           />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           <div>
                             <label className="mb-0.5 block text-xs font-medium text-gray-600">Price ({curr})</label>
                             <input
@@ -1019,7 +1019,7 @@ export default function ProductsPage() {
                       </div>
 
                       {addon.price_type === 'per_unit' && (
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                           <div>
                             <label className="mb-0.5 block text-xs font-medium text-gray-600">Unit Label</label>
                             <input
@@ -1160,7 +1160,7 @@ export default function ProductsPage() {
                         </div>
                       )}
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="mb-0.5 block text-xs font-medium text-gray-600">Rule Name</label>
                           <input
@@ -1175,7 +1175,7 @@ export default function ProductsPage() {
                             className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
                           />
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           <div>
                             <label className="mb-0.5 block text-xs font-medium text-gray-600">Min Qty</label>
                             <input
@@ -1209,7 +1209,7 @@ export default function ProductsPage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="mb-0.5 block text-xs font-medium text-gray-600">Discount Type</label>
                           <select

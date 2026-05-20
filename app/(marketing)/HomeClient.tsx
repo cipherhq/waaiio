@@ -82,8 +82,8 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
       <section className="relative min-h-screen overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700">
         {/* Decorative blobs */}
         <motion.div style={{ y: heroY }} className="pointer-events-none absolute inset-0">
-          <div className="absolute -left-40 -top-40 h-[500px] w-[500px] rounded-full bg-brand-400/15 blur-3xl" />
-          <div className="absolute -bottom-32 right-0 h-[400px] w-[400px] rounded-full bg-accent/10 blur-3xl" />
+          <div className="absolute -left-20 -top-20 h-[250px] w-[250px] sm:-left-40 sm:-top-40 sm:h-[500px] sm:w-[500px] rounded-full bg-brand-400/15 blur-3xl" />
+          <div className="absolute -bottom-16 right-0 h-[200px] w-[200px] sm:-bottom-32 sm:h-[400px] sm:w-[400px] rounded-full bg-accent/10 blur-3xl" />
         </motion.div>
 
         <motion.div style={{ opacity: heroOpacity }} className="relative mx-auto flex min-h-screen max-w-6xl items-center px-4 pt-16">
@@ -540,7 +540,37 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
           </AnimatedSection>
 
           <AnimatedSection delay={0.1}>
-            <div className="mt-12 overflow-x-auto rounded-2xl border border-gray-200">
+            {/* Mobile: card-based comparison */}
+            <div className="mt-12 space-y-3 sm:hidden">
+              <div className="rounded-xl border border-green-200 bg-green-50 p-4">
+                <h4 className="text-xs font-semibold uppercase text-green-700 mb-3">Both WhatsApp Business & Waaiio</h4>
+                <ul className="space-y-2 text-sm text-gray-700">
+                  {['Business profile & hours', 'Product catalog', 'Quick replies', 'Away message', 'Greeting message', 'Broadcast lists'].map(f => (
+                    <li key={f} className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> {f}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-xl border border-brand/20 bg-brand-50 p-4">
+                <h4 className="text-xs font-semibold uppercase text-brand mb-3">Only with Waaiio</h4>
+                <ul className="space-y-2 text-sm text-gray-700">
+                  {[
+                    'AI conversation handling 24/7', 'Accept bookings with calendar & slots',
+                    'Collect payments (5 gateways, 5 countries)', 'Automatic reminders before appointments',
+                    'Customer memory & repeat booking', 'Generate receipts & invoices',
+                    'E-signatures & contracts', 'Loyalty & referral programs',
+                    'Event tickets with QR codes', 'Queue & waitlist management',
+                    'Multi-language (7 languages)', 'Order management & delivery tracking',
+                    'Recurring payments & subscriptions', 'Dashboard with analytics',
+                    'Staff management', 'Split payments & automated payouts',
+                  ].map(f => (
+                    <li key={f} className="flex items-center gap-2"><span className="text-brand font-bold">&#10003;</span> {f}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {/* Desktop: comparison table */}
+            <div className="mt-12 hidden sm:block overflow-x-auto rounded-2xl border border-gray-200">
               <table className="w-full min-w-[520px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50">
@@ -983,7 +1013,7 @@ function TestimonialCard({ quote, name, role, stat, metric }: { quote: string; n
   return (
     <motion.div
       whileHover={{ y: -4 }}
-      className="flex min-w-[280px] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition lg:min-w-0"
+      className="flex min-w-[85vw] sm:min-w-[280px] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition lg:min-w-0"
     >
       <div className="mb-4 flex items-center justify-between">
         <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand">{stat}</span>

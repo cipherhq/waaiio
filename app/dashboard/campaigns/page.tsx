@@ -236,7 +236,7 @@ export default function CampaignsPage() {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Minimum Donation</label>
                 <input
@@ -263,7 +263,7 @@ export default function CampaignsPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Start Date</label>
                 <input
@@ -287,7 +287,7 @@ export default function CampaignsPage() {
             {/* Edit mode: show raised amount, donor count, and donations list */}
             {view === 'edit' && (
               <>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="rounded-lg border border-gray-100 bg-gray-50 p-4">
                     <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Raised</p>
                     <p className="mt-1 text-lg font-bold text-gray-900">

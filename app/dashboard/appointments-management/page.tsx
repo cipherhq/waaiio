@@ -205,7 +205,7 @@ export default function AppointmentsManagementPage() {
                 className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
 
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Price</label>
                 <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })}
@@ -246,7 +246,7 @@ export default function AppointmentsManagementPage() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">
                   Buffer time (min)
