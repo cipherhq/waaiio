@@ -3,6 +3,8 @@ import HomeClient from './HomeClient';
 import { getCategoryList } from '@/lib/categoryConfig';
 import { createServiceClient } from '@/lib/supabase/service';
 
+export const revalidate = 60;
+
 const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 

@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Add ISR (Incremental Static Regeneration) to Marketing Pages
+
+- **Homepage** (`app/(marketing)/page.tsx`) — `revalidate = 60` (1 min, fetches live stats)
+- **Directory** (`app/(marketing)/directory/page.tsx`) — `revalidate = 60` (1 min, businesses may change)
+- **About** (`app/(marketing)/about/page.tsx`) — `revalidate = 3600` (1 hr, static content)
+- **Contact** (`app/(marketing)/contact/page.tsx`) — `revalidate = 3600` (1 hr, static content)
+- **Features** (`app/(marketing)/features/page.tsx`) — `revalidate = 3600` (1 hr, static content)
+- **Pricing** skipped — it's a `'use client'` component (ISR only works on server components)
+- Pages are now cached at Vercel's edge for N seconds instead of re-rendering every request
+- No `force-dynamic` directives were present in any of these files
+
 ### Extract 5 Handler Groups from bot.service.ts (Pure Refactor)
 
 - **bot-helpers.ts** — `getActiveSession`, `deactivateSession`, `sendBotText`, `forwardToBusinessOwner` extracted as standalone functions. File: `lib/bot/bot-helpers.ts`

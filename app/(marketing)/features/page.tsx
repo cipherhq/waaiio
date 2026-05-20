@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   title: 'Features — Waaiio',
   description:

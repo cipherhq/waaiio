@@ -1,6 +1,8 @@
 import { createServiceClient } from '@/lib/supabase/service';
 import DirectoryClient from './DirectoryClient';
 
+export const revalidate = 60;
+
 /**
  * Server component wrapper for directory page.
  * Pre-renders business names/categories for SEO — search engines see real content.

@@ -3,6 +3,8 @@ import Link from 'next/link';
 import AnimatedSection from '@/components/marketing/AnimatedSection';
 import CounterAnimation from '@/components/marketing/CounterAnimation';
 
+export const revalidate = 3600;
+
 export const metadata: Metadata = {
   title: 'About Waaiio',
   description:
