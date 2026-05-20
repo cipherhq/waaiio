@@ -1168,7 +1168,7 @@ export const schedulingFlow: FlowDefinition = {
         return !meta.collect_venue;
       },
       async prompt(): Promise<PromptMessage[]> {
-        return [{ type: 'text', text: '📍 Where is the event/appointment?\n\nPlease type the *venue name and address*:' }];
+        return [{ type: 'text', text: '📍 What is your address?\n\nPlease type the *full address*:' }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input.trim().length < 5) return { valid: false, errorMessage: 'Please enter a valid address (at least 5 characters).' };

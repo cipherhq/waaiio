@@ -820,8 +820,8 @@ export default function ServicesPage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Collect venue address</p>
-                    <p className="text-xs text-gray-400">Ask customers where the event/appointment is</p>
+                    <p className="text-sm font-medium text-gray-700">Collect address</p>
+                    <p className="text-xs text-gray-400">Ask customers for their address during booking</p>
                   </div>
                   <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, collect_venue: !form.metadata?.collect_venue } })}
                     className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.collect_venue ? 'bg-brand' : 'bg-gray-200'}`}>
