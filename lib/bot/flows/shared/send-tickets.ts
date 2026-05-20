@@ -145,9 +145,14 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
       // Upload QR image to storage
       const qrPath = `tickets/${businessId}/${ticket.ticketCode}.png`;
-      await supabase.storage
+      const { error: qrUploadError } = await supabase.storage
         .from('documents')
         .upload(qrPath, qrBuffer, { contentType: 'image/png', upsert: true });
+
+      if (qrUploadError) {
+        logger.error('[TICKETS] Failed to upload QR to storage:', qrUploadError.message, '| path:', qrPath);
+        continue;
+      }
 
       const { data: qrSignedUrl } = await supabase.storage
         .from('documents')
@@ -159,6 +164,8 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
           imageUrl: qrSignedUrl.signedUrl,
           caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — ${ticket.ticketCode}\nShow this QR code at the entrance`,
         });
+      } else {
+        logger.error('[TICKETS] Failed to create signed URL for QR:', qrPath);
       }
     } catch (qrErr) {
       logger.error('[TICKETS] QR image send failed for', ticket.ticketCode, ':', qrErr);
