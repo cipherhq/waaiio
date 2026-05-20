@@ -579,7 +579,7 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._join_waitlist) return 'waitlist_join';
-        if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'cancel') return 'select_capability';
         return 'select_staff';
       },
     },
@@ -1370,7 +1370,7 @@ export const schedulingFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'cancel') return 'select_capability';
         return 'collect_name';
       },
     },
@@ -2089,7 +2089,7 @@ export const schedulingFlow: FlowDefinition = {
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
         // Cancelled booking — end flow
-        if (d._action === 'cancel') return null;
+        if (d._action === 'cancel') return 'select_capability';
         // After accepting/cancelling terms, re-enter this step to proceed
         if (d._terms_accepted || d._terms_cancelled) {
           return 'create_booking';
@@ -2242,7 +2242,7 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
-        if (d._action === 'cancel') return null;
+        if (d._action === 'cancel') return 'select_capability';
         if (d._saved_card_paid) {
           // Update booking status to confirmed
           if (d.booking_id) {
