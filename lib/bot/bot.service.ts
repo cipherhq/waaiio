@@ -19,6 +19,7 @@ import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnified
 import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
+import type { BotSession, BusinessRecord, BotContext } from './bot-types';
 
 // ── Escape hatches: always hardcoded, never overridable ──
 const ESCAPE_HATCH_PATTERNS = [
@@ -30,34 +31,9 @@ const ESCAPE_HATCH_PATTERNS = [
   /^start\s*over$/i,
 ];
 
-interface BotSession {
-  id: string;
-  whatsapp_number: string;
-  user_id: string | null;
-  business_id: string | null;
-  current_step: string;
-  session_data: Record<string, unknown>;
-  conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>;
-  is_active: boolean;
-  expires_at: string;
-}
-
-interface BusinessRecord {
-  id: string;
-  name: string;
-  slug: string;
-  category: BusinessCategoryKey;
-  flow_type: FlowType;
-  subscription_tier: string;
-  trial_ends_at: string;
-  metadata: Record<string, unknown>;
-  country_code?: CountryCode;
-  is_whitelabel?: boolean;
-  payment_gateway?: string | null;
-}
-
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
+  private readonly ctx: BotContext;
 
   constructor(
     private readonly supabase: SupabaseClient,
@@ -66,6 +42,7 @@ export class BotService {
     private readonly intelligence: BotIntelligenceService,
   ) {
     this.flowExecutor = new FlowExecutor(supabase, messageSender, standaloneService, intelligence);
+    this.ctx = { supabase, messageSender, standaloneService, intelligence, flowExecutor: this.flowExecutor };
   }
 
   async handleMessage(
