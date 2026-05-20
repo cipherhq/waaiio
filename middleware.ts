@@ -127,8 +127,8 @@ export async function middleware(request: NextRequest) {
       || request.nextUrl.pathname.startsWith('/api/cron');
 
     if (!isWebhookRoute) {
-      // POST/PUT/PATCH/DELETE: 60 req/min, GET: 120 req/min
-      const limit = isStateMutating ? 60 : 120;
+      // POST/PUT/PATCH/DELETE: 120 req/min, GET: 300 req/min (scaled for 1000+ users)
+      const limit = isStateMutating ? 120 : 300;
       const key = `api:${ip}:${isStateMutating ? 'write' : 'read'}`;
       if (!checkMiddlewareRateLimit(key, limit, 60_000)) {
         return new NextResponse(
