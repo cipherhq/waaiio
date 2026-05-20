@@ -26,7 +26,7 @@ export function PageHelp({ pageKey, title, description }: PageHelpProps) {
   };
 
   return (
-    <div className="mt-4 rounded-lg border-l-4 border-blue-400 bg-blue-50 px-4 py-3">
+    <div className="mt-4 rounded-lg border-l-4 border-blue-400 dark:border-blue-600 bg-blue-50 dark:bg-blue-900/20 px-4 py-3">
       <div className="flex items-start gap-3">
         {/* Info icon */}
         <svg
@@ -44,14 +44,14 @@ export function PageHelp({ pageKey, title, description }: PageHelpProps) {
         </svg>
 
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-blue-900">{title}</p>
-          <p className="mt-0.5 text-sm text-blue-700">{description}</p>
+          <p className="text-sm font-semibold text-blue-900 dark:text-blue-200">{title}</p>
+          <p className="mt-0.5 text-sm text-blue-700 dark:text-blue-300">{description}</p>
         </div>
 
         {/* Dismiss button */}
         <button
           onClick={handleDismiss}
-          className="shrink-0 rounded p-0.5 text-blue-400 transition hover:bg-blue-100 hover:text-blue-600"
+          className="shrink-0 rounded p-0.5 text-blue-400 transition hover:bg-blue-100 dark:hover:bg-blue-900/40 hover:text-blue-600"
           aria-label="Dismiss help"
         >
           <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -88,7 +88,7 @@ function StarRating({ rating }: { rating: number }) {
       {[1, 2, 3, 4, 5].map((star) => (
         <svg
           key={star}
-          className={`h-3.5 w-3.5 ${star <= rating ? 'text-yellow-400' : 'text-gray-200'}`}
+          className={`h-3.5 w-3.5 ${star <= rating ? 'text-yellow-400' : 'text-gray-200 dark:text-gray-600'}`}
           fill="currentColor"
           viewBox="0 0 20 20"
         >
@@ -333,15 +333,15 @@ export default function CustomersPage() {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{labels.personLabelPlural}</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{labels.personLabelPlural}</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             {totalCustomers} {labels.personLabel.toLowerCase()} profile{totalCustomers !== 1 ? 's' : ''} across all channels.
           </p>
         </div>
         {filtered.length > 0 && (
           <button
             onClick={handleExport}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
           >
             Export CSV
           </button>
@@ -356,25 +356,25 @@ export default function CustomersPage() {
 
       {/* Metrics Row */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Total {labels.personLabelPlural}</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900">{totalCustomers}</p>
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Total {labels.personLabelPlural}</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{totalCustomers}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">Active (30 days)</p>
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Active (30 days)</p>
           <p className="mt-2 text-2xl font-bold text-green-600">{activeCustomers}</p>
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
             {totalCustomers > 0 ? Math.round((activeCustomers / totalCustomers) * 100) : 0}% of
             total
           </p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">{isGiving ? 'Total Received' : 'Total Revenue'}</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900">{formatCurrency(totalRevenue, cc)}</p>
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Received' : 'Total Revenue'}</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{formatCurrency(totalRevenue, cc)}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-5">
-          <p className="text-xs font-medium text-gray-500">{isGiving ? `Avg Giving / ${labels.personLabel}` : `Avg Spend / ${labels.personLabel}`}</p>
-          <p className="mt-2 text-2xl font-bold text-gray-900">{formatCurrency(Math.round(avgSpend), cc)}</p>
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{isGiving ? `Avg Giving / ${labels.personLabel}` : `Avg Spend / ${labels.personLabel}`}</p>
+          <p className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">{formatCurrency(Math.round(avgSpend), cc)}</p>
         </div>
       </div>
 
@@ -385,7 +385,7 @@ export default function CustomersPage() {
           placeholder="Search by name or phone..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+          className="w-full max-w-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
         />
       </div>
 
@@ -395,9 +395,9 @@ export default function CustomersPage() {
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
         </div>
       ) : filtered.length === 0 ? (
-        <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">
+        <div className="mt-8 rounded-xl border border-dashed border-gray-200 dark:border-gray-700 p-12 text-center">
           <svg
-            className="mx-auto h-12 w-12 text-gray-300"
+            className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-500"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -409,32 +409,32 @@ export default function CustomersPage() {
               d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
             />
           </svg>
-          <p className="mt-3 text-sm text-gray-400">
+          <p className="mt-3 text-sm text-gray-400 dark:text-gray-500">
             {search
               ? `No ${labels.personLabelPlural.toLowerCase()} match your search.`
               : `No ${labels.personLabel.toLowerCase()} profiles yet. They will appear after their first interaction.`}
           </p>
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 bg-white">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-50 bg-gray-50/50">
+              <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Givings' : 'Total Visits'}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Avg Rating</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Last Seen</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Segment</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Tags</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Givings' : 'Total Visits'}</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Given' : 'Total Spent'}</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Avg Rating</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Last Seen</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Segment</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Tags</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
               {pageItems.map((c) => (
                 <tr
                   key={c.id}
-                  className={`cursor-pointer hover:bg-gray-50/50 ${
+                  className={`cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-700/30 ${
                     selectedIds.has(c.id) ? 'bg-brand-50/30' : selectedId === c.id ? 'bg-brand-50/20' : ''
                   }`}
                   onClick={() => selectCustomer(c)}
@@ -447,11 +447,11 @@ export default function CustomersPage() {
                         {(c.name || c.phone || '?').charAt(0).toUpperCase()}
                       </div>
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-gray-900">
+                        <p className="truncate font-medium text-gray-900 dark:text-gray-100">
                           {c.name || 'Unknown'}
                         </p>
                         {c.phone && (
-                          <p className="truncate text-xs text-gray-400">{c.phone}</p>
+                          <p className="truncate text-xs text-gray-400 dark:text-gray-500">{c.phone}</p>
                         )}
                       </div>
                     </div>
@@ -465,7 +465,7 @@ export default function CustomersPage() {
                   </td>
 
                   {/* Total Spent */}
-                  <td className="px-4 py-3 text-gray-600">
+                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                     {c.total_spent > 0 ? formatCurrency(c.total_spent, cc) : '\u2014'}
                   </td>
 
@@ -474,17 +474,17 @@ export default function CustomersPage() {
                     {c.avg_rating != null && c.avg_rating > 0 ? (
                       <div className="flex items-center gap-1.5">
                         <StarRating rating={Math.round(c.avg_rating)} />
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
                           {c.avg_rating.toFixed(1)}
                         </span>
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-300">&mdash;</span>
+                      <span className="text-xs text-gray-300 dark:text-gray-500">&mdash;</span>
                     )}
                   </td>
 
                   {/* Last Seen */}
-                  <td className="px-4 py-3 text-gray-500">
+                  <td className="px-4 py-3 text-gray-500 dark:text-gray-400">
                     {relativeTime(c.last_seen_at)}
                   </td>
 
@@ -501,7 +501,7 @@ export default function CustomersPage() {
                         {c.customer_segment === 'at_risk' ? 'At Risk' : c.customer_segment.charAt(0).toUpperCase() + c.customer_segment.slice(1)}
                       </span>
                     ) : (
-                      <span className="text-xs text-gray-300">&mdash;</span>
+                      <span className="text-xs text-gray-300 dark:text-gray-500">&mdash;</span>
                     )}
                   </td>
 
@@ -527,15 +527,15 @@ export default function CustomersPage() {
 
       {/* Bulk Action Bar */}
       {selectedIds.size > 0 && (
-        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-brand/20 bg-brand-50 p-3">
-          <span className="text-sm font-medium text-gray-700">{selectedIds.size} selected</span>
+        <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-brand/20 bg-brand-50 dark:bg-brand-900/20 p-3">
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{selectedIds.size} selected</span>
           <div className="flex items-center gap-2">
             <input
               type="text"
               placeholder="Tag name..."
               value={bulkTag}
               onChange={(e) => setBulkTag(e.target.value)}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs outline-none focus:border-brand"
+              className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
             />
             <button
               disabled={!bulkTag || bulkProcessing}
@@ -565,7 +565,7 @@ export default function CustomersPage() {
               placeholder="Message..."
               value={bulkMessage}
               onChange={(e) => setBulkMessage(e.target.value)}
-              className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs outline-none focus:border-brand sm:w-48"
+              className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-1.5 text-xs text-gray-900 dark:text-gray-100 outline-none focus:border-brand sm:w-48"
             />
             <button
               disabled={!bulkMessage || bulkProcessing}
@@ -590,7 +590,7 @@ export default function CustomersPage() {
               Send WhatsApp
             </button>
           </div>
-          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 hover:text-gray-700">Clear</button>
+          <button onClick={() => setSelectedIds(new Set())} className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">Clear</button>
         </div>
       )}
 
@@ -600,15 +600,15 @@ export default function CustomersPage() {
           <button
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50"
           >
             Previous
           </button>
-          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <span className="text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50"
           >
             Next
           </button>
@@ -619,13 +619,13 @@ export default function CustomersPage() {
       {selected && (
         <div className="fixed inset-y-0 right-0 z-50 flex">
           <div className="fixed inset-0 bg-black/20" onClick={() => setSelectedId(null)} />
-          <div className="relative ml-auto flex w-full max-w-lg flex-col bg-white shadow-xl">
+          <div className="relative ml-auto flex w-full max-w-lg flex-col bg-white dark:bg-gray-800 shadow-xl">
             {/* Drawer header */}
-            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
-              <h2 className="text-lg font-bold text-gray-900">{labels.personLabel} Details</h2>
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 px-6 py-4">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{labels.personLabel} Details</h2>
               <button
                 onClick={() => setSelectedId(null)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
               >
                 <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -652,23 +652,23 @@ export default function CustomersPage() {
                       {(selected.name || selected.phone || '?').charAt(0).toUpperCase()}
                     </div>
                     <div className="min-w-0">
-                      <p className="text-lg font-semibold text-gray-900">
+                      <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                         {selected.name || 'Unknown'}
                       </p>
                       {selected.phone && (
-                        <p className="text-sm text-gray-500">{selected.phone}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{selected.phone}</p>
                       )}
                       {selected.email && (
-                        <p className="text-sm text-gray-500">{selected.email}</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{selected.email}</p>
                       )}
                     </div>
                   </div>
 
                   {/* Quick stats */}
                   <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">First Seen</p>
-                      <p className="mt-1 text-sm font-medium text-gray-900">
+                    <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">First Seen</p>
+                      <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
                         {selected.first_seen_at
                           ? new Date(selected.first_seen_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                               day: 'numeric',
@@ -678,9 +678,9 @@ export default function CustomersPage() {
                           : '--'}
                       </p>
                     </div>
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">Last Seen</p>
-                      <p className="mt-1 text-sm font-medium text-gray-900">
+                    <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">Last Seen</p>
+                      <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
                         {selected.last_seen_at
                           ? new Date(selected.last_seen_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                               day: 'numeric',
@@ -690,15 +690,15 @@ export default function CustomersPage() {
                           : '--'}
                       </p>
                     </div>
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">{isGiving ? 'Total Givings' : 'Total Visits'}</p>
-                      <p className="mt-1 text-xl font-bold text-gray-900">
+                    <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{isGiving ? 'Total Givings' : 'Total Visits'}</p>
+                      <p className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">
                         {selected.total_visits}
                       </p>
                     </div>
-                    <div className="rounded-lg bg-gray-50 p-3">
-                      <p className="text-xs text-gray-500">{isGiving ? 'Total Given' : 'Total Spent'}</p>
-                      <p className="mt-1 text-xl font-bold text-gray-900">
+                    <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{isGiving ? 'Total Given' : 'Total Spent'}</p>
+                      <p className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">
                         {selected.total_spent > 0 ? formatCurrency(selected.total_spent, cc) : '\u2014'}
                       </p>
                     </div>
@@ -728,9 +728,9 @@ export default function CustomersPage() {
                           {selected.churn_risk != null ? `${selected.churn_risk}%` : '\u2014'}
                         </p>
                       </div>
-                      <div className="rounded-lg bg-gray-50 p-3">
-                        <p className="text-xs text-gray-500">Segment</p>
-                        <p className="mt-1 text-sm font-bold text-gray-900">
+                      <div className="rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Segment</p>
+                        <p className="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100">
                           {selected.customer_segment
                             ? selected.customer_segment === 'at_risk' ? 'At Risk' : selected.customer_segment.charAt(0).toUpperCase() + selected.customer_segment.slice(1)
                             : '\u2014'}
@@ -742,7 +742,7 @@ export default function CustomersPage() {
                   {/* Loyalty Points */}
                   {loyalty && (
                     <div className="mt-6">
-                      <h3 className="text-sm font-semibold text-gray-900">Loyalty Points</h3>
+                      <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Loyalty Points</h3>
                       <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div className="rounded-lg bg-green-50 p-3">
                           <p className="text-xs text-green-600">Balance</p>
@@ -768,25 +768,25 @@ export default function CustomersPage() {
 
                   {/* Booking / Giving History */}
                   <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900">History</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">History</h3>
                     {bookings.length === 0 ? (
-                      <p className="mt-2 text-xs text-gray-400">No records found.</p>
+                      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">No records found.</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {bookings.map((b) => (
                           <div
                             key={b.id}
-                            className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2"
+                            className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2"
                           >
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-gray-900">
+                              <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                                 {b.service_type || 'Booking'}
                               </p>
-                              <p className="text-xs text-gray-400">{b.date}</p>
+                              <p className="text-xs text-gray-400 dark:text-gray-500">{b.date}</p>
                             </div>
                             <div className="ml-3 flex shrink-0 items-center gap-2">
                               {b.deposit_amount != null && b.deposit_amount > 0 && (
-                                <span className="text-xs font-medium text-gray-600">
+                                <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
                                   {formatCurrency(b.deposit_amount, cc)}
                                 </span>
                               )}
@@ -810,21 +810,21 @@ export default function CustomersPage() {
 
                   {/* Order History */}
                   <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900">Order History</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Order History</h3>
                     {orders.length === 0 ? (
-                      <p className="mt-2 text-xs text-gray-400">No orders found.</p>
+                      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">No orders found.</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {orders.map((o) => (
                           <div
                             key={o.id}
-                            className="flex items-center justify-between rounded-lg border border-gray-100 px-3 py-2"
+                            className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2"
                           >
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-gray-900">
+                              <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                                 Order
                               </p>
-                              <p className="text-xs text-gray-400">
+                              <p className="text-xs text-gray-400 dark:text-gray-500">
                                 {new Date(o.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                                   day: 'numeric',
                                   month: 'short',
@@ -834,7 +834,7 @@ export default function CustomersPage() {
                             </div>
                             <div className="ml-3 flex shrink-0 items-center gap-2">
                               {o.total != null && o.total > 0 && (
-                                <span className="text-xs font-medium text-gray-600">
+                                <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
                                   {formatCurrency(o.total, cc)}
                                 </span>
                               )}
@@ -858,19 +858,19 @@ export default function CustomersPage() {
 
                   {/* Feedback */}
                   <div className="mt-6">
-                    <h3 className="text-sm font-semibold text-gray-900">Feedback</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Feedback</h3>
                     {feedback.length === 0 ? (
-                      <p className="mt-2 text-xs text-gray-400">No feedback yet.</p>
+                      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">No feedback yet.</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {feedback.map((f) => (
                           <div
                             key={f.id}
-                            className="rounded-lg border border-gray-100 px-3 py-2"
+                            className="rounded-lg border border-gray-100 dark:border-gray-700 px-3 py-2"
                           >
                             <div className="flex items-center justify-between">
                               <StarRating rating={f.rating} />
-                              <span className="text-xs text-gray-400">
+                              <span className="text-xs text-gray-400 dark:text-gray-500">
                                 {new Date(f.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                                   day: 'numeric',
                                   month: 'short',
@@ -878,7 +878,7 @@ export default function CustomersPage() {
                               </span>
                             </div>
                             {f.comment && (
-                              <p className="mt-1 text-xs text-gray-600">{f.comment}</p>
+                              <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">{f.comment}</p>
                             )}
                           </div>
                         ))}
@@ -888,25 +888,25 @@ export default function CustomersPage() {
 
                   {/* Editable Tags */}
                   <div className="mt-6">
-                    <label className="block text-sm font-semibold text-gray-900">Tags</label>
+                    <label className="block text-sm font-semibold text-gray-900 dark:text-gray-100">Tags</label>
                     <input
                       type="text"
                       value={editTags}
                       onChange={(e) => setEditTags(e.target.value)}
                       placeholder="vip, loyal, new (comma-separated)"
-                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
                     />
                   </div>
 
                   {/* Editable Notes */}
                   <div className="mt-4">
-                    <label className="block text-sm font-semibold text-gray-900">Notes</label>
+                    <label className="block text-sm font-semibold text-gray-900 dark:text-gray-100">Notes</label>
                     <textarea
                       value={editNotes}
                       onChange={(e) => setEditNotes(e.target.value)}
                       rows={3}
                       placeholder="Add internal notes about this customer..."
-                      className="mt-1 w-full resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      className="mt-1 w-full resize-none rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
                     />
                   </div>
 
@@ -928,7 +928,7 @@ export default function CustomersPage() {
                           onChange={(e) => { setWaMessage(e.target.value); setWaSent(false); }}
                           rows={2}
                           placeholder="Type a message to send via WhatsApp..."
-                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-green-500"
+                          className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-green-500"
                         />
                         {waSent && <p className="mt-1 text-xs text-green-600">Message sent!</p>}
                         <button

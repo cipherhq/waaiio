@@ -278,8 +278,8 @@ export default function InsightsPage() {
   return (
     <div>
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Intelligence Hub</h1>
-        <p className="mt-1 text-sm text-gray-500">AI-powered insights for {business.name}</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Intelligence Hub</h1>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">AI-powered insights for {business.name}</p>
         <PageHelp
           pageKey="insights"
           title="Intelligence Hub"
@@ -289,8 +289,8 @@ export default function InsightsPage() {
 
       {/* ── FREE: Snapshot ── */}
       <div className="mt-6">
-        <h2 className="text-lg font-semibold text-gray-900">Snapshot</h2>
-        <p className="text-sm text-gray-500">Key metrics at a glance</p>
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Snapshot</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400">Key metrics at a glance</p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             label="Busiest Day"
@@ -318,7 +318,7 @@ export default function InsightsPage() {
       {/* ── GROWTH: Trends & Recommendations ── */}
       <div className="mt-10">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-900">Trends & Recommendations</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Trends & Recommendations</h2>
           {!isGrowthOrAbove && <TierBadge tier="growth" />}
         </div>
         <TierLock locked={!isGrowthOrAbove} requiredTier="Growth">
@@ -350,7 +350,7 @@ export default function InsightsPage() {
           {/* Recommendation Cards */}
           {trends && trends.recommendations.length > 0 && (
             <div className="mt-6 space-y-3">
-              <h3 className="text-sm font-semibold text-gray-700">Recommendations</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recommendations</h3>
               {trends.recommendations.map((rec, i) => (
                 <div key={i} className="flex items-start gap-3 rounded-xl border border-amber-100 bg-amber-50 p-4">
                   <svg aria-hidden="true" className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -367,16 +367,16 @@ export default function InsightsPage() {
       {/* ── BUSINESS: Full Intelligence ── */}
       <div className="mt-10">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-900">Full Intelligence</h2>
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Full Intelligence</h2>
           {!isBusiness && <TierBadge tier="business" />}
         </div>
         <TierLock locked={!isBusiness} requiredTier="Business">
           {/* Customer Segments */}
-          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
-            <h3 className="text-sm font-semibold text-gray-900">Customer Segments</h3>
+          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Customer Segments</h3>
             {intelligence && intelligence.segments.total > 0 ? (
               <div className="mt-4">
-                <div className="flex h-4 w-full overflow-hidden rounded-full bg-gray-100">
+                <div className="flex h-4 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
                   <SegmentBar
                     pct={intelligence.segments.total > 0 ? (intelligence.segments.newCount / intelligence.segments.total) * 100 : 0}
                     color="bg-blue-500"
@@ -402,7 +402,7 @@ export default function InsightsPage() {
                 </div>
               </div>
             ) : (
-              <p className="mt-3 text-sm text-gray-400">No customer data yet.</p>
+              <p className="mt-3 text-sm text-gray-400 dark:text-gray-500">No customer data yet.</p>
             )}
           </div>
 
@@ -427,7 +427,7 @@ export default function InsightsPage() {
           {/* Alert Cards */}
           {intelligence && intelligence.alerts.length > 0 && (
             <div className="mt-6 space-y-3">
-              <h3 className="text-sm font-semibold text-gray-700">Alerts</h3>
+              <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Alerts</h3>
               {intelligence.alerts.map((alert, i) => (
                 <div key={i} className="flex items-start gap-3 rounded-xl border border-red-100 bg-red-50 p-4">
                   <svg aria-hidden="true" className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -457,12 +457,12 @@ function StatCard({
   sub?: string;
   accent?: 'green' | 'red';
 }) {
-  const accentClass = accent === 'green' ? 'text-green-600' : accent === 'red' ? 'text-red-600' : 'text-gray-900';
+  const accentClass = accent === 'green' ? 'text-green-600' : accent === 'red' ? 'text-red-600' : 'text-gray-900 dark:text-gray-100';
   return (
-    <div className="rounded-xl border border-gray-100 bg-white p-5">
-      <p className="text-xs font-medium text-gray-500">{label}</p>
+    <div className="rounded-xl border border-gray-100 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
+      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
       <p className={`mt-2 text-2xl font-bold ${accentClass}`}>{value}</p>
-      {sub && <p className="mt-1 text-xs text-gray-400">{sub}</p>}
+      {sub && <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">{sub}</p>}
     </div>
   );
 }
@@ -493,13 +493,13 @@ function TierLock({
   return (
     <div className="relative mt-4">
       <div className="pointer-events-none select-none blur-sm">{children}</div>
-      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/60 backdrop-blur-[2px]">
+      <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-white/60 backdrop-blur-[2px] dark:bg-gray-800/60">
         <div className="text-center">
-          <svg aria-hidden="true" className="mx-auto h-8 w-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+          <svg aria-hidden="true" className="mx-auto h-8 w-8 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
           </svg>
-          <p className="mt-2 text-sm font-semibold text-gray-700">Upgrade to {requiredTier}</p>
-          <p className="mt-1 text-xs text-gray-500">Unlock this section with a plan upgrade</p>
+          <p className="mt-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Upgrade to {requiredTier}</p>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Unlock this section with a plan upgrade</p>
           <a
             href="/dashboard/settings"
             className="mt-3 inline-block rounded-lg bg-brand px-4 py-2 text-xs font-medium text-white transition hover:bg-brand-600"
@@ -522,8 +522,8 @@ function SegmentLabel({ label, count, color }: { label: string; count: number; c
     <div className="flex items-center gap-2">
       <div className={`h-3 w-3 rounded-full ${color}`} />
       <div>
-        <p className="text-xs font-medium text-gray-700">{label}</p>
-        <p className="text-sm font-bold text-gray-900">{count}</p>
+        <p className="text-xs font-medium text-gray-700 dark:text-gray-300">{label}</p>
+        <p className="text-sm font-bold text-gray-900 dark:text-gray-100">{count}</p>
       </div>
     </div>
   );

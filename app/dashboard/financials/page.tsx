@@ -31,13 +31,13 @@ interface Transaction {
 }
 
 const flowTypeStyles: Record<string, string> = {
-  payment: 'bg-purple-100 text-purple-700',
-  booking: 'bg-blue-100 text-blue-700',
-  order: 'bg-green-100 text-green-700',
-  donation: 'bg-purple-100 text-purple-700',
-  crowdfund: 'bg-orange-100 text-orange-700',
-  ticket: 'bg-orange-100 text-orange-700',
-  event: 'bg-orange-100 text-orange-700',
+  payment: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  booking: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  order: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+  donation: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  crowdfund: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+  ticket: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+  event: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
 };
 
 export default function FinancialsPage() {
@@ -207,8 +207,8 @@ export default function FinancialsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Financials</h1>
-      <p className="mt-1 text-sm text-gray-500">Transaction tracking and revenue analytics</p>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Financials</h1>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Transaction tracking and revenue analytics</p>
 
       <PageHelp
         pageKey="financials"
@@ -226,17 +226,17 @@ export default function FinancialsPage() {
       </div>
 
       {/* Monthly Revenue Chart */}
-      <div className="mt-8 rounded-xl border border-gray-200 bg-white p-5">
-        <h3 className="text-sm font-semibold text-gray-900">Monthly {isGiving ? 'Giving' : 'Revenue'}</h3>
+      <div className="mt-8 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Monthly {isGiving ? 'Giving' : 'Revenue'}</h3>
         <div className="mt-4 flex items-end gap-3" style={{ height: 160 }}>
           {monthlyRevenue.map((m, i) => (
             <div key={i} className="flex flex-1 flex-col items-center gap-1">
-              <span className="text-[10px] text-gray-500">{m.amount > 0 ? formatCompact(m.amount) : ''}</span>
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">{m.amount > 0 ? formatCompact(m.amount) : ''}</span>
               <div
                 className="w-full rounded-t-md bg-brand transition-all"
                 style={{ height: `${Math.max(4, (m.amount / maxMonthly) * 140)}px` }}
               />
-              <span className="text-xs text-gray-500">{m.label}</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">{m.label}</span>
             </div>
           ))}
         </div>
@@ -248,7 +248,7 @@ export default function FinancialsPage() {
           <select
             value={typeFilter}
             onChange={e => { setTypeFilter(e.target.value); setPage(1); }}
-            className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 dark:bg-gray-700 focus:border-brand focus:outline-none"
           >
             <option value="all">All Types</option>
             {availableTypes.map(t => (
@@ -259,7 +259,7 @@ export default function FinancialsPage() {
         <select
           value={statusFilter}
           onChange={e => { setStatusFilter(e.target.value); setPage(1); }}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+          className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 dark:bg-gray-700 focus:border-brand focus:outline-none"
         >
           <option value="all">All Statuses</option>
           <option value="completed">Completed</option>
@@ -272,12 +272,12 @@ export default function FinancialsPage() {
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(1); }}
           placeholder={`Search reference or ${labels.personLabel.toLowerCase()}...`}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none sm:w-64"
+          className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm text-gray-700 dark:text-gray-100 dark:bg-gray-700 focus:border-brand focus:outline-none sm:w-64"
         />
         <div className="flex items-center gap-2">
-          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand" />
-          <span className="text-xs text-gray-400">to</span>
-          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand" />
+          <input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} className="rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand" />
+          <span className="text-xs text-gray-400 dark:text-gray-500">to</span>
+          <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} className="rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand" />
         </div>
         <CsvExportButton
           data={filtered.map(t => ({
@@ -294,49 +294,49 @@ export default function FinancialsPage() {
       </div>
 
       {/* Transaction Table */}
-      <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+      <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         {pageItems.length === 0 ? (
-          <div className="py-16 text-center text-sm text-gray-500">No transactions found</div>
+          <div className="py-16 text-center text-sm text-gray-500 dark:text-gray-400">No transactions found</div>
         ) : (
           <table className="w-full text-sm">
-            <thead className="border-b border-gray-100 bg-gray-50">
+            <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
               <tr>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date</th>
                 {availableTypes.length > 1 && (
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
+                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Type</th>
                 )}
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Description</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.personLabel}</th>
-                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Description</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</th>
+                <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
               {pageItems.map(t => (
-                <tr key={t.id} className="transition hover:bg-gray-50">
-                  <td className="px-4 py-3 text-gray-900 whitespace-nowrap">{formatDate(t.date)}</td>
+                <tr key={t.id} className="transition hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                  <td className="px-4 py-3 text-gray-900 dark:text-gray-100 whitespace-nowrap">{formatDate(t.date)}</td>
                   {availableTypes.length > 1 && (
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${flowTypeStyles[t.type] || 'bg-gray-100 text-gray-600'}`}>
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${flowTypeStyles[t.type] || 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
                         {t.type}
                       </span>
                     </td>
                   )}
-                  <td className="px-4 py-3 text-gray-700 max-w-[200px] truncate">{t.description}</td>
-                  <td className="px-4 py-3 text-gray-600">{t.customer}</td>
-                  <td className="px-4 py-3 text-right font-medium text-gray-900">{formatCurrency(t.amount, country)}</td>
+                  <td className="px-4 py-3 text-gray-700 dark:text-gray-300 max-w-[200px] truncate">{t.description}</td>
+                  <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{t.customer}</td>
+                  <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-gray-100">{formatCurrency(t.amount, country)}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                      t.status === 'completed' || t.status === 'confirmed' ? 'bg-green-100 text-green-700' :
-                      t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                      t.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-red-100 text-red-700'
+                      t.status === 'completed' || t.status === 'confirmed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
+                      t.status === 'in_progress' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
+                      t.status === 'pending' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300' :
+                      'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
                     }`}>
                       {t.status.replace('_', ' ')}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-500 font-mono text-xs">{t.reference}</td>
+                  <td className="px-4 py-3 text-gray-500 dark:text-gray-400 font-mono text-xs">{t.reference}</td>
                 </tr>
               ))}
             </tbody>
@@ -350,15 +350,15 @@ export default function FinancialsPage() {
           <button
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50"
           >
             Previous
           </button>
-          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <span className="text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50"
           >
             Next
           </button>
@@ -370,16 +370,16 @@ export default function FinancialsPage() {
 
 function MetricCard({ label, value, color }: { label: string; value: string; color: string }) {
   const colors: Record<string, string> = {
-    blue: 'bg-blue-50 border-blue-100',
-    green: 'bg-green-50 border-green-100',
-    orange: 'bg-orange-50 border-orange-100',
-    yellow: 'bg-yellow-50 border-yellow-100',
-    red: 'bg-red-50 border-red-100',
+    blue: 'bg-blue-50 border-blue-100 dark:bg-blue-900/20 dark:border-blue-800',
+    green: 'bg-green-50 border-green-100 dark:bg-green-900/20 dark:border-green-800',
+    orange: 'bg-orange-50 border-orange-100 dark:bg-orange-900/20 dark:border-orange-800',
+    yellow: 'bg-yellow-50 border-yellow-100 dark:bg-yellow-900/20 dark:border-yellow-800',
+    red: 'bg-red-50 border-red-100 dark:bg-red-900/20 dark:border-red-800',
   };
   return (
-    <div className={`rounded-xl border p-4 ${colors[color] || 'bg-gray-50 border-gray-100'}`}>
-      <p className="text-xs font-medium text-gray-500">{label}</p>
-      <p className="mt-1 text-xl font-bold text-gray-900">{value}</p>
+    <div className={`rounded-xl border p-4 ${colors[color] || 'bg-gray-50 border-gray-100 dark:bg-gray-800/50 dark:border-gray-700'}`}>
+      <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
+      <p className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">{value}</p>
     </div>
   );
 }

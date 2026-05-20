@@ -687,11 +687,11 @@ export default function CalendarPage() {
       <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setSelectedEntry(null)}>
         <div className="fixed inset-0 bg-black/30" />
         <div
-          className="relative z-10 w-full max-w-md rounded-xl bg-white shadow-xl"
+          className="relative z-10 w-full max-w-md rounded-xl bg-white shadow-xl dark:bg-gray-800"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Modal header */}
-          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+          <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4 dark:border-gray-700">
             <div>
               {entryType === 'booking' && (
                 <p className="font-mono text-lg font-bold text-brand">
@@ -709,7 +709,7 @@ export default function CalendarPage() {
                 </p>
               )}
               {entryType === 'blocked' && (
-                <p className="text-lg font-bold text-gray-700">
+                <p className="text-lg font-bold text-gray-700 dark:text-gray-300">
                   Blocked Dates
                 </p>
               )}
@@ -725,12 +725,12 @@ export default function CalendarPage() {
                 }`}>
                   {selectedEntry.status.replace('_', ' ')}
                 </span>
-                <span className="text-xs text-gray-400 capitalize">{entryType}</span>
+                <span className="text-xs text-gray-400 capitalize dark:text-gray-500">{entryType}</span>
               </div>
             </div>
             <button
               onClick={() => setSelectedEntry(null)}
-              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100"
+              className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 dark:text-gray-500 dark:hover:bg-gray-700"
             >
               <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -746,38 +746,38 @@ export default function CalendarPage() {
               return (
                 <>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500">Guest</h3>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Guest</h3>
+                    <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
                       {b.guest_name || '\u2014'}
                     </p>
                     {b.guest_phone && (
-                      <p className="text-sm text-gray-500">{b.guest_phone}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">{b.guest_phone}</p>
                     )}
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Details</h3>
                     <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
                       <div>
-                        <span className="text-gray-400">Date</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">Date</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {new Date(b.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
                           })}
                         </p>
                       </div>
                       <div>
-                        <span className="text-gray-400">Time</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">Time</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {b.time ? formatTime(b.time) : '\u2014'}
                         </p>
                       </div>
                       <div>
-                        <span className="text-gray-400">Party Size</span>
-                        <p className="font-medium text-gray-900">{b.party_size}</p>
+                        <span className="text-gray-400 dark:text-gray-500">Party Size</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">{b.party_size}</p>
                       </div>
                       {staffList.length > 0 ? (
                         <div>
-                          <span className="text-gray-400">Staff</span>
+                          <span className="text-gray-400 dark:text-gray-500">Staff</span>
                           <select
                             value={b.staff_id || ''}
                             onChange={async (e) => {
@@ -793,7 +793,7 @@ export default function CalendarPage() {
                               setSelectedEntry(null);
                               fetchData();
                             }}
-                            className="mt-0.5 block w-full text-sm font-medium border border-gray-200 rounded-lg px-2 py-1"
+                            className="mt-0.5 block w-full text-sm font-medium border border-gray-200 rounded-lg px-2 py-1 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                           >
                             <option value="">Unassigned</option>
                             {staffList.map(s => (
@@ -803,8 +803,8 @@ export default function CalendarPage() {
                         </div>
                       ) : b.staff_name ? (
                         <div>
-                          <span className="text-gray-400">Staff</span>
-                          <p className="font-medium text-gray-900">{b.staff_name}</p>
+                          <span className="text-gray-400 dark:text-gray-500">Staff</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">{b.staff_name}</p>
                         </div>
                       ) : null}
                     </div>
@@ -817,7 +817,7 @@ export default function CalendarPage() {
                   )}
                   {nextActions[selectedEntry.status] && nextActions[selectedEntry.status].length > 0 && (
                     <div>
-                      <h3 className="text-sm font-medium text-gray-500">Actions</h3>
+                      <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Actions</h3>
                       <div className="mt-2 flex flex-wrap gap-2">
                         {nextActions[selectedEntry.status].map((action) => (
                           <button
@@ -830,7 +830,7 @@ export default function CalendarPage() {
                                 updateStatus(b.id, action.next);
                               }
                             }}
-                            className={`rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium ${action.color}`}
+                            className={`rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium dark:border-gray-600 ${action.color}`}
                           >
                             {action.label}
                           </button>
@@ -867,55 +867,55 @@ export default function CalendarPage() {
               return (
                 <>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500">Guest</h3>
-                    <p className="mt-1 text-sm font-medium text-gray-900">
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Guest</h3>
+                    <p className="mt-1 text-sm font-medium text-gray-900 dark:text-gray-100">
                       {r.guest_name || '\u2014'}
                     </p>
                     {r.guest_phone && (
-                      <p className="text-sm text-gray-500">{r.guest_phone}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">{r.guest_phone}</p>
                     )}
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Details</h3>
                     <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
                       {r.property?.name && (
                         <div className="col-span-2">
-                          <span className="text-gray-400">Property</span>
-                          <p className="font-medium text-gray-900">{r.property.name}</p>
+                          <span className="text-gray-400 dark:text-gray-500">Property</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">{r.property.name}</p>
                         </div>
                       )}
                       <div>
-                        <span className="text-gray-400">Check-in</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">Check-in</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {new Date(r.check_in + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             weekday: 'short', day: 'numeric', month: 'short',
                           })}
                         </p>
                       </div>
                       <div>
-                        <span className="text-gray-400">Check-out</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">Check-out</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {new Date(r.check_out + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             weekday: 'short', day: 'numeric', month: 'short',
                           })}
                         </p>
                       </div>
                       <div>
-                        <span className="text-gray-400">Guests</span>
-                        <p className="font-medium text-gray-900">{r.guests}</p>
+                        <span className="text-gray-400 dark:text-gray-500">Guests</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">{r.guests}</p>
                       </div>
                       <div>
-                        <span className="text-gray-400">Amount</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">Amount</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {formatCurrency(r.total_amount, (business.country_code || 'NG') as CountryCode)}
                         </p>
                       </div>
                       {r.deposit_amount > 0 && (
                         <div>
-                          <span className="text-gray-400">Deposit</span>
-                          <p className="font-medium text-gray-900">
+                          <span className="text-gray-400 dark:text-gray-500">Deposit</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">
                             {formatCurrency(r.deposit_amount, (business.country_code || 'NG') as CountryCode)}
-                            <span className="ml-1 text-xs text-gray-400 capitalize">({r.deposit_status})</span>
+                            <span className="ml-1 text-xs text-gray-400 capitalize dark:text-gray-500">({r.deposit_status})</span>
                           </p>
                         </div>
                       )}
@@ -927,7 +927,7 @@ export default function CalendarPage() {
                       <p className="mt-1 text-sm text-indigo-700">{r.special_requests}</p>
                     </div>
                   )}
-                  <p className="text-xs text-gray-400">Manage reservation status on the Reservations page.</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Manage reservation status on the Reservations page.</p>
                 </>
               );
             })()}
@@ -938,11 +938,11 @@ export default function CalendarPage() {
               return (
                 <>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Details</h3>
                     <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
                       <div>
-                        <span className="text-gray-400">Date</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">Date</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {new Date(ev.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
                           })}
@@ -950,19 +950,19 @@ export default function CalendarPage() {
                       </div>
                       {ev.time && (
                         <div>
-                          <span className="text-gray-400">Time</span>
-                          <p className="font-medium text-gray-900">{formatTime(ev.time)}</p>
+                          <span className="text-gray-400 dark:text-gray-500">Time</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">{formatTime(ev.time)}</p>
                         </div>
                       )}
                       {ev.venue && (
                         <div className="col-span-2">
-                          <span className="text-gray-400">Venue</span>
-                          <p className="font-medium text-gray-900">{ev.venue}</p>
+                          <span className="text-gray-400 dark:text-gray-500">Venue</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">{ev.venue}</p>
                         </div>
                       )}
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400">Manage event details on the Events page.</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Manage event details on the Events page.</p>
                 </>
               );
             })()}
@@ -973,25 +973,25 @@ export default function CalendarPage() {
               return (
                 <>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-500">Details</h3>
+                    <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">Details</h3>
                     <div className="mt-2 grid grid-cols-2 gap-3 text-sm">
                       {bd.property?.name && (
                         <div className="col-span-2">
-                          <span className="text-gray-400">Property</span>
-                          <p className="font-medium text-gray-900">{bd.property.name}</p>
+                          <span className="text-gray-400 dark:text-gray-500">Property</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">{bd.property.name}</p>
                         </div>
                       )}
                       <div>
-                        <span className="text-gray-400">From</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">From</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {new Date(bd.date_from + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             weekday: 'short', day: 'numeric', month: 'short',
                           })}
                         </p>
                       </div>
                       <div>
-                        <span className="text-gray-400">To</span>
-                        <p className="font-medium text-gray-900">
+                        <span className="text-gray-400 dark:text-gray-500">To</span>
+                        <p className="font-medium text-gray-900 dark:text-gray-100">
                           {new Date(bd.date_to + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                             weekday: 'short', day: 'numeric', month: 'short',
                           })}
@@ -999,13 +999,13 @@ export default function CalendarPage() {
                       </div>
                       {bd.reason && (
                         <div className="col-span-2">
-                          <span className="text-gray-400">Reason</span>
-                          <p className="font-medium text-gray-900">{bd.reason}</p>
+                          <span className="text-gray-400 dark:text-gray-500">Reason</span>
+                          <p className="font-medium text-gray-900 dark:text-gray-100">{bd.reason}</p>
                         </div>
                       )}
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400">Manage blocked dates on the Properties page.</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Manage blocked dates on the Properties page.</p>
                 </>
               );
             })()}
@@ -1018,27 +1018,27 @@ export default function CalendarPage() {
   return (
     <div>
       {error && (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-400">
           Something went wrong loading data. <button onClick={() => { setError(false); fetchData(); }} className="font-medium underline">Try again</button>
         </div>
       )}
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Calendar</h1>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Calendar</h1>
           <PageHelp
             pageKey="calendar"
             title="Booking Calendar"
             description="Visual calendar view of all your bookings. Switch between month, week, and day views. Click on a booking to see details or reschedule."
           />
         </div>
-        <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1">
+        <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-800">
           {(['month', 'week', 'day'] as ViewMode[]).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
               className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize transition ${
-                view === v ? 'bg-brand text-white' : 'text-gray-600 hover:bg-gray-50'
+                view === v ? 'bg-brand text-white' : 'text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-700/50'
               }`}
             >
               {v}
@@ -1051,13 +1051,13 @@ export default function CalendarPage() {
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         {/* Filter tabs */}
         {filterOptions.length > 2 && (
-          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1">
+          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1 dark:border-gray-700 dark:bg-gray-800">
             {filterOptions.map((f) => (
               <button
                 key={f.key}
                 onClick={() => setFilter(f.key)}
                 className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
-                  filter === f.key ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-50'
+                  filter === f.key ? 'bg-gray-800 text-white dark:bg-gray-600' : 'text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-700/50'
                 }`}
               >
                 {f.label}
@@ -1071,7 +1071,7 @@ export default function CalendarPage() {
           <select
             value={staffFilter}
             onChange={e => setStaffFilter(e.target.value)}
-            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs"
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
           >
             <option value="all">All Staff</option>
             {staffList.map(s => (
@@ -1086,7 +1086,7 @@ export default function CalendarPage() {
             {legendItems.map((item) => (
               <div key={item.label} className="flex items-center gap-1">
                 <span className={`inline-block h-2.5 w-2.5 rounded-full ${item.dotColor}`} />
-                <span className="text-xs text-gray-500">{item.label}</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">{item.label}</span>
               </div>
             ))}
           </div>
@@ -1097,7 +1097,7 @@ export default function CalendarPage() {
       <div className="mt-3 flex items-center gap-3">
         <button
           onClick={() => navigate(-1)}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/50"
         >
           <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -1105,19 +1105,19 @@ export default function CalendarPage() {
         </button>
         <button
           onClick={goToToday}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/50"
         >
           Today
         </button>
         <button
           onClick={() => navigate(1)}
-          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50"
+          className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700/50"
         >
           <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
           </svg>
         </button>
-        <h2 className="text-lg font-semibold text-gray-800">{periodLabel}</h2>
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">{periodLabel}</h2>
       </div>
 
       {/* Loading */}
@@ -1129,10 +1129,10 @@ export default function CalendarPage() {
         <>
           {/* Month View */}
           {view === 'month' && (
-            <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
-              <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/50">
+            <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+              <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/50 dark:border-gray-700 dark:bg-gray-800/30">
                 {DAY_NAMES.map((d) => (
-                  <div key={d} className="px-2 py-2 text-center text-xs font-medium text-gray-500">
+                  <div key={d} className="px-2 py-2 text-center text-xs font-medium text-gray-500 dark:text-gray-400">
                     {d}
                   </div>
                 ))}
@@ -1150,8 +1150,8 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={key}
-                      className={`min-h-[100px] border-b border-r border-gray-100 p-1.5 ${
-                        isOtherMonth ? 'bg-gray-50/40' : ''
+                      className={`min-h-[100px] border-b border-r border-gray-100 p-1.5 dark:border-gray-700 ${
+                        isOtherMonth ? 'bg-gray-50/40 dark:bg-gray-800/30' : ''
                       }`}
                     >
                       <div className="mb-1 flex items-center justify-between">
@@ -1160,20 +1160,20 @@ export default function CalendarPage() {
                             isToday
                               ? 'bg-brand text-white'
                               : isOtherMonth
-                              ? 'text-gray-300'
-                              : 'text-gray-700'
+                              ? 'text-gray-300 dark:text-gray-600'
+                              : 'text-gray-700 dark:text-gray-300'
                           }`}
                         >
                           {date.getDate()}
                         </span>
                         {dayEntries.length > 0 && (
-                          <span className="text-[10px] text-gray-400">{dayEntries.length}</span>
+                          <span className="text-[10px] text-gray-400 dark:text-gray-500">{dayEntries.length}</span>
                         )}
                       </div>
                       <div className="flex flex-col gap-0.5">
                         {visible.map((entry) => renderEntryPill(entry))}
                         {extra > 0 && (
-                          <span className="px-1 text-[10px] text-gray-400">+{extra} more</span>
+                          <span className="px-1 text-[10px] text-gray-400 dark:text-gray-500">+{extra} more</span>
                         )}
                       </div>
                     </div>
@@ -1185,7 +1185,7 @@ export default function CalendarPage() {
 
           {/* Week View */}
           {view === 'week' && (
-            <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
               {/* All-day / multi-day entries row */}
               {(() => {
                 const allDayEntries = weekDays.map((d) => {
@@ -1195,14 +1195,14 @@ export default function CalendarPage() {
                 const hasAllDay = allDayEntries.some((arr) => arr.length > 0);
                 if (!hasAllDay) return null;
                 return (
-                  <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-200 bg-gray-50/30">
-                    <div className="flex items-start justify-end border-r border-gray-100 px-2 py-1">
-                      <span className="text-[10px] text-gray-400">All day</span>
+                  <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-200 bg-gray-50/30 dark:border-gray-700 dark:bg-gray-800/30">
+                    <div className="flex items-start justify-end border-r border-gray-100 px-2 py-1 dark:border-gray-700">
+                      <span className="text-[10px] text-gray-400 dark:text-gray-500">All day</span>
                     </div>
                     {weekDays.map((d, i) => {
                       const entries = allDayEntries[i];
                       return (
-                        <div key={formatDateKey(d)} className="min-h-[32px] border-r border-gray-50 p-0.5 last:border-r-0">
+                        <div key={formatDateKey(d)} className="min-h-[32px] border-r border-gray-50 p-0.5 last:border-r-0 dark:border-gray-700">
                           {entries.map((entry) => renderEntryPill(entry, true))}
                         </div>
                       );
@@ -1211,17 +1211,17 @@ export default function CalendarPage() {
                 );
               })()}
               {/* Header row with day names */}
-              <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-100 bg-gray-50/50">
-                <div className="border-r border-gray-100 px-2 py-2" />
+              <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-100 bg-gray-50/50 dark:border-gray-700 dark:bg-gray-800/30">
+                <div className="border-r border-gray-100 px-2 py-2 dark:border-gray-700" />
                 {weekDays.map((d) => {
                   const key = formatDateKey(d);
                   const isToday = key === today;
                   return (
-                    <div key={key} className="border-r border-gray-100 px-2 py-2 text-center last:border-r-0">
-                      <span className="text-xs text-gray-500">{DAY_NAMES[d.getDay()]}</span>
+                    <div key={key} className="border-r border-gray-100 px-2 py-2 text-center last:border-r-0 dark:border-gray-700">
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{DAY_NAMES[d.getDay()]}</span>
                       <div
                         className={`mx-auto mt-0.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium ${
-                          isToday ? 'bg-brand text-white' : 'text-gray-700'
+                          isToday ? 'bg-brand text-white' : 'text-gray-700 dark:text-gray-300'
                         }`}
                       >
                         {d.getDate()}
@@ -1233,9 +1233,9 @@ export default function CalendarPage() {
               {/* Time slots */}
               <div className="max-h-[600px] overflow-y-auto">
                 {HOURS.map((hour) => (
-                  <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-50 last:border-b-0">
-                    <div className="flex items-start justify-end border-r border-gray-100 px-2 py-1">
-                      <span className="text-[10px] text-gray-400">
+                  <div key={hour} className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-50 last:border-b-0 dark:border-gray-700">
+                    <div className="flex items-start justify-end border-r border-gray-100 px-2 py-1 dark:border-gray-700">
+                      <span className="text-[10px] text-gray-400 dark:text-gray-500">
                         {hour % 12 || 12}{hour >= 12 ? 'PM' : 'AM'}
                       </span>
                     </div>
@@ -1248,7 +1248,7 @@ export default function CalendarPage() {
                         return eHour === hour;
                       });
                       return (
-                        <div key={`${key}-${hour}`} className="min-h-[48px] border-r border-gray-50 p-0.5 last:border-r-0">
+                        <div key={`${key}-${hour}`} className="min-h-[48px] border-r border-gray-50 p-0.5 last:border-r-0 dark:border-gray-700">
                           {hourEntries.map((entry) => renderEntryPill(entry))}
                         </div>
                       );
@@ -1261,15 +1261,15 @@ export default function CalendarPage() {
 
           {/* Day View */}
           {view === 'day' && (
-            <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white">
+            <div className="mt-4 overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
               {/* All-day entries */}
               {(() => {
                 const key = formatDateKey(currentDate);
                 const allDayEntries = (entriesByDate[key] || []).filter((e) => !e.time);
                 if (allDayEntries.length === 0) return null;
                 return (
-                  <div className="border-b border-gray-200 bg-gray-50/30 p-3">
-                    <p className="mb-1 text-xs font-medium text-gray-400">All Day</p>
+                  <div className="border-b border-gray-200 bg-gray-50/30 p-3 dark:border-gray-700 dark:bg-gray-800/30">
+                    <p className="mb-1 text-xs font-medium text-gray-400 dark:text-gray-500">All Day</p>
                     <div className="flex flex-col gap-1">
                       {allDayEntries.map((entry) => (
                         <button
@@ -1310,10 +1310,10 @@ export default function CalendarPage() {
                   return (
                     <div
                       key={hour}
-                      className="grid grid-cols-[72px_1fr] border-b border-gray-50 last:border-b-0"
+                      className="grid grid-cols-[72px_1fr] border-b border-gray-50 last:border-b-0 dark:border-gray-700"
                     >
-                      <div className="flex items-start justify-end border-r border-gray-100 px-3 py-2">
-                        <span className="text-xs text-gray-400">
+                      <div className="flex items-start justify-end border-r border-gray-100 px-3 py-2 dark:border-gray-700">
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
                           {hour % 12 || 12}:00 {hour >= 12 ? 'PM' : 'AM'}
                         </span>
                       </div>
@@ -1364,8 +1364,8 @@ export default function CalendarPage() {
 
           {/* Empty state */}
           {filteredEntries.length === 0 && (
-            <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-12 text-center">
-              <p className="text-sm text-gray-400">
+            <div className="mt-4 rounded-xl border border-dashed border-gray-200 p-12 text-center dark:border-gray-700">
+              <p className="text-sm text-gray-400 dark:text-gray-500">
                 {filter === 'all' ? 'No entries for this period' : `No ${filter}s for this period`}
               </p>
             </div>
@@ -1380,9 +1380,9 @@ export default function CalendarPage() {
       {actionModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setActionModal(null)}>
           <div className="fixed inset-0 bg-black/40" />
-          <div className="relative z-10 w-full max-w-sm rounded-xl bg-white p-6 shadow-xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-lg font-bold text-gray-900">{actionModal.label}</h3>
-            <p className="mt-1 text-sm text-gray-500">
+          <div className="relative z-10 w-full max-w-sm rounded-xl bg-white p-6 shadow-xl dark:bg-gray-800" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100">{actionModal.label}</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               {actionModal.inputType === 'reason' ? 'Why did the customer miss their appointment?' : 'Any notes for this visit? (optional)'}
             </p>
             <textarea
@@ -1390,13 +1390,13 @@ export default function CalendarPage() {
               onChange={e => setActionInput(e.target.value)}
               rows={3}
               placeholder={actionModal.inputType === 'reason' ? 'e.g. No answer, cancelled last minute...' : 'e.g. Arrived 5 min early, brought a friend...'}
-              className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+              className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               autoFocus
             />
             <div className="mt-4 flex gap-2">
               <button
                 onClick={() => setActionModal(null)}
-                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700/50"
               >
                 Cancel
               </button>

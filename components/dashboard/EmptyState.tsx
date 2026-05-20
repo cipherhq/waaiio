@@ -26,13 +26,13 @@ export default function EmptyState({
 
   return (
     <div className="mx-auto mt-16 flex max-w-md flex-col items-center text-center">
-      <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-brand-50">
+      <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-brand-50 dark:bg-brand-900/30">
         <span className="text-4xl leading-none">{icon}</span>
       </div>
 
-      <h3 className="mt-6 text-lg font-bold text-gray-900">{title}</h3>
+      <h3 className="mt-6 text-lg font-bold text-gray-900 dark:text-gray-100">{title}</h3>
 
-      <p className="mt-2 text-sm leading-relaxed text-gray-500">{description}</p>
+      <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">{description}</p>
 
       {actionLabel && (
         <ActionTag
@@ -44,8 +44,8 @@ export default function EmptyState({
       )}
 
       {tip && (
-        <div className="mt-6 w-full rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-left">
-          <p className="text-xs leading-relaxed text-blue-700">
+        <div className="mt-6 w-full rounded-xl border border-blue-100 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/20 px-4 py-3 text-left">
+          <p className="text-xs leading-relaxed text-blue-700 dark:text-blue-300">
             <span className="font-semibold">Tip:</span>{' '}
             {tip.replace(/^Tip:\s*/i, '')}
           </p>

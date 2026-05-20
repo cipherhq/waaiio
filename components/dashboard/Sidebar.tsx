@@ -433,7 +433,7 @@ export function Sidebar() {
         {Array.from(sections.entries()).map(([section, items], idx) => (
           <div key={section}>
             {section !== 'main' && (
-              <p className={`${idx > 0 ? 'mt-5' : ''} mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-400`}>
+              <p className={`${idx > 0 ? 'mt-5' : ''} mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500`}>
                 {sectionLabels[section] || section}
               </p>
             )}
@@ -447,7 +447,7 @@ export function Sidebar() {
                   className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition ${
                     isActive(item.href)
                       ? 'bg-brand text-white'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                      : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100'
                   }`}
                 >
                   <svg
@@ -477,11 +477,11 @@ export function Sidebar() {
       </nav>
 
       {/* Bottom actions */}
-      <div className="border-t border-gray-200 px-3 py-3 space-y-0.5">
+      <div className="border-t border-gray-200 dark:border-gray-700 px-3 py-3 space-y-0.5">
         <ThemeToggle />
         <Link
           href="/"
-          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
+          className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100"
         >
           <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
@@ -490,7 +490,7 @@ export function Sidebar() {
         </Link>
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-gray-500 dark:text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100"
         >
           <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
@@ -506,7 +506,7 @@ export function Sidebar() {
       {/* Mobile hamburger */}
       <button
         onClick={() => setMobileOpen(true)}
-        className="fixed left-4 top-4 z-40 rounded-lg bg-white p-2 shadow-md md:hidden"
+        className="fixed left-4 top-4 z-40 rounded-lg bg-white dark:bg-gray-800 p-2 shadow-md md:hidden"
         aria-label="Open menu"
       >
         <svg aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -518,10 +518,10 @@ export function Sidebar() {
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} />
-          <div className="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-xl flex flex-col">
+          <div className="absolute left-0 top-0 bottom-0 w-72 bg-white dark:bg-gray-900 shadow-xl flex flex-col">
             <button
               onClick={() => setMobileOpen(false)}
-              className="absolute right-3 top-3 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              className="absolute right-3 top-3 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600"
               aria-label="Close menu"
             >
               <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -534,7 +534,7 @@ export function Sidebar() {
       )}
 
       {/* Desktop sidebar */}
-      <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:flex md:w-64 md:flex-col md:border-r md:border-gray-200 md:bg-white md:z-30">
+      <aside className="hidden md:fixed md:inset-y-0 md:left-0 md:flex md:w-64 md:flex-col md:border-r md:border-gray-200 dark:md:border-gray-700 md:bg-white dark:md:bg-gray-900 md:z-30">
         {navContent}
       </aside>
     </>
