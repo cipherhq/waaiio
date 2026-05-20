@@ -712,7 +712,7 @@ export const schedulingFlow: FlowDefinition = {
           // Deactivate session so "Send Hi" actually starts fresh
           await ctx.supabase
             .from('bot_sessions')
-            .update({ is_active: false, last_active_at: new Date().toISOString() })
+            .update({ is_active: false })
             .eq('id', ctx.session.id);
           return [{
             type: 'text',
@@ -1555,7 +1555,7 @@ export const schedulingFlow: FlowDefinition = {
 
           await ctx.supabase
             .from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
+            .update({ current_step: 'complete', is_active: false })
             .eq('id', ctx.session.id);
 
           return [{
@@ -1641,7 +1641,7 @@ export const schedulingFlow: FlowDefinition = {
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
           await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
+            .update({ current_step: 'complete', is_active: false })
             .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
         }
@@ -1924,7 +1924,7 @@ export const schedulingFlow: FlowDefinition = {
         // No deposit — booking confirmed
         await ctx.supabase
           .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false, last_active_at: new Date().toISOString() })
+          .update({ current_step: 'complete', is_active: false })
           .eq('id', ctx.session.id);
 
         // Custom template for standalone bots

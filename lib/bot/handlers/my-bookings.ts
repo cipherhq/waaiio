@@ -271,7 +271,7 @@ export async function handleModifyBooking(
 
   if (!bookingId) {
     await sendText(from, 'Something went wrong. Send *my bookings* to try again.');
-    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
 
@@ -284,7 +284,7 @@ export async function handleModifyBooking(
 
     if (!booking) {
       await sendText(from, 'Booking not found. Send *my bookings* to try again.');
-      await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       return;
     }
 
@@ -316,7 +316,7 @@ export async function handleModifyBooking(
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
     await sendText(from, 'Action cancelled. Send *Hi* to start fresh or type *switch <business name>* to visit another business. 🙏');
-    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
 
@@ -360,7 +360,7 @@ export async function handleModifyBooking(
     }
 
     await sendText(from, '✓ Cancelled.\n\nSend *Hi* to start fresh or *my bookings* to manage others.');
-    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
 
@@ -374,7 +374,7 @@ export async function handleModifyBooking(
 
     if (!booking || !booking.business_id) {
       await sendText(from, 'Could not load booking details. Send *my bookings* to try again.');
-      await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       return;
     }
 
@@ -386,7 +386,7 @@ export async function handleModifyBooking(
 
     if (!biz) {
       await sendText(from, 'Business not found. Send *Hi* to start over.');
-      await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       return;
     }
 

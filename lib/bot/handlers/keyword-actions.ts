@@ -42,7 +42,7 @@ export async function executeKeywordAction(
   };
 
   const deactivateSession = async (sessionId: string) => {
-    await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', sessionId);
+    await supabase.from('bot_sessions').update({ is_active: false }).eq('id', sessionId);
   };
 
   try {
@@ -84,7 +84,7 @@ export async function executeKeywordAction(
 
         if (action === 'show_status' || action === 'show_history') {
           // Bookings / history
-          await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
           const phoneP = from.startsWith('+') ? from : `+${from}`;
           const phoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: profile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
@@ -108,7 +108,7 @@ export async function executeKeywordAction(
         }
 
         if (action === 'show_receipt') {
-          await supabase.from('bot_sessions').update({ is_active: false, last_active_at: new Date().toISOString() }).eq('id', session.id);
+          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
           const phoneP = from.startsWith('+') ? from : `+${from}`;
           const phoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: profile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
