@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Add Structured Logging with Request Context
+- **Files:** `lib/logger.ts`, `middleware.ts`, `app/api/webhook/whatsapp/route.ts`, `app/api/webhook/meta-cloud/route.ts`
+- **What:** Enhanced logger with `withContext()` method for child loggers carrying metadata (requestId, from phone). Added `generateRequestId()` utility. Production logs now output structured `key=value` format. Middleware generates `x-request-id` header on every request. Both webhook routes use contextual loggers for traceability.
+- **Affects:** All existing `logger.info/warn/error/debug` call sites remain compatible (additive change). Vercel logs now contain structured context for webhook debugging.
+- **Could break:** Nothing — existing API is unchanged. New `withContext` is opt-in.
+
 ### Add PWA Support
 
 - **`app/manifest.ts`** — Enhanced manifest: added full name, description, `start_url: /dashboard`, `orientation: portrait-primary`, `purpose: any maskable` on icons
