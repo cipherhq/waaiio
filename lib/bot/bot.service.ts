@@ -20,6 +20,11 @@ import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
 import { isWithinBusinessHours, type BusinessHours } from './business-hours';
 import type { BotSession, BusinessRecord, BotContext } from './bot-types';
+import { getActiveSession as _getActiveSession, deactivateSession as _deactivateSession, sendBotText, forwardToBusinessOwner as _forwardToBusinessOwner } from './bot-helpers';
+import { getFirstStep as _getFirstStep, getFirstStepFromCapabilities as _getFirstStepFromCapabilities, capabilityToFirstStep as _capabilityToFirstStep } from './handlers/flow-routing';
+import { handleQuoteResponse as _handleQuoteResponse } from './handlers/quote-response';
+import { handleTicketCheckin as _handleTicketCheckin } from './handlers/ticket-checkin';
+import { handleTransactionDocument as _handleTransactionDocument } from './handlers/transaction-docs';
 
 // ── Escape hatches: always hardcoded, never overridable ──
 const ESCAPE_HATCH_PATTERNS = [
@@ -2778,65 +2783,15 @@ export class BotService {
   }
 
   private getFirstStep(flowType: FlowType): string {
-    switch (flowType) {
-      case 'scheduling': return 'select_service';
-      case 'payment': return 'select_category';
-      case 'ordering': return 'browse_catalog';
-      case 'ticketing': return 'select_event';
-      case 'queue': return 'queue_start';
-      case 'reservation': return 'select_service';
-      default: return 'select_service';
-    }
+    return _getFirstStep(flowType);
   }
 
-  /**
-   * Determine the first step based on capabilities.
-   * - Single capability → go directly to that flow's first step
-   * - Multiple capabilities → show capability selection menu
-   * - Fallback to flow_type if no capabilities loaded
-   */
   private getFirstStepFromCapabilities(capabilities: CapabilityId[], flowType: FlowType): string {
-    if (capabilities.length === 0) {
-      return this.getFirstStep(flowType);
-    }
-
-    // Filter to user-facing capabilities only (same filter as select_capability prompt)
-    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
-    // If scheduling is present, payment/invoice happen within the booking flow — don't show as separate options
-    if (capabilities.includes('scheduling')) {
-      nonUserFacing.add('payment');
-      nonUserFacing.add('invoice');
-    }
-    const userFacing = capabilities.filter(c => !nonUserFacing.has(c));
-
-    if (userFacing.length <= 1) {
-      return this.capabilityToFirstStep(userFacing[0] || capabilities[0]);
-    }
-
-    // Multiple user-facing capabilities — route to capability selection
-    return 'select_capability';
+    return _getFirstStepFromCapabilities(capabilities, flowType);
   }
 
   private capabilityToFirstStep(cap: CapabilityId): string {
-    switch (cap) {
-      case 'appointment': return 'select_appointment';
-      case 'scheduling': return 'select_service';
-      case 'giving': return 'select_category';
-      case 'payment': return 'select_category';
-      case 'ordering': return 'browse_catalog';
-      case 'ticketing': return 'select_event';
-      case 'crowdfunding': return 'select_campaign';
-      case 'reminders': return 'select_service'; // reminders piggyback on scheduling
-      case 'queue': return 'queue_start';
-      case 'reports': return 'select_service'; // reports are dashboard-only, no bot flow
-      case 'chat': return 'chat_start';
-      case 'waitlist': return 'waitlist_join';
-      case 'feedback': return 'select_service'; // feedback is post-completion
-      case 'loyalty': return 'loyalty_menu';
-      case 'referral': return 'select_service'; // referral is post-completion
-      case 'staff': return 'select_service'; // staff enhances scheduling
-      default: return 'select_service';
-    }
+    return _capabilityToFirstStep(cap);
   }
 
   // ── My Bookings ──────────────────────────────────────
@@ -3503,274 +3458,19 @@ export class BotService {
   // ── Transaction Document Handler ──────────────────────────
 
   private async handleTransactionDocument(from: string, userId: string, type: 'history' | 'receipt' | 'annual'): Promise<void> {
-    const labelMap = { history: 'transaction history', receipt: 'receipt', annual: 'annual statement' };
-    const label = labelMap[type];
-    await this.sendText(from, `Generating your ${label}... 📄`);
-
-    try {
-      // Try PDF first, fall back to text receipt
-      let pdfSent = false;
-      try {
-        const { generateDocumentDirect } = await import('@/lib/receipts/generate-direct');
-        const result = await generateDocumentDirect(userId, type, from);
-        if (result) {
-          await this.messageSender.sendDocument({
-            to: from,
-            documentUrl: result.url,
-            filename: result.filename,
-            caption: type === 'history' ? 'Your transaction history' : type === 'annual' ? 'Your annual statement' : 'Your latest receipt',
-          });
-          pdfSent = true;
-        }
-      } catch (pdfErr) {
-        logger.error('[BOT] PDF receipt failed, falling back to text:', pdfErr);
-      }
-
-      // Fallback: send a text receipt with recent transaction details
-      if (!pdfSent) {
-        const textReceipt = await this.buildTextReceipt(userId, from, type);
-        if (textReceipt) {
-          await this.sendText(from, textReceipt);
-        } else {
-          await this.sendText(from, `No transactions found. Make a booking first, then come back for your ${label}!`);
-        }
-      }
-    } catch (err) {
-      logger.error('[BOT] handleTransactionDocument error:', err);
-      await this.sendText(from, `Sorry, I couldn't generate your ${label} right now. Please try again later.`);
-    }
-  }
-
-  // ── Text Receipt Builder (fallback when PDF fails) ──────
-  private async buildTextReceipt(userId: string, phone: string, type: string): Promise<string | null> {
-    const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
-    const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
-
-    // Fetch recent transactions from multiple sources
-    const [{ data: bookings }, { data: payments }, { data: invoices }, { data: donations }] = await Promise.all([
-      this.supabase.from('bookings')
-        .select('reference_code, date, total_amount, status, created_at, services(name), businesses(name, country_code)')
-        .eq('user_id', userId)
-        .in('status', ['completed', 'confirmed', 'pending'])
-        .order('created_at', { ascending: false }).limit(5),
-      this.supabase.from('payments')
-        .select('gateway_reference, amount, status, created_at, businesses:business_id(name, country_code)')
-        .eq('user_id', userId).eq('status', 'success')
-        .order('created_at', { ascending: false }).limit(5),
-      this.supabase.from('invoices')
-        .select('invoice_number, total_amount, status, paid_at, businesses:business_id(name, country_code)')
-        .or(`customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .eq('status', 'paid')
-        .order('paid_at', { ascending: false }).limit(3),
-      this.supabase.from('campaign_donations')
-        .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
-        .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .eq('status', 'success')
-        .order('created_at', { ascending: false }).limit(3),
-    ]);
-
-    const lines: string[] = [];
-
-    if (bookings && bookings.length > 0) {
-      const b = bookings[0];
-      const biz = b.businesses as unknown as { name: string; country_code?: string } | null;
-      const svc = b.services as unknown as { name: string } | null;
-      const cc = biz?.country_code as CountryCode || 'NG';
-      const dateStr = new Date(b.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-
-      lines.push(
-        '*Receipt*',
-        '',
-        `Business: *${biz?.name || 'Business'}*`,
-        `Service: ${svc?.name || b.reference_code || 'Service'}`,
-        `Date: ${dateStr}`,
-        `Amount: ${formatCurrency(b.total_amount || 0, cc)}`,
-        `Ref: *${b.reference_code}*`,
-        `Status: ${b.status}`,
-      );
-    } else if (payments && payments.length > 0) {
-      const p = payments[0];
-      const biz = p.businesses as unknown as { name: string; country_code?: string } | null;
-      const cc = biz?.country_code as CountryCode || 'NG';
-      const dateStr = new Date(p.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-
-      lines.push(
-        '*Receipt*',
-        '',
-        `Business: *${biz?.name || 'Business'}*`,
-        `Date: ${dateStr}`,
-        `Amount: ${formatCurrency(p.amount || 0, cc)}`,
-        `Ref: *${p.gateway_reference}*`,
-        `Status: Paid`,
-      );
-    } else if (donations && donations.length > 0) {
-      const d = donations[0];
-      const biz = d.businesses as unknown as { name: string; country_code?: string } | null;
-      const campaign = d.campaigns as unknown as { name: string } | null;
-      const cc = (biz?.country_code as CountryCode) || 'NG';
-      const dateStr = new Date(d.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
-
-      lines.push(
-        '*Donation Receipt*',
-        '',
-        `Organization: *${biz?.name || 'Organization'}*`,
-        `Campaign: ${campaign?.name || 'Donation'}`,
-        `Date: ${dateStr}`,
-        `Amount: ${formatCurrency(Number(d.amount), cc)}`,
-        `Ref: *${d.reference_code}*`,
-      );
-    } else if (invoices && invoices.length > 0) {
-      const inv = invoices[0];
-      const biz = inv.businesses as unknown as { name: string; country_code?: string } | null;
-      const cc = (biz?.country_code as CountryCode) || 'NG';
-      const dateStr = inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
-
-      lines.push(
-        '*Invoice Receipt*',
-        '',
-        `Business: *${biz?.name || 'Business'}*`,
-        `Invoice: ${inv.invoice_number}`,
-        `Paid: ${dateStr}`,
-        `Amount: ${formatCurrency(Number(inv.total_amount), cc)}`,
-      );
-    }
-
-    if (lines.length === 0) return null;
-
-    lines.push('', 'Type *Hi* to continue');
-    return lines.join('\n');
+    return _handleTransactionDocument(this.supabase, this.messageSender, this.sendText.bind(this), from, userId, type);
   }
 
   // ── Quote Response Handler ──────────────────────────────
 
   private async handleQuoteResponse(from: string, quoteId: string, action: 'accept' | 'reject'): Promise<void> {
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL
-        || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
-
-      if (!baseUrl) {
-        await this.sendText(from, 'Sorry, something went wrong. Please try again.');
-        return;
-      }
-
-      const response = await fetch(`${baseUrl}/api/orders/quote-accept`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quote_id: quoteId, action }),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        await this.sendText(from, result.error || 'Something went wrong. Please try again.');
-        return;
-      }
-
-      if (action === 'reject') {
-        await this.sendText(from, 'Price declined. Thank you for considering!');
-      }
-      // Accept case: payment link is sent by the API route itself
-    } catch (err) {
-      logger.error('[BOT] Quote response error:', err);
-      await this.sendText(from, 'Sorry, something went wrong. Please try again.');
-    }
+    return _handleQuoteResponse(this.sendText.bind(this), from, quoteId, action);
   }
 
   // ── Ticket Check-in via WhatsApp ──────────────────────
 
   private async handleTicketCheckin(from: string, ticketCode: string): Promise<void> {
-    try {
-      const { data: ticket } = await this.supabase
-        .from('event_tickets')
-        .select('id, status, scanned_at, scanned_by, guest_name, guest_phone, event:events!event_id(name, date, time, self_checkin_enabled, business_id)')
-        .eq('ticket_code', ticketCode)
-        .single();
-
-      if (!ticket) {
-        await this.sendText(from, `❌ Ticket *${ticketCode}* not found. Please check the code and try again.`);
-        return;
-      }
-
-      const event = ticket.event as any;
-
-      // Check self check-in is enabled
-      if (!event?.self_checkin_enabled) {
-        await this.sendText(from, `🎟️ Ticket *${ticketCode}* for *${event?.name || 'event'}* is valid.\n\nSelf check-in is not enabled for this event. Please check in at the entrance.`);
-        return;
-      }
-
-      // Already used
-      if (ticket.status === 'used') {
-        const scannedTime = ticket.scanned_at
-          ? new Date(ticket.scanned_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-          : '';
-        await this.sendText(from, `⚠️ Ticket *${ticketCode}* was already checked in${scannedTime ? ` at ${scannedTime}` : ''}${ticket.scanned_by && ticket.scanned_by !== 'self' ? ` by ${ticket.scanned_by}` : ''}.`);
-        return;
-      }
-
-      if (ticket.status === 'cancelled') {
-        await this.sendText(from, `❌ Ticket *${ticketCode}* has been cancelled.`);
-        return;
-      }
-
-      // Event day check
-      if (event?.date) {
-        const eventDate = new Date(event.date + 'T00:00:00');
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const eventDay = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate());
-        const bufferMs = 60 * 60 * 1000;
-
-        let earliestCheckin = eventDay;
-        if (event.time) {
-          const [h, m] = event.time.split(':').map(Number);
-          earliestCheckin = new Date(eventDay.getTime() + h * 3600000 + m * 60000 - bufferMs);
-        }
-
-        const latestCheckin = new Date(eventDay.getTime() + 24 * 60 * 60 * 1000);
-
-        if (now < earliestCheckin) {
-          await this.sendText(from, `⏰ Check-in for *${event.name}* is not open yet.\n\nIt opens on ${eventDate.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' })}.`);
-          return;
-        }
-
-        if (now > latestCheckin) {
-          await this.sendText(from, `⏰ Check-in for *${event.name}* has closed.`);
-          return;
-        }
-      }
-
-      // Verify phone matches ticket owner (fraud prevention)
-      const phone = from.startsWith('+') ? from : `+${from}`;
-      const ticketPhone = ticket.guest_phone || '';
-      if (ticketPhone && !ticketPhone.includes(from) && !phone.includes(ticketPhone.replace('+', ''))) {
-        // Phone doesn't match — still allow but mark as different phone
-        await this.supabase.from('event_tickets').update({
-          status: 'used',
-          scanned_at: new Date().toISOString(),
-          scanned_by: `whatsapp:${from}`,
-        }).eq('id', ticket.id);
-      } else {
-        await this.supabase.from('event_tickets').update({
-          status: 'used',
-          scanned_at: new Date().toISOString(),
-          scanned_by: 'self',
-        }).eq('id', ticket.id);
-      }
-
-      await this.sendText(from, [
-        `✅ *Checked In!*`,
-        '',
-        `🎪 ${event?.name || 'Event'}`,
-        `🎟️ Ticket: *${ticketCode}*`,
-        `👤 ${ticket.guest_name || 'Guest'}`,
-        '',
-        `Welcome! Enjoy the event.`,
-      ].join('\n'));
-    } catch (err) {
-      logger.error('[BOT] Ticket check-in error:', err);
-      await this.sendText(from, 'Sorry, something went wrong verifying your ticket. Please try again or check in at the entrance.');
-    }
+    return _handleTicketCheckin(this.supabase, this.sendText.bind(this), from, ticketCode);
   }
 
   // ── Unified Keyword Action Executor ──────────────────────
@@ -3977,95 +3677,23 @@ export class BotService {
   // ── Helpers ──────────────────────────────────────────────
 
   private async getActiveSession(phone: string): Promise<BotSession | null> {
-    const now = new Date().toISOString();
-    const { data } = await this.supabase
-      .from('bot_sessions')
-      .select('*')
-      .eq('whatsapp_number', phone)
-      .eq('is_active', true)
-      .gte('expires_at', now) // Only return non-expired sessions
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (!data) {
-      // Clean up any expired sessions for this phone
-      await this.supabase
-        .from('bot_sessions')
-        .update({ is_active: false })
-        .eq('whatsapp_number', phone)
-        .eq('is_active', true)
-        .lt('expires_at', now);
-      return null;
-    }
-
-    return (data as BotSession) || null;
+    return _getActiveSession(this.supabase, phone);
   }
 
   private async deactivateSession(sessionId: string): Promise<void> {
-    await this.supabase
-      .from('bot_sessions')
-      .update({ is_active: false })
-      .eq('id', sessionId);
+    return _deactivateSession(this.supabase, sessionId);
   }
 
   private async sendText(to: string, text: string): Promise<void> {
-    try {
-      logger.debug('[BOT] sendText to:', to, 'text:', text.slice(0, 100));
-      const result = await this.messageSender.sendText({ to, text });
-      logger.debug('[BOT] sendText result:', JSON.stringify(result));
-    } catch (err) {
-      logger.error('[BOT] sendText FAILED to:', to, 'error:', err);
-    }
+    return sendBotText(this.messageSender, to, text);
   }
 
-  /**
-   * Forward an inbound chat message to the business owner's phone via WhatsApp.
-   * Checks: forwarding toggle is ON + business is on a paid tier.
-   * Tracks usage per month for billing.
-   * Non-critical — failures are silently ignored.
-   */
   private async forwardToBusinessOwner(
     businessId: string,
     customerPhone: string,
     customerName: string | null,
     messageText: string,
   ): Promise<void> {
-    try {
-      // Check if forwarding is enabled for this business
-      const { data: waConfig } = await this.supabase
-        .from('whatsapp_config')
-        .select('forward_chat_to_phone')
-        .eq('business_id', businessId)
-        .maybeSingle();
-
-      if (!waConfig?.forward_chat_to_phone) return;
-
-      // Check paid tier (free tier cannot use forwarding)
-      const { data: biz } = await this.supabase
-        .from('businesses')
-        .select('phone, name, subscription_tier')
-        .eq('id', businessId)
-        .single();
-
-      if (!biz?.phone) return;
-      if (biz.subscription_tier === 'free') return;
-
-      const ownerPhone = biz.phone.startsWith('+') ? biz.phone.slice(1) : biz.phone;
-      // Don't forward to the customer's own number
-      const normalizedCustomer = customerPhone.replace(/^\+/, '');
-      if (ownerPhone === normalizedCustomer) return;
-
-      const displayName = customerName || customerPhone;
-      await this.messageSender.sendText({
-        to: ownerPhone,
-        text: `💬 *${displayName}*:\n${messageText}\n\n_Reply from your dashboard → Chat_`,
-      });
-
-      // Track usage for billing
-      await this.supabase.rpc('increment_chat_forwards', { p_business_id: businessId });
-    } catch {
-      // Non-critical — don't break the flow
-    }
+    return _forwardToBusinessOwner(this.ctx, businessId, customerPhone, customerName, messageText);
   }
 }
