@@ -20,6 +20,7 @@ export const metadata: Metadata = {
   description:
     'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries — churches, salons, clinics, restaurants, schools, shops, and more.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'),
+  manifest: '/manifest.webmanifest',
   icons: {
     icon: '/favicon.ico',
     apple: '/apple-touch-icon.png',

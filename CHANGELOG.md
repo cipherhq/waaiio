@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Add PWA Support
+
+- **`app/manifest.ts`** — Enhanced manifest: added full name, description, `start_url: /dashboard`, `orientation: portrait-primary`, `purpose: any maskable` on icons
+- **`app/layout.tsx`** — Added `manifest: '/manifest.webmanifest'` to metadata export so browsers discover the manifest
+- Icons already existed: `icon-192.png`, `icon-512.png`, `apple-touch-icon.png`, `favicon.ico`
+- No service worker added (intentional — avoids caching complexity)
+- No new packages installed
+
 ### Add ISR (Incremental Static Regeneration) to Marketing Pages
 
 - **Homepage** (`app/(marketing)/page.tsx`) — `revalidate = 60` (1 min, fetches live stats)
