@@ -591,7 +591,7 @@ export const schedulingFlow: FlowDefinition = {
         // Drop-off services don't need time selection
         const svcMeta = ctx.session.session_data._service_metadata as Record<string, unknown> | undefined;
         if (svcMeta?.is_dropoff) {
-          ctx.session.session_data.time = 'Drop-off';
+          ctx.session.session_data.time = '00:00'; // valid time for DB; display handled separately
           return true;
         }
 
@@ -1687,7 +1687,8 @@ export const schedulingFlow: FlowDefinition = {
           booking = { id: d.booking_id as string, reference_code: d.reference_code as string };
         } else {
           // Use atomic booking function to prevent double-booking race condition
-          const maxCapacity = (d._service_max_capacity as number) || 1;
+          const svcMetaBooking = d._service_metadata as Record<string, unknown> | undefined;
+          const maxCapacity = svcMetaBooking?.is_dropoff ? 9999 : ((d._service_max_capacity as number) || 1);
           const { data: slotResult, error: slotError } = await ctx.supabase
             .rpc('book_slot_atomic' as string, {
               p_business_id: ctx.business!.id,

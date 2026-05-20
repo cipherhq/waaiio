@@ -5,6 +5,15 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19
+
+### Drop-off Service Booking Fix
+- **Fixed booking creation crash for drop-off services** — `book_slot_atomic` RPC casts `p_time::time` which fails when value is literal `'Drop-off'` string. Changed to `'00:00'` (valid time); display logic already handles drop-off separately. File: `scheduling.flow.ts`
+- **Fixed false capacity block for drop-off services** — All drop-off bookings share time `00:00`, so capacity check would wrongly reject after `max_capacity` bookings on same day. Set `max_capacity = 9999` for drop-off services. File: `scheduling.flow.ts`
+- **What could break:** If a drop-off service somehow needs real time slots, the `00:00` placeholder would need revisiting.
+
+---
+
 ## 2026-05-18
 
 ### Smart Natural Language Booking / Ordering / Payments
