@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getPhonePlaceholder, type CountryCode } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface FormField {
   id: string;
@@ -94,7 +95,7 @@ export default function FormsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('forms')
-      .select('*')
+      .select('id, title, description, fields, token, is_active, response_count, created_at')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
     setForms((data || []) as Form[]);
@@ -125,7 +126,7 @@ export default function FormsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('form_responses')
-      .select('*')
+      .select('id, customer_phone, customer_name, customer_email, answers, business_notes, status, channel, submitted_at')
       .eq('form_id', form.id)
       .order('submitted_at', { ascending: false });
     setResponses((data || []) as FormResponse[]);
@@ -490,6 +491,11 @@ export default function FormsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Forms</h1>
           <p className="mt-1 text-sm text-gray-500">Create forms and collect data from customers via shareable links</p>
+          <PageHelp
+            pageKey="forms"
+            title="Custom Forms"
+            description="Build custom forms and send them to customers via WhatsApp or shareable links. Collect information, applications, or feedback with multiple field types."
+          />
         </div>
         <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">
           + New Form

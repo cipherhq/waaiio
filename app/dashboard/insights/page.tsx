@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 // ── Types ──
 
@@ -279,6 +280,11 @@ export default function InsightsPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Intelligence Hub</h1>
         <p className="mt-1 text-sm text-gray-500">AI-powered insights for {business.name}</p>
+        <PageHelp
+          pageKey="insights"
+          title="Intelligence Hub"
+          description="Smart business insights — customer retention, revenue forecasts, peak hours, and actionable recommendations powered by AI."
+        />
       </div>
 
       {/* ── FREE: Snapshot ── */}

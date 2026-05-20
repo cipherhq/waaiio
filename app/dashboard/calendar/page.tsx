@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Booking {
   id: string;
@@ -1023,7 +1024,14 @@ export default function CalendarPage() {
       )}
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Calendar</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Calendar</h1>
+          <PageHelp
+            pageKey="calendar"
+            title="Booking Calendar"
+            description="Visual calendar view of all your bookings. Switch between month, week, and day views. Click on a booking to see details or reschedule."
+          />
+        </div>
         <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-1">
           {(['month', 'week', 'day'] as ViewMode[]).map((v) => (
             <button

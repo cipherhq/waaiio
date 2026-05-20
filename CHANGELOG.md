@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### PageHelp Component Added to 5 Dashboard Pages
+
+- **Insights** — Added PageHelp banner with "Intelligence Hub" description. File: `app/dashboard/insights/page.tsx`
+- **Tickets** — Added PageHelp banner with "Event Tickets" description. File: `app/dashboard/tickets/page.tsx`
+- **Forms** — Added PageHelp banner with "Custom Forms" description. File: `app/dashboard/forms/page.tsx`
+- **Analytics** — Added PageHelp banner with "Business Analytics" description. File: `app/dashboard/analytics/page.tsx`
+- **Calendar** — Added PageHelp banner with "Booking Calendar" description. File: `app/dashboard/calendar/page.tsx`
+- Chat page already had PageHelp — no changes needed.
+
 ### Non-Destructive Improvements (9 changes)
 
 #### Accessibility

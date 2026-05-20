@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { getLocale, type CountryCode } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface TicketRow {
   id: string;
@@ -134,6 +135,11 @@ export default function TicketsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Tickets</h1>
           <p className="mt-1 text-sm text-gray-500">Manage event tickets and attendees</p>
+          <PageHelp
+            pageKey="tickets"
+            title="Event Tickets"
+            description="View and manage all event ticket sales. Track ticket status, search by guest name or ticket code, and export data for your records."
+          />
         </div>
         <button
           onClick={exportCSV}

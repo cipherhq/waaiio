@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, getLocale } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface DailyCount {
   date: string;
@@ -203,6 +204,11 @@ export default function AnalyticsPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
           <p className="mt-1 text-sm text-gray-500">Performance overview for {business.name}</p>
+          <PageHelp
+            pageKey="analytics"
+            title="Business Analytics"
+            description="See how your business is performing — daily bookings, revenue trends, top services, peak hours, and customer insights. Filter by time range for deeper analysis."
+          />
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-1 rounded-lg bg-gray-100 p-1">
