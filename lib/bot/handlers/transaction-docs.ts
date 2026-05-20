@@ -93,14 +93,14 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(b.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '*Receipt*',
+      '🧾 *Receipt*',
       '',
-      `Business: *${biz?.name || 'Business'}*`,
-      `Service: ${svc?.name || b.reference_code || 'Service'}`,
-      `Date: ${dateStr}`,
-      `Amount: ${formatCurrency(b.total_amount || 0, cc)}`,
-      `Ref: *${b.reference_code}*`,
-      `Status: ${b.status}`,
+      `🏢 Business: *${biz?.name || 'Business'}*`,
+      `📋 Service: ${svc?.name || b.reference_code || 'Service'}`,
+      `📅 Date: ${dateStr}`,
+      `💰 Amount: ${formatCurrency(b.total_amount || 0, cc)}`,
+      `🔖 Ref: *${b.reference_code}*`,
+      `✅ Status: ${b.status}`,
     );
   } else if (payments && payments.length > 0) {
     const p = payments[0];
@@ -109,13 +109,13 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(p.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '*Receipt*',
+      '🧾 *Receipt*',
       '',
-      `Business: *${biz?.name || 'Business'}*`,
-      `Date: ${dateStr}`,
-      `Amount: ${formatCurrency(p.amount || 0, cc)}`,
-      `Ref: *${p.gateway_reference}*`,
-      `Status: Paid`,
+      `🏢 Business: *${biz?.name || 'Business'}*`,
+      `📅 Date: ${dateStr}`,
+      `💰 Amount: ${formatCurrency(p.amount || 0, cc)}`,
+      `🔖 Ref: *${p.gateway_reference}*`,
+      `✅ Status: Paid`,
     );
   } else if (donations && donations.length > 0) {
     const d = donations[0];
@@ -125,13 +125,13 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = new Date(d.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
 
     lines.push(
-      '*Donation Receipt*',
+      '🙏 *Donation Receipt*',
       '',
-      `Organization: *${biz?.name || 'Organization'}*`,
-      `Campaign: ${campaign?.name || 'Donation'}`,
-      `Date: ${dateStr}`,
-      `Amount: ${formatCurrency(Number(d.amount), cc)}`,
-      `Ref: *${d.reference_code}*`,
+      `🏢 Organization: *${biz?.name || 'Organization'}*`,
+      `📋 Campaign: ${campaign?.name || 'Donation'}`,
+      `📅 Date: ${dateStr}`,
+      `💰 Amount: ${formatCurrency(Number(d.amount), cc)}`,
+      `🔖 Ref: *${d.reference_code}*`,
     );
   } else if (invoices && invoices.length > 0) {
     const inv = invoices[0];
@@ -140,12 +140,12 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
     const dateStr = inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
 
     lines.push(
-      '*Invoice Receipt*',
+      '🧾 *Invoice Receipt*',
       '',
-      `Business: *${biz?.name || 'Business'}*`,
-      `Invoice: ${inv.invoice_number}`,
-      `Paid: ${dateStr}`,
-      `Amount: ${formatCurrency(Number(inv.total_amount), cc)}`,
+      `🏢 Business: *${biz?.name || 'Business'}*`,
+      `📋 Invoice: ${inv.invoice_number}`,
+      `📅 Paid: ${dateStr}`,
+      `💰 Amount: ${formatCurrency(Number(inv.total_amount), cc)}`,
     );
   }
 
