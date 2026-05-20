@@ -206,18 +206,20 @@ export const paymentFlow: FlowDefinition = {
         const d = ctx.session.session_data;
         const amount = d.amount as number;
 
+        // ── T&C cancel check (before gate) ──
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Payment cancelled. Send *Hi* to start over.' }];
+        }
+
         // ── T&C gate ──
         if (!d._terms_accepted && amount > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
           await ctx.supabase.from('bot_sessions')
             .update({ session_data: d })
             .eq('id', ctx.session.id);
           return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
-        }
-        if (d._terms_cancelled) {
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
-          return [{ type: 'text', text: 'No problem! Payment cancelled. Send *Hi* to start over.' }];
         }
 
         // Ensure user exists

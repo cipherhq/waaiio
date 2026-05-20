@@ -64,6 +64,12 @@ export class FlowExecutor {
     // Store business ID for outbound tracking
     this.currentBusinessId = business?.id || session.business_id || null;
 
+    // Update last_active_at so returning-customer routing picks the most recently used business
+    await this.supabase
+      .from('bot_sessions')
+      .update({ last_active_at: new Date().toISOString() })
+      .eq('id', session.id);
+
     // Check conversation limit before processing
     if (this.currentBusinessId) {
       const limit = await checkConversationLimit(this.supabase, this.currentBusinessId);

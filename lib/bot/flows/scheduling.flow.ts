@@ -1638,6 +1638,14 @@ export const schedulingFlow: FlowDefinition = {
           totalDeposit = 0;
         }
 
+        // ── T&C cancel check (before gate) ──
+        if (d._terms_cancelled) {
+          await ctx.supabase.from('bot_sessions')
+            .update({ current_step: 'complete', is_active: false })
+            .eq('id', ctx.session.id);
+          return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
+        }
+
         // ── T&C gate (before creating record) ──
         if (!d._terms_accepted && totalDeposit > 0 && ctx.business?.metadata?.require_terms_before_payment !== false) {
           d._pending_deposit = totalDeposit;
@@ -1645,12 +1653,6 @@ export const schedulingFlow: FlowDefinition = {
             .update({ session_data: d })
             .eq('id', ctx.session.id);
           return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
-        }
-        if (d._terms_cancelled) {
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
-          return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
         }
 
         const insertPayload: Record<string, unknown> = {
