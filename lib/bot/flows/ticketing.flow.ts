@@ -157,30 +157,29 @@ export const ticketingFlow: FlowDefinition = {
           `${available} tickets available`,
         ].filter(Boolean).join('\n');
 
-        // Send image first (directly, not via prompt) so it arrives before buttons
+        // Build messages array — image first, then buttons
+        // Both in the return array so executor sends them in guaranteed order
+        const messages: PromptMessage[] = [];
+
         if (d.event_image_url) {
-          await ctx.sender.sendImage({
-            to: ctx.from,
+          messages.push({
+            type: 'image' as const,
             imageUrl: d.event_image_url as string,
             caption: eventDetails,
-          });
+          } as PromptMessage);
         } else {
-          await ctx.sender.sendText({ to: ctx.from, text: eventDetails });
+          messages.push({ type: 'text', text: eventDetails });
         }
 
-        // Return only the buttons as prompt — image already sent above
-        const messages: PromptMessage[] = [];
-        messages.push(
-          {
-            type: 'buttons',
-            body: `How many tickets? (max ${maxShow})`,
-            buttons: [
-              { id: '1', title: '1 ticket' },
-              ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
-              ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
-            ].slice(0, 3), // WhatsApp max 3 buttons
-          },
-        );
+        messages.push({
+          type: 'buttons',
+          body: `How many tickets? (max ${maxShow})`,
+          buttons: [
+            { id: '1', title: '1 ticket' },
+            ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
+            ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
+          ].slice(0, 3), // WhatsApp max 3 buttons
+        });
 
         return messages;
       },
@@ -589,8 +588,8 @@ export const ticketingFlow: FlowDefinition = {
               }),
             });
 
-            // Send ticket PDF (non-blocking)
-            sendTicketsAfterPurchase({
+            // Send ticket PDF + QR codes (MUST await — Vercel kills process after response)
+            await sendTicketsAfterPurchase({
               supabase: ctx.supabase,
               sender: ctx.sender,
               businessId: ctx.business!.id,
@@ -604,7 +603,7 @@ export const ticketingFlow: FlowDefinition = {
               guestPhone: ctx.from,
               referenceCode: d.reference_code as string,
               quantity: d.ticket_quantity as number,
-            }).catch(err => console.error('[TICKETING] Ticket PDF send error:', err));
+            });
 
             // Notify owner: email + WhatsApp
             notifyOwnerNewTicketSale({
