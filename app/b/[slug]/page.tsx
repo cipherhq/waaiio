@@ -77,9 +77,23 @@ export default async function PublicBookingPage({ params }: PageProps) {
     is_dropoff: (s.metadata as Record<string, unknown>)?.is_dropoff === true,
   }));
 
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'LocalBusiness',
+    name: business.name,
+    ...(business.description ? { description: business.description } : {}),
+    ...(business.address ? { address: { '@type': 'PostalAddress', streetAddress: business.address } } : {}),
+    url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/b/${slug}`,
+  };
+
   return (
-    <BookingForm
-      business={{
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <BookingForm
+        business={{
         id: business.id,
         name: business.name,
         slug: business.slug,
@@ -94,5 +108,6 @@ export default async function PublicBookingPage({ params }: PageProps) {
       }}
       services={serializedServices}
     />
+    </>
   );
 }

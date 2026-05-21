@@ -549,6 +549,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                   </div>
                 ) : (
                   <div>
+                    <p className="text-xs text-gray-500 mb-1">We&apos;ll send a code to verify your email — your booking confirmation will be sent here.</p>
                     <div className="flex gap-2">
                       <input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} placeholder="john@example.com" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500" />
                       <button type="button" onClick={sendOtp} disabled={otpLoading || !guestEmail.trim()} className="rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>

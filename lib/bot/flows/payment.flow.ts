@@ -326,7 +326,7 @@ export const paymentFlow: FlowDefinition = {
             },
             {
               type: 'buttons',
-              body: "Paid already? Tap below to confirm:",
+              body: "\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
               buttons: [
                 { id: 'i_paid', title: "I've Paid" },
                 { id: 'go_back', title: 'Cancel' },
@@ -360,7 +360,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete your payment using the link above.\n\nPaid already? Tap below to confirm:",
+          body: "Complete your payment using the link above.\n\n\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },

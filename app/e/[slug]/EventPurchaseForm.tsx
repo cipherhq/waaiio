@@ -513,6 +513,7 @@ export default function EventPurchaseForm({
                     </div>
                   ) : (
                     <div>
+                      <p className="text-xs text-gray-500 mb-1">We&apos;ll send a 4-digit code to verify your email — your tickets will be sent here.</p>
                       <div className="flex gap-2">
                         <input
                           type="email"

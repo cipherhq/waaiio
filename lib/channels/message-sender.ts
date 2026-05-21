@@ -104,29 +104,34 @@ export class MetaCloudSender implements MessageSender {
       items: Array<{ title: string; description?: string; postbackText: string }>;
     }>;
   }) {
+    // Enforce WhatsApp API limits: title 24 chars, body 1024 chars, buttonLabel 20 chars, item title 24 chars, item description 72 chars
+    const truncatedTitle = msg.title.length > 24 ? msg.title.slice(0, 21) + '...' : msg.title;
+    const truncatedBody = msg.body.slice(0, 1024);
+    const truncatedButtonLabel = msg.buttonLabel.slice(0, 20);
+
     const sections = msg.sections
       ? msg.sections.map(s => ({
-          title: s.title,
+          title: s.title.length > 24 ? s.title.slice(0, 21) + '...' : s.title,
           rows: s.items.map(item => ({
             id: item.postbackText,
-            title: item.title,
-            description: item.description,
+            title: item.title.length > 24 ? item.title.slice(0, 21) + '...' : item.title,
+            description: item.description ? item.description.slice(0, 72) : item.description,
           })),
         }))
       : [{
-          title: msg.title,
+          title: truncatedTitle,
           rows: msg.items.map(item => ({
             id: item.postbackText,
-            title: item.title,
-            description: item.description,
+            title: item.title.length > 24 ? item.title.slice(0, 21) + '...' : item.title,
+            description: item.description ? item.description.slice(0, 72) : item.description,
           })),
         }];
 
     const result = await this.cloud.sendList({
       to: msg.to,
-      headerText: msg.title,
-      bodyText: msg.body,
-      buttonText: msg.buttonLabel,
+      headerText: truncatedTitle,
+      bodyText: truncatedBody,
+      buttonText: truncatedButtonLabel,
       sections,
     });
     return { success: true, messageId: result.messageId };
@@ -137,10 +142,11 @@ export class MetaCloudSender implements MessageSender {
     body: string;
     buttons: Array<{ id: string; title: string }>;
   }) {
+    // Enforce WhatsApp API limits: body 1024 chars, button title 20 chars
     const result = await this.cloud.sendButtons({
       to: msg.to,
-      bodyText: msg.body,
-      buttons: msg.buttons,
+      bodyText: msg.body.slice(0, 1024),
+      buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
     });
     return { success: true, messageId: result.messageId };
   }

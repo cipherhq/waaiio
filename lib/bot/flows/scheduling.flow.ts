@@ -1898,7 +1898,7 @@ export const schedulingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: "Paid already? Tap below to confirm:",
+                body: "\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'go_back', title: 'Cancel' },
@@ -2324,7 +2324,7 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Your confirmation will arrive automatically after payment.\n\nPaid already? Tap below to confirm:",
+          body: "Your confirmation will arrive automatically after payment.\n\n\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },

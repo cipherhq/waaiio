@@ -134,9 +134,35 @@ export default async function EventPage(
       available: tt.total_tickets - tt.tickets_sold,
     }));
 
+  const currencyMap: Record<string, string> = { US: 'USD', NG: 'NGN', GH: 'GHS', GB: 'GBP', CA: 'CAD' };
+  const priceCurrency = currencyMap[business.country_code] || 'USD';
+
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Event',
+    name: event.name,
+    description: event.description || `Get tickets for ${event.name}`,
+    startDate: event.date,
+    ...(event.end_date ? { endDate: event.end_date } : {}),
+    ...(event.image_url ? { image: event.image_url } : {}),
+    location: { '@type': 'Place', name: event.venue || 'TBD' },
+    organizer: { '@type': 'Organization', name: business.name },
+    offers: {
+      '@type': 'Offer',
+      price: event.price,
+      priceCurrency,
+      availability: available > 0 ? 'https://schema.org/InStock' : 'https://schema.org/SoldOut',
+    },
+  };
+
   return (
-    <EventPurchaseForm
-      event={{
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <EventPurchaseForm
+        event={{
         id: event.id,
         name: event.name,
         description: event.description,
@@ -161,5 +187,6 @@ export default async function EventPage(
         payment_gateway: business.payment_gateway,
       }}
     />
+    </>
   );
 }
