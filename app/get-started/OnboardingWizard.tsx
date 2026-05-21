@@ -1628,6 +1628,9 @@ function OnboardingWizard() {
                   >
                     Continue
                   </button>
+                  {selectedCapabilities.length === 0 && (
+                    <p className="text-center text-xs text-red-500 mt-2">Please select at least one feature to continue</p>
+                  )}
                 </div>
               </div>
             )}
