@@ -70,9 +70,29 @@ export async function GET(request: NextRequest) {
     capMap.set(row.business_id, existing);
   }
 
+  // Fetch published events for ticketing businesses
+  const ticketingBizIds = sorted.filter(b => (capMap.get(b.id) || []).includes('ticketing')).map(b => b.id);
+  const { data: eventRows } = ticketingBizIds.length > 0
+    ? await supabase
+        .from('events')
+        .select('id, name, slug, date, business_id')
+        .in('business_id', ticketingBizIds)
+        .eq('status', 'published')
+        .gte('date', new Date().toISOString().split('T')[0])
+        .order('date', { ascending: true })
+    : { data: [] };
+
+  const eventMap = new Map<string, Array<{ id: string; name: string; slug: string; date: string }>>();
+  for (const e of (eventRows || [])) {
+    const existing = eventMap.get(e.business_id) || [];
+    existing.push({ id: e.id, name: e.name, slug: e.slug, date: e.date });
+    eventMap.set(e.business_id, existing);
+  }
+
   const businesses = sorted.map(b => ({
     ...b,
     capabilities: capMap.get(b.id) || [],
+    events: eventMap.get(b.id) || [],
     is_featured: featuredIds.includes(b.id),
   }));
 

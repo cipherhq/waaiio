@@ -11,6 +11,13 @@ interface Service {
   duration_minutes: number | null;
 }
 
+interface EventItem {
+  id: string;
+  name: string;
+  slug: string;
+  date: string;
+}
+
 interface Business {
   id: string;
   name: string;
@@ -23,6 +30,7 @@ interface Business {
   slug: string;
   services: Service[];
   capabilities: string[];
+  events: EventItem[];
 }
 
 const COUNTRIES = [
@@ -281,14 +289,28 @@ export default function DirectoryClient() {
                               Book Online
                             </Link>
                           )}
-                          {biz.slug && biz.capabilities.includes('ticketing') && (
+                          {biz.events && biz.events.length === 1 && (
                             <Link
-                              href={`/b/${biz.slug}?tab=events`}
+                              href={`/e/${biz.events[0].slug}`}
                               className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-orange-500 py-2.5 text-sm font-bold text-white transition hover:bg-orange-600"
                             >
                               <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" /></svg>
                               Buy Tickets
                             </Link>
+                          )}
+                          {biz.events && biz.events.length > 1 && (
+                            <div className="flex flex-1 flex-col gap-1">
+                              {biz.events.slice(0, 3).map(evt => (
+                                <Link
+                                  key={evt.id}
+                                  href={`/e/${evt.slug}`}
+                                  className="flex items-center justify-center gap-1.5 rounded-lg bg-orange-500 py-2 text-xs font-bold text-white transition hover:bg-orange-600"
+                                >
+                                  <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" /></svg>
+                                  {evt.name.length > 25 ? evt.name.slice(0, 25) + '...' : evt.name}
+                                </Link>
+                              ))}
+                            </div>
                           )}
                         </div>
                         </div>
