@@ -1313,12 +1313,15 @@ export class BotService {
 
     if (!session || isRestart) {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
+      // Remember the business from the session being restarted — prevents country
+      // filter from dropping it (e.g. NG business accessed via US shared number)
+      const restartBusinessId = isRestart && session?.business_id ? session.business_id : null;
       if (session) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       }
 
       // Determine standalone business
-      let businessId: string | null = preResolvedBusinessId || null;
+      let businessId: string | null = preResolvedBusinessId || restartBusinessId || null;
       logger.debug('[BOT] preResolvedBusinessId:', preResolvedBusinessId);
 
       // Determine the country of the shared number being messaged (for country scoping)
