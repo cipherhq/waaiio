@@ -665,7 +665,7 @@ export default function StaffPage() {
                   step={0.5}
                   value={form.commission_rate ?? ''}
                   onChange={e => setForm({ ...form, commission_rate: e.target.value ? Number(e.target.value) : null })}
-                  placeholder="0"
+                  placeholder="Enter amount"
                   className="w-20 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
                 />
                 <span className="text-sm text-gray-500">%</span>

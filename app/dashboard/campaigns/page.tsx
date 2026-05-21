@@ -231,7 +231,7 @@ export default function CampaignsPage() {
                 min={0}
                 value={form.goal_amount || ''}
                 onChange={(e) => setForm({ ...form, goal_amount: Number(e.target.value) })}
-                placeholder="0"
+                placeholder="Enter amount"
                 className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
             </div>

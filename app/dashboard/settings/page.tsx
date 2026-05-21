@@ -2069,7 +2069,7 @@ export default function SettingsPage() {
                     min={0}
                     value={defaultShippingFee || ''}
                     onChange={(e) => setDefaultShippingFee(Number(e.target.value) || 0)}
-                    placeholder="0"
+                    placeholder="Enter amount"
                     className="w-full rounded-lg border border-gray-200 py-2 pl-7 pr-3 text-sm outline-none focus:border-brand"
                   />
                 </div>
@@ -2095,7 +2095,7 @@ export default function SettingsPage() {
                   min={0}
                   value={minOrderAmount || ''}
                   onChange={(e) => setMinOrderAmount(Number(e.target.value) || 0)}
-                  placeholder="0"
+                  placeholder="Enter amount"
                   className="w-full rounded-lg border border-gray-200 py-2 pl-7 pr-3 text-sm outline-none focus:border-brand"
                 />
               </div>

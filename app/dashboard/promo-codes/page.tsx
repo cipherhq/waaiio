@@ -219,7 +219,7 @@ export default function PromoCodesPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Min Order ({currSymbol})</label>
-                <input type="number" min={0} value={form.min_order_amount || ''} onChange={e => setForm({ ...form, min_order_amount: parseFloat(e.target.value) || 0 })} placeholder="0" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <input type="number" min={0} value={form.min_order_amount || ''} onChange={e => setForm({ ...form, min_order_amount: parseFloat(e.target.value) || 0 })} placeholder="Enter amount" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max Uses</label>

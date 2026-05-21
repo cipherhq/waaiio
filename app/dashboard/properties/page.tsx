@@ -319,7 +319,7 @@ export default function PropertiesPage() {
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Deposit</label>
                 <input type="number" min={0} value={form.deposit_amount || ''} onChange={e => setForm({ ...form, deposit_amount: Number(e.target.value) })}
-                  placeholder="0"
+                  placeholder="Enter amount"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
               <div>

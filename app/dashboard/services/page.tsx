@@ -503,7 +503,7 @@ export default function ServicesPage() {
                     min={0}
                     value={form.price || ''}
                     onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
-                    placeholder="0"
+                    placeholder="Enter price"
                     className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                 </div>
@@ -516,7 +516,7 @@ export default function ServicesPage() {
                     min={0}
                     value={form.deposit_amount || ''}
                     onChange={(e) => setForm({ ...form, deposit_amount: Number(e.target.value) })}
-                    placeholder="0"
+                    placeholder="Enter deposit"
                     className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
                   <p className="mt-0.5 text-xs text-gray-400">0 = no deposit required</p>

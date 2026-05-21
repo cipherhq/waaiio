@@ -867,7 +867,7 @@ export default function ProductsPage() {
                       min={0}
                       value={form.price || ''}
                       onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
-                      placeholder="0"
+                      placeholder="Enter amount"
                       className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
                     />
                   </div>
@@ -934,7 +934,7 @@ export default function ProductsPage() {
                   min={0}
                   value={form.shipping_cost ?? ''}
                   onChange={(e) => setForm({ ...form, shipping_cost: e.target.value ? Number(e.target.value) : null })}
-                  placeholder="0"
+                  placeholder="Enter amount"
                   className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand"
                 />
               </div>
@@ -994,7 +994,7 @@ export default function ProductsPage() {
                                 updated[idx] = { ...updated[idx], price: Number(e.target.value) || 0 };
                                 setAddons(updated);
                               }}
-                              placeholder="0"
+                              placeholder="Enter amount"
                               disabled={addon.price_type === 'quote'}
                               className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand disabled:bg-gray-50 disabled:text-gray-400"
                             />
@@ -1240,7 +1240,7 @@ export default function ProductsPage() {
                               updated[idx] = { ...updated[idx], discount_value: Number(e.target.value) || 0 };
                               setVolumeDiscounts(updated);
                             }}
-                            placeholder="0"
+                            placeholder="Enter amount"
                             className="w-full rounded border border-gray-100 px-2 py-1.5 text-sm outline-none focus:border-brand"
                           />
                         </div>
@@ -1397,7 +1397,7 @@ export default function ProductsPage() {
                               min={0}
                               value={bulkPrice || ''}
                               onChange={(e) => setBulkPrice(e.target.value)}
-                              placeholder="0"
+                              placeholder="Enter amount"
                               className="w-full rounded border border-gray-200 py-1.5 pl-5 pr-1 text-sm outline-none focus:border-brand"
                             />
                           </div>
