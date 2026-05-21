@@ -63,27 +63,46 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     });
   }
 
-  // 2. Insert into event_tickets
-  const rows = tickets.map(t => ({
-    business_id: businessId,
-    booking_id: bookingId,
-    event_id: eventId,
-    ticket_code: t.ticketCode,
-    ticket_number: t.ticketNumber,
-    guest_name: guestName,
-    guest_phone: guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`,
-    status: 'valid',
-  }));
-
-  const { error: insertError } = await supabase
+  // 2. Check if tickets already exist (dedup — webhook + "I've Paid" race)
+  const { data: existingTickets } = await supabase
     .from('event_tickets')
-    .insert(rows);
+    .select('ticket_code')
+    .eq('booking_id', bookingId);
 
-  if (insertError) {
-    logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
-    return;
+  if (existingTickets && existingTickets.length > 0) {
+    logger.info('[TICKETS] Tickets already exist for booking', bookingId, '— skipping insert, using existing');
+    // Use existing ticket codes instead of generating new ones
+    tickets.length = 0;
+    existingTickets.forEach((t, i) => {
+      tickets.push({
+        ticketCode: t.ticket_code,
+        ticketNumber: i + 1,
+        totalTickets: existingTickets.length,
+      });
+    });
+  } else {
+    // Insert new tickets
+    const rows = tickets.map(t => ({
+      business_id: businessId,
+      booking_id: bookingId,
+      event_id: eventId,
+      ticket_code: t.ticketCode,
+      ticket_number: t.ticketNumber,
+      guest_name: guestName,
+      guest_phone: guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`,
+      status: 'valid',
+    }));
+
+    const { error: insertError } = await supabase
+      .from('event_tickets')
+      .insert(rows);
+
+    if (insertError) {
+      logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
+      return;
+    }
+    logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
   }
-  logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
 
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
@@ -122,21 +141,31 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
   }
 
-  // 4. Send QR codes via public API — no storage upload needed
+  // 4. Send rich ticket images (event details + QR code on a designed ticket)
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
   for (const ticket of tickets) {
     try {
-      const qrUrl = `${verifyBaseUrl}/${ticket.ticketCode}`;
-      // Use public QR API — returns PNG directly, no upload/signed URL needed
-      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(qrUrl)}`;
+      // Rich ticket image generated server-side with event details + QR
+      const ticketImageUrl = `${appUrl}/api/tickets/image?code=${ticket.ticketCode}`;
 
       await sender.sendImage({
         to: phone,
-        imageUrl: qrImageUrl,
-        caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this QR code at the entrance`,
+        imageUrl: ticketImageUrl,
+        caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this at the entrance`,
       });
-      logger.info('[TICKETS] QR sent for', ticket.ticketCode);
-    } catch (qrErr) {
-      logger.error('[TICKETS] QR image send failed for', ticket.ticketCode, ':', qrErr);
+      logger.info('[TICKETS] Rich ticket image sent for', ticket.ticketCode);
+    } catch (imgErr) {
+      // Fallback: send bare QR code
+      try {
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${appUrl}/tickets/${ticket.ticketCode}`)}`;
+        await sender.sendImage({
+          to: phone,
+          imageUrl: qrImageUrl,
+          caption: `🎟️ *${ticket.ticketCode}* — Show this QR at the entrance`,
+        });
+      } catch (qrErr) {
+        logger.error('[TICKETS] Both ticket image and QR failed for', ticket.ticketCode, ':', qrErr);
+      }
     }
   }
 

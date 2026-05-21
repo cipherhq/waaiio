@@ -598,27 +598,31 @@ export const ticketingFlow: FlowDefinition = {
                 .eq('booking_id', d.booking_id as string);
 
               if (existingTickets && existingTickets.length > 0) {
-                // Send QR code images via public API + text codes
-                const verifyBase = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
-                const ticketLines: string[] = [];
+                // Send rich ticket images with event details + QR code
+                const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
                 for (const t of existingTickets) {
-                  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${verifyBase}/${t.ticket_code}`)}`;
-                  ticketLines.push(`🎟️ *${t.ticket_code}*\n📱 QR: ${qrImageUrl}`);
-                  // Also try sending as image
                   try {
                     await ctx.sender.sendImage({
                       to: ctx.from,
-                      imageUrl: qrImageUrl,
-                      caption: `🎟️ *${t.ticket_code}* — Show this QR at the entrance`,
+                      imageUrl: `${appUrl}/api/tickets/image?code=${t.ticket_code}`,
+                      caption: `🎟️ *${t.ticket_code}* — Show this at the entrance`,
                     });
-                  } catch (qrErr) {
-                    console.error('[TICKETING] QR image send failed for', t.ticket_code, ':', qrErr);
+                  } catch (imgErr) {
+                    // Fallback: bare QR
+                    try {
+                      await ctx.sender.sendImage({
+                        to: ctx.from,
+                        imageUrl: `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${appUrl}/tickets/${t.ticket_code}`)}`,
+                        caption: `🎟️ *${t.ticket_code}* — Show this QR at the entrance`,
+                      });
+                    } catch { /* text fallback below */ }
                   }
                 }
-                // Always send text fallback with clickable QR links
+                // Always send text fallback
+                const codes = existingTickets.map((t: { ticket_code: string }) => `🎟️ *${t.ticket_code}*`).join('\n');
                 await ctx.sender.sendText({
                   to: ctx.from,
-                  text: `Your ticket${existingTickets.length > 1 ? 's' : ''}:\n\n${ticketLines.join('\n\n')}\n\nShow the QR code at the entrance or type *my bookings* to view tickets.`,
+                  text: `Your ticket code${existingTickets.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow at the entrance or type *my bookings* to view tickets.`,
                 });
               }
 
