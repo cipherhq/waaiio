@@ -378,24 +378,15 @@ export async function findReturningCustomerBusinesses(
 
   if (uniqueBusinessIds.length === 0) return [];
 
-  // Fetch business details — prefer same-country, fall back to cross-country
-  const baseBizQuery = () => supabase
+  // Fetch business details for returning customers — NO country filter.
+  // These users already have session/booking history proving which businesses
+  // they interact with. Country filtering is for first-time bot code matching only.
+  const { data: businesses } = await supabase
     .from('businesses')
     .select('id, name, bot_code')
     .in('id', uniqueBusinessIds)
     .eq('status', 'active')
     .not('bot_code', 'is', null);
-
-  let { data: businesses } = countryFilter
-    ? await baseBizQuery().eq('country_code', countryFilter)
-    : await baseBizQuery();
-
-  // If country filter excluded all results, retry without it — the user
-  // explicitly interacted with a cross-country business (e.g. NG business via US number)
-  if ((!businesses || businesses.length === 0) && countryFilter) {
-    const fallback = await baseBizQuery();
-    businesses = fallback.data;
-  }
 
   if (!businesses || businesses.length === 0) return [];
 
