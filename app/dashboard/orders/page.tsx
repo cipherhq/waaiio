@@ -703,6 +703,13 @@ export default function OrdersPage() {
                     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[order.status] || 'bg-gray-100 text-gray-600'}`}>
                       {order.status}
                     </span>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      order.channel === 'web'
+                        ? 'bg-brand-50 text-brand'
+                        : 'bg-green-50 text-green-700'
+                    }`}>
+                      {order.channel === 'web' ? 'Web' : 'WhatsApp'}
+                    </span>
                   </div>
                   <p className="mt-0.5 text-xs text-gray-500">
                     {order.items.length} item{order.items.length !== 1 ? 's' : ''}

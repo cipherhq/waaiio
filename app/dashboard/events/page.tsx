@@ -10,6 +10,7 @@ import { PageHelp } from '@/components/dashboard/PageHelp';
 interface EventItem {
   id: string;
   name: string;
+  slug: string | null;
   description: string | null;
   date: string;
   time: string | null;
@@ -50,6 +51,7 @@ export default function EventsPage() {
   const [newTypePrice, setNewTypePrice] = useState(0);
   const [newTypeTotal, setNewTypeTotal] = useState(100);
   const [uploading, setUploading] = useState(false);
+  const [copiedEventId, setCopiedEventId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
@@ -71,7 +73,7 @@ export default function EventsPage() {
     const supabase = createClient();
     const { data } = await supabase
       .from('events')
-      .select('id, name, description, date, time, venue, price, total_tickets, tickets_sold, max_per_order, status, image_url, created_at')
+      .select('id, name, slug, description, date, time, venue, price, total_tickets, tickets_sold, max_per_order, status, image_url, created_at')
       .eq('business_id', business.id)
       .order('date', { ascending: false });
     setEvents((data || []) as EventItem[]);
@@ -416,6 +418,27 @@ export default function EventsPage() {
                 </p>
               </div>
             )}
+            {view === 'edit' && form.status === 'published' && events.find(e => e.id === form.id)?.slug && (
+              <div className="rounded-lg border border-brand/20 bg-brand-50/30 p-3">
+                <p className="text-xs font-medium text-brand">Share Event</p>
+                <p className="mt-1.5 break-all text-xs text-gray-600">
+                  {typeof window !== 'undefined' ? window.location.origin : 'https://waaiio.com'}/e/{events.find(e => e.id === form.id)?.slug}
+                </p>
+                <button
+                  onClick={() => {
+                    const slug = events.find(e => e.id === form.id)?.slug;
+                    if (slug) {
+                      navigator.clipboard.writeText(`${window.location.origin}/e/${slug}`);
+                      setCopiedEventId(form.id);
+                      setTimeout(() => setCopiedEventId(null), 2000);
+                    }
+                  }}
+                  className="mt-2 w-full rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition"
+                >
+                  {copiedEventId === form.id ? 'Copied!' : 'Copy Link'}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -504,6 +527,24 @@ export default function EventsPage() {
                 {total > 0 && (
                   <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
                     <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${progress}%` }} />
+                  </div>
+                )}
+                {event.status === 'published' && event.slug && (
+                  <div className="mt-3 flex items-center gap-2 border-t border-gray-50 pt-3" onClick={(e) => e.stopPropagation()}>
+                    <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    <span className="truncate text-xs text-gray-500">waaiio.com/e/{event.slug}</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/e/${event.slug}`);
+                        setCopiedEventId(event.id);
+                        setTimeout(() => setCopiedEventId(null), 2000);
+                      }}
+                      className="shrink-0 text-xs font-medium text-brand hover:underline"
+                    >
+                      {copiedEventId === event.id ? 'Copied!' : 'Copy Link'}
+                    </button>
                   </div>
                 )}
                 </div>
