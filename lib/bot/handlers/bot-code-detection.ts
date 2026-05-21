@@ -378,19 +378,24 @@ export async function findReturningCustomerBusinesses(
 
   if (uniqueBusinessIds.length === 0) return [];
 
-  // Fetch business details for all unique IDs, filtered by country if on a shared number
-  let bizQuery = supabase
+  // Fetch business details — prefer same-country, fall back to cross-country
+  const baseBizQuery = () => supabase
     .from('businesses')
     .select('id, name, bot_code')
     .in('id', uniqueBusinessIds)
     .eq('status', 'active')
     .not('bot_code', 'is', null);
 
-  if (countryFilter) {
-    bizQuery = bizQuery.eq('country_code', countryFilter);
-  }
+  let { data: businesses } = countryFilter
+    ? await baseBizQuery().eq('country_code', countryFilter)
+    : await baseBizQuery();
 
-  const { data: businesses } = await bizQuery;
+  // If country filter excluded all results, retry without it — the user
+  // explicitly interacted with a cross-country business (e.g. NG business via US number)
+  if ((!businesses || businesses.length === 0) && countryFilter) {
+    const fallback = await baseBizQuery();
+    businesses = fallback.data;
+  }
 
   if (!businesses || businesses.length === 0) return [];
 
