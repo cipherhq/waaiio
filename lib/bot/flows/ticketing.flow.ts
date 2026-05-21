@@ -598,11 +598,20 @@ export const ticketingFlow: FlowDefinition = {
                 .eq('booking_id', d.booking_id as string);
 
               if (existingTickets && existingTickets.length > 0) {
-                const codes = existingTickets.map((t: { ticket_code: string }) => `🎟️ *${t.ticket_code}*`).join('\n');
-                await ctx.sender.sendText({
-                  to: ctx.from,
-                  text: `Your ticket code${existingTickets.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance or type *my bookings* to view your tickets.`,
-                });
+                // Send QR code images via public API
+                const verifyBase = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
+                for (const t of existingTickets) {
+                  try {
+                    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${verifyBase}/${t.ticket_code}`)}`;
+                    await ctx.sender.sendImage({
+                      to: ctx.from,
+                      imageUrl: qrImageUrl,
+                      caption: `🎟️ *${t.ticket_code}*\nShow this QR code at the entrance`,
+                    });
+                  } catch (qrErr) {
+                    console.error('[TICKETING] QR send failed for', t.ticket_code, qrErr);
+                  }
+                }
               }
 
               return { valid: true, data: { _action: 'already_confirmed' } };
