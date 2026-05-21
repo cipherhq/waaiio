@@ -151,7 +151,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       await sender.sendImage({
         to: phone,
         imageUrl: ticketImageUrl,
-        caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this at the entrance`,
+        caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this at the entrance\n\n🔗 ${appUrl}/tickets/${ticket.ticketCode}`,
       });
       logger.info('[TICKETS] Rich ticket image sent for', ticket.ticketCode);
     } catch (imgErr) {

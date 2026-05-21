@@ -605,7 +605,7 @@ export const ticketingFlow: FlowDefinition = {
                     await ctx.sender.sendImage({
                       to: ctx.from,
                       imageUrl: `${appUrl}/api/tickets/image?code=${t.ticket_code}`,
-                      caption: `🎟️ *${t.ticket_code}* — Show this at the entrance`,
+                      caption: `🎟️ *${t.ticket_code}* — Show this at the entrance\n\n🔗 ${appUrl}/tickets/${t.ticket_code}`,
                     });
                   } catch (imgErr) {
                     // Fallback: bare QR
@@ -619,10 +619,12 @@ export const ticketingFlow: FlowDefinition = {
                   }
                 }
                 // Always send text fallback
-                const codes = existingTickets.map((t: { ticket_code: string }) => `🎟️ *${t.ticket_code}*`).join('\n');
+                const codes = existingTickets.map((t: { ticket_code: string }) =>
+                  `🎟️ *${t.ticket_code}*\n🔗 ${appUrl}/tickets/${t.ticket_code}`
+                ).join('\n\n');
                 await ctx.sender.sendText({
                   to: ctx.from,
-                  text: `Your ticket code${existingTickets.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow at the entrance or type *my bookings* to view tickets.`,
+                  text: `Your ticket${existingTickets.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow at the entrance or type *my bookings* to view tickets.`,
                 });
               }
 
