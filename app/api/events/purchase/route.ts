@@ -108,62 +108,55 @@ export async function POST(request: NextRequest) {
 
   const totalAmount = unitPrice * quantity;
 
-  // 2. Find or create user by email/phone
+  // 2. Find or create user by email (email is verified via OTP)
   let userId: string;
-
-  // Try to find existing profile by email or phone
   const emailLower = guestEmail.toLowerCase();
   const phoneClean = guestPhone ? `+${guestPhone.replace(/[^0-9]/g, '')}` : null;
 
-  const { data: existingProfile } = await supabase
+  // Look up by email first (most reliable — verified via OTP)
+  const { data: byEmail } = await supabase
     .from('profiles')
     .select('id')
-    .or(`email.eq.${emailLower}${phoneClean ? `,phone.eq.${phoneClean}` : ''}`)
+    .eq('email', emailLower)
     .limit(1)
     .maybeSingle();
 
-  if (existingProfile) {
-    userId = existingProfile.id;
+  // If not found by email, try phone
+  const { data: byPhone } = !byEmail && phoneClean
+    ? await supabase.from('profiles').select('id').eq('phone', phoneClean).limit(1).maybeSingle()
+    : { data: null };
+
+  if (byEmail) {
+    userId = byEmail.id;
+  } else if (byPhone) {
+    userId = byPhone.id;
+    // Update their email since we verified it
+    await supabase.from('profiles').update({ email: emailLower }).eq('id', byPhone.id);
   } else {
-    // Create guest auth user
+    // Create new auth user
     const nameParts = guestName.trim().split(/\s+/);
     const firstName = nameParts[0] || guestName;
     const lastName = nameParts.slice(1).join(' ') || '';
 
-    const createPayload: Record<string, unknown> = {
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email: emailLower,
       email_confirm: true,
       user_metadata: { first_name: firstName, last_name: lastName },
-    };
-    if (phoneClean) {
-      createPayload.phone = phoneClean;
-      createPayload.phone_confirm = true;
-    }
-
-    const { data: authData, error: authError } = await supabase.auth.admin.createUser(createPayload);
+    });
 
     if (authError || !authData?.user) {
-      // If auth user already exists (race condition), try lookup again
-      const { data: retryProfile } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('email', emailLower)
-        .maybeSingle();
-
-      if (retryProfile) {
-        userId = retryProfile.id;
+      // Race condition — user may have been created between our check and now
+      const { data: retry } = await supabase.from('profiles').select('id').eq('email', emailLower).maybeSingle();
+      if (retry) {
+        userId = retry.id;
       } else {
         console.error('[EVENT-PURCHASE] Failed to create user:', authError?.message);
-        return NextResponse.json({ error: 'Something went wrong creating your account' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to create account. Please try again.' }, { status: 500 });
       }
     } else {
       userId = authData.user.id;
-      // Update profile with name (trigger creates profile, but metadata may not sync)
       await supabase.from('profiles').update({
-        first_name: firstName,
-        last_name: lastName,
-        email: emailLower,
-        ...(phoneClean ? { phone: phoneClean } : {}),
+        first_name: firstName, last_name: lastName, email: emailLower,
       }).eq('id', authData.user.id);
     }
   }
