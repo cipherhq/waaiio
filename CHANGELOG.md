@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Launch Readiness Fixes (Issues 7-11)
+- **Files:** `app/e/[slug]/EventPurchaseForm.tsx`, `app/b/[slug]/BookingForm.tsx`, `app/e/[slug]/page.tsx`, `app/b/[slug]/page.tsx`, `lib/bot/flows/ticketing.flow.ts`, `lib/bot/flows/scheduling.flow.ts`, `lib/bot/flows/payment.flow.ts`, `lib/channels/message-sender.ts`
+- **What:** (7) Added OTP explanation helper text before verify button on event purchase and booking forms. (8) Changed "Paid already? Tap below to confirm:" to timing guidance "After paying, wait 5-10 seconds then tap below:" across all 3 payment flows (ticketing, scheduling, payment). (9) Verified already implemented (View Tickets link). (10) Added WhatsApp API limit enforcement in MetaCloudSender: sendList truncates title (24), body (1024), buttonLabel (20), section titles (24), item titles (24), item descriptions (72); sendButtons truncates body (1024) and button titles (20). (11) Added JSON-LD structured data: Event schema on /e/[slug] with offers/availability, LocalBusiness schema on /b/[slug].
+- **Affects:** Public event/booking pages (SEO), WhatsApp bot payment UX, WhatsApp message delivery reliability.
+- **Could break:** Nothing — all changes are additive or string truncation (prevents API errors). JSON-LD is inert to rendering.
+
 ### Add Web vs WhatsApp Channel Breakdown to Analytics and Admin
 - **Files:** `app/dashboard/analytics/page.tsx`, `app/dashboard/page.tsx`, `admin/src/pages/Dashboard.tsx`
 - **What:** Analytics page now has a "Booking Channels" section showing WhatsApp vs Web booking counts with percentage bars. Dashboard overview "Total Bookings" stat shows web booking count as subtitle when > 0. Admin panel System Health section has a new "Booking Channels" card showing monthly WhatsApp vs Web split with a stacked progress bar.
