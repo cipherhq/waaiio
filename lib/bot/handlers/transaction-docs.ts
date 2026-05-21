@@ -38,8 +38,37 @@ export async function handleTransactionDocument(
       logger.error('[BOT] PDF receipt failed, falling back to text:', pdfErr);
     }
 
-    // Fallback: send a text receipt with recent transaction details
+    // Fallback: send receipt image + text
     if (!pdfSent) {
+      // Try to find the latest reference code to generate a receipt image
+      if (type === 'receipt') {
+        const phoneP = from.startsWith('+') ? from : `+${from}`;
+        const phoneN = from.startsWith('+') ? from.slice(1) : from;
+        const { data: latestBooking } = await supabase
+          .from('bookings')
+          .select('reference_code')
+          .eq('user_id', userId)
+          .in('status', ['completed', 'confirmed'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const refCode = latestBooking?.reference_code;
+        if (refCode) {
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          try {
+            await messageSender.sendImage({
+              to: from,
+              imageUrl: `${appUrl}/api/receipts/image?ref=${refCode}`,
+              caption: `🧾 Receipt — ${refCode}`,
+            });
+          } catch (imgErr) {
+            logger.error('[BOT] Receipt image failed:', imgErr);
+          }
+        }
+      }
+
+      // Always send text receipt as well
       const textReceipt = await buildTextReceipt(supabase, userId, from, type);
       if (textReceipt) {
         await sendText(from, textReceipt);
