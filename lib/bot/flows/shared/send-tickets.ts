@@ -85,58 +85,44 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   }
   logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
 
-  // 3. Generate PDF
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
-
-  const pdfBuffer = await generateTicketsPdf({
-    eventName,
-    eventDate,
-    eventTime,
-    venue,
-    guestName,
-    referenceCode,
-    tickets,
-    verifyBaseUrl,
-  });
-
-  // 4. Upload to Supabase Storage
-  const storagePath = `tickets/${businessId}/${bookingId}.pdf`;
-
-  const { error: uploadError } = await supabase.storage
-    .from('documents')
-    .upload(storagePath, pdfBuffer, {
-      contentType: 'application/pdf',
-      upsert: true,
-    });
-
-  if (uploadError) {
-    logger.error('[TICKETS] Failed to upload PDF to storage:', uploadError.message, '| path:', storagePath);
-    return;
-  }
-  logger.info('[TICKETS] PDF uploaded to storage:', storagePath);
-
-  // 5. Create signed URL (24-hour expiry)
-  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
-    .from('documents')
-    .createSignedUrl(storagePath, 86400); // 24 hours
-
-  if (signedUrlError || !signedUrlData?.signedUrl) {
-    logger.error('[TICKETS] Failed to create signed URL:', signedUrlError?.message, '| path:', storagePath);
-    return;
-  }
-
-  // 6. Send PDF via WhatsApp
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
 
-  await sender.sendDocument({
-    to: phone,
-    documentUrl: signedUrlData.signedUrl,
-    filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
-    caption: `Your ${quantity} ${ticketLabel} for ${eventName}`,
-  });
+  // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
+  try {
+    const pdfBuffer = await generateTicketsPdf({
+      eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl,
+    });
 
-  // 7. Send each ticket's QR code as a standalone image (easier to show at door)
+    const storagePath = `tickets/${businessId}/${bookingId}.pdf`;
+    const { error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+
+    if (!uploadError) {
+      logger.info('[TICKETS] PDF uploaded to storage:', storagePath);
+      const { data: signedUrlData } = await supabase.storage
+        .from('documents')
+        .createSignedUrl(storagePath, 86400);
+
+      if (signedUrlData?.signedUrl) {
+        await sender.sendDocument({
+          to: phone,
+          documentUrl: signedUrlData.signedUrl,
+          filename: `${eventName.replace(/[^a-zA-Z0-9 ]/g, '').slice(0, 40)} - Tickets.pdf`,
+          caption: `Your ${quantity} ${ticketLabel} for ${eventName}`,
+        });
+        logger.info('[TICKETS] PDF sent to', phone);
+      }
+    } else {
+      logger.error('[TICKETS] PDF upload failed:', uploadError.message);
+    }
+  } catch (pdfErr) {
+    logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
+  }
+
+  // 4. Send QR codes — ALWAYS runs regardless of PDF success
   for (const ticket of tickets) {
     try {
       const qrUrl = `${verifyBaseUrl}/${ticket.ticketCode}`;
