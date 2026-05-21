@@ -130,6 +130,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
   const [guestName, setGuestName] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [emailVerified, setEmailVerified] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState('');
@@ -614,9 +615,21 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                 </div>
               </div>
 
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                <span className="text-xs text-gray-500">
+                  I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-purple-600 underline">Waaiio&apos;s terms</a> and policies
+                </span>
+              </label>
+
               <button
                 onClick={handleBooking}
-                disabled={submitting}
+                disabled={submitting || !agreedToTerms}
                 className="w-full rounded-lg bg-purple-600 py-3 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
               >
                 {submitting

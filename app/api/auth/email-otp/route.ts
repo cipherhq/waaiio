@@ -1,29 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 
-// In-memory OTP store (sufficient for serverless — each instance handles its own verification)
-const otpStore = new Map<string, { code: string; expiresAt: number }>();
-
-// Cleanup expired entries periodically
-function cleanupExpired() {
-  const now = Date.now();
-  for (const [key, entry] of otpStore) {
-    if (now > entry.expiresAt) otpStore.delete(key);
-  }
-  if (otpStore.size > 10_000) {
-    const excess = otpStore.size - 10_000;
-    const iter = otpStore.keys();
-    for (let i = 0; i < excess; i++) {
-      const next = iter.next();
-      if (!next.done) otpStore.delete(next.value);
-    }
-  }
-}
-
 export async function POST(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const action = searchParams.get('action'); // 'send' or 'verify'
+  const action = searchParams.get('action');
 
   if (action === 'verify') return handleVerify(request);
   return handleSend(request);
@@ -47,10 +29,16 @@ async function handleSend(request: NextRequest) {
 
     // Generate 4-digit code
     const code = String(Math.floor(1000 + Math.random() * 9000));
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
 
-    // Store with 5-minute expiry
-    cleanupExpired();
-    otpStore.set(emailLower, { code, expiresAt: Date.now() + 5 * 60 * 1000 });
+    // Store in DB (upsert by email — replaces any existing code)
+    const supabase = createServiceClient();
+    await supabase
+      .from('platform_settings')
+      .upsert(
+        { key: `otp:${emailLower}`, value: { code, expires_at: expiresAt }, description: 'Email OTP' },
+        { onConflict: 'key' },
+      );
 
     // Send email
     await sendEmail({
@@ -90,23 +78,32 @@ async function handleVerify(request: NextRequest) {
     const limit = rateLimitResponse(`email-otp-verify:${emailLower}`, 5, 15 * 60 * 1000);
     if (limit) return limit;
 
-    const entry = otpStore.get(emailLower);
+    // Fetch from DB
+    const supabase = createServiceClient();
+    const { data } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', `otp:${emailLower}`)
+      .maybeSingle();
 
-    if (!entry) {
+    if (!data?.value) {
       return NextResponse.json({ error: 'No code found. Request a new one.' }, { status: 400 });
     }
 
-    if (Date.now() > entry.expiresAt) {
-      otpStore.delete(emailLower);
+    const stored = data.value as { code: string; expires_at: string };
+
+    if (new Date() > new Date(stored.expires_at)) {
+      // Cleanup expired
+      await supabase.from('platform_settings').delete().eq('key', `otp:${emailLower}`);
       return NextResponse.json({ error: 'Code expired. Request a new one.' }, { status: 400 });
     }
 
-    if (entry.code !== String(code).trim()) {
+    if (stored.code !== String(code).trim()) {
       return NextResponse.json({ error: 'Incorrect code' }, { status: 401 });
     }
 
-    // Verified — remove from store
-    otpStore.delete(emailLower);
+    // Verified — delete from DB
+    await supabase.from('platform_settings').delete().eq('key', `otp:${emailLower}`);
 
     return NextResponse.json({ verified: true });
   } catch {

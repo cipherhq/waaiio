@@ -58,6 +58,7 @@ export default function EventPurchaseForm({
   const [guestName, setGuestName] = useState('');
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   // Email OTP verification
   const [emailVerified, setEmailVerified] = useState(false);
@@ -172,6 +173,11 @@ export default function EventPurchaseForm({
 
     if (!emailVerified) {
       setErrorMsg('Please verify your email first.');
+      return;
+    }
+
+    if (!agreedToTerms) {
+      setErrorMsg('Please agree to the terms and conditions.');
       return;
     }
 
@@ -556,10 +562,23 @@ export default function EventPurchaseForm({
                 <p className="text-sm text-red-600">{errorMsg}</p>
               )}
 
+              {/* Terms checkbox */}
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={agreedToTerms}
+                  onChange={(e) => setAgreedToTerms(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#6C2BD9] focus:ring-[#6C2BD9]"
+                />
+                <span className="text-xs text-gray-500">
+                  I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-[#6C2BD9] underline">Waaiio&apos;s terms</a> and policies
+                </span>
+              </label>
+
               {/* Submit button */}
               <button
                 type="submit"
-                disabled={state === 'purchasing' || (hasTicketTypes && !selectedTicketType)}
+                disabled={state === 'purchasing' || (hasTicketTypes && !selectedTicketType) || !agreedToTerms}
                 className="w-full rounded-xl bg-[#6C2BD9] py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#5a23b5] disabled:opacity-50"
               >
                 {state === 'purchasing'
