@@ -30,6 +30,8 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
       return 'Buy Tickets';
     case 'reservation':
       return 'Book a Stay';
+    case 'table_reservation':
+      return 'Make a Reservation';
     case 'crowdfunding':
       return 'Support a Campaign';
     case 'reminders':

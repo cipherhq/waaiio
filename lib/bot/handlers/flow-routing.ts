@@ -30,7 +30,7 @@ export function getFirstStepFromCapabilities(capabilities: CapabilityId[], flowT
   // Filter to user-facing capabilities only (same filter as select_capability prompt)
   const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
   // If scheduling is present, payment/invoice happen within the booking flow — don't show as separate options
-  if (capabilities.includes('scheduling')) {
+  if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
     nonUserFacing.add('payment');
     nonUserFacing.add('invoice');
   }
@@ -51,6 +51,7 @@ export function capabilityToFirstStep(cap: CapabilityId): string {
   switch (cap) {
     case 'appointment': return 'select_appointment';
     case 'scheduling': return 'select_service';
+    case 'table_reservation': return 'select_service'; // Reuses scheduling flow
     case 'giving': return 'select_category';
     case 'payment': return 'select_category';
     case 'ordering': return 'browse_catalog';

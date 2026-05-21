@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership';
+export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'table_reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -25,6 +25,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
 
   // ── PRO (Growth) ──
   { id: 'reservation', label: 'Reservations', description: 'Property bookings with check-in/out dates. For hotels, Airbnb, shortlets, and car rentals.', icon: '🏘️' },
+  { id: 'table_reservation', label: 'Table Reservations', description: 'Let customers reserve tables for dining with date, time, and party size.', icon: '🍽️' },
   { id: 'recurring', label: 'Subscriptions', description: 'Auto-charge customers weekly or monthly. They can manage their own subscriptions via WhatsApp.', icon: '🔄' },
   { id: 'broadcast', label: 'Broadcasts', description: 'Send promotions, updates, and announcements to all your customers at once via WhatsApp.', icon: '📢' },
   { id: 'membership', label: 'Membership', description: 'Create Bronze/Silver/Gold tiers. Customers auto-upgrade based on spending and get discounts.', icon: '🏅' },
@@ -68,6 +69,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
 
   // ── PRO (Growth): Tools to grow and engage ──
   reservation: 'growth',  // Property/room bookings with check-in/out
+  table_reservation: 'free',  // Restaurant table reservations
   recurring: 'growth',    // Auto-charge subscriptions (gym, church, etc.)
   broadcast: 'growth',    // Send promos to all customers at once
   membership: 'growth',   // VIP tiers based on spending
@@ -119,7 +121,7 @@ export const TIER_LABELS: Record<SubscriptionTier, string> = {
  * loyalty and referral are OPT-IN — businesses enable them manually from dashboard.
  * They are NOT included in category defaults. */
 export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
-  restaurant: ['appointment', 'reservation', 'ordering', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'auto_reply'],
+  restaurant: ['table_reservation', 'ordering', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'auto_reply'],
   barber: ['appointment', 'feedback', 'chat', 'staff', 'broadcast', 'auto_reply'],
   spa: ['appointment', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'auto_reply', 'membership'],
   salon: ['appointment', 'feedback', 'chat', 'staff', 'broadcast', 'auto_reply'],
