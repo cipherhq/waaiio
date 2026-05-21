@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { supabase, adminDb } from '@/lib/supabase';
-import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap, CreditCard, BrainCircuit, Bell } from 'lucide-react';
+import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap, CreditCard, BrainCircuit, Bell, Globe, MessageCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 interface StatCard {
@@ -33,6 +33,8 @@ export default function Dashboard() {
   const [llmUsedCount, setLlmUsedCount] = useState(0);
   const [llmAvgConfidence, setLlmAvgConfidence] = useState(0);
   const [recentAlerts, setRecentAlerts] = useState<{ id: string; severity: string; title: string; business_name: string; created_at: string }[]>([]);
+  const [whatsappBookings, setWhatsappBookings] = useState(0);
+  const [webBookings, setWebBookings] = useState(0);
 
   useEffect(() => {
     async function loadStats() {
@@ -231,11 +233,13 @@ export default function Dashboard() {
         setAlerts(alertList);
 
         // System health queries
-        const [paymentsSuccessRes, paymentsFailedRes, llmRes, recentAlertsRes] = await Promise.all([
+        const [paymentsSuccessRes, paymentsFailedRes, llmRes, recentAlertsRes, waBookingsRes, webBookingsRes] = await Promise.all([
           adminQuery('payments', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'success' }, { column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
           adminQuery('payments', { select: 'id', filters: [{ column: 'status', op: 'eq', value: 'failed' }, { column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
           adminQuery('llm_classifications', { select: 'confidence, llm_used', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], limit: 500 }),
           adminQuery('alerts', { select: 'id, severity, title, business_id, created_at', order: { column: 'created_at', ascending: false }, limit: 5 }),
+          adminQuery('bookings', { select: 'id', filters: [{ column: 'channel', op: 'eq', value: 'whatsapp' }, { column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
+          adminQuery('bookings', { select: 'id', filters: [{ column: 'channel', op: 'eq', value: 'web' }, { column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' }),
         ]);
 
         setPaymentSuccessCount(paymentsSuccessRes.count || 0);
@@ -246,6 +250,9 @@ export default function Dashboard() {
         setLlmUsedCount(llmData.filter((r: Record<string, unknown>) => r.llm_used).length);
         const confidences = llmData.filter((r: Record<string, unknown>) => (r.confidence as number) > 0).map((r: Record<string, unknown>) => r.confidence as number);
         setLlmAvgConfidence(confidences.length > 0 ? confidences.reduce((a, b) => a + b, 0) / confidences.length : 0);
+
+        setWhatsappBookings(waBookingsRes.count || 0);
+        setWebBookings(webBookingsRes.count || 0);
 
         // Enrich alerts with business names
         const alertBizIds = [...new Set((recentAlertsRes.data || []).map((a: Record<string, unknown>) => a.business_id as string).filter(Boolean))];
@@ -405,6 +412,41 @@ export default function Dashboard() {
               <span className={`font-semibold ${llmAvgConfidence >= 0.8 ? 'text-green-600' : llmAvgConfidence >= 0.5 ? 'text-yellow-600' : 'text-red-600'}`}>
                 {(llmAvgConfidence * 100).toFixed(0)}%
               </span>
+            </div>
+          </div>
+
+          {/* Booking Channels */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5">
+            <div className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-blue-600" />
+              <h3 className="text-sm font-semibold text-gray-900">Booking Channels</h3>
+            </div>
+            <div className="mt-3 flex items-end justify-between">
+              <div>
+                <p className="text-2xl font-bold text-gray-900">
+                  {(whatsappBookings + webBookings) > 0
+                    ? `${whatsappBookings + webBookings}`
+                    : '—'}
+                </p>
+                <p className="text-xs text-gray-500">Total this month</p>
+              </div>
+              <div className="text-right text-xs text-gray-400">
+                <p className="text-green-600 font-medium flex items-center justify-end gap-1">
+                  <MessageCircle className="h-3 w-3" /> {whatsappBookings} WhatsApp
+                </p>
+                <p className="text-blue-600 font-medium flex items-center justify-end gap-1">
+                  <Globe className="h-3 w-3" /> {webBookings} Web
+                </p>
+              </div>
+            </div>
+            {(whatsappBookings + webBookings) > 0 && (
+              <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-blue-100">
+                <div className="h-2 rounded-full bg-green-500" style={{ width: `${(whatsappBookings / (whatsappBookings + webBookings)) * 100}%` }} />
+              </div>
+            )}
+            <div className="mt-2 flex gap-4 text-[10px] text-gray-400">
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-green-500" /> WhatsApp</span>
+              <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-blue-400" /> Web</span>
             </div>
           </div>
 

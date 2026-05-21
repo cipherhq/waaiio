@@ -68,8 +68,10 @@ export default function DashboardOverview() {
   const [orderRevenue, setOrderRevenue] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
   const [monthlyBookings, setMonthlyBookings] = useState(0);
+  const [webBookings, setWebBookings] = useState(0);
   const [loading, setLoading] = useState(true);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [bookingLinkCopied, setBookingLinkCopied] = useState(false);
 
   const { labels } = useCategoryConfig(business.category);
   const country = (business.country_code || 'NG') as CountryCode;
@@ -119,7 +121,7 @@ export default function DashboardOverview() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
 
-      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes, outstandingInvCountRes] = await Promise.all([
+      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes, outstandingInvCountRes, webBookingsRes] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
@@ -144,6 +146,7 @@ export default function DashboardOverview() {
         supabase.rpc('get_outstanding_invoices', { p_business_id: business.id }),
         // Outstanding invoice count (moved into Promise.all — was sequential before)
         supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('business_id', business.id).in('status', ['sent', 'viewed', 'overdue']),
+        supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('channel', 'web'),
       ]);
 
       const revenue = Number(revenueRes.data ?? 0);
@@ -168,6 +171,7 @@ export default function DashboardOverview() {
       setOrderRevenue(Number(orderRevenueRes.data ?? 0));
       setRecentOrders((recentOrdersRes.data || []) as RecentOrder[]);
       setMonthlyBookings(monthlyRes.count || 0);
+      setWebBookings(webBookingsRes.count || 0);
       setLoading(false);
 
       // Check if business has a payout account — show banner if revenue exists but no payout setup
@@ -339,6 +343,7 @@ export default function DashboardOverview() {
           value={stats.totalBookings}
           icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
           color="brand"
+          sub={webBookings > 0 ? `${webBookings} from web` : undefined}
         />
         {totalOrders > 0 && (
           <StatCard
@@ -520,6 +525,40 @@ export default function DashboardOverview() {
               </div>
             )}
           </div>
+
+          {/* Web Booking Link Card */}
+          {business.slug && (
+            <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-gradient-to-br from-brand-50/50 to-white dark:from-brand-900/20 dark:to-gray-800 p-5">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand/10">
+                  <svg aria-hidden="true" className="h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Web Booking Page</h3>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Customers can book directly from this link</p>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center gap-2">
+                <input
+                  readOnly
+                  value={`${typeof window !== 'undefined' ? window.location.origin : 'https://waaiio.com'}/b/${business.slug}`}
+                  className="flex-1 truncate rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-xs text-gray-600 dark:text-gray-300"
+                />
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/b/${business.slug}`);
+                    setBookingLinkCopied(true);
+                    setTimeout(() => setBookingLinkCopied(false), 2000);
+                  }}
+                  className="shrink-0 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition"
+                >
+                  {bookingLinkCopied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* QR Code Card */}
           {whatsappLink && (
@@ -789,11 +828,13 @@ function StatCard({
   value,
   icon,
   color,
+  sub,
 }: {
   label: string;
   value: number | string;
   icon: string;
   color: 'brand' | 'blue' | 'amber' | 'green';
+  sub?: string;
 }) {
   const colorMap = {
     brand: 'bg-brand-50 text-brand',
@@ -813,6 +854,7 @@ function StatCard({
         </div>
       </div>
       <p className="mt-3 text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</p>
+      {sub && <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">{sub}</p>}
     </div>
   );
 }
