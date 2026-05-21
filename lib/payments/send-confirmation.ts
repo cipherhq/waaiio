@@ -157,7 +157,7 @@ export async function sendProactiveConfirmation(
   let showSaveCardTip = false;
   if (businessId) {
     const { data: paymentGw } = await supabase.from('payments').select('gateway, metadata').eq('id', payment.id).single();
-    if (paymentGw?.gateway === 'paystack') {
+    if (paymentGw?.gateway === 'paystack' && customerPhone) {
       const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
       // Check if customer already has a saved card for this business
       const { data: existingSaved } = await supabase
