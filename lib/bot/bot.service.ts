@@ -1311,6 +1311,50 @@ export class BotService {
       isBotCodeRestart
     );
 
+    // Mid-flow greeting: ask for confirmation before resetting
+    if (session && isMidFlow && isRestart && isGreetingText && !isBotCodeRestart) {
+      // Check if user already confirmed restart
+      if (session.session_data._restart_pending) {
+        // They confirmed — fall through to restart logic below
+      } else {
+        // First time — ask for confirmation
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: { ...session.session_data, _restart_pending: true } })
+          .eq('id', session.id);
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'You have an active session. Do you want to start over?',
+          buttons: [
+            { id: 'restart_yes', title: 'Yes, start over' },
+            { id: 'restart_no', title: 'No, continue' },
+          ],
+        });
+        return;
+      }
+    }
+
+    // Handle restart confirmation response
+    if (session && session.session_data._restart_pending) {
+      if (text === 'restart_no') {
+        delete session.session_data._restart_pending;
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: session.session_data })
+          .eq('id', session.id);
+        // Re-show the current step prompt with business context
+        let biz = null;
+        if (session.business_id) {
+          const { data } = await this.supabase.from('businesses')
+            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
+            .eq('id', session.business_id).single();
+          biz = data;
+        }
+        await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz, mediaUrl, messageType);
+        return;
+      }
+      // restart_yes or any other greeting — proceed with restart
+      delete session.session_data._restart_pending;
+    }
+
     if (!session || isRestart) {
       logger.debug('[BOT] New/restart session. hasSession:', !!session, 'isRestart:', isRestart);
       // Remember the business from the session being restarted — prevents country
