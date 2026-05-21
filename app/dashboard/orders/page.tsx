@@ -208,7 +208,7 @@ export default function OrdersPage() {
     } catch {
       // Fallback to direct update if API fails
       const supabase = createClient();
-      await supabase.from('orders').update({ status: newStatus }).eq('id', orderId);
+      await supabase.from('orders').update({ status: newStatus }).eq('id', orderId).eq('business_id', business.id);
     }
     await fetchOrders();
     if (selectedOrder?.id === orderId) {

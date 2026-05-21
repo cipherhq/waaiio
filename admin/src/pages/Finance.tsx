@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { downloadCSV } from '@/lib/csv';
 
 interface Payment {
@@ -53,10 +54,21 @@ interface Business {
 }
 
 export default function Finance() {
+  const session = useAdminSession();
+  const isFullAdmin = session?.role === 'admin';
   const [loading, setLoading] = useState(true);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [fees, setFees] = useState<PlatformFee[]>([]);
   const [payouts, setPayouts] = useState<BusinessPayout[]>([]);
+
+  if (!isFullAdmin) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
+        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
+        <p className="mt-1 text-sm text-gray-500">Only full admins can view financial data.</p>
+      </div>
+    );
+  }
   const [refunds, setRefunds] = useState<Refund[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);

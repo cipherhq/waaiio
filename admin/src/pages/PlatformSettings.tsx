@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { logAudit } from '@/lib/auditLog';
 import { fmtDateTime } from '@/lib/formatters';
 import { Settings, Plus, Pencil, Trash2, Save, X } from 'lucide-react';
@@ -67,9 +68,20 @@ function formatValue(val: unknown): string {
 }
 
 export default function PlatformSettings() {
+  const session = useAdminSession();
+  const isFullAdmin = session?.role === 'admin';
   const [settings, setSettings] = useState<PlatformSetting[]>([]);
   const [loading, setLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+
+  if (!isFullAdmin) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
+        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
+        <p className="mt-1 text-sm text-gray-500">Only full admins can manage platform settings.</p>
+      </div>
+    );
+  }
 
   // Edit state — track all changes inline
   const [edits, setEdits] = useState<Record<string, string>>({});
