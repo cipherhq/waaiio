@@ -126,17 +126,39 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Find or create user by email for the guest
-    let userId = business.owner_id; // Fallback: attribute to business owner
+    // Find or create user by email/phone
+    let userId: string;
+    const emailLower = guestEmail.toLowerCase();
+    const phoneClean = guestPhone ? `+${guestPhone.replace(/[^0-9]/g, '')}` : null;
 
-    const { data: existingUser } = await supabase
-      .from('users')
+    const { data: existingProfile } = await supabase
+      .from('profiles')
       .select('id')
-      .eq('email', guestEmail.toLowerCase())
+      .or(`email.eq.${emailLower}${phoneClean ? `,phone.eq.${phoneClean}` : ''}`)
+      .limit(1)
       .maybeSingle();
 
-    if (existingUser) {
-      userId = existingUser.id;
+    if (existingProfile) {
+      userId = existingProfile.id;
+    } else {
+      const nameParts = guestName.trim().split(/\s+/);
+      const firstName = nameParts[0] || guestName;
+      const lastName = nameParts.slice(1).join(' ') || '';
+      const createPayload: Record<string, unknown> = {
+        email: emailLower, email_confirm: true,
+        user_metadata: { first_name: firstName, last_name: lastName },
+      };
+      if (phoneClean) { createPayload.phone = phoneClean; createPayload.phone_confirm = true; }
+
+      const { data: authData, error: authError } = await supabase.auth.admin.createUser(createPayload);
+      if (authError || !authData?.user) {
+        const { data: retryProfile } = await supabase.from('profiles').select('id').eq('email', emailLower).maybeSingle();
+        if (retryProfile) { userId = retryProfile.id; }
+        else { return NextResponse.json({ error: 'Failed to create account' }, { status: 500 }); }
+      } else {
+        userId = authData.user.id;
+        await supabase.from('profiles').update({ first_name: firstName, last_name: lastName, email: emailLower, ...(phoneClean ? { phone: phoneClean } : {}) }).eq('id', authData.user.id);
+      }
     }
 
     // Determine pricing

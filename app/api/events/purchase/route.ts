@@ -108,33 +108,64 @@ export async function POST(request: NextRequest) {
 
   const totalAmount = unitPrice * quantity;
 
-  // 2. Find or create user profile by email
+  // 2. Find or create user by email/phone
   let userId: string;
-  const { data: existingUser } = await supabase
-    .from('user_profiles')
+
+  // Try to find existing profile by email or phone
+  const emailLower = guestEmail.toLowerCase();
+  const phoneClean = guestPhone ? `+${guestPhone.replace(/[^0-9]/g, '')}` : null;
+
+  const { data: existingProfile } = await supabase
+    .from('profiles')
     .select('id')
-    .eq('email', guestEmail.toLowerCase())
+    .or(`email.eq.${emailLower}${phoneClean ? `,phone.eq.${phoneClean}` : ''}`)
+    .limit(1)
     .maybeSingle();
 
-  if (existingUser) {
-    userId = existingUser.id;
+  if (existingProfile) {
+    userId = existingProfile.id;
   } else {
-    // Create a minimal user profile
-    const { data: newUser, error: createError } = await supabase
-      .from('user_profiles')
-      .insert({
-        email: guestEmail.toLowerCase(),
-        full_name: guestName,
-        phone: guestPhone || null,
-      })
-      .select('id')
-      .single();
+    // Create guest auth user
+    const nameParts = guestName.trim().split(/\s+/);
+    const firstName = nameParts[0] || guestName;
+    const lastName = nameParts.slice(1).join(' ') || '';
 
-    if (createError || !newUser) {
-      console.error('[EVENT-PURCHASE] Failed to create user profile:', createError?.message);
-      return NextResponse.json({ error: 'Something went wrong' }, { status: 500 });
+    const createPayload: Record<string, unknown> = {
+      email: emailLower,
+      email_confirm: true,
+      user_metadata: { first_name: firstName, last_name: lastName },
+    };
+    if (phoneClean) {
+      createPayload.phone = phoneClean;
+      createPayload.phone_confirm = true;
     }
-    userId = newUser.id;
+
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser(createPayload);
+
+    if (authError || !authData?.user) {
+      // If auth user already exists (race condition), try lookup again
+      const { data: retryProfile } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', emailLower)
+        .maybeSingle();
+
+      if (retryProfile) {
+        userId = retryProfile.id;
+      } else {
+        console.error('[EVENT-PURCHASE] Failed to create user:', authError?.message);
+        return NextResponse.json({ error: 'Something went wrong creating your account' }, { status: 500 });
+      }
+    } else {
+      userId = authData.user.id;
+      // Update profile with name (trigger creates profile, but metadata may not sync)
+      await supabase.from('profiles').update({
+        first_name: firstName,
+        last_name: lastName,
+        email: emailLower,
+        ...(phoneClean ? { phone: phoneClean } : {}),
+      }).eq('id', authData.user.id);
+    }
   }
 
   // 3. Call atomic purchase function
