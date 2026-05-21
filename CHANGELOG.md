@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Adapt Payment Success Pipeline for Web Channel Purchases
+- **Files:** `app/payment-success/page.tsx`, `lib/bot/flows/shared/send-tickets.ts`, `lib/payments/send-confirmation.ts`
+- **What:** Web channel bookings (`channel='web'`) now receive email-only confirmation and ticket delivery instead of WhatsApp. Payment success page detects booking channel and shows "Confirmation sent to your email" + "View Your Tickets" link for web ticketing purchases. `sender` parameter in `SendTicketsOptions` is now optional — WhatsApp PDF/QR delivery is skipped when sender is undefined, but email delivery always runs when `guestEmail` is available. `sendProactiveConfirmation` no longer returns early when no WhatsApp channel is resolved — it sends email confirmation via `bookingConfirmationEmail` template and still processes tickets. Session reset only runs when `customerPhone` exists.
+- **Affects:** All 3 ticket delivery paths (flow, webhook, success page). Web purchases get email. WhatsApp purchases unchanged. If phone IS provided on web bookings, WhatsApp delivery is also attempted (best of both).
+- **Could break:** If `bookings.guest_email` is null for web bookings, no email is sent (silent skip). Callers of `sendTicketsAfterPurchase` that relied on `sender` being required will now get a type error if they pass `undefined` explicitly — but since it's optional, existing calls with a sender value are unaffected.
+
 ### Add Structured Logging with Request Context
 - **Files:** `lib/logger.ts`, `middleware.ts`, `app/api/webhook/whatsapp/route.ts`, `app/api/webhook/meta-cloud/route.ts`
 - **What:** Enhanced logger with `withContext()` method for child loggers carrying metadata (requestId, from phone). Added `generateRequestId()` utility. Production logs now output structured `key=value` format. Middleware generates `x-request-id` header on every request. Both webhook routes use contextual loggers for traceability.
