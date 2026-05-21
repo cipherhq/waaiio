@@ -157,21 +157,40 @@ export const ticketingFlow: FlowDefinition = {
           `${available} tickets available`,
         ].filter(Boolean).join('\n');
 
-        // Send image/text FIRST with await, then delay for WhatsApp to process
-        // before returning buttons. Images take longer for WhatsApp to render
-        // than text/buttons, so we need an explicit gap.
-        if (d.event_image_url) {
-          await ctx.sender.sendImage({
-            to: ctx.from,
-            imageUrl: d.event_image_url as string,
-            caption: eventDetails,
-          });
-        } else {
-          await ctx.sender.sendText({ to: ctx.from, text: eventDetails });
+        // Send event details + buttons together, image as follow-up.
+        // WhatsApp processes images slower than text/buttons, so sending
+        // the image first always results in buttons arriving before the image.
+        // Solution: put all essential info in the button body, send image after.
+        const buttonBody = d.event_image_url
+          ? `How many tickets? (max ${maxShow})`
+          : `${eventDetails}\n\nHow many tickets? (max ${maxShow})`;
+
+        // If no image, include event details in the button body
+        if (!d.event_image_url) {
+          return [{
+            type: 'buttons',
+            body: buttonBody,
+            buttons: [
+              { id: '1', title: '1 ticket' },
+              ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
+              ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
+            ].slice(0, 3),
+          }];
         }
 
-        // Wait for WhatsApp to finish processing the image before sending buttons
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // With image: send image first with event details as caption,
+        // persist to session so executor doesn't re-send, wait, then return buttons
+        await ctx.sender.sendImage({
+          to: ctx.from,
+          imageUrl: d.event_image_url as string,
+          caption: eventDetails,
+        });
+
+        // Mark that image was already sent (avoid re-send on validation retry)
+        ctx.session.session_data._image_sent = true;
+
+        // 3 second delay — WhatsApp needs time to download, thumbnail, and deliver the image
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         return [{
           type: 'buttons',
