@@ -40,6 +40,8 @@ export async function GET(request: NextRequest) {
   // QR code URL
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&format=png&color=1a1a1a&bgcolor=ffffff&data=${encodeURIComponent(`https://waaiio.com/tickets/${ticketCode}`)}`;
 
+  const flyerUrl = event?.image_url || null;
+
   return new ImageResponse(
     (
       <div
@@ -47,13 +49,44 @@ export async function GET(request: NextRequest) {
           width: '800',
           height: '400',
           display: 'flex',
-          background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+          background: flyerUrl ? '#000' : 'linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
           color: 'white',
           fontFamily: 'sans-serif',
           position: 'relative',
           overflow: 'hidden',
         }}
       >
+        {/* Event flyer as background (if available) */}
+        {flyerUrl && (
+          <img
+            src={flyerUrl}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              objectFit: 'cover',
+              opacity: 0.35,
+            }}
+          />
+        )}
+
+        {/* Dark overlay for readability */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            background: flyerUrl
+              ? 'linear-gradient(135deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.5) 50%, rgba(0,0,0,0.7) 100%)'
+              : 'transparent',
+            display: 'flex',
+          }}
+        />
+
         {/* Left side — Event details */}
         <div
           style={{
@@ -62,6 +95,7 @@ export async function GET(request: NextRequest) {
             flexDirection: 'column',
             justifyContent: 'center',
             padding: '40px',
+            zIndex: 1,
           }}
         >
           {/* Business name */}
@@ -110,6 +144,7 @@ export async function GET(request: NextRequest) {
             justifyContent: 'center',
             padding: '30px',
             borderLeft: '2px dashed rgba(255,255,255,0.15)',
+            zIndex: 1,
           }}
         >
           {/* QR Code */}
