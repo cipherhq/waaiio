@@ -111,9 +111,29 @@ export async function sendProactiveConfirmation(
     }
   }
 
-  if (!customerPhone || !businessId) {
-    logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or business`);
+  if (!businessId) {
+    logger.warn(`${logPrefix} Proactive confirmation skipped — no business`);
     return;
+  }
+
+  // For web channel bookings, we may not have a phone but should still send email
+  if (!customerPhone) {
+    // Try to send email-only confirmation for web channel bookings
+    let guestEmail: string | null = null;
+    if (payment.booking_id) {
+      const { data: emailBooking } = await supabase
+        .from('bookings')
+        .select('guest_email, channel')
+        .eq('id', payment.booking_id)
+        .single();
+      guestEmail = emailBooking?.guest_email || null;
+    }
+    if (!guestEmail) {
+      logger.warn(`${logPrefix} Proactive confirmation skipped — no phone or email`);
+      return;
+    }
+    // We have email but no phone — send email-only below
+    logger.info(`${logPrefix} No phone found, will attempt email-only confirmation to ${guestEmail}`);
   }
 
   logger.info(`${logPrefix} Sending proactive confirmation to ${customerPhone} for ${businessName}`);
@@ -171,50 +191,60 @@ export async function sendProactiveConfirmation(
     // Prefer the channel the customer was chatting on
     // Check active, inactive, and ANY session for this phone (not just this business)
     let resolved = null;
+    let inboundChId: string | undefined;
 
-    // 1. Try session for this phone + business (active or recently inactive)
-    const { data: bizSession } = await supabase
-      .from('bot_sessions').select('session_data')
-      .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
-      .order('created_at', { ascending: false }).limit(1).maybeSingle();
-    let inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
-
-    // 2. Fallback: any recent session for this phone (may be on a different business)
-    if (!inboundChId) {
-      const { data: anySession } = await supabase
+    // Only look up WhatsApp sessions if we have a customer phone
+    if (customerPhone) {
+      // 1. Try session for this phone + business (active or recently inactive)
+      const { data: bizSession } = await supabase
         .from('bot_sessions').select('session_data')
-        .eq('whatsapp_number', customerPhone)
-        .not('session_data->_inbound_channel_id', 'is', null)
+        .eq('whatsapp_number', customerPhone).eq('business_id', businessId)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      inboundChId = (anySession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+      inboundChId = (bizSession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+
+      // 2. Fallback: any recent session for this phone (may be on a different business)
+      if (!inboundChId) {
+        const { data: anySession } = await supabase
+          .from('bot_sessions').select('session_data')
+          .eq('whatsapp_number', customerPhone)
+          .not('session_data->_inbound_channel_id', 'is', null)
+          .order('created_at', { ascending: false }).limit(1).maybeSingle();
+        inboundChId = (anySession?.session_data as Record<string, unknown>)?._inbound_channel_id as string | undefined;
+      }
     }
 
     if (inboundChId) resolved = await resolver.resolveByChannelId(inboundChId);
     if (!resolved) resolved = await resolver.resolveByBusinessId(businessId);
-    if (!resolved) return;
 
-    const phone = stripPlus(customerPhone);
-    await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+    // Send WhatsApp confirmation if channel is available and we have a phone
+    if (resolved && customerPhone) {
+      const phone = stripPlus(customerPhone);
+      await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
+    } else {
+      logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
+    }
 
-    // ── 6. Post-completion (loyalty, feedback, referral) ──
-    try {
-      const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
-      const customerName = await getCustomerName(supabase, customerPhone);
-      await handlePostCompletion({
-        supabase, businessId, customerPhone, customerName,
-        serviceType: payment.booking_id ? 'booking' : 'order',
-        referenceId: payment.booking_id || undefined,
-        sender: resolved.sender,
-        amountPaid: payment.amount,
-        serviceName, referenceCode,
-      });
-    } catch (pcErr) {
-      logger.error(`${logPrefix} Post-completion error:`, pcErr);
+    // ── 6. Post-completion (loyalty, feedback, referral) — requires WhatsApp sender ──
+    if (resolved && customerPhone) {
+      try {
+        const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
+        const customerName = await getCustomerName(supabase, customerPhone);
+        await handlePostCompletion({
+          supabase, businessId, customerPhone, customerName,
+          serviceType: payment.booking_id ? 'booking' : 'order',
+          referenceId: payment.booking_id || undefined,
+          sender: resolved.sender,
+          amountPaid: payment.amount,
+          serviceName, referenceCode,
+        });
+      } catch (pcErr) {
+        logger.error(`${logPrefix} Post-completion error:`, pcErr);
+      }
     }
 
     // ── 7. Owner notification ──
     try {
-      if (payment.booking_id) {
+      if (payment.booking_id && resolved) {
         const { notifyOwnerNewBooking } = await import('@/lib/bot/flows/shared/notify-owner');
         const { data: booking } = await supabase.from('bookings')
           .select('date, time, party_size, guest_name')
@@ -254,7 +284,7 @@ export async function sendProactiveConfirmation(
       if (payment.booking_id) {
         const { data: ticketBooking } = await supabase
           .from('bookings')
-          .select('flow_type, date, time, party_size, guest_name, guest_phone, notes')
+          .select('flow_type, date, time, party_size, guest_name, guest_phone, guest_email, notes')
           .eq('id', payment.booking_id)
           .single();
 
@@ -274,14 +304,17 @@ export async function sendProactiveConfirmation(
 
           const { sendTicketsAfterPurchase } = await import('@/lib/bot/flows/shared/send-tickets');
           await sendTicketsAfterPurchase({
-            supabase, sender: resolved.sender, businessId,
+            supabase,
+            sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
+            businessId,
             bookingId: payment.booking_id,
             eventId: event?.id || '',
             eventName, eventDate: dateLabel,
             eventTime: event?.time || ticketBooking.time || undefined,
             venue: event?.venue || '',
             guestName: ticketBooking.guest_name || 'Guest',
-            guestPhone: ticketBooking.guest_phone || customerPhone,
+            guestPhone: ticketBooking.guest_phone || customerPhone || '',
+            guestEmail: ticketBooking.guest_email || undefined,
             referenceCode,
             quantity: ticketBooking.party_size || 1,
             amount: payment.amount, countryCode,
@@ -292,12 +325,57 @@ export async function sendProactiveConfirmation(
       logger.error(`${logPrefix} Ticket send error:`, ticketErr);
     }
 
-    // ── 9. Reset session so user stays with this business ──
-    await supabase
-      .from('bot_sessions')
-      .update({ current_step: 'select_capability', session_data: {}, is_active: true })
-      .eq('whatsapp_number', customerPhone)
-      .eq('business_id', businessId);
+    // ── 8b. Send email confirmation for web channel bookings without WhatsApp ──
+    if (!resolved || !customerPhone) {
+      try {
+        let guestEmail: string | null = null;
+        let bookingDate = '';
+        let bookingTime = '';
+        let bookingQty = 1;
+        let guestFirstName = 'there';
+        if (payment.booking_id) {
+          const { data: emailBooking } = await supabase
+            .from('bookings')
+            .select('guest_email, guest_name, date, time, party_size')
+            .eq('id', payment.booking_id)
+            .single();
+          guestEmail = emailBooking?.guest_email || null;
+          guestFirstName = emailBooking?.guest_name?.split(' ')[0] || 'there';
+          bookingDate = emailBooking?.date || '';
+          bookingTime = emailBooking?.time || '';
+          bookingQty = emailBooking?.party_size || 1;
+        }
+        if (guestEmail) {
+          const { sendEmail } = await import('@/lib/email/client');
+          const { bookingConfirmationEmail } = await import('@/lib/email/templates');
+          const emailContent = bookingConfirmationEmail({
+            firstName: guestFirstName,
+            businessName,
+            date: bookingDate,
+            time: bookingTime,
+            quantity: bookingQty,
+            referenceCode,
+            amount: payment.amount,
+            formattedAmount: formatCurrency(payment.amount, countryCode),
+            quantityLabel: 'Guest(s)',
+            confirmationEmoji: '✅',
+          });
+          await sendEmail({ to: guestEmail, ...emailContent });
+          logger.info(`${logPrefix} Email-only confirmation sent to ${guestEmail}`);
+        }
+      } catch (emailErr) {
+        logger.error(`${logPrefix} Web channel email confirmation error:`, emailErr);
+      }
+    }
+
+    // ── 9. Reset session so user stays with this business (only for WhatsApp sessions) ──
+    if (customerPhone) {
+      await supabase
+        .from('bot_sessions')
+        .update({ current_step: 'select_capability', session_data: {}, is_active: true })
+        .eq('whatsapp_number', customerPhone)
+        .eq('business_id', businessId);
+    }
   } catch (err) {
     logger.error(`${logPrefix} Send confirmation error:`, err);
   }

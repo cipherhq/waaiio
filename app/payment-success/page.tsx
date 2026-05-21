@@ -17,6 +17,10 @@ export default async function PaymentSuccessPage({
   const params = await searchParams;
   let businessPhone: string | undefined;
   let confirmed = false;
+  let bookingChannel: string | null = null;
+  let isTicketing = false;
+  let ticketCodes: string[] = [];
+  let hasPhone = false;
 
   // Verify payment and trigger WhatsApp confirmation automatically
   if (params.ref) {
@@ -93,6 +97,31 @@ export default async function PaymentSuccessPage({
           confirmed = true;
         }
 
+        // Fetch booking channel and ticket info for UI rendering
+        if (confirmed && payment.booking_id) {
+          try {
+            const { data: bookingInfo } = await supabase
+              .from('bookings')
+              .select('channel, flow_type, guest_phone')
+              .eq('id', payment.booking_id)
+              .single();
+            bookingChannel = bookingInfo?.channel || null;
+            isTicketing = bookingInfo?.flow_type === 'ticketing';
+            hasPhone = !!bookingInfo?.guest_phone;
+
+            // Fetch ticket codes for ticketing bookings (for "View Tickets" link)
+            if (isTicketing) {
+              const { data: tickets } = await supabase
+                .from('event_tickets')
+                .select('ticket_code')
+                .eq('booking_id', payment.booking_id);
+              ticketCodes = (tickets || []).map(t => t.ticket_code);
+            }
+          } catch (infoErr) {
+            logger.error('[PAYMENT-SUCCESS] Failed to fetch booking info:', infoErr);
+          }
+        }
+
         // Process payment pipeline + send WhatsApp confirmation (awaited, not fire-and-forget)
         if (confirmed) {
           try {
@@ -119,17 +148,42 @@ export default async function PaymentSuccessPage({
     }
   }
 
+  const isWebChannel = bookingChannel === 'web';
+
+  // Determine confirmation message
+  let confirmationMessage: string;
+  if (!confirmed) {
+    confirmationMessage = isWebChannel
+      ? 'Thank you! Your confirmation will arrive in your email shortly.'
+      : 'Thank you! Your confirmation will arrive on WhatsApp shortly.';
+  } else if (isWebChannel) {
+    confirmationMessage = 'Your payment is confirmed. Confirmation sent to your email.';
+  } else {
+    confirmationMessage = 'Your payment is confirmed. Check WhatsApp for your booking details.';
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 px-4 text-center">
       <div className="mx-auto max-w-sm">
         <div className="text-5xl mb-4">✅</div>
         <h1 className="text-2xl font-bold text-gray-900">Payment Received!</h1>
         <p className="mt-3 text-sm text-gray-600 leading-relaxed">
-          {confirmed
-            ? 'Your payment is confirmed. Check WhatsApp for your booking details.'
-            : 'Thank you! Your confirmation will arrive on WhatsApp shortly.'}
+          {confirmationMessage}
         </p>
-        <ReturnToWhatsApp phone={businessPhone} />
+        {/* Show ticket link for web channel ticketing purchases */}
+        {isWebChannel && isTicketing && ticketCodes.length > 0 && (
+          <a
+            href={`/tickets/${ticketCodes[0]}`}
+            className="mt-4 inline-flex items-center justify-center gap-2 rounded-xl bg-purple-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-purple-700"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" />
+            </svg>
+            View Your Tickets
+          </a>
+        )}
+        {/* Show "Return to WhatsApp" only for WhatsApp channel or web channel with phone */}
+        {(!isWebChannel || hasPhone) && <ReturnToWhatsApp phone={businessPhone} />}
         <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
       </div>
     </div>
