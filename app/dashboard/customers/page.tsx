@@ -7,6 +7,7 @@ import { exportToCsv } from '@/lib/utils/csv-export';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import EmptyState from '@/components/dashboard/EmptyState';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -394,25 +395,17 @@ export default function CustomersPage() {
         <div className="mt-8 flex justify-center">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
         </div>
+      ) : customers.length === 0 ? (
+        <EmptyState
+          icon="👥"
+          title="No customers yet"
+          description="Customers are automatically added when they interact with your WhatsApp bot or web booking page."
+          tip="Test your bot by sending your bot code to the WhatsApp number, or share your booking link."
+        />
       ) : filtered.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 dark:border-gray-700 p-12 text-center">
-          <svg
-            className="mx-auto h-12 w-12 text-gray-300 dark:text-gray-500"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
-            />
-          </svg>
-          <p className="mt-3 text-sm text-gray-400 dark:text-gray-500">
-            {search
-              ? `No ${labels.personLabelPlural.toLowerCase()} match your search.`
-              : `No ${labels.personLabel.toLowerCase()} profiles yet. They will appear after their first interaction.`}
+          <p className="text-sm text-gray-400 dark:text-gray-500">
+            No {labels.personLabelPlural.toLowerCase()} match your search.
           </p>
         </div>
       ) : (

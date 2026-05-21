@@ -1347,7 +1347,7 @@ export default function ChatPage() {
                 )}
                 {businessTier === 'free' && (
                   <p className="mt-2 text-[11px] text-gray-400">
-                    Upgrade to Growth or Business plan to enable WhatsApp forwarding.
+                    Upgrade to Pro or Premium plan to enable WhatsApp forwarding.
                   </p>
                 )}
               </div>

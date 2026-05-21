@@ -215,10 +215,10 @@ export default function BroadcastsPage() {
             </svg>
           </div>
           <h2 className="mt-4 text-lg font-semibold text-gray-900 dark:text-gray-100">
-            Broadcast messages are a Growth+ feature
+            Broadcast messages are a Pro+ feature
           </h2>
           <p className="mt-2 text-sm text-gray-600 dark:text-gray-400 max-w-md mx-auto">
-            Upgrade to the Growth plan to send broadcast messages to up to 500 recipients per month, or go Business for unlimited broadcasts.
+            Upgrade to the Pro plan to send broadcast messages to up to 500 recipients per month, or go Premium for unlimited broadcasts.
           </p>
           <Link
             href="/dashboard/payouts"

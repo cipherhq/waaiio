@@ -883,7 +883,7 @@ export default function SettingsPage() {
                         />
                       </label>
                       {business.subscription_tier === 'free' && (
-                        <p className="mt-1 text-xs text-gray-400">Logo appears on invoices on Growth plan and above</p>
+                        <p className="mt-1 text-xs text-gray-400">Logo appears on invoices on Pro plan and above</p>
                       )}
                     </div>
                   </div>
@@ -2826,7 +2826,7 @@ export default function SettingsPage() {
           <div className="rounded-xl border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-900/20 p-4">
             <p className="text-xs text-blue-700 dark:text-blue-400">
               Dashboard notifications (the bell icon) are always on and free. Email and sound are also free.
-              WhatsApp notifications use your plan&apos;s message quota — Free plan gets 50/month, Growth and Business plans get unlimited.
+              WhatsApp notifications use your plan&apos;s message quota — Free plan gets 50/month, Pro and Premium plans get unlimited.
             </p>
           </div>
         </div>
@@ -2936,7 +2936,7 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         onClick={async () => {
-                          if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits and capabilities that require Growth or Business plans.')) return;
+                          if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits and capabilities that require Pro or Premium plans.')) return;
                           setDowngrading(true);
                           const supabase = createClient();
                           // Update subscription tier

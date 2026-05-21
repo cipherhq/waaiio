@@ -69,7 +69,7 @@ export function UpgradeBanner({
     descColor = 'text-yellow-700';
     buttonBg = 'bg-yellow-600';
     buttonHover = 'hover:bg-yellow-700';
-    message = `You've used ${currentBookings} of ${maxBookings} bookings this month. Upgrade to Growth for 500 bookings.`;
+    message = `You've used ${currentBookings} of ${maxBookings} bookings this month. Upgrade to Pro for 500 bookings.`;
   }
 
   return (

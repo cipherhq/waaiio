@@ -82,7 +82,7 @@ const JSON_LD_APP = {
   featureList: 'Appointment booking, Payment processing, Online ordering, Event ticketing, Donation collection, Customer chat, Feedback surveys, Loyalty programs, Queue management, Invoice generation, E-signatures',
   offers: [
     { '@type': 'Offer', name: 'Starter', price: '0', priceCurrency: 'USD', description: 'Free plan with 30-day trial', availability: 'https://schema.org/InStock' },
-    { '@type': 'Offer', name: 'Pro', price: '14.99', priceCurrency: 'USD', description: 'Growth plan for scaling businesses', availability: 'https://schema.org/InStock' },
+    { '@type': 'Offer', name: 'Pro', price: '14.99', priceCurrency: 'USD', description: 'Pro plan for scaling businesses', availability: 'https://schema.org/InStock' },
     { '@type': 'Offer', name: 'Premium', price: '39.99', priceCurrency: 'USD', description: 'Full platform with white-label branding', availability: 'https://schema.org/InStock' },
   ],
   creator: { '@type': 'Organization', name: 'Waaiio', url: baseUrl },

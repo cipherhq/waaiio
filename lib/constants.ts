@@ -402,7 +402,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
     ],
   },
   growth: {
-    name: 'Growth',
+    name: 'Pro',
     price: 15_000,
     feePercentage: 1.5,
     feeFlat: 0,
@@ -418,7 +418,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
     ],
   },
   business: {
-    name: 'Business',
+    name: 'Premium',
     price: 50_000,
     feePercentage: 1.0,
     feeFlat: 0,

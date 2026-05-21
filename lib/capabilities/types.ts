@@ -111,8 +111,8 @@ export function canEnableCapability(
 /** Human-readable tier label */
 export const TIER_LABELS: Record<SubscriptionTier, string> = {
   free: 'Free',
-  growth: 'Growth',
-  business: 'Business',
+  growth: 'Pro',
+  business: 'Premium',
 };
 
 /** Default capabilities for each business category.

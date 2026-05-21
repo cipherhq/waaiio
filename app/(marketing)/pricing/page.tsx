@@ -36,7 +36,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            Start free with our 30-day trial. No credit card required. Pay only for what you use — or lock in a monthly plan for lower fees.
+            30-day free trial with zero fees, then 2% per transaction. No monthly fees on Starter. Free reservations don&apos;t count.
           </p>
 
           {/* Country picker */}
@@ -64,16 +64,21 @@ export default function PricingPage() {
         <AnimatedSection>
           <div className="mx-auto max-w-6xl px-4">
             <div className="grid gap-8 lg:grid-cols-3">
-              <TierCard
-                tier="free"
-                name={TIER_FEATURES.free.marketingName}
-                price="Free"
-                priceNote="No monthly fee"
-                description={TIER_FEATURES.free.description}
-                features={tiers.free.features}
-                cta={{ label: 'Start Free Trial', href: '/get-started' }}
-                country={country}
-              />
+              <div>
+                <TierCard
+                  tier="free"
+                  name={TIER_FEATURES.free.marketingName}
+                  price="Free"
+                  priceNote="No monthly fee"
+                  description={TIER_FEATURES.free.description}
+                  features={tiers.free.features}
+                  cta={{ label: 'Start Free Trial', href: '/get-started' }}
+                  country={country}
+                />
+                <p className="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-center text-xs text-gray-500">
+                  After trial: 2% per paid transaction. Free bookings (no deposit) are always free.
+                </p>
+              </div>
               <TierCard
                 tier="growth"
                 name={TIER_FEATURES.growth.marketingName}

@@ -321,7 +321,7 @@ export default function InsightsPage() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Trends & Recommendations</h2>
           {!isGrowthOrAbove && <TierBadge tier="growth" />}
         </div>
-        <TierLock locked={!isGrowthOrAbove} requiredTier="Growth">
+        <TierLock locked={!isGrowthOrAbove} requiredTier="Pro">
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <StatCard
               label="Revenue WoW"
@@ -370,7 +370,7 @@ export default function InsightsPage() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Full Intelligence</h2>
           {!isBusiness && <TierBadge tier="business" />}
         </div>
-        <TierLock locked={!isBusiness} requiredTier="Business">
+        <TierLock locked={!isBusiness} requiredTier="Premium">
           {/* Customer Segments */}
           <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Customer Segments</h3>

@@ -258,7 +258,7 @@ export default function SurveysPage() {
         <PageHeader title="Surveys" tooltip={PAGE_TOOLTIPS.surveys} />
         <div className="rounded-lg border border-gray-200 bg-white p-12 text-center dark:border-gray-700 dark:bg-gray-800">
           <div className="text-4xl mb-4">📊</div>
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Surveys available on Growth plan</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">Surveys available on Pro plan</h2>
           <p className="text-gray-500 dark:text-gray-400 mb-4">Create custom surveys and send them to your customers via WhatsApp. Track responses and analyze results in real-time.</p>
           <a href="/dashboard/settings" className="inline-flex items-center px-4 py-2 bg-black text-white rounded-lg hover:bg-gray-800 text-sm font-medium">
             Upgrade Plan

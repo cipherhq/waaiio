@@ -433,7 +433,7 @@ export function Sidebar() {
         {Array.from(sections.entries()).map(([section, items], idx) => (
           <div key={section}>
             {section !== 'main' && (
-              <p className={`${idx > 0 ? 'mt-5' : ''} mb-1 px-3 text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500`}>
+              <p className={`${idx > 0 ? 'mt-5' : ''} mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400`}>
                 {sectionLabels[section] || section}
               </p>
             )}

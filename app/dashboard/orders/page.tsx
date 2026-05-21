@@ -675,8 +675,10 @@ export default function OrdersPage() {
         <EmptyState
           icon="📦"
           title="No orders yet"
-          description="Orders will appear here when customers place them through your WhatsApp bot."
-          tip="Make sure you've added products first — customers can't order without a menu."
+          description="When customers order through WhatsApp or your web page, orders will appear here."
+          actionLabel="Share your store link"
+          onAction={() => navigator.clipboard.writeText(`${window.location.origin}/b/${business.slug}`)}
+          tip="Share your WhatsApp bot code or web booking link to start receiving orders."
         />
       ) : filtered.length === 0 ? (
         <div className="mt-12 text-center">

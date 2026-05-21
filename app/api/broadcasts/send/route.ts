@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
     // Tier gate: free tier cannot broadcast
     if (tier === 'free') {
       return NextResponse.json(
-        { message: 'Broadcast messages are available on Growth and Business plans. Please upgrade to send broadcasts.' },
+        { message: 'Broadcast messages are available on Pro and Premium plans. Please upgrade to send broadcasts.' },
         { status: 403 },
       );
     }
