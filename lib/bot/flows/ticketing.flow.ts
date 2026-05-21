@@ -608,21 +608,37 @@ export const ticketingFlow: FlowDefinition = {
             });
 
             // Send ticket PDF + QR codes (MUST await — Vercel kills process after response)
-            await sendTicketsAfterPurchase({
-              supabase: ctx.supabase,
-              sender: ctx.sender,
-              businessId: ctx.business!.id,
-              bookingId: d.booking_id as string,
-              eventId: d.event_id as string,
-              eventName: d.event_name as string,
-              eventDate: dateLabel,
-              eventTime: d.event_time as string | undefined,
-              venue: (d.event_venue as string) || '',
-              guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              guestPhone: ctx.from,
-              referenceCode: d.reference_code as string,
-              quantity: d.ticket_quantity as number,
-            });
+            try {
+              await sendTicketsAfterPurchase({
+                supabase: ctx.supabase,
+                sender: ctx.sender,
+                businessId: ctx.business!.id,
+                bookingId: d.booking_id as string,
+                eventId: d.event_id as string,
+                eventName: d.event_name as string,
+                eventDate: dateLabel,
+                eventTime: d.event_time as string | undefined,
+                venue: (d.event_venue as string) || '',
+                guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                guestPhone: ctx.from,
+                referenceCode: d.reference_code as string,
+                quantity: d.ticket_quantity as number,
+              });
+            } catch (ticketErr) {
+              console.error('[TICKETING] sendTicketsAfterPurchase FAILED:', ticketErr);
+              // Fallback: send a text-only ticket with the code
+              const ticketCodes = await ctx.supabase
+                .from('event_tickets')
+                .select('ticket_code')
+                .eq('booking_id', d.booking_id as string);
+              if (ticketCodes.data && ticketCodes.data.length > 0) {
+                const codes = ticketCodes.data.map(t => t.ticket_code).join('\n');
+                await ctx.sender.sendText({
+                  to: ctx.from,
+                  text: `🎟️ Your ticket code${ticketCodes.data.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance. You can also type *my bookings* to view your tickets.`,
+                });
+              }
+            }
 
             // Notify owner: email + WhatsApp
             notifyOwnerNewTicketSale({

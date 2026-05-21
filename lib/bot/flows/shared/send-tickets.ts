@@ -51,6 +51,8 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     guestName, guestPhone, referenceCode, quantity,
   } = opts;
 
+  logger.info('[TICKETS] Starting sendTicketsAfterPurchase | booking:', bookingId, '| event:', eventName, '| qty:', quantity);
+
   // 1. Generate unique ticket codes
   const tickets: Array<{ ticketCode: string; ticketNumber: number; totalTickets: number }> = [];
   for (let i = 0; i < quantity; i++) {
@@ -81,6 +83,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.error('[TICKETS] Failed to insert event_tickets:', insertError.message, insertError.code);
     return;
   }
+  logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
 
   // 3. Generate PDF
   const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
@@ -110,6 +113,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.error('[TICKETS] Failed to upload PDF to storage:', uploadError.message, '| path:', storagePath);
     return;
   }
+  logger.info('[TICKETS] PDF uploaded to storage:', storagePath);
 
   // 5. Create signed URL (24-hour expiry)
   const { data: signedUrlData, error: signedUrlError } = await supabase.storage
