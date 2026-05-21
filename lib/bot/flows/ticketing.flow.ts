@@ -598,20 +598,28 @@ export const ticketingFlow: FlowDefinition = {
                 .eq('booking_id', d.booking_id as string);
 
               if (existingTickets && existingTickets.length > 0) {
-                // Send QR code images via public API
+                // Send QR code images via public API + text codes
                 const verifyBase = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
+                const ticketLines: string[] = [];
                 for (const t of existingTickets) {
+                  const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${verifyBase}/${t.ticket_code}`)}`;
+                  ticketLines.push(`🎟️ *${t.ticket_code}*\n📱 QR: ${qrImageUrl}`);
+                  // Also try sending as image
                   try {
-                    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${verifyBase}/${t.ticket_code}`)}`;
                     await ctx.sender.sendImage({
                       to: ctx.from,
                       imageUrl: qrImageUrl,
-                      caption: `🎟️ *${t.ticket_code}*\nShow this QR code at the entrance`,
+                      caption: `🎟️ *${t.ticket_code}* — Show this QR at the entrance`,
                     });
                   } catch (qrErr) {
-                    console.error('[TICKETING] QR send failed for', t.ticket_code, qrErr);
+                    console.error('[TICKETING] QR image send failed for', t.ticket_code, ':', qrErr);
                   }
                 }
+                // Always send text fallback with clickable QR links
+                await ctx.sender.sendText({
+                  to: ctx.from,
+                  text: `Your ticket${existingTickets.length > 1 ? 's' : ''}:\n\n${ticketLines.join('\n\n')}\n\nShow the QR code at the entrance or type *my bookings* to view tickets.`,
+                });
               }
 
               return { valid: true, data: { _action: 'already_confirmed' } };
