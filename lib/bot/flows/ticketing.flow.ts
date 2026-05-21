@@ -589,6 +589,22 @@ export const ticketingFlow: FlowDefinition = {
                   countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
                 }),
               });
+
+              // Dedup path: webhook confirmed payment, but may not have sent tickets.
+              // Check if tickets exist and send the codes as fallback.
+              const { data: existingTickets } = await ctx.supabase
+                .from('event_tickets')
+                .select('ticket_code')
+                .eq('booking_id', d.booking_id as string);
+
+              if (existingTickets && existingTickets.length > 0) {
+                const codes = existingTickets.map((t: { ticket_code: string }) => `🎟️ *${t.ticket_code}*`).join('\n');
+                await ctx.sender.sendText({
+                  to: ctx.from,
+                  text: `Your ticket code${existingTickets.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance or type *my bookings* to view your tickets.`,
+                });
+              }
+
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 
