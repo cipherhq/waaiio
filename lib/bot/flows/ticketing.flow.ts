@@ -157,31 +157,31 @@ export const ticketingFlow: FlowDefinition = {
           `${available} tickets available`,
         ].filter(Boolean).join('\n');
 
-        // Build messages array — image first, then buttons
-        // Both in the return array so executor sends them in guaranteed order
-        const messages: PromptMessage[] = [];
-
+        // Send image/text FIRST with await, then delay for WhatsApp to process
+        // before returning buttons. Images take longer for WhatsApp to render
+        // than text/buttons, so we need an explicit gap.
         if (d.event_image_url) {
-          messages.push({
-            type: 'image' as const,
+          await ctx.sender.sendImage({
+            to: ctx.from,
             imageUrl: d.event_image_url as string,
             caption: eventDetails,
-          } as PromptMessage);
+          });
         } else {
-          messages.push({ type: 'text', text: eventDetails });
+          await ctx.sender.sendText({ to: ctx.from, text: eventDetails });
         }
 
-        messages.push({
+        // Wait for WhatsApp to finish processing the image before sending buttons
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        return [{
           type: 'buttons',
           body: `How many tickets? (max ${maxShow})`,
           buttons: [
             { id: '1', title: '1 ticket' },
             ...(maxShow >= 2 ? [{ id: '2', title: '2 tickets' }] : []),
             ...(maxShow >= 4 ? [{ id: '4', title: '4 tickets' }] : []),
-          ].slice(0, 3), // WhatsApp max 3 buttons
-        });
-
-        return messages;
+          ].slice(0, 3),
+        }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const qty = parseInt(input, 10);
