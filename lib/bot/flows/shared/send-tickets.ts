@@ -122,47 +122,25 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
   }
 
-  // 4. Send QR codes — ALWAYS runs regardless of PDF success
+  // 4. Send QR codes via public API — no storage upload needed
   for (const ticket of tickets) {
     try {
       const qrUrl = `${verifyBaseUrl}/${ticket.ticketCode}`;
-      const qrBuffer = await QRCode.toBuffer(qrUrl, {
-        width: 400,
-        margin: 2,
-        color: { dark: '#1a1a1a', light: '#ffffff' },
-        type: 'png',
+      // Use public QR API — returns PNG directly, no upload/signed URL needed
+      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(qrUrl)}`;
+
+      await sender.sendImage({
+        to: phone,
+        imageUrl: qrImageUrl,
+        caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this QR code at the entrance`,
       });
-
-      // Upload QR image to storage
-      const qrPath = `tickets/${businessId}/${ticket.ticketCode}.png`;
-      const { error: qrUploadError } = await supabase.storage
-        .from('documents')
-        .upload(qrPath, qrBuffer, { contentType: 'image/png', upsert: true });
-
-      if (qrUploadError) {
-        logger.error('[TICKETS] Failed to upload QR to storage:', qrUploadError.message, '| path:', qrPath);
-        continue;
-      }
-
-      const { data: qrSignedUrl } = await supabase.storage
-        .from('documents')
-        .createSignedUrl(qrPath, 86400);
-
-      if (qrSignedUrl?.signedUrl) {
-        await sender.sendImage({
-          to: phone,
-          imageUrl: qrSignedUrl.signedUrl,
-          caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — ${ticket.ticketCode}\nShow this QR code at the entrance`,
-        });
-      } else {
-        logger.error('[TICKETS] Failed to create signed URL for QR:', qrPath);
-      }
+      logger.info('[TICKETS] QR sent for', ticket.ticketCode);
     } catch (qrErr) {
       logger.error('[TICKETS] QR image send failed for', ticket.ticketCode, ':', qrErr);
     }
   }
 
-  logger.info('[TICKETS] PDF + QR codes sent to', phone, '| booking:', bookingId);
+  logger.info('[TICKETS] Ticket delivery complete for', phone, '| booking:', bookingId);
 
   // 8. Send email confirmation if we have an email address
   let email = opts.guestEmail;
