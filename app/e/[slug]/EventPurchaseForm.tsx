@@ -59,6 +59,13 @@ export default function EventPurchaseForm({
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
 
+  // Email OTP verification
+  const [emailVerified, setEmailVerified] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpCode, setOtpCode] = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError] = useState('');
+
   // Success state
   const [referenceCode, setReferenceCode] = useState('');
 
@@ -104,11 +111,67 @@ export default function EventPurchaseForm({
     return time ? `${date} at ${time}` : date;
   }
 
+  async function sendOtp() {
+    if (!guestEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestEmail)) {
+      setOtpError('Enter a valid email first');
+      return;
+    }
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const res = await fetch('/api/auth/email-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: guestEmail.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setOtpError(data.error || 'Failed to send code');
+      } else {
+        setOtpSent(true);
+      }
+    } catch {
+      setOtpError('Network error. Try again.');
+    }
+    setOtpLoading(false);
+  }
+
+  async function verifyOtp() {
+    if (!otpCode || otpCode.length !== 4) {
+      setOtpError('Enter the 4-digit code');
+      return;
+    }
+    setOtpLoading(true);
+    setOtpError('');
+    try {
+      const res = await fetch('/api/auth/email-otp?action=verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: guestEmail.trim(), code: otpCode }),
+      });
+      const data = await res.json();
+      if (data.verified) {
+        setEmailVerified(true);
+        setOtpSent(false);
+      } else {
+        setOtpError(data.error || 'Invalid code');
+      }
+    } catch {
+      setOtpError('Network error. Try again.');
+    }
+    setOtpLoading(false);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
     if (!guestName.trim() || !guestEmail.trim()) {
       setErrorMsg('Please fill in your name and email.');
+      return;
+    }
+
+    if (!emailVerified) {
+      setErrorMsg('Please verify your email first.');
       return;
     }
 
@@ -398,14 +461,73 @@ export default function EventPurchaseForm({
                   <label className="mb-1 block text-sm font-medium text-gray-700">
                     Email <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="email"
-                    value={guestEmail}
-                    onChange={(e) => setGuestEmail(e.target.value)}
-                    required
-                    placeholder="john@example.com"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-[#6C2BD9] focus:ring-1 focus:ring-[#6C2BD9]"
-                  />
+                  {emailVerified ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-3 py-2.5 text-sm">
+                      <span className="text-green-600">&#10003;</span>
+                      <span className="text-gray-700">{guestEmail}</span>
+                      <button
+                        type="button"
+                        onClick={() => { setEmailVerified(false); setOtpSent(false); setOtpCode(''); }}
+                        className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : otpSent ? (
+                    <div>
+                      <p className="mb-2 text-xs text-gray-500">Code sent to {guestEmail}</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={4}
+                          value={otpCode}
+                          onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                          placeholder="4-digit code"
+                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-[#6C2BD9]"
+                        />
+                        <button
+                          type="button"
+                          onClick={verifyOtp}
+                          disabled={otpLoading || otpCode.length !== 4}
+                          className="rounded-lg bg-[#6C2BD9] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#5a22b8] disabled:opacity-50"
+                        >
+                          {otpLoading ? '...' : 'Verify'}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={sendOtp}
+                        disabled={otpLoading}
+                        className="mt-1 text-xs text-[#6C2BD9] hover:underline"
+                      >
+                        Resend code
+                      </button>
+                      {otpError && <p className="mt-1 text-xs text-red-500">{otpError}</p>}
+                    </div>
+                  ) : (
+                    <div>
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          value={guestEmail}
+                          onChange={(e) => setGuestEmail(e.target.value)}
+                          required
+                          placeholder="john@example.com"
+                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-[#6C2BD9] focus:ring-1 focus:ring-[#6C2BD9]"
+                        />
+                        <button
+                          type="button"
+                          onClick={sendOtp}
+                          disabled={otpLoading || !guestEmail.trim()}
+                          className="rounded-lg bg-[#6C2BD9] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#5a22b8] disabled:opacity-50"
+                        >
+                          {otpLoading ? '...' : 'Verify'}
+                        </button>
+                      </div>
+                      {otpError && <p className="mt-1 text-xs text-red-500">{otpError}</p>}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-gray-700">
