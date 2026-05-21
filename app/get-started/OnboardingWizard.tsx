@@ -1472,11 +1472,17 @@ function OnboardingWizard() {
                     const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
                     const tierLabel = tier === 'free' ? null : tier === 'growth' ? 'Pro' : 'Premium';
                     const tierColor = tier === 'growth' ? 'bg-blue-100 text-blue-700' : tier === 'business' ? 'bg-purple-100 text-purple-700' : '';
+                    // Disable if capability requires a higher plan than selected
+                    const planOrder = ['free', 'growth', 'business'] as const;
+                    const capTierIdx = planOrder.indexOf(tier as typeof planOrder[number]);
+                    const selectedPlanIdx = planOrder.indexOf(selectedPlan);
+                    const isLocked = capTierIdx > selectedPlanIdx;
                     return (
                       <div key={feat.id} className="group relative">
                         <button
                           type="button"
                           onClick={() => {
+                            if (isLocked) return;
                             setSelectedCapabilities(prev =>
                               prev.includes(feat.id)
                                 ? prev.filter(c => c !== feat.id)
@@ -1484,9 +1490,11 @@ function OnboardingWizard() {
                             );
                           }}
                           className={`w-full rounded-xl border-2 p-4 text-left transition ${
-                            isSelected
-                              ? 'border-brand bg-brand-50/50'
-                              : 'border-gray-200 hover:border-gray-300 bg-white'
+                            isLocked
+                              ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                              : isSelected
+                                ? 'border-brand bg-brand-50/50'
+                                : 'border-gray-200 hover:border-gray-300 bg-white'
                           }`}
                         >
                           <div className="flex items-start gap-3">
@@ -1649,7 +1657,11 @@ function OnboardingWizard() {
 
                 <div className="mt-6 space-y-4">
                   {/* Free / Starter */}
-                  <button type="button" onClick={() => setSelectedPlan('free')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <button type="button" onClick={() => {
+                    setSelectedPlan('free');
+                    // Remove capabilities above free tier
+                    setSelectedCapabilities(prev => prev.filter(c => (CAPABILITY_TIER_REQUIREMENTS[c] || 'free') === 'free'));
+                  }} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
                     {requiredPlan === 'free' && selectedCapabilities.length > 0 && (
                       <span className="absolute -top-3 left-4 rounded-full bg-green-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
                     )}
@@ -1672,7 +1684,14 @@ function OnboardingWizard() {
                   </button>
 
                   {/* Growth / Pro */}
-                  <button type="button" onClick={() => setSelectedPlan('growth')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
+                  <button type="button" onClick={() => {
+                    setSelectedPlan('growth');
+                    // Remove capabilities above growth tier
+                    setSelectedCapabilities(prev => prev.filter(c => {
+                      const t = CAPABILITY_TIER_REQUIREMENTS[c] || 'free';
+                      return t === 'free' || t === 'growth';
+                    }));
+                  }} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
                     <span className="absolute -top-3 right-4 rounded-full bg-accent px-3 py-0.5 text-xs font-bold text-gray-900">Most Popular</span>
                     {requiredPlan === 'growth' && (
                       <span className="absolute -top-3 left-4 rounded-full bg-blue-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
