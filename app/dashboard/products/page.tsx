@@ -1853,7 +1853,7 @@ export default function ProductsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          {hasWhatsAppChannel && products.length > 0 && (
+          {hasWhatsAppChannel && products.length > 0 && business.subscription_tier === 'business' && (
             <button
               onClick={handleCatalogSync}
               disabled={syncing}
@@ -2082,7 +2082,7 @@ export default function ProductsPage() {
                     >
                       <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: product.is_active ? '22px' : '2px' }} />
                     </button>
-                    {hasWhatsAppChannel && (
+                    {hasWhatsAppChannel && business.subscription_tier === 'business' && (
                       <span className={`flex items-center gap-1 text-xs ${product.catalog_synced_at ? 'text-green-600' : 'text-gray-400'}`}>
                         <span className={`inline-block h-1.5 w-1.5 rounded-full ${product.catalog_synced_at ? 'bg-green-500' : 'bg-gray-300'}`} />
                         {product.catalog_synced_at ? 'Synced' : 'Not synced'}
@@ -2105,7 +2105,7 @@ export default function ProductsPage() {
       )}
 
       {/* Sync History */}
-      {hasWhatsAppChannel && syncLogs.length > 0 && (
+      {hasWhatsAppChannel && business.subscription_tier === 'business' && syncLogs.length > 0 && (
         <div className="mt-6">
           <button
             onClick={() => setShowSyncHistory(!showSyncHistory)}
