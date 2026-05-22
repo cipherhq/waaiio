@@ -5,6 +5,16 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (b)
+
+### WhatsApp Catalog Sync Dashboard UI
+- **Files:** `app/dashboard/products/page.tsx`, `app/api/catalog/sync/route.ts`
+- **What:** (1) Added "Sync to WhatsApp" button in products page header — only visible when business has an active `meta_cloud` WhatsApp channel and products exist. Button calls `POST /api/catalog/sync`, shows progress state and success/error banner. (2) Added per-product sync indicator (green dot "Synced" / gray dot "Not synced") in the product card quick actions bar, based on `catalog_synced_at` column. (3) Updated sync API route to: store `whatsapp_catalog_id` on business record, set `catalog_synced_at` on all synced products, and log every sync attempt to `catalog_sync_logs` table with status (success/partial/failed). (4) Added collapsible "Sync History" section below product grid showing last 5 sync attempts with synced/failed counts, status badges, timestamps, and error messages.
+- **Affects:** Products dashboard page (new UI elements), catalog sync API (now persists sync state). Requires migration 152 (already applied).
+- **Could break:** `catalog_synced_at` and `catalog_sync_logs` queries use browser Supabase client — RLS must allow business owner reads (migration 152 has RLS policy). The `whatsapp_channels` check query uses browser client with RLS — should work since channels table has owner-based RLS.
+
+---
+
 ## 2026-05-22
 
 ### Bot Performance Analytics + Waitlist-to-Booking Conversion

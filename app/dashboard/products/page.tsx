@@ -96,6 +96,17 @@ interface Product {
   shipping_cost: number | null;
   min_order_qty: number;
   variant_options?: OptionGroup[];
+  catalog_synced_at?: string | null;
+}
+
+interface CatalogSyncLog {
+  id: string;
+  catalog_id: string;
+  synced_count: number;
+  failed_count: number;
+  error_message: string | null;
+  status: 'pending' | 'success' | 'partial' | 'failed';
+  created_at: string;
 }
 
 const EMPTY_PRODUCT: Omit<Product, 'id'> = {
@@ -234,11 +245,18 @@ export default function ProductsPage() {
   const [bulkResult, setBulkResult] = useState<{ imported: number; skipped: number; errors?: { row: number; reason: string }[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // WhatsApp Catalog Sync
+  const [hasWhatsAppChannel, setHasWhatsAppChannel] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [syncLogs, setSyncLogs] = useState<CatalogSyncLog[]>([]);
+  const [showSyncHistory, setShowSyncHistory] = useState(false);
+
   const fetchProducts = useCallback(async () => {
     const supabase = createClient();
     const { data } = await supabase
       .from('products')
-      .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options')
+      .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
       .eq('business_id', business.id)
       .is('deleted_at', null)
       .order('sort_order', { ascending: true });
@@ -328,7 +346,60 @@ export default function ProductsPage() {
     });
   }, [business.id]);
 
-  useEffect(() => { fetchProducts(); fetchAnalytics(); }, [fetchProducts, fetchAnalytics]);
+  // Check if business has a Meta Cloud WhatsApp channel
+  const checkWhatsAppChannel = useCallback(async () => {
+    const supabase = createClient();
+    const { count } = await supabase
+      .from('whatsapp_channels')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id)
+      .eq('provider', 'meta_cloud')
+      .eq('is_active', true);
+    setHasWhatsAppChannel((count || 0) > 0);
+  }, [business.id]);
+
+  // Fetch catalog sync logs
+  const fetchSyncLogs = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('catalog_sync_logs')
+      .select('id, catalog_id, synced_count, failed_count, error_message, status, created_at')
+      .eq('business_id', business.id)
+      .order('created_at', { ascending: false })
+      .limit(5);
+    setSyncLogs((data as CatalogSyncLog[]) || []);
+  }, [business.id]);
+
+  // Handle catalog sync
+  async function handleCatalogSync() {
+    setSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch('/api/catalog/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSyncMessage({ type: 'error', text: data.error || 'Sync failed' });
+      } else {
+        setSyncMessage({
+          type: 'success',
+          text: `Synced ${data.synced} product${data.synced !== 1 ? 's' : ''} to WhatsApp catalog${data.failed > 0 ? ` (${data.failed} failed)` : ''}`,
+        });
+        // Refresh products and sync logs to show updated sync status
+        fetchProducts();
+        fetchSyncLogs();
+      }
+    } catch {
+      setSyncMessage({ type: 'error', text: 'Network error. Please try again.' });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  useEffect(() => { fetchProducts(); fetchAnalytics(); checkWhatsAppChannel(); fetchSyncLogs(); }, [fetchProducts, fetchAnalytics, checkWhatsAppChannel, fetchSyncLogs]);
 
   // Scroll to edited product after save
   useEffect(() => {
@@ -1782,6 +1853,15 @@ export default function ProductsPage() {
           </p>
         </div>
         <div className="flex gap-2">
+          {hasWhatsAppChannel && products.length > 0 && (
+            <button
+              onClick={handleCatalogSync}
+              disabled={syncing}
+              className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm font-medium text-green-700 hover:bg-green-100 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {syncing ? 'Syncing...' : 'Sync to WhatsApp'}
+            </button>
+          )}
           <button
             onClick={() => setView('bulk')}
             className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
@@ -1802,6 +1882,16 @@ export default function ProductsPage() {
         title="Your Products"
         description="This is your product catalog. Customers browse these items and add them to their cart on WhatsApp. Add photos, prices, and descriptions to help customers choose."
       />
+
+      {/* Sync status banner */}
+      {syncMessage && (
+        <div className={`mt-3 flex items-center justify-between rounded-lg px-4 py-2.5 ${
+          syncMessage.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+        }`}>
+          <p className="text-sm font-medium">{syncMessage.text}</p>
+          <button onClick={() => setSyncMessage(null)} className="ml-2 text-sm opacity-60 hover:opacity-100">&times;</button>
+        </div>
+      )}
 
       {/* Shipping config link */}
       {capabilities.includes('ordering') && (
@@ -1985,12 +2075,20 @@ export default function ProductsPage() {
 
                 {/* Quick actions bar */}
                 <div className="mt-3 flex items-center justify-between border-t border-gray-50 pt-3">
-                  <button
-                    onClick={(e) => { e.stopPropagation(); toggleActive(product); }}
-                    className={`relative h-6 w-11 rounded-full transition ${product.is_active ? 'bg-brand' : 'bg-gray-200'}`}
-                  >
-                    <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: product.is_active ? '22px' : '2px' }} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleActive(product); }}
+                      className={`relative h-6 w-11 rounded-full transition ${product.is_active ? 'bg-brand' : 'bg-gray-200'}`}
+                    >
+                      <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: product.is_active ? '22px' : '2px' }} />
+                    </button>
+                    {hasWhatsAppChannel && (
+                      <span className={`flex items-center gap-1 text-xs ${product.catalog_synced_at ? 'text-green-600' : 'text-gray-400'}`}>
+                        <span className={`inline-block h-1.5 w-1.5 rounded-full ${product.catalog_synced_at ? 'bg-green-500' : 'bg-gray-300'}`} />
+                        {product.catalog_synced_at ? 'Synced' : 'Not synced'}
+                      </span>
+                    )}
+                  </div>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDelete(product.id); }}
                     className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-500"
@@ -2003,6 +2101,64 @@ export default function ProductsPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Sync History */}
+      {hasWhatsAppChannel && syncLogs.length > 0 && (
+        <div className="mt-6">
+          <button
+            onClick={() => setShowSyncHistory(!showSyncHistory)}
+            className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-gray-900"
+          >
+            <svg
+              aria-hidden="true"
+              className={`h-4 w-4 transition-transform ${showSyncHistory ? 'rotate-90' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            Sync History
+          </button>
+          {showSyncHistory && (
+            <div className="mt-3 rounded-xl border border-gray-100 bg-white divide-y divide-gray-50">
+              {syncLogs.map((log) => (
+                <div key={log.id} className="flex items-center justify-between px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <span className={`inline-block h-2 w-2 rounded-full ${
+                      log.status === 'success' ? 'bg-green-500'
+                        : log.status === 'partial' ? 'bg-amber-500'
+                        : log.status === 'failed' ? 'bg-red-500'
+                        : 'bg-gray-400'
+                    }`} />
+                    <div>
+                      <p className="text-sm text-gray-900">
+                        {log.synced_count} synced{log.failed_count > 0 ? `, ${log.failed_count} failed` : ''}
+                      </p>
+                      {log.error_message && (
+                        <p className="text-xs text-red-500">{log.error_message}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                      log.status === 'success' ? 'bg-green-50 text-green-700'
+                        : log.status === 'partial' ? 'bg-amber-50 text-amber-700'
+                        : log.status === 'failed' ? 'bg-red-50 text-red-700'
+                        : 'bg-gray-50 text-gray-600'
+                    }`}>
+                      {log.status}
+                    </span>
+                    <span className="text-xs text-gray-400">
+                      {new Date(log.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

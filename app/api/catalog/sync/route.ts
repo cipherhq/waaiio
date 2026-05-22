@@ -76,11 +76,29 @@ export async function POST(request: NextRequest) {
     availability: (p.stock_quantity === null || p.stock_quantity > 0) ? 'in stock' as const : 'out of stock' as const,
   })));
 
-  // Save catalog ID to business metadata
-  const existingMeta = ((biz as Record<string, unknown>).metadata || {}) as Record<string, unknown>;
+  // Store whatsapp_catalog_id on the business record
   await service.from('businesses').update({
-    metadata: { ...existingMeta, wa_catalog_id: catalogId },
+    whatsapp_catalog_id: catalogId,
   }).eq('id', business_id);
+
+  // Mark synced products with catalog_synced_at
+  if (result.synced > 0) {
+    const productIds = products.map(p => p.id);
+    await service.from('products').update({
+      catalog_synced_at: new Date().toISOString(),
+    }).in('id', productIds).eq('business_id', business_id);
+  }
+
+  // Log to catalog_sync_logs
+  const logStatus = result.failed === 0 ? 'success' : result.synced === 0 ? 'failed' : 'partial';
+  await service.from('catalog_sync_logs').insert({
+    business_id,
+    catalog_id: catalogId,
+    synced_count: result.synced,
+    failed_count: result.failed,
+    status: logStatus,
+    error_message: result.failed > 0 ? `${result.failed} product(s) failed to sync` : null,
+  });
 
   logger.debug('[CATALOG] Sync result:', result);
 
