@@ -5,6 +5,16 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (c)
+
+### Multi-Agent Live Chat Support
+- **Files:** `app/api/chat/assign/route.ts` (new), `app/api/chat/send/route.ts`, `app/api/chat/list/route.ts`, `app/dashboard/chat/page.tsx`
+- **What:** (1) New `/api/chat/assign` POST endpoint — assigns/unassigns conversations to team members (owner/admin/manager auth). Updates `assigned_to` + `assigned_at` on `chat_conversations`. (2) Updated send route — resolves sender's `business_members.id`, stores as `staff_id` on outbound messages, auto-assigns unassigned conversations to the sender. Also allows team members (not just owners) to send messages. (3) Updated list route — includes `assigned_to` in conversation data, returns `currentMemberId`, supports `?assigned=me` and `?assigned=unassigned` query params. Also allows team members to access the chat list. (4) Updated chat UI — assignment dropdown in conversation header, "All | Assigned to me | Unassigned" filter tabs (only shown when team has 2+ members), assigned badge on conversation list items, agent name on outbound message bubbles.
+- **Affects:** Chat page, chat API routes. Requires migration 151 (already applied: `assigned_to`, `assigned_at` columns + team member RLS policies).
+- **Could break:** Owner-only businesses (no team members) see no changes — assignment UI is hidden when `teamMembers.length <= 1`. The `getMemberName()` function looks up by `business_members.id` — owner without a `business_members` record won't show a name on their messages (gracefully handled with null check).
+
+---
+
 ## 2026-05-19 (b)
 
 ### WhatsApp Catalog Sync Dashboard UI

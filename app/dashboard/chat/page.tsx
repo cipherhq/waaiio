@@ -30,7 +30,19 @@ interface ChatConversation {
   escalated_at: string | null;
   last_message_at: string | null;
   created_at: string;
+  assigned_to: string | null;
+  assigned_at: string | null;
 }
+
+interface TeamMember {
+  id: string;
+  email: string;
+  name?: string;
+  role: string;
+  isOwner: boolean;
+}
+
+type AssignmentFilter = 'all' | 'mine' | 'unassigned';
 
 interface CannedResponse {
   id: string;
@@ -100,6 +112,11 @@ export default function ChatPage() {
   const [forwardToggling, setForwardToggling] = useState(false);
   const [forwardUsage, setForwardUsage] = useState<{ count: number; month: string } | null>(null);
   const [businessTier, setBusinessTier] = useState<string>('free');
+  // Team / assignment state
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>('all');
+  const [currentMemberId, setCurrentMemberId] = useState<string | null>(null);
+  const [assigning, setAssigning] = useState(false);
   // Audio recording state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -132,6 +149,10 @@ export default function ChatPage() {
         const data = await res.json();
         const convs = data.conversations || [];
         const msgs = data.messages || [];
+
+        if (data.currentMemberId !== undefined) {
+          setCurrentMemberId(data.currentMemberId);
+        }
 
         if (isInitial) {
           setConversations(convs);
@@ -229,6 +250,20 @@ export default function ChatPage() {
       }
     }
     loadForwardSettings();
+  }, [business.id]);
+
+  // Load team members
+  useEffect(() => {
+    async function loadTeam() {
+      try {
+        const res = await fetch(`/api/team?business_id=${business.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setTeamMembers(data.members || []);
+        }
+      } catch { /* silent */ }
+    }
+    loadTeam();
   }, [business.id]);
 
   // Realtime: chat_messages
@@ -370,6 +405,41 @@ export default function ChatPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showCanned]);
 
+  // Assign conversation to a team member
+  async function assignConversation(conversationId: string, memberId: string) {
+    setAssigning(true);
+    try {
+      const res = await fetch('/api/chat/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId,
+          assignedTo: memberId || null,
+        }),
+      });
+      if (res.ok) {
+        // Optimistic update
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === conversationId
+              ? { ...c, assigned_to: memberId || null, assigned_at: memberId ? new Date().toISOString() : null }
+              : c
+          )
+        );
+      }
+    } catch { /* silent */ } finally {
+      setAssigning(false);
+    }
+  }
+
+  // Get display name for a team member by their business_members id
+  function getMemberName(memberId: string | null): string | null {
+    if (!memberId) return null;
+    const member = teamMembers.find((m) => m.id === memberId);
+    if (!member) return null;
+    return member.name || member.email;
+  }
+
   // Build enriched conversation list from conversations table + messages for unread counts
   const enrichedConversations = conversations.map((conv) => {
     const convMessages = messages.filter(
@@ -394,14 +464,22 @@ export default function ChatPage() {
       ? enrichedConversations
       : enrichedConversations.filter((c) => c.status === statusFilter);
 
+  // Filter by assignment
+  const assignmentFiltered =
+    assignmentFilter === 'all'
+      ? statusFiltered
+      : assignmentFilter === 'mine'
+      ? statusFiltered.filter((c) => c.assigned_to === currentMemberId)
+      : statusFiltered.filter((c) => !c.assigned_to);
+
   // Filter by search
   const filteredConversations = searchQuery.trim()
-    ? statusFiltered.filter(
+    ? assignmentFiltered.filter(
         (c) =>
           (c.customer_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
           c.customer_phone.includes(searchQuery)
       )
-    : statusFiltered;
+    : assignmentFiltered;
 
   // Sort by last_message_at
   const sortedConversations = [...filteredConversations].sort(
@@ -814,6 +892,29 @@ export default function ChatPage() {
             ))}
           </div>
 
+          {/* Assignment filter */}
+          {teamMembers.length > 1 && (
+            <div className="flex border-b border-gray-100">
+              {([
+                { key: 'all' as AssignmentFilter, label: 'All' },
+                { key: 'mine' as AssignmentFilter, label: 'Assigned to me' },
+                { key: 'unassigned' as AssignmentFilter, label: 'Unassigned' },
+              ]).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setAssignmentFilter(tab.key)}
+                  className={`flex-1 px-2 py-2 text-[11px] font-medium transition ${
+                    assignmentFilter === tab.key
+                      ? 'border-b-2 border-purple-500 text-purple-700'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Search */}
           <div className="border-b border-gray-100 p-3">
             <div className="relative">
@@ -940,6 +1041,14 @@ export default function ChatPage() {
                         From: {conv.escalated_from_step.replace(/_/g, ' ')}
                       </p>
                     )}
+                    {/* Assigned badge */}
+                    {conv.assigned_to && (
+                      <p className="mt-0.5 text-[10px] text-purple-600">
+                        {conv.assigned_to === currentMemberId
+                          ? 'Assigned to you'
+                          : `Assigned: ${getMemberName(conv.assigned_to) || 'Team member'}`}
+                      </p>
+                    )}
                   </div>
                 </button>
               ))
@@ -1032,16 +1141,35 @@ export default function ChatPage() {
                   </div>
                 </div>
 
-                {/* Resolve button */}
-                {selectedConversation?.status === 'open' && (
-                  <button
-                    onClick={handleResolve}
-                    disabled={resolving}
-                    className="rounded-lg border border-green-200 px-3 py-1.5 text-xs font-semibold text-green-700 transition hover:bg-green-50 disabled:opacity-50"
-                  >
-                    {resolving ? 'Ending...' : 'End Session'}
-                  </button>
-                )}
+                <div className="flex items-center gap-2">
+                  {/* Assignment dropdown */}
+                  {teamMembers.length > 1 && selectedConversation?.id && (
+                    <select
+                      value={selectedConversation.assigned_to || ''}
+                      onChange={(e) => assignConversation(selectedConversation.id, e.target.value)}
+                      disabled={assigning}
+                      className="rounded-lg border border-gray-200 px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand disabled:opacity-50"
+                    >
+                      <option value="">Unassigned</option>
+                      {teamMembers.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name || m.email}{m.isOwner ? ' (Owner)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {/* Resolve button */}
+                  {selectedConversation?.status === 'open' && (
+                    <button
+                      onClick={handleResolve}
+                      disabled={resolving}
+                      className="rounded-lg border border-green-200 px-3 py-1.5 text-xs font-semibold text-green-700 transition hover:bg-green-50 disabled:opacity-50"
+                    >
+                      {resolving ? 'Ending...' : 'End Session'}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Messages area */}
@@ -1125,6 +1253,11 @@ export default function ChatPage() {
                                       : 'text-gray-400'
                                   }`}
                                 >
+                                  {msg.direction === 'outbound' && msg.staff_id && getMemberName(msg.staff_id) && (
+                                    <span className="mr-1.5 font-medium">
+                                      {getMemberName(msg.staff_id)}
+                                    </span>
+                                  )}
                                   {formatBubbleTime(msg.created_at)}
                                 </p>
                               </div>
