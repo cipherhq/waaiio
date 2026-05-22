@@ -29,6 +29,19 @@ export async function sendProactiveConfirmation(
   payment: PaymentForConfirmation,
   logPrefix = '[WEBHOOK]',
 ): Promise<void> {
+  // Dedup: only the first caller sends confirmation.
+  // Atomic: UPDATE ... WHERE confirmation_sent_at IS NULL — only one path can claim it.
+  const { count } = await supabase
+    .from('payments')
+    .update({ confirmation_sent_at: new Date().toISOString() })
+    .eq('id', payment.id)
+    .is('confirmation_sent_at', null);
+
+  if (!count || count === 0) {
+    logger.info(`${logPrefix} Confirmation already sent for payment ${payment.id} — skipping`);
+    return;
+  }
+
   let customerPhone: string | null = null;
   let businessId: string | null = null;
   let businessName = 'Business';
