@@ -38,6 +38,7 @@ interface Booking {
   staff_name: string | null;
   service_id: string | null;
   refund_amount: number | null;
+  guest_list: Array<{ name: string }> | null;
   _isReservation?: boolean;
 }
 
@@ -215,6 +216,7 @@ export default function BookingsPage() {
           staff_name: prop?.name || null,
           notes: `🏠 ${prop?.name || 'Property'}`,
           refund_amount: null,
+          guest_list: null,
           rescheduled_at: null,
           original_date: null,
           original_time: null,
@@ -236,7 +238,7 @@ export default function BookingsPage() {
     // Query bookings table (appointments + on-demand services)
     let query = supabase
       .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id')
+      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list')
       .eq('business_id', business.id)
       .neq('flow_type', 'payment')
       .order('date', { ascending: false })
@@ -760,6 +762,16 @@ export default function BookingsPage() {
                 {selected.guest_phone && <p className="text-sm text-gray-600">{selected.guest_phone}</p>}
                 {selected.guest_email && <p className="text-sm text-gray-600">{selected.guest_email}</p>}
               </div>
+
+              {/* Guest List (group bookings) */}
+              {selected.guest_list && selected.guest_list.length > 0 && (
+                <div className="rounded-lg bg-gray-50 p-4">
+                  <h3 className="text-xs font-semibold uppercase text-gray-400 mb-2">Guests ({selected.guest_list.length})</h3>
+                  {selected.guest_list.map((g, i) => (
+                    <p key={i} className="text-sm text-gray-700">{g.name}</p>
+                  ))}
+                </div>
+              )}
 
               {/* Property (reservations) */}
               {selected._isReservation && selected.staff_name && (

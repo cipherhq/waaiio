@@ -14,6 +14,15 @@ interface BroadcastContact {
   last_interaction: string;
 }
 
+type SegmentPreset = 'all' | 'active_30' | 'inactive_30' | 'high_spenders' | 'by_tag';
+
+interface AudienceFilters {
+  preset: SegmentPreset;
+  lastVisit: '' | '7days' | '30days' | '90days' | 'over90';
+  minSpend: number | '';
+  tags: string[];
+}
+
 interface BroadcastHistory {
   id: string;
   message: string;
@@ -43,6 +52,11 @@ export default function BroadcastsPage() {
   const [useTemplate, setUseTemplate] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<AudienceFilters>({ preset: 'all', lastVisit: '', minSpend: '', tags: [] });
+  const [showCustomFilters, setShowCustomFilters] = useState(false);
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
@@ -67,45 +81,36 @@ export default function BroadcastsPage() {
         return;
       }
 
-      // Load unique contacts from bot sessions for this business
-      const { data: sessions } = await supabase
-        .from('bot_sessions')
-        .select('whatsapp_number, user_id, created_at')
+      // Load contacts from customer_profiles with opt-in filter
+      const { data: profiles } = await supabase
+        .from('customer_profiles')
+        .select('phone, name, tags, total_spent, last_seen_at')
         .eq('business_id', business.id)
-        .order('created_at', { ascending: false });
+        .eq('notification_opt_in', true)
+        .order('last_seen_at', { ascending: false });
 
-      // Deduplicate by phone
-      const phoneMap = new Map<string, BroadcastContact>();
-      for (const session of sessions || []) {
-        const phone = session.whatsapp_number;
-        if (phone && !phoneMap.has(phone)) {
-          phoneMap.set(phone, {
-            phone,
-            first_name: null,
-            last_name: null,
-            last_interaction: session.created_at,
-          });
+      const contactList: BroadcastContact[] = (profiles || [])
+        .filter(p => p.phone)
+        .map(p => {
+          const parts = (p.name || '').split(/\s+/);
+          return {
+            phone: p.phone,
+            first_name: parts[0] || null,
+            last_name: parts.slice(1).join(' ') || null,
+            last_interaction: p.last_seen_at || '',
+          };
+        });
+
+      setContacts(contactList);
+
+      // Collect unique tags for the tag filter
+      const tagSet = new Set<string>();
+      for (const p of profiles || []) {
+        if (Array.isArray(p.tags)) {
+          for (const t of p.tags) tagSet.add(t);
         }
       }
-
-      // Try to enrich with profile data
-      const phones = Array.from(phoneMap.keys());
-      if (phones.length > 0) {
-        const { data: profiles } = await supabase
-          .from('profiles')
-          .select('phone, first_name, last_name')
-          .in('phone', phones);
-
-        for (const profile of profiles || []) {
-          if (profile.phone && phoneMap.has(profile.phone)) {
-            const contact = phoneMap.get(profile.phone)!;
-            contact.first_name = profile.first_name;
-            contact.last_name = profile.last_name;
-          }
-        }
-      }
-
-      setContacts(Array.from(phoneMap.values()));
+      setAvailableTags(Array.from(tagSet).sort());
 
       // Load broadcast history
       const { data: broadcasts } = await supabase
@@ -139,6 +144,92 @@ export default function BroadcastsPage() {
     }
     load();
   }, [business.id, isFreeTier]);
+
+  // Load filtered contacts based on audience filters
+  async function loadFilteredContacts(f: AudienceFilters): Promise<BroadcastContact[]> {
+    const supabase = createClient();
+    let query = supabase
+      .from('customer_profiles')
+      .select('phone, name, tags, total_spent, last_seen_at')
+      .eq('business_id', business.id)
+      .eq('notification_opt_in', true);
+
+    const now = new Date();
+
+    // Preset shortcuts
+    if (f.preset === 'active_30') {
+      const thirtyAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
+      query = query.gte('last_seen_at', thirtyAgo);
+    } else if (f.preset === 'inactive_30') {
+      const thirtyAgo = new Date(now.getTime() - 30 * 86400000).toISOString();
+      query = query.lte('last_seen_at', thirtyAgo);
+    }
+    // high_spenders handled client-side after fetch
+
+    // Custom filters
+    if (f.lastVisit === '7days') {
+      query = query.gte('last_seen_at', new Date(now.getTime() - 7 * 86400000).toISOString());
+    } else if (f.lastVisit === '30days') {
+      query = query.gte('last_seen_at', new Date(now.getTime() - 30 * 86400000).toISOString());
+    } else if (f.lastVisit === '90days') {
+      query = query.gte('last_seen_at', new Date(now.getTime() - 90 * 86400000).toISOString());
+    } else if (f.lastVisit === 'over90') {
+      query = query.lte('last_seen_at', new Date(now.getTime() - 90 * 86400000).toISOString());
+    }
+
+    if (f.minSpend && Number(f.minSpend) > 0) {
+      query = query.gte('total_spent', Number(f.minSpend));
+    }
+
+    if (f.tags.length > 0) {
+      query = query.contains('tags', f.tags);
+    }
+
+    const { data } = await query.order('last_seen_at', { ascending: false });
+
+    let results = (data || []).filter(p => p.phone);
+
+    // High spenders: filter client-side (above average)
+    if (f.preset === 'high_spenders' && results.length > 0) {
+      const avgSpend = results.reduce((s, p) => s + Number(p.total_spent || 0), 0) / results.length;
+      results = results.filter(p => Number(p.total_spent || 0) > avgSpend);
+    }
+
+    return results.map(p => {
+      const parts = (p.name || '').split(/\s+/);
+      return {
+        phone: p.phone,
+        first_name: parts[0] || null,
+        last_name: parts.slice(1).join(' ') || null,
+        last_interaction: p.last_seen_at || '',
+      };
+    });
+  }
+
+  async function applyFilters(f: AudienceFilters) {
+    setFilters(f);
+    setPreviewLoading(true);
+    try {
+      const filtered = await loadFilteredContacts(f);
+      setContacts(filtered);
+      setPreviewCount(filtered.length);
+    } catch {
+      // Non-critical
+    }
+    setPreviewLoading(false);
+  }
+
+  async function handlePreview() {
+    setPreviewLoading(true);
+    try {
+      const filtered = await loadFilteredContacts(filters);
+      setPreviewCount(filtered.length);
+      setContacts(filtered);
+    } catch {
+      // Non-critical
+    }
+    setPreviewLoading(false);
+  }
 
   // Derived usage state — don't block if usage hasn't loaded yet
   const broadcastsUsed = usage?.broadcast_count ?? 0;
@@ -326,9 +417,43 @@ export default function BroadcastsPage() {
         <div className="mt-6 grid gap-6 lg:grid-cols-5">
           {/* Compose Area */}
           <div className="lg:col-span-3 space-y-4">
-            {/* Audience */}
+            {/* Audience Segmentation */}
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience</h2>
+
+              {/* Segment Shortcuts */}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {([
+                  { id: 'all' as SegmentPreset, label: 'All Contacts' },
+                  { id: 'active_30' as SegmentPreset, label: 'Active (last 30 days)' },
+                  { id: 'inactive_30' as SegmentPreset, label: 'Inactive (30+ days)' },
+                  { id: 'high_spenders' as SegmentPreset, label: 'High Spenders' },
+                  { id: 'by_tag' as SegmentPreset, label: 'By Tag' },
+                ]).map(seg => (
+                  <button
+                    key={seg.id}
+                    onClick={() => {
+                      const newFilters: AudienceFilters = { ...filters, preset: seg.id, lastVisit: '', minSpend: '', tags: [] };
+                      if (seg.id === 'by_tag') {
+                        setShowCustomFilters(true);
+                        setFilters(newFilters);
+                      } else {
+                        setShowCustomFilters(false);
+                        applyFilters(newFilters);
+                      }
+                    }}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
+                      filters.preset === seg.id
+                        ? 'bg-brand text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                    }`}
+                  >
+                    {seg.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sending to X recipients */}
               <div className="mt-3 flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-50 dark:bg-brand-900/30">
                   <svg aria-hidden="true" className="h-5 w-5 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -337,18 +462,104 @@ export default function BroadcastsPage() {
                 </div>
                 <div>
                   <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                    All contacts ({contacts.length})
+                    {previewLoading ? 'Counting...' : `Sending to ${contacts.length} recipient${contacts.length !== 1 ? 's' : ''}`}
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Everyone who has interacted with your bot
+                    {filters.preset === 'all' ? 'Everyone who opted in' :
+                     filters.preset === 'active_30' ? 'Customers active in the last 30 days' :
+                     filters.preset === 'inactive_30' ? 'Customers inactive for 30+ days' :
+                     filters.preset === 'high_spenders' ? 'Customers above average spend' :
+                     'Filtered by tags'}
                   </p>
                 </div>
+              </div>
+
+              {/* Custom Filters (collapsible) */}
+              <div className="mt-4">
+                <button
+                  onClick={() => setShowCustomFilters(!showCustomFilters)}
+                  className="flex items-center gap-1.5 text-xs font-medium text-brand hover:text-brand-600 transition"
+                >
+                  <svg aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${showCustomFilters ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                  Custom Filters
+                </button>
+
+                {showCustomFilters && (
+                  <div className="mt-3 space-y-3 rounded-lg border border-gray-100 dark:border-gray-700 p-4">
+                    {/* Last Visit */}
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Last visit</label>
+                      <select
+                        value={filters.lastVisit}
+                        onChange={(e) => setFilters(f => ({ ...f, lastVisit: e.target.value as AudienceFilters['lastVisit'] }))}
+                        className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
+                      >
+                        <option value="">Any time</option>
+                        <option value="7days">Last 7 days</option>
+                        <option value="30days">Last 30 days</option>
+                        <option value="90days">Last 90 days</option>
+                        <option value="over90">Over 90 days ago</option>
+                      </select>
+                    </div>
+
+                    {/* Min Spend */}
+                    <div>
+                      <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Minimum spend</label>
+                      <input
+                        type="number"
+                        value={filters.minSpend}
+                        onChange={(e) => setFilters(f => ({ ...f, minSpend: e.target.value ? Number(e.target.value) : '' }))}
+                        placeholder="e.g. 5000"
+                        min={0}
+                        className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
+                      />
+                    </div>
+
+                    {/* Tags */}
+                    {availableTags.length > 0 && (
+                      <div>
+                        <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Tags</label>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {availableTags.map(tag => (
+                            <button
+                              key={tag}
+                              onClick={() => {
+                                setFilters(f => ({
+                                  ...f,
+                                  tags: f.tags.includes(tag) ? f.tags.filter(t => t !== tag) : [...f.tags, tag],
+                                }));
+                              }}
+                              className={`rounded-full px-2.5 py-1 text-xs font-medium transition ${
+                                filters.tags.includes(tag)
+                                  ? 'bg-brand text-white'
+                                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                              }`}
+                            >
+                              {tag}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Preview Button */}
+                    <button
+                      onClick={handlePreview}
+                      disabled={previewLoading}
+                      className="w-full rounded-lg border border-brand px-4 py-2 text-sm font-medium text-brand hover:bg-brand-50 dark:hover:bg-brand-900/20 disabled:opacity-50 transition"
+                    >
+                      {previewLoading ? 'Loading...' : previewCount !== null ? `Preview (${previewCount} recipients)` : 'Preview Recipients'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {contacts.length === 0 && (
                 <div className="mt-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
                   <p className="text-sm text-amber-700 dark:text-amber-400">
-                    No contacts yet. Customers who message your bot will appear here.
+                    No contacts match this filter. Try broadening your criteria.
                   </p>
                 </div>
               )}

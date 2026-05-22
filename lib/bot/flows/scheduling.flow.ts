@@ -1030,6 +1030,36 @@ export const schedulingFlow: FlowDefinition = {
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { party_size: size } };
       },
+      async next() { return 'collect_guest_names'; },
+    },
+
+    // ── Collect Guest Names (group bookings) ──
+    {
+      id: 'collect_guest_names',
+      async skipIf(ctx: FlowContext) {
+        const partySize = ctx.session.session_data.party_size as number;
+        if (!partySize || partySize <= 1) return true;
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const partySize = ctx.session.session_data.party_size as number;
+        return [{
+          type: 'text',
+          text: `Please list the names of all ${partySize} guests (one per line):\n\nOr type *skip* to skip.`,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input.toLowerCase().trim() === 'skip') {
+          return { valid: true, data: { guest_list: [] } };
+        }
+        const partySize = ctx.session.session_data.party_size as number;
+        const names = input.split('\n').map(n => n.trim()).filter(n => n.length > 0);
+        if (names.length !== partySize) {
+          return { valid: false, errorMessage: `Please list exactly ${partySize} names (one per line), or type *skip*.` };
+        }
+        const guestList = names.map(name => ({ name }));
+        return { valid: true, data: { guest_list: guestList } };
+      },
       async next() { return 'special_requests'; },
     },
 
@@ -1312,6 +1342,15 @@ export const schedulingFlow: FlowDefinition = {
         // Only show quantity if > 1 or not a drop-off
         if (!isDropoff || (d.party_size as number) > 1) {
           lines.push(`👥 ${d.party_size as number} ${labels.quantityLabel}`);
+        }
+
+        // Show guest list if provided
+        const guestList = d.guest_list as Array<{ name: string }> | undefined;
+        if (guestList && guestList.length > 0) {
+          lines.push('👥 Guests:');
+          for (const g of guestList) {
+            lines.push(`  • ${g.name}`);
+          }
         }
 
         // Show delivery/pickup option
@@ -1766,6 +1805,14 @@ export const schedulingFlow: FlowDefinition = {
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
+
+        // Store guest list if provided (group bookings)
+        if (isNewBooking && Array.isArray(d.guest_list) && (d.guest_list as Array<{name: string}>).length > 0) {
+          await ctx.supabase
+            .from('bookings')
+            .update({ guest_list: d.guest_list })
+            .eq('id', booking.id);
+        }
 
         if (isNewBooking) {
           // ── Fire booking_created rules + sequences (non-blocking) ──
