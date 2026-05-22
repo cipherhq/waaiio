@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Customer Segmentation for Broadcasts + Group Booking Guest Names
+- **Files:** `app/dashboard/broadcasts/page.tsx`, `lib/bot/flows/scheduling.flow.ts`, `app/dashboard/reservations/page.tsx`
+- **What:** (1) Replaced simple "All contacts" broadcast audience with customer segmentation using `customer_profiles` table. Added preset segment shortcuts (All Contacts, Active 30 days, Inactive 30+ days, High Spenders, By Tag) and collapsible custom filter section (last visit dropdown, min spend input, multi-select tags) with live preview count. Contacts now loaded from `customer_profiles` with `notification_opt_in = true` filter instead of `bot_sessions`. (2) Added `collect_guest_names` flow step after `select_quantity` in scheduling flow. Prompts for guest names when party_size > 1 (one per line), validates count matches party_size, stores as `guest_list` JSONB. Skips for single bookings; user can type "skip". (3) After booking creation via `book_slot_atomic`, updates booking with `guest_list`. (4) Shows guest names in booking confirmation message and dashboard detail panel.
+- **Affects:** Broadcast targeting, scheduling bot flow (new step in chain), booking detail views.
+- **Could break:** Broadcasts now use `customer_profiles` instead of `bot_sessions` for contacts. Businesses with no customer profiles won't see contacts until profiles are populated. Guest name collection step adds one extra interaction for group bookings (party_size > 1). The `guest_list` column must exist on bookings table (migration 150).
+
 ### Dashboard Appointment Rescheduling + Referral Tracking Enhancements
 - **Files:** `app/api/bookings/[id]/reschedule/route.ts` (new), `app/dashboard/reservations/page.tsx`, `app/dashboard/referrals/page.tsx`
 - **What:** (1) Created reschedule API endpoint: POST with newDate/newTime, validates business ownership via `authenticateRequest`, stores original_date/original_time, updates booking, sends WhatsApp + email notifications to customer. Only allows pending/confirmed bookings. (2) Added Reschedule button in booking detail panel with inline date/time form, "Rescheduled" badge in timeline. (3) Enhanced referrals page: added Pending Conversions, Total Rewards Given, Outstanding Rewards stat cards; conversion funnel visualization with horizontal bars; referrer earnings breakdown (rewards earned + pending columns); status filter tabs (All/Pending/Converted/Rewarded/Expired); reward amount column in referrals table.
