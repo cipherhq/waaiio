@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { exportToCsv } from '@/lib/utils/csv-export';
@@ -8,6 +8,7 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { ensurePlus } from '@/lib/utils/phone';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -152,6 +153,15 @@ export default function CustomersPage() {
   const [bulkTag, setBulkTag] = useState('');
   const [bulkMessage, setBulkMessage] = useState('');
   const [bulkProcessing, setBulkProcessing] = useState(false);
+
+  // CSV Import
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importParsed, setImportParsed] = useState<Array<{ name: string; phone: string; email: string; valid: boolean; issue?: string }>>([]);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: number; errors?: Array<{ row: number; reason: string }> } | null>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
 
@@ -321,6 +331,95 @@ export default function CustomersPage() {
     );
   }
 
+  /* ---- CSV Import ---- */
+
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function parseImportCsv(text: string) {
+    const lines = text.trim().split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) { setImportParsed([]); return; }
+
+    // Auto-detect header row
+    const firstLine = lines[0].toLowerCase();
+    const hasHeader = firstLine.includes('name') || firstLine.includes('phone') || firstLine.includes('email');
+    const dataLines = hasHeader ? lines.slice(1) : lines;
+
+    const parsed = dataLines.map((line) => {
+      const parts = line.split(',').map((p) => p.trim().replace(/^["']|["']$/g, ''));
+      const name = parts[0] || '';
+      const phone = (parts[1] || '').replace(/[\s\-()]/g, '');
+      const email = parts[2] || '';
+
+      let valid = true;
+      let issue: string | undefined;
+
+      if (!phone) {
+        valid = false;
+        issue = 'Missing phone';
+      } else if (email && !EMAIL_RE.test(email)) {
+        valid = false;
+        issue = 'Invalid email';
+      }
+
+      return { name, phone: phone ? ensurePlus(phone) : '', email, valid, issue };
+    });
+
+    setImportParsed(parsed);
+  }
+
+  function handleImportFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportFile(file);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      setImportText(text);
+      parseImportCsv(text);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }
+
+  function handleImportTextChange(text: string) {
+    setImportText(text);
+    setImportResult(null);
+    if (text.trim().length > 0) {
+      parseImportCsv(text);
+    } else {
+      setImportParsed([]);
+    }
+  }
+
+  async function handleImportSubmit() {
+    const validContacts = importParsed.filter((c) => c.valid);
+    if (validContacts.length === 0) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const res = await fetch('/api/customers/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          contacts: validContacts.map((c) => ({
+            name: c.name || undefined,
+            phone: c.phone,
+            email: c.email || undefined,
+          })),
+        }),
+      });
+      const json = await res.json();
+      setImportResult(json);
+      if (json.imported > 0) {
+        fetchCustomers();
+      }
+    } catch {
+      setImportResult({ imported: 0, skipped: validContacts.length, errors: [{ row: 0, reason: 'Network error' }] });
+    }
+    setImporting(false);
+  }
+
   /* ---- Selected customer object ---- */
 
   const selected = customers.find((c) => c.id === selectedId) || null;
@@ -339,14 +438,22 @@ export default function CustomersPage() {
             {totalCustomers} {labels.personLabel.toLowerCase()} profile{totalCustomers !== 1 ? 's' : ''} across all channels.
           </p>
         </div>
-        {filtered.length > 0 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={handleExport}
+            onClick={() => { setShowImport(true); setImportText(''); setImportParsed([]); setImportResult(null); }}
             className="rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
           >
-            Export CSV
+            Import CSV
           </button>
-        )}
+          {filtered.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="rounded-lg border border-gray-200 dark:border-gray-700 px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+            >
+              Export CSV
+            </button>
+          )}
+        </div>
       </div>
 
       <PageHelp
@@ -605,6 +712,112 @@ export default function CustomersPage() {
           >
             Next
           </button>
+        </div>
+      )}
+
+      {/* Import CSV Modal */}
+      {showImport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="fixed inset-0 bg-black/30" onClick={() => setShowImport(false)} />
+          <div className="relative mx-4 w-full max-w-2xl rounded-2xl bg-white dark:bg-gray-800 shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 px-6 py-4">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Import Contacts</h2>
+              <button onClick={() => setShowImport(false)} className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto p-6 space-y-4">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Upload a CSV file or paste contacts below. Expected format: <code className="rounded bg-gray-100 dark:bg-gray-700 px-1 text-xs">name, phone, email</code> (one per line). Header row is auto-detected.
+              </p>
+
+              {/* File input */}
+              <div className="rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 p-4 text-center">
+                <input ref={importFileRef} type="file" accept=".csv,.txt" onChange={handleImportFileSelect} className="hidden" />
+                <button onClick={() => importFileRef.current?.click()} className="text-sm font-medium text-brand hover:underline">
+                  Choose CSV file
+                </button>
+                {importFile && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{importFile.name}</p>}
+              </div>
+
+              {/* Paste area */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Or paste contacts</label>
+                <textarea
+                  value={importText}
+                  onChange={(e) => handleImportTextChange(e.target.value)}
+                  rows={5}
+                  placeholder={`name, phone, email\nJane Doe, +2348012345678, jane@example.com\nJohn Smith, +14155551234,`}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 font-mono text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                />
+              </div>
+
+              {/* Preview table */}
+              {importParsed.length > 0 && (
+                <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+                  <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 px-4 py-3">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                      Preview: {importParsed.filter((c) => c.valid).length} valid of {importParsed.length} rows
+                    </p>
+                  </div>
+                  <div className="max-h-48 overflow-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 dark:bg-gray-800/50 text-left text-xs text-gray-500 dark:text-gray-400">
+                        <tr>
+                          <th scope="col" className="px-4 py-2 w-8"></th>
+                          <th scope="col" className="px-4 py-2">Name</th>
+                          <th scope="col" className="px-4 py-2">Phone</th>
+                          <th scope="col" className="px-4 py-2">Email</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
+                        {importParsed.map((row, idx) => (
+                          <tr key={idx} className={row.valid ? '' : 'bg-red-50/50 dark:bg-red-900/10'}>
+                            <td className="px-4 py-2">
+                              {row.valid ? (
+                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-green-500" title="Valid" />
+                              ) : (
+                                <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-500" title={row.issue || 'Invalid'} />
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-gray-900 dark:text-gray-100">{row.name || '--'}</td>
+                            <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{row.phone || '--'}</td>
+                            <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{row.email || '--'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Result */}
+              {importResult && (
+                <div className={`rounded-lg p-3 text-sm ${importResult.imported > 0 ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400'}`}>
+                  Imported: {importResult.imported}, Skipped: {importResult.skipped}
+                  {importResult.errors && importResult.errors.length > 0 && (
+                    <ul className="mt-1 list-disc pl-4 text-xs">
+                      {importResult.errors.slice(0, 5).map((e, i) => (
+                        <li key={i}>Row {e.row}: {e.reason}</li>
+                      ))}
+                      {importResult.errors.length > 5 && <li>...and {importResult.errors.length - 5} more</li>}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {/* Import button */}
+              <button
+                onClick={handleImportSubmit}
+                disabled={importing || importParsed.filter((c) => c.valid).length === 0}
+                className="w-full rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+              >
+                {importing ? 'Importing...' : `Import ${importParsed.filter((c) => c.valid).length} Contacts`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
