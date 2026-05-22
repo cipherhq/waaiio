@@ -567,7 +567,7 @@ export default function SignPage() {
 
       {/* Main content */}
       <main className="flex flex-1 flex-col items-center px-4 py-6">
-        <div className="w-full max-w-lg">
+        <div className="w-full max-w-lg pb-24 md:pb-0">
 
           {/* Uploaded Document Section */}
           {contract?.template_url && (
@@ -680,7 +680,7 @@ export default function SignPage() {
           <div className="overflow-hidden rounded-xl border-2 border-dashed border-gray-300 bg-white">
             <canvas
               ref={canvasRef}
-              className="h-48 w-full cursor-crosshair"
+              className="h-56 md:h-48 w-full cursor-crosshair"
               style={{ touchAction: 'none' }}
               onMouseDown={startDraw}
               onMouseMove={draw}
@@ -698,8 +698,24 @@ export default function SignPage() {
             </p>
           )}
 
-          {/* Buttons */}
-          <div className="mt-6 flex gap-3">
+          {/* Legal note (above sticky footer on mobile) */}
+          <p className="mt-6 text-center text-xs text-gray-400">
+            By signing, you agree that this electronic signature is as valid as a handwritten signature.
+          </p>
+        </div>
+      </main>
+
+      {/* Scroll-to-sign indicator on mobile */}
+      {!hasDrawn && (
+        <div className="fixed bottom-20 left-1/2 z-10 -translate-x-1/2 rounded-full bg-brand px-4 py-2 text-xs text-white shadow-lg md:hidden animate-bounce">
+          ↓ Scroll down to sign
+        </div>
+      )}
+
+      {/* Sticky footer buttons on mobile, inline on desktop */}
+      <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-gray-200 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:relative md:border-0 md:p-0 md:pb-0">
+        <div className="mx-auto max-w-lg">
+          <div className="flex gap-3">
             <button
               onClick={clearCanvas}
               disabled={!hasDrawn || state === 'submitting'}
@@ -715,9 +731,7 @@ export default function SignPage() {
               {state === 'submitting' ? 'Submitting...' : 'Submit Signature'}
             </button>
           </div>
-
-          {/* Decline button */}
-          <div className="mt-4 text-center">
+          <div className="mt-2 text-center">
             <button
               onClick={() => setShowDeclineModal(true)}
               className="text-sm font-medium text-red-500 hover:text-red-600 hover:underline"
@@ -725,13 +739,8 @@ export default function SignPage() {
               Decline to Sign
             </button>
           </div>
-
-          {/* Legal note */}
-          <p className="mt-6 text-center text-xs text-gray-400">
-            By signing, you agree that this electronic signature is as valid as a handwritten signature.
-          </p>
         </div>
-      </main>
+      </div>
 
       {/* Decline Modal */}
       {showDeclineModal && (
