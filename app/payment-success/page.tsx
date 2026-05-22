@@ -51,7 +51,34 @@ export default async function PaymentSuccessPage({
 
       if (payment) {
         const biz = payment.businesses as unknown as { phone: string; name: string; country_code?: string } | null;
-        businessPhone = biz?.phone || undefined;
+
+        // Get the WhatsApp channel number (not the owner's personal phone)
+        if (payment.business_id) {
+          // Try assigned channel first, then dedicated, then shared
+          const { data: bizFull } = await supabase
+            .from('businesses')
+            .select('assigned_channel_id, whatsapp_channel_id')
+            .eq('id', payment.business_id)
+            .single();
+
+          const channelId = bizFull?.assigned_channel_id || bizFull?.whatsapp_channel_id;
+          if (channelId) {
+            const { data: ch } = await supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).maybeSingle();
+            if (ch?.phone_number) businessPhone = ch.phone_number;
+          }
+          if (!businessPhone) {
+            const { data: dedicated } = await supabase.from('whatsapp_channels').select('phone_number')
+              .eq('business_id', payment.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
+            if (dedicated?.phone_number) businessPhone = dedicated.phone_number;
+          }
+          if (!businessPhone) {
+            const cc = biz?.country_code || 'US';
+            const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
+              .eq('channel_type', 'shared').eq('country_code', cc).eq('is_active', true).limit(1).maybeSingle();
+            if (shared?.phone_number) businessPhone = shared.phone_number;
+          }
+        }
+        if (!businessPhone) businessPhone = biz?.phone || undefined;
 
         // If payment is still pending, verify and confirm it now
         if (payment.status !== 'success') {
