@@ -53,6 +53,16 @@ export default function AnalyticsPage() {
   const [paymentFailed, setPaymentFailed] = useState(0);
   const [whatsappBookings, setWhatsappBookings] = useState(0);
   const [webBookings, setWebBookings] = useState(0);
+  const [inboundMessages, setInboundMessages] = useState(0);
+  const [outboundMessages, setOutboundMessages] = useState(0);
+  const [totalConversations, setTotalConversations] = useState(0);
+  const [botTotalSessions, setBotTotalSessions] = useState(0);
+  const [botCompleted, setBotCompleted] = useState(0);
+  const [botAbandoned, setBotAbandoned] = useState(0);
+  const [botActive, setBotActive] = useState(0);
+  const [botCompletionRate, setBotCompletionRate] = useState(0);
+  const [topIntents, setTopIntents] = useState<{ intent: string; count: number }[]>([]);
+  const [avgConfidence, setAvgConfidence] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -79,7 +89,11 @@ export default function AnalyticsPage() {
       if (endStr) bookingsQuery = bookingsQuery.lte('date', endStr);
       bookingsQuery = bookingsQuery.order('date', { ascending: false });
 
-      const [bookingsRes, servicesRes, botSessionsRes, paymentsRes] = await Promise.all([
+      // Get current month key for conversation_usage
+      const now = new Date();
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+      const [bookingsRes, servicesRes, botSessionsRes, paymentsRes, convUsageRes, intentsRes] = await Promise.all([
         bookingsQuery,
         supabase
           .from('services')
@@ -87,12 +101,23 @@ export default function AnalyticsPage() {
           .eq('business_id', business.id),
         supabase
           .from('bot_sessions')
-          .select('id, is_active, session_data')
+          .select('id, is_active, current_step, session_data')
           .eq('business_id', business.id)
           .gte('created_at', startStr + 'T00:00:00'),
         supabase
           .from('payments')
           .select('id, status')
+          .eq('business_id', business.id)
+          .gte('created_at', startStr + 'T00:00:00'),
+        supabase
+          .from('conversation_usage')
+          .select('inbound_count, outbound_count, conversation_count')
+          .eq('business_id', business.id)
+          .eq('month_key', monthKey)
+          .maybeSingle(),
+        supabase
+          .from('llm_classifications')
+          .select('detected_intent, confidence')
           .eq('business_id', business.id)
           .gte('created_at', startStr + 'T00:00:00'),
       ]);
@@ -179,6 +204,41 @@ export default function AnalyticsPage() {
         return data?.escalated_to_human === true;
       });
       setBotEscalated(escalatedSessions.length);
+
+      // Bot Performance (detailed)
+      const convData = convUsageRes.data;
+      setInboundMessages(convData?.inbound_count || 0);
+      setOutboundMessages(convData?.outbound_count || 0);
+      setTotalConversations(convData?.conversation_count || 0);
+
+      setBotTotalSessions(allSessions.length);
+      const completed = allSessions.filter(s => !s.is_active && s.current_step === 'complete');
+      const abandoned = allSessions.filter(s => !s.is_active && s.current_step !== 'complete');
+      const active = allSessions.filter(s => s.is_active);
+      setBotCompleted(completed.length);
+      setBotAbandoned(abandoned.length);
+      setBotActive(active.length);
+      setBotCompletionRate(allSessions.length > 0 ? Math.round((completed.length / allSessions.length) * 100) : 0);
+
+      // Intent distribution
+      const intentMap = new Map<string, number>();
+      let totalConf = 0;
+      let confCount = 0;
+      for (const cls of (intentsRes.data || []) as { detected_intent: string | null; confidence: number }[]) {
+        if (cls.detected_intent) {
+          intentMap.set(cls.detected_intent, (intentMap.get(cls.detected_intent) || 0) + 1);
+        }
+        if (cls.confidence > 0) {
+          totalConf += cls.confidence;
+          confCount++;
+        }
+      }
+      const sortedIntents = Array.from(intentMap.entries())
+        .map(([intent, count]) => ({ intent, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+      setTopIntents(sortedIntents);
+      setAvgConfidence(confCount > 0 ? Math.round((totalConf / confCount) * 100) : 0);
 
       // Payment stats
       const allPayments = paymentsRes.data || [];
@@ -466,6 +526,85 @@ export default function AnalyticsPage() {
           </div>
         )}
       </div>
+
+      {/* Bot Performance (Detailed) */}
+      {(inboundMessages > 0 || botTotalSessions > 0) && (
+        <>
+          <h2 className="mt-10 text-lg font-bold text-gray-900">Bot Performance</h2>
+          <p className="mt-1 text-sm text-gray-500">Messaging activity and session outcomes this month</p>
+
+          {/* Stat cards row */}
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Inbound Messages" value={inboundMessages} sub="This month" />
+            <StatCard label="Outbound Messages" value={outboundMessages} sub="This month" />
+            <StatCard label="Bot Sessions" value={botTotalSessions} sub={`${totalConversations} conversations`} />
+            <StatCard label="Completion Rate" value={`${botCompletionRate}%`} sub={`${botCompleted} completed`} />
+          </div>
+
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            {/* Intent Distribution */}
+            {topIntents.length > 0 && (
+              <div className="rounded-xl border border-gray-100 bg-white p-6">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-gray-900">Top Intents Detected</h3>
+                  <span className="text-xs text-gray-400">Avg confidence: {avgConfidence}%</span>
+                </div>
+                <div className="mt-4 space-y-3">
+                  {(() => {
+                    const maxIntentCount = Math.max(...topIntents.map(i => i.count), 1);
+                    return topIntents.map((item, i) => (
+                      <div key={item.intent} className="flex items-center gap-3">
+                        <span className="w-5 text-center text-xs font-bold text-gray-400">{i + 1}</span>
+                        <div className="flex-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-900 capitalize">{item.intent.replace(/_/g, ' ')}</span>
+                            <span className="text-xs text-gray-500">{item.count}</span>
+                          </div>
+                          <div className="mt-1 h-2 w-full rounded-full bg-gray-100">
+                            <div className="h-2 rounded-full bg-brand" style={{ width: `${(item.count / maxIntentCount) * 100}%` }} />
+                          </div>
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
+
+            {/* Session Outcomes */}
+            {botTotalSessions > 0 && (
+              <div className="rounded-xl border border-gray-100 bg-white p-6">
+                <h3 className="text-sm font-semibold text-gray-900">Session Outcomes</h3>
+                <div className="mt-4 space-y-4">
+                  {[
+                    { label: 'Completed', value: botCompleted, color: 'bg-green-500', textColor: 'text-green-600' },
+                    { label: 'Abandoned', value: botAbandoned, color: 'bg-yellow-500', textColor: 'text-yellow-600' },
+                    { label: 'Active', value: botActive, color: 'bg-blue-500', textColor: 'text-blue-600' },
+                  ].map((item) => {
+                    const pct = botTotalSessions > 0 ? Math.round((item.value / botTotalSessions) * 100) : 0;
+                    return (
+                      <div key={item.label}>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium text-gray-700">{item.label}</span>
+                          <span className={`font-semibold ${item.textColor}`}>{item.value} ({pct}%)</span>
+                        </div>
+                        <div className="mt-1.5 h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                          <div className={`h-3 rounded-full ${item.color}`} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-4 flex gap-4 text-[10px] text-gray-400">
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-green-500" /> Completed</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-yellow-500" /> Abandoned</span>
+                  <span className="flex items-center gap-1"><span className="inline-block h-2 w-2 rounded-full bg-blue-500" /> Active</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

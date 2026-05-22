@@ -32,6 +32,11 @@ export default function WaitlistPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [notifyAllLoading, setNotifyAllLoading] = useState(false);
+  const [autoNotify, setAutoNotify] = useState<boolean>(() => {
+    const meta = (business.metadata || {}) as Record<string, unknown>;
+    return meta.waitlist_auto_notify !== false; // default ON
+  });
+  const [autoNotifySaving, setAutoNotifySaving] = useState(false);
 
   const fetchEntries = useCallback(async () => {
     const supabase = createClient();
@@ -104,11 +109,29 @@ export default function WaitlistPage() {
     }
   }
 
+  async function handleToggleAutoNotify() {
+    setAutoNotifySaving(true);
+    try {
+      const supabase = createClient();
+      const newValue = !autoNotify;
+      const meta = { ...(business.metadata || {}), waitlist_auto_notify: newValue } as Record<string, unknown>;
+      await supabase
+        .from('businesses')
+        .update({ metadata: meta })
+        .eq('id', business.id);
+      setAutoNotify(newValue);
+    } finally {
+      setAutoNotifySaving(false);
+    }
+  }
+
   // Metrics
   const waitingCount = entries.filter(e => e.status === 'waiting').length;
   const notifiedCount = entries.filter(e => e.status === 'notified').length;
   const convertedCount = entries.filter(e => e.status === 'converted').length;
   const expiredCount = entries.filter(e => e.status === 'expired').length;
+  const totalEntries = entries.length;
+  const conversionRate = totalEntries > 0 ? Math.round((convertedCount / totalEntries) * 100) : 0;
 
   return (
     <div>
@@ -129,7 +152,7 @@ export default function WaitlistPage() {
       </div>
 
       {/* Metrics Cards */}
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-5">
         <div className="rounded-xl border border-gray-100 bg-white p-5">
           <p className="text-xs font-medium text-gray-500">Waiting</p>
           <p className="mt-1 text-2xl font-bold text-yellow-600">{waitingCount}</p>
@@ -146,6 +169,34 @@ export default function WaitlistPage() {
           <p className="text-xs font-medium text-gray-500">Expired</p>
           <p className="mt-1 text-2xl font-bold text-gray-500">{expiredCount}</p>
         </div>
+        <div className="rounded-xl border border-gray-100 bg-white p-5">
+          <p className="text-xs font-medium text-gray-500">Conversion Rate</p>
+          <p className="mt-1 text-2xl font-bold text-brand">{conversionRate}%</p>
+          <p className="mt-0.5 text-xs text-gray-400">{convertedCount} of {totalEntries}</p>
+        </div>
+      </div>
+
+      {/* Auto-Notify Setting */}
+      <div className="mt-4 flex items-center justify-between rounded-xl border border-gray-100 bg-white p-4">
+        <div>
+          <p className="text-sm font-medium text-gray-900">Auto-notify waitlist</p>
+          <p className="text-xs text-gray-500">Automatically notify waitlisted customers when a slot opens (cancellation, no-show, or reschedule)</p>
+        </div>
+        <button
+          onClick={handleToggleAutoNotify}
+          disabled={autoNotifySaving}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+            autoNotify ? 'bg-brand' : 'bg-gray-200'
+          } ${autoNotifySaving ? 'opacity-50' : ''}`}
+          role="switch"
+          aria-checked={autoNotify}
+        >
+          <span
+            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+              autoNotify ? 'translate-x-5' : 'translate-x-0'
+            }`}
+          />
+        </button>
       </div>
 
       {/* Waitlist Table */}

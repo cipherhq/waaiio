@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { notifyWaitlistOnSlotOpen } from '@/lib/waitlist/auto-notify';
 import type { CountryCode } from '@/lib/constants';
 
 export const maxDuration = 30;
@@ -39,13 +40,13 @@ export async function PATCH(
     // Verify booking exists and user owns the business
     const { data: booking } = await service
       .from('bookings')
-      .select('id, business_id, guest_phone, guest_name, reference_code, date, time, status, checked_in_at, checked_out_at, no_show_at, businesses(name, country_code, owner_id)')
+      .select('id, business_id, service_id, guest_phone, guest_name, reference_code, date, time, status, checked_in_at, checked_out_at, no_show_at, businesses(name, country_code, owner_id, metadata)')
       .eq('id', id)
       .single();
 
     if (!booking) return NextResponse.json({ error: 'Booking not found' }, { status: 404 });
 
-    const biz = booking.businesses as unknown as { name: string; country_code?: string; owner_id: string } | null;
+    const biz = booking.businesses as unknown as { name: string; country_code?: string; owner_id: string; metadata?: Record<string, unknown> } | null;
     if (!biz || biz.owner_id !== user.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
@@ -150,6 +151,21 @@ export async function PATCH(
     if (updateError) {
       logger.error('[BOOKING-STATUS] Update error:', updateError);
       return NextResponse.json({ error: 'Failed to update booking' }, { status: 500 });
+    }
+
+    // Auto-notify waitlisted customers when a no-show frees a slot
+    if (action === 'no_show' && biz?.metadata?.waitlist_auto_notify !== false) {
+      try {
+        await notifyWaitlistOnSlotOpen({
+          supabase: service,
+          businessId: booking.business_id,
+          businessName: biz?.name || 'the business',
+          date: booking.date,
+          serviceId: booking.service_id,
+        });
+      } catch (err) {
+        logger.error('[BOOKING-STATUS] Waitlist auto-notify error:', err);
+      }
     }
 
     // Send WhatsApp notification to customer (non-blocking)

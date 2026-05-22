@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { markWaitlistConverted } from '@/lib/waitlist/auto-notify';
 
 interface PaymentRecord {
   id: string;
@@ -40,6 +41,27 @@ export async function processSuccessfulPayment(
       bookingId: payment.booking_id,
       paymentAmount: payment.amount,
     });
+
+    // Track waitlist conversion: if this customer was notified via waitlist, mark as converted
+    try {
+      const { data: booking } = await supabase
+        .from('bookings')
+        .select('business_id, service_id, guest_phone')
+        .eq('id', payment.booking_id)
+        .single();
+
+      if (booking?.guest_phone) {
+        await markWaitlistConverted({
+          supabase,
+          businessId: booking.business_id,
+          customerPhone: booking.guest_phone,
+          serviceId: booking.service_id,
+          bookingId: payment.booking_id,
+        });
+      }
+    } catch (err) {
+      logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
+    }
   }
 
   // 2. Process invoice payment

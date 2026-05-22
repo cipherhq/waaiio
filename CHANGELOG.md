@@ -5,6 +5,16 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-22
+
+### Bot Performance Analytics + Waitlist-to-Booking Conversion
+- **Files:** `app/dashboard/analytics/page.tsx`, `app/api/bookings/[id]/status/route.ts`, `app/api/bookings/[id]/reschedule/route.ts`, `app/dashboard/waitlist/page.tsx`, `lib/payments/process-success.ts`, `lib/waitlist/auto-notify.ts` (new)
+- **What:** (1) Added "Bot Performance" section to analytics page with 4 stat cards (Inbound/Outbound Messages, Sessions, Completion Rate), Intent Distribution list (top 5 intents with bars + avg confidence), and Session Outcomes visualization (Completed/Abandoned/Active bars). Queries `conversation_usage`, `bot_sessions` (with `current_step` for completion detection), and `llm_classifications` tables. (2) Created shared `lib/waitlist/auto-notify.ts` with `notifyWaitlistOnSlotOpen()` and `markWaitlistConverted()`. (3) Status route (no_show) and reschedule route now auto-notify up to 3 waitlisted customers via WhatsApp when a slot opens. Respects `business.metadata.waitlist_auto_notify` toggle (default ON). (4) `processSuccessfulPayment` now tracks waitlist conversions: looks up notified waitlist entries by customer phone + service, marks as `converted` with `booking_id` and `converted_at`. (5) Waitlist dashboard page now shows Conversion Rate stat card and an auto-notify toggle switch.
+- **Affects:** Analytics page (new section), booking status/reschedule flows (waitlist notifications), payment success pipeline (conversion tracking), waitlist dashboard (new metrics + settings).
+- **Could break:** `llm_classifications` RLS only allows service_role and admin — browser client queries may return empty results for non-admin users. The `conversation_usage` query uses `maybeSingle()` which is safe. Auto-notify sends WhatsApp outside 24h window — falls back to text if no template configured (may fail for some channels). `process-success.ts` now does an extra booking SELECT after confirmation — minimal perf impact.
+
+---
+
 ## 2026-05-19
 
 ### Customer Segmentation for Broadcasts + Group Booking Guest Names

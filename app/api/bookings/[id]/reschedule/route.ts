@@ -4,6 +4,7 @@ import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
+import { notifyWaitlistOnSlotOpen } from '@/lib/waitlist/auto-notify';
 
 export const maxDuration = 30;
 
@@ -49,7 +50,7 @@ export async function POST(
     // Fetch the booking and verify it belongs to this business
     const { data: booking, error: fetchError } = await service
       .from('bookings')
-      .select('id, business_id, date, time, status, guest_name, guest_phone, guest_email, reference_code, businesses(name, country_code)')
+      .select('id, business_id, service_id, date, time, status, guest_name, guest_phone, guest_email, reference_code, businesses(name, country_code, metadata)')
       .eq('id', id)
       .eq('business_id', businessId)
       .single();
@@ -87,8 +88,23 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to reschedule booking' }, { status: 500 });
     }
 
-    const biz = booking.businesses as unknown as { name: string; country_code?: string } | null;
+    const biz = booking.businesses as unknown as { name: string; country_code?: string; metadata?: Record<string, unknown> } | null;
     const bizName = biz?.name || 'the business';
+
+    // Notify waitlisted customers about the freed original slot
+    if (biz?.metadata?.waitlist_auto_notify !== false && originalDate !== newDate) {
+      try {
+        await notifyWaitlistOnSlotOpen({
+          supabase: service,
+          businessId: booking.business_id,
+          businessName: bizName,
+          date: originalDate,
+          serviceId: booking.service_id,
+        });
+      } catch (err) {
+        logger.error('[RESCHEDULE] Waitlist auto-notify error:', err);
+      }
+    }
 
     // Format date for display
     const displayDate = new Date(newDate + 'T00:00').toLocaleDateString('en-US', {
