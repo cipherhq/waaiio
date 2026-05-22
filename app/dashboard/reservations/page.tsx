@@ -129,6 +129,12 @@ export default function BookingsPage() {
   const [refundPayment, setRefundPayment] = useState<{ id: string; amount: number; refund_amount: number; currency: string } | null>(null);
   const [staffList, setStaffList] = useState<Array<{id: string; name: string}>>([]);
 
+  // Reschedule state
+  const [showReschedule, setShowReschedule] = useState(false);
+  const [rescheduleDate, setRescheduleDate] = useState('');
+  const [rescheduleTime, setRescheduleTime] = useState('');
+  const [rescheduling, setRescheduling] = useState(false);
+
   const selected = bookings.find((b) => b.id === selectedId) || null;
 
   // Filter by booking type tab
@@ -971,6 +977,13 @@ export default function BookingsPage() {
                       <span className="ml-auto text-gray-400">{new Date(selected.confirmed_at).toLocaleString()}</span>
                     </div>
                   )}
+                  {selected.rescheduled_at && (
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-2 rounded-full bg-blue-400" />
+                      <span className="text-gray-500">Rescheduled</span>
+                      <span className="ml-auto text-gray-400">{new Date(selected.rescheduled_at).toLocaleString()}</span>
+                    </div>
+                  )}
                   {selected.seated_at && (
                     <div className="flex items-center gap-2">
                       <div className="h-2 w-2 rounded-full bg-blue-500" />
@@ -994,6 +1007,87 @@ export default function BookingsPage() {
                   )}
                 </div>
               </div>
+
+              {/* Reschedule — only for non-reservation pending/confirmed bookings */}
+              {!selected._isReservation && ['pending', 'confirmed'].includes(selected.status) && (
+                <div className="border-t border-gray-100 pt-4">
+                  {!showReschedule ? (
+                    <button
+                      onClick={() => {
+                        setShowReschedule(true);
+                        setRescheduleDate('');
+                        setRescheduleTime('');
+                      }}
+                      className="rounded-lg border border-blue-200 px-4 py-2.5 text-sm font-medium text-blue-600 hover:bg-blue-50"
+                    >
+                      Reschedule
+                    </button>
+                  ) : (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-semibold uppercase text-gray-400">Reschedule Booking</h3>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="mb-1 block text-xs text-gray-500">New Date</label>
+                          <input
+                            type="date"
+                            min={new Date().toISOString().split('T')[0]}
+                            value={rescheduleDate}
+                            onChange={(e) => setRescheduleDate(e.target.value)}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-gray-500">New Time</label>
+                          <input
+                            type="time"
+                            value={rescheduleTime}
+                            onChange={(e) => setRescheduleTime(e.target.value)}
+                            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          disabled={rescheduling || !rescheduleDate || !rescheduleTime}
+                          onClick={async () => {
+                            setRescheduling(true);
+                            try {
+                              const res = await fetch(`/api/bookings/${selected.id}/reschedule`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  newDate: rescheduleDate,
+                                  newTime: rescheduleTime,
+                                  businessId: business.id,
+                                }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok) {
+                                alert(data.error || 'Failed to reschedule');
+                              } else {
+                                setShowReschedule(false);
+                                fetchBookings();
+                              }
+                            } catch {
+                              alert('Network error');
+                            }
+                            setRescheduling(false);
+                          }}
+                          className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          {rescheduling ? 'Rescheduling...' : 'Confirm Reschedule'}
+                        </button>
+                        <button
+                          onClick={() => setShowReschedule(false)}
+                          className="rounded-lg border border-gray-200 px-4 py-2 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Actions */}
               {nextActions[selected.status] && nextActions[selected.status].filter(a => !labels.hiddenStatuses.includes(a.next)).length > 0 && (
