@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-19
 
+### Low-Stock WhatsApp/Email Alerts Cron + CSV Contact Import
+- **Files:** `app/api/cron/low-stock-alerts/route.ts` (new), `app/api/customers/import/route.ts` (new), `app/dashboard/customers/page.tsx`, `vercel.json`
+- **What:** (1) Created Vercel cron endpoint for low-stock alerts. Queries products where `stock_quantity <= low_stock_threshold` and `low_stock_alerted = false`, groups by business, sends WhatsApp via ChannelResolver + email to owner, marks products alerted, resets flag for restocked products via `reset_low_stock_alerts` RPC. Runs daily at 10am UTC. (2) Created CSV contact import: POST `/api/customers/import` with business ownership auth, phone normalization via `ensurePlus()`, email validation, upserts into `customer_profiles` (500-row cap). (3) Added Import CSV button + modal to customers dashboard with file upload, paste area, auto-detect header, preview table with green/red validation dots, import results.
+- **Affects:** Products with `track_inventory = true`, business owner notifications, customer management.
+- **Could break:** Nothing — new endpoints only. Cron depends on `low_stock_alerted` column (migration 031) and `reset_low_stock_alerts` RPC. Import upserts on `business_id,phone` unique constraint.
+
 ### Launch Readiness Fixes (Issues 7-11)
 - **Files:** `app/e/[slug]/EventPurchaseForm.tsx`, `app/b/[slug]/BookingForm.tsx`, `app/e/[slug]/page.tsx`, `app/b/[slug]/page.tsx`, `lib/bot/flows/ticketing.flow.ts`, `lib/bot/flows/scheduling.flow.ts`, `lib/bot/flows/payment.flow.ts`, `lib/channels/message-sender.ts`
 - **What:** (7) Added OTP explanation helper text before verify button on event purchase and booking forms. (8) Changed "Paid already? Tap below to confirm:" to timing guidance "After paying, wait 5-10 seconds then tap below:" across all 3 payment flows (ticketing, scheduling, payment). (9) Verified already implemented (View Tickets link). (10) Added WhatsApp API limit enforcement in MetaCloudSender: sendList truncates title (24), body (1024), buttonLabel (20), section titles (24), item titles (24), item descriptions (72); sendButtons truncates body (1024) and button titles (20). (11) Added JSON-LD structured data: Event schema on /e/[slug] with offers/availability, LocalBusiness schema on /b/[slug].
