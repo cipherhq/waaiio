@@ -5,6 +5,32 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (e)
+
+### Class Booking + Multi-Location Bot Routing
+
+**Files changed:**
+- `supabase/migrations/155_class_booking_multi_location.sql` — NEW: adds `is_class` + `class_schedule` columns to services, updates `book_slot_atomic` RPC with `p_location_id` parameter
+- `lib/bot/flows/scheduling.flow.ts` — Added `select_location` step as first step in scheduling flow (skips if 0-1 locations), updated service queries to include `is_class`/`class_schedule`, class services show schedule + spots left in bot list, location name shown in confirmation, `location_id` passed to `book_slot_atomic` and direct insert payload, full-class offers waitlist if capability enabled
+- `app/dashboard/services/page.tsx` — Added `is_class`/`class_schedule` to Service interface + form + save payload, Group Class toggle with class schedule editor (repeating day+time), class roster display (enrolled students for upcoming sessions), filter tabs (All | Services | Classes) on list view, class badge in service list items
+
+**What changed:**
+- Classes are services with `is_class=true` + `max_capacity > 1` + optional `class_schedule` JSONB
+- Bot shows class services with schedule info ("Mon/Wed 6:00 PM - 8 spots left")
+- When class is full and waitlist capability is enabled, bot offers waitlist join
+- Multi-location businesses get a `select_location` step before service selection in the bot
+- Location auto-selects if only 1 location exists
+- `book_slot_atomic` now accepts `p_location_id` (defaults to NULL for backward compat)
+- Dashboard service edit form has Group Class toggle with day/time schedule editor + max students + enrolled roster
+
+**What could break:**
+- Migration adds new columns with defaults — safe for existing data
+- `book_slot_atomic` has `p_location_id` as last param with DEFAULT NULL — existing callers unaffected
+- `select_location` step is skipped for businesses with 0-1 locations — no change for single-location businesses
+- Service queries now select `is_class, class_schedule` — new columns default to `false` and `[]` respectively
+
+---
+
 ## 2026-05-19 (d)
 
 ### Category System Restructure — 16 Industry Groups

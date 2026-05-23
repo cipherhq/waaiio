@@ -43,6 +43,9 @@ interface Service {
   // Feature flags (stored in metadata)
   quote_enabled: boolean;
   metadata: Record<string, unknown>;
+  // Class booking
+  is_class: boolean;
+  class_schedule: Array<{ day: string; time: string }>;
 }
 
 interface ServiceAddon {
@@ -86,6 +89,9 @@ export default function ServicesPage() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
+  const [filterTab, setFilterTab] = useState<'all' | 'services' | 'classes'>('all');
+  const [showClassSchedule, setShowClassSchedule] = useState(false);
+  const [classRoster, setClassRoster] = useState<Array<{ guest_name: string; guest_phone: string; status: string }>>([]);
 
   const emptyForm: Service = {
     id: '',
@@ -115,6 +121,8 @@ export default function ServicesPage() {
     gallery_urls: [],
     quote_enabled: false,
     metadata: {},
+    is_class: false,
+    class_schedule: [],
   };
   const [form, setForm] = useState<Service>(emptyForm);
   const [addons, setAddons] = useState<ServiceAddon[]>([]);
@@ -152,6 +160,22 @@ export default function ServicesPage() {
       .eq('business_id', business.id)
       .eq('is_active', true);
     setStaffList((data as StaffMember[]) || []);
+  }
+
+  async function fetchClassRoster(serviceId: string) {
+    const supabase = createClient();
+    // Get next upcoming class date
+    const today = new Date().toISOString().split('T')[0];
+    const { data } = await supabase
+      .from('bookings')
+      .select('guest_name, guest_phone, status')
+      .eq('business_id', business.id)
+      .eq('service_id', serviceId)
+      .gte('date', today)
+      .in('status', ['confirmed', 'pending', 'in_progress'])
+      .order('date', { ascending: true })
+      .limit(50);
+    setClassRoster((data as Array<{ guest_name: string; guest_phone: string; status: string }>) || []);
   }
 
   async function fetchAddons(serviceId: string) {
@@ -213,6 +237,8 @@ export default function ServicesPage() {
     setShowStaff(false);
     setShowGallery(false);
     setShowAddons(false);
+    setShowClassSchedule(false);
+    setClassRoster([]);
     setView('add');
   }
 
@@ -226,6 +252,8 @@ export default function ServicesPage() {
       included_service_ids: service.included_service_ids || [],
       gallery_urls: service.gallery_urls || [],
       metadata: meta,
+      is_class: service.is_class || false,
+      class_schedule: service.class_schedule || [],
     });
     setShowPrice(labels.defaultHasPrice || service.price > 0 || service.deposit_amount > 0);
     // Auto-expand toggles based on existing data
@@ -234,7 +262,11 @@ export default function ServicesPage() {
     setShowStaff(service.requires_staff);
     setShowGallery((service.gallery_urls || []).length > 0);
     setShowAddons(true); // always show if editing
+    setShowClassSchedule(service.is_class || false);
+    setClassRoster([]);
     if (service.id) fetchAddons(service.id);
+    // Fetch class roster if this is a class
+    if (service.is_class && service.id) fetchClassRoster(service.id);
     setView('edit');
   }
 
@@ -287,6 +319,8 @@ export default function ServicesPage() {
       included_service_ids: form.is_package ? form.included_service_ids : [],
       gallery_urls: form.gallery_urls || [],
       quote_enabled: form.quote_enabled,
+      is_class: form.is_class,
+      class_schedule: form.is_class ? form.class_schedule : [],
       metadata: {
         ...(form.metadata || {}),
         collect_venue: (form.metadata || {}).collect_venue || false,
@@ -582,6 +616,83 @@ export default function ServicesPage() {
                   <input type="number" min={1} step={1} value={((form.metadata?.turnaround_days ?? '') as number) || ''} onChange={(e) => setForm({ ...form, metadata: { ...form.metadata, turnaround_days: Number(e.target.value) || null } })}
                     placeholder="e.g. 3" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
                   <span className="ml-2 text-xs text-gray-400">days until ready</span>
+                </div>
+              )}
+
+              {/* Group Class toggle */}
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Group Class <Tooltip text="Mark this as a group class with capacity limits. Customers sign up for available slots. Set max students below." /></p>
+                  <p className="text-xs text-gray-400">Multiple students can book the same time slot</p>
+                </div>
+                <button type="button" onClick={() => {
+                  const next = !form.is_class;
+                  setForm({ ...form, is_class: next, class_schedule: next ? form.class_schedule : [] });
+                  setShowClassSchedule(next);
+                }}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.is_class ? 'bg-brand' : 'bg-gray-200'}`}>
+                  <div className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition" style={{ left: form.is_class ? '22px' : '2px' }} />
+                </button>
+              </div>
+              {form.is_class && showClassSchedule && (
+                <div className="ml-1 pb-2 space-y-3">
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1.5">Class Schedule</p>
+                    <p className="text-xs text-gray-400 mb-2">Set the recurring days and times for this class</p>
+                    {form.class_schedule.map((entry, i) => (
+                      <div key={i} className="flex items-center gap-2 mb-2">
+                        <select value={entry.day} onChange={(e) => {
+                          const updated = [...form.class_schedule];
+                          updated[i] = { ...updated[i], day: e.target.value };
+                          setForm({ ...form, class_schedule: updated });
+                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand">
+                          {WEEKDAYS.map(d => <option key={d.key} value={d.key}>{d.short}</option>)}
+                        </select>
+                        <input type="time" value={entry.time} onChange={(e) => {
+                          const updated = [...form.class_schedule];
+                          updated[i] = { ...updated[i], time: e.target.value };
+                          setForm({ ...form, class_schedule: updated });
+                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                        <button type="button" onClick={() => {
+                          setForm({ ...form, class_schedule: form.class_schedule.filter((_, j) => j !== i) });
+                        }} className="text-red-400 hover:text-red-600 text-sm">&times;</button>
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => {
+                      setForm({ ...form, class_schedule: [...form.class_schedule, { day: 'monday', time: '09:00' }] });
+                    }} className="rounded-lg border border-dashed border-gray-300 px-3 py-1.5 text-xs text-gray-500 hover:border-brand hover:text-brand">
+                      + Add Day/Time
+                    </button>
+                  </div>
+                  {/* Max Students */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Max Students per Class</label>
+                    <input type="number" min={2} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
+                      onChange={(e) => setForm({ ...form, ...{ max_capacity: Number(e.target.value) || null } } as Service)}
+                      placeholder="e.g. 20" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  </div>
+                  {/* Class Roster (edit mode only) */}
+                  {view === 'edit' && form.id && classRoster.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">
+                        Enrolled Students ({classRoster.length} of {String((form as unknown as Record<string, unknown>).max_capacity || '?')} spots filled)
+                      </p>
+                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                        {classRoster.map((student, i) => (
+                          <div key={i} className="flex items-center justify-between rounded-lg bg-white border border-gray-100 px-3 py-1.5">
+                            <span className="text-sm text-gray-800">{student.guest_name || 'Unknown'}</span>
+                            <span className="text-xs text-gray-400">{student.guest_phone}</span>
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${student.status === 'confirmed' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'}`}>
+                              {student.status}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {view === 'edit' && form.id && classRoster.length === 0 && (
+                    <p className="text-xs text-gray-400">No students enrolled for upcoming classes yet.</p>
+                  )}
                 </div>
               )}
 
@@ -953,6 +1064,26 @@ export default function ServicesPage() {
         description="These are the services your customers can request through WhatsApp. Add your prices, descriptions, and any deposit requirements. The bot will show these options to customers automatically."
       />
 
+      {/* Filter tabs — only show if there are both services and classes */}
+      {services.length > 0 && services.some(s => s.is_class) && (
+        <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 p-1 w-fit">
+          {(['all', 'services', 'classes'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setFilterTab(tab)}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                filterTab === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {tab === 'all' ? 'All' : tab === 'services' ? 'Services' : 'Classes'}
+              <span className="ml-1 text-gray-400">
+                {tab === 'all' ? services.length : tab === 'services' ? services.filter(s => !s.is_class).length : services.filter(s => s.is_class).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {services.length === 0 ? (
         <EmptyState
           icon="🛎️"
@@ -964,7 +1095,7 @@ export default function ServicesPage() {
         />
       ) : (
         <div className="mt-6 space-y-3">
-          {services.map((service) => (
+          {services.filter(s => filterTab === 'all' ? true : filterTab === 'classes' ? s.is_class : !s.is_class).map((service) => (
             <div
               key={service.id}
               onClick={() => openEdit(service)}
@@ -1010,6 +1141,10 @@ export default function ServicesPage() {
                         <span>{service.staff_ids.length} staff</span>
                       )}
                       {service.is_package && <span className="text-brand font-medium">Package</span>}
+                      {service.is_class && <span className="text-blue-600 font-medium">Class</span>}
+                      {service.is_class && service.class_schedule?.length > 0 && (
+                        <span>{service.class_schedule.map(cs => cs.day.slice(0, 3)).join('/')}{service.class_schedule[0]?.time ? ` ${service.class_schedule[0].time}` : ''}</span>
+                      )}
                       {service.quote_enabled && <span className="text-amber-600">Price Request</span>}
                       {(service.gallery_urls || []).length > 0 && <span>{service.gallery_urls.length} photos</span>}
                     </div>

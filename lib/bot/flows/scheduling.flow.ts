@@ -80,6 +80,79 @@ function getStaffPrompt(category: string): string {
 export const schedulingFlow: FlowDefinition = {
   type: 'scheduling',
   steps: [
+    // ── Select Location (multi-location businesses) ──
+    {
+      id: 'select_location',
+      async skipIf(ctx: FlowContext) {
+        if (!ctx.business) return true;
+        // Already selected via NL or previous step
+        if (ctx.session.session_data.location_id) return true;
+        const { count } = await ctx.supabase
+          .from('business_locations')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business.id)
+          .eq('is_active', true);
+        if (!count || count <= 1) {
+          // If exactly 1 location, auto-select it
+          if (count === 1) {
+            const { data: loc } = await ctx.supabase
+              .from('business_locations')
+              .select('id, name')
+              .eq('business_id', ctx.business.id)
+              .eq('is_active', true)
+              .single();
+            if (loc) {
+              ctx.session.session_data.location_id = loc.id;
+              ctx.session.session_data._location_name = loc.name;
+            }
+          }
+          return true;
+        }
+        return false;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const { data: locations } = await ctx.supabase
+          .from('business_locations')
+          .select('id, name, address')
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
+          .order('is_primary', { ascending: false });
+
+        if (!locations || locations.length === 0) return [];
+
+        return [{
+          type: 'list',
+          title: 'Locations',
+          body: 'Which location would you like to visit?',
+          buttonLabel: 'Choose Location',
+          items: locations.map(l => ({
+            title: l.name.slice(0, 24),
+            description: (l.address || '').slice(0, 72),
+            postbackText: l.id,
+          })),
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const { data: location } = await ctx.supabase
+          .from('business_locations')
+          .select('id, name')
+          .eq('id', input)
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
+          .maybeSingle();
+
+        if (!location) {
+          return { valid: false, errorMessage: 'Please select a valid location from the list.' };
+        }
+
+        return {
+          valid: true,
+          data: { location_id: location.id, _location_name: location.name },
+        };
+      },
+      async next() { return 'select_service'; },
+    },
+
     // ── Select Service ──
     {
       id: 'select_service',
@@ -88,7 +161,7 @@ export const schedulingFlow: FlowDefinition = {
 
         let query = ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -111,6 +184,27 @@ export const schedulingFlow: FlowDefinition = {
           return [];
         }
 
+        // Pre-fetch upcoming booking counts for class services to show spots left
+        const classServices = services.filter(s => (s as Record<string, unknown>).is_class && s.max_capacity && s.max_capacity > 1);
+        const spotsMap = new Map<string, number>();
+        if (classServices.length > 0) {
+          const todayStr = new Date().toISOString().split('T')[0];
+          const futureDate = new Date();
+          futureDate.setDate(futureDate.getDate() + 14);
+          const futureDateStr = futureDate.toISOString().split('T')[0];
+          for (const cs of classServices) {
+            const { count } = await ctx.supabase
+              .from('bookings')
+              .select('id', { count: 'exact', head: true })
+              .eq('business_id', ctx.business.id)
+              .eq('service_id', cs.id)
+              .in('status', ['confirmed', 'pending', 'in_progress'])
+              .gte('date', todayStr)
+              .lte('date', futureDateStr);
+            spotsMap.set(cs.id, Math.max(0, (cs.max_capacity || 1) - (count || 0)));
+          }
+        }
+
         const labels = getCategoryLabels(ctx.business.category);
         return [{
           type: 'list',
@@ -119,8 +213,21 @@ export const schedulingFlow: FlowDefinition = {
           buttonLabel: 'Choose',
           items: services.map(s => {
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            const sAny = s as Record<string, unknown>;
+            const isClass = sAny.is_class === true;
+            const classSchedule = (sAny.class_schedule as Array<{ day: string; time: string }>) || [];
             let desc = '';
-            if (s.price > 0) {
+
+            // For classes, show schedule + spots left
+            if (isClass && classSchedule.length > 0) {
+              const days = classSchedule.map(cs => cs.day.slice(0, 3).charAt(0).toUpperCase() + cs.day.slice(1, 3)).join('/');
+              const time = classSchedule[0]?.time || '';
+              const timeDisplay = time ? formatTime(time, true) : '';
+              const spots = spotsMap.get(s.id);
+              desc = `${days} ${timeDisplay}`;
+              if (spots !== undefined) desc += ` \u2022 ${spots} spot${spots !== 1 ? 's' : ''} left`;
+              if (s.price > 0) desc = `${formatCurrency(s.price, cc)} \u2022 ${desc}`;
+            } else if (s.price > 0) {
               const priceStr = formatCurrency(s.price, cc);
               if (s.billing_type === 'recurring' && s.recurring_interval) {
                 const suffix = s.recurring_interval === 'weekly' ? '/week' : '/month';
@@ -156,7 +263,7 @@ export const schedulingFlow: FlowDefinition = {
         // Try exact ID match first (from list postback)
         const { data: service } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
           .maybeSingle();
@@ -166,7 +273,7 @@ export const schedulingFlow: FlowDefinition = {
         if (!matched) {
           const { data: allServices } = await ctx.supabase
             .from('services')
-            .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
+            .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
             .eq('business_id', ctx.business!.id)
             .eq('is_active', true)
             .neq('service_type', 'giving')
@@ -212,6 +319,8 @@ export const schedulingFlow: FlowDefinition = {
             _service_requires_staff: (matched as Record<string, unknown>).requires_staff || false,
             _service_staff_ids: (matched as Record<string, unknown>).staff_ids || [],
             _service_allow_staff_selection: (matched as Record<string, unknown>).allow_staff_selection || false,
+            _service_is_class: (matched as Record<string, unknown>).is_class || false,
+            _service_class_schedule: (matched as Record<string, unknown>).class_schedule || [],
           },
         };
       },
@@ -222,7 +331,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const { data: services } = await ctx.supabase
           .from('services')
-          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata')
+          .select('id, name, price, duration_minutes, buffer_minutes, max_capacity, auto_approve, deposit_amount, billing_type, recurring_interval, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
           .neq('service_type', 'giving')
@@ -253,6 +362,8 @@ export const schedulingFlow: FlowDefinition = {
           ctx.session.session_data._service_requires_staff = s.requires_staff || false;
           ctx.session.session_data._service_staff_ids = s.staff_ids || [];
           ctx.session.session_data._service_allow_staff_selection = s.allow_staff_selection || false;
+          ctx.session.session_data._service_is_class = (s as Record<string, unknown>).is_class || false;
+          ctx.session.session_data._service_class_schedule = (s as Record<string, unknown>).class_schedule || [];
           ctx.session.session_data.skip_service = true;
           return true;
         }
@@ -1314,6 +1425,7 @@ export const schedulingFlow: FlowDefinition = {
           `${labels.confirmationEmoji} ${ctx.business?.name || 'Business'}`,
         ];
         if (d.service_name) lines.push(`📌 ${d.service_name as string}`);
+        if (d._location_name) lines.push(`📍 Location: ${d._location_name as string}`);
         if (d.staff_name) lines.push(`👤 With: ${d.staff_name as string}`);
 
         const svcMeta = d._service_metadata as Record<string, unknown> | undefined;
@@ -1718,6 +1830,7 @@ export const schedulingFlow: FlowDefinition = {
           guest_email: (d.email as string) || null,
           total_amount: totalDeposit,
           quantity: partySize,
+          location_id: (d.location_id as string) || null,
         };
 
         // If booking already exists (e.g. retry_payment), skip the RPC and reuse existing booking
@@ -1754,6 +1867,7 @@ export const schedulingFlow: FlowDefinition = {
               p_promo_code_id: (d._promo_id as string) || null,
               p_total_amount: totalDeposit,
               p_staff_name: (d.staff_name as string) || null,
+              p_location_id: (d.location_id as string) || null,
             })
             .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 
@@ -1763,6 +1877,22 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           if (!slotResult.slot_available) {
+            // For classes, offer waitlist if capability enabled
+            const isClassBooking = d._service_is_class === true;
+            if (isClassBooking) {
+              const caps = await getEnabledCapabilities(ctx.supabase, ctx.business!.id);
+              if (caps.includes('waitlist')) {
+                return [{
+                  type: 'buttons',
+                  body: 'This class is full! Would you like to join the waitlist? We\'ll notify you if a spot opens up.',
+                  buttons: [
+                    { id: 'wl_join', title: 'Join Waitlist' },
+                    { id: 'go_back', title: 'No Thanks' },
+                  ],
+                }];
+              }
+              return [{ type: 'text', text: 'Sorry, this class is full. Send *Hi* to try a different class or time.' }];
+            }
             return [{ type: 'text', text: 'Sorry, that slot was just taken by another customer. Send *Hi* to pick a different time.' }];
           }
 
@@ -1929,6 +2059,7 @@ export const schedulingFlow: FlowDefinition = {
                   `📋 *${labels.receiptTitle}!*`,
                   '',
                   `${labels.confirmationEmoji} ${ctx.business?.name}`,
+                  d._location_name ? `📍 ${d._location_name as string}` : '',
                   d.staff_name ? `👤 With: ${d.staff_name as string}` : '',
                   `📅 ${dateLabel}`,
                   `🕐 ${d.time as string}`,
