@@ -5,6 +5,21 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (i)
+
+### Fix: collect_guest_names step rejects comma-separated names on WhatsApp
+
+**Bug:** The `collect_guest_names` step in the scheduling flow asked users to enter names "one per line", but WhatsApp mobile users can't easily type multiline messages. Users typing comma-separated names like "John, Mary, Sarah" got rejected by the validator, leaving them stuck.
+
+**Files changed:**
+- `lib/bot/flows/scheduling.flow.ts` — `collect_guest_names` step:
+  - **prompt**: Changed from plain text to a buttons message with a "Skip Names" button (better UX than typing "skip"). Updated instructions to ask for comma-separated names with an example.
+  - **validate**: Now accepts 5 input formats: newline-separated, comma-separated, numbered lists ("1. John 2. Mary"), "and"-separated, and dash/bullet-separated. Also relaxed strict count matching — no longer rejects if name count doesn't match party size.
+
+**What could break:** If downstream code relied on `guest_list.length === party_size`, it may now receive a different count. The guest list is stored in `session_data.guest_list` and used for display/confirmation only, so this should be safe.
+
+---
+
 ## 2026-05-19 (h)
 
 ### Fix: Bot crash on non-flow capabilities (estimates, packages, class_booking, multi_location)
