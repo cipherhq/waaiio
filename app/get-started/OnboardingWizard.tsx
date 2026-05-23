@@ -1349,6 +1349,13 @@ function OnboardingWizard() {
                       example: 'e.g. "I\'d like 2 Jollof Rice and 1 Peppered Chicken"',
                     },
                     {
+                      id: 'table_reservation' as CapabilityId,
+                      title: 'Make Reservations',
+                      desc: 'Customers reserve tables or spots with date, time, and party size.',
+                      tip: 'For restaurants, cafes, bars, lounges, and any business where customers reserve a table or spot for dining.',
+                      example: 'e.g. "Reserve a table for 4 on Friday at 7pm"',
+                    },
+                    {
                       id: 'reservation' as CapabilityId,
                       title: 'Book Stays / Rentals',
                       desc: 'Guests pick check-in and check-out dates to book your property.',
@@ -1476,7 +1483,9 @@ function OnboardingWizard() {
                     const planOrder = ['free', 'growth', 'business'] as const;
                     const capTierIdx = planOrder.indexOf(tier as typeof planOrder[number]);
                     const selectedPlanIdx = planOrder.indexOf(selectedPlan);
-                    const isLocked = capTierIdx > selectedPlanIdx;
+                    // During onboarding, all features are available (30-day trial unlocks everything)
+                    // Tier badge still shown so users know what they'll need after trial
+                    const isLocked = false;
                     return (
                       <div key={feat.id} className="group relative">
                         <button
