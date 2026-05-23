@@ -44,6 +44,18 @@ If something breaks, check this log to find what changed and when.
 - Up to 500 event pages (`/e/[slug]`) and 500 business pages (`/b/[slug]`) included
 - Google and other crawlers can now discover and index public commerce pages
 
+### UX: Dashboard overhaul — remove jargon, fix guidance
+- **Files:** `Sidebar.tsx`, `settings/page.tsx`, `capabilities/page.tsx`, `page.tsx`, `chat/page.tsx`, `customers/page.tsx`
+- Sidebar: "Bot Settings"→"WhatsApp Setup", "Explore Features"→"Add Features", "FAQ Answers"→"Auto-Replies"
+- Sections: "Engage"→"Grow", "Manage"→"Your Business"
+- Calendar gets distinct icon (was identical to Bookings)
+- Forms + Surveys merged into single "Surveys & Forms" nav item
+- Settings: added intro text, "Bot & Booking" tab→"WhatsApp & Booking"
+- Capabilities: description explains enabling adds feature to bot menu
+- Dashboard: removed duplicate inline setup checklist (OnboardingChecklist is single source)
+- Chat: empty state now has description + "Share WhatsApp link" CTA
+- Customers: empty state now has action button linking to QR code page
+
 ### Design: Website elevated from 6/10 to premium quality
 - **Files:** `HomeClient.tsx`, `layout.tsx` (root + auth + marketing), `globals.css`, `tailwind.config.ts`
 - Hero headline: outcome-focused "Customers Book & Pay on WhatsApp — While You Sleep"
