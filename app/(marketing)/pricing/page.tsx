@@ -68,10 +68,13 @@ export default function PricingPage() {
             <div className="mb-8 flex items-center justify-center gap-3">
               <span className={`text-sm font-medium ${!isAnnual ? 'text-gray-900' : 'text-gray-400'}`}>Monthly</span>
               <button
+                role="switch"
+                aria-checked={isAnnual}
+                aria-label="Toggle annual billing"
                 onClick={() => setIsAnnual(!isAnnual)}
                 className={`relative h-7 w-14 rounded-full transition ${isAnnual ? 'bg-brand' : 'bg-gray-300'}`}
               >
-                <div className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition" style={{ left: isAnnual ? '30px' : '2px' }} />
+                <div className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-all duration-200" style={{ left: isAnnual ? '30px' : '2px' }} />
               </button>
               <span className={`text-sm font-medium ${isAnnual ? 'text-gray-900' : 'text-gray-400'}`}>
                 Annual <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">Save 20%</span>

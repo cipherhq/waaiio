@@ -18,10 +18,12 @@ const CHECK = (
 
 function FeatureCard({ icon, title, desc }: { icon: string; title: string; desc: string }) {
   return (
-    <div className="group rounded-2xl border border-gray-100 bg-white p-6 transition hover:border-brand-200 hover:shadow-lg hover:shadow-brand-50">
-      <span className="text-3xl" dangerouslySetInnerHTML={{ __html: icon }} />
+    <div className="group rounded-2xl border border-gray-100 bg-white p-6 transition-all duration-200 hover:-translate-y-1 hover:border-brand/20 hover:shadow-xl hover:shadow-brand/5">
+      <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-brand-50 to-brand-100/50 transition-transform duration-200 group-hover:scale-110">
+        <span className="text-2xl" dangerouslySetInnerHTML={{ __html: icon }} />
+      </div>
       <h3 className="mt-4 text-base font-semibold text-gray-900">{title}</h3>
-      <p className="mt-2 text-sm leading-relaxed text-gray-600">{desc}</p>
+      <p className="mt-2 text-sm leading-relaxed text-gray-500">{desc}</p>
     </div>
   );
 }

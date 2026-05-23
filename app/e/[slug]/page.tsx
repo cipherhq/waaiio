@@ -112,7 +112,7 @@ export default async function EventPage(
           </p>
           <a
             href="https://www.waaiio.com"
-            className="mt-6 inline-block rounded-xl bg-[#6C2BD9] px-6 py-3 text-sm font-semibold text-white hover:bg-[#5a23b5]"
+            className="mt-6 inline-block rounded-xl bg-brand px-6 py-3 text-sm font-semibold text-white hover:bg-brand-600 transition"
           >
             Visit Waaiio
           </a>

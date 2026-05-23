@@ -96,9 +96,9 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
             <div
               className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${
                 isActive
-                  ? 'bg-purple-600 text-white'
+                  ? 'bg-brand text-white'
                   : isComplete
-                    ? 'bg-purple-100 text-purple-700'
+                    ? 'bg-brand-100 text-brand-700'
                     : 'bg-gray-100 text-gray-400'
               }`}
             >
@@ -111,7 +111,7 @@ function StepIndicator({ currentStep }: { currentStep: number }) {
               )}
             </div>
             {i < STEPS.length - 1 && (
-              <div className={`hidden sm:block h-0.5 w-6 ${isComplete ? 'bg-purple-300' : 'bg-gray-200'}`} />
+              <div className={`hidden sm:block h-0.5 w-6 ${isComplete ? 'bg-brand-300' : 'bg-gray-200'}`} />
             )}
           </div>
         );
@@ -319,7 +319,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
           <div className="mt-6">
             <button
               onClick={() => window.location.reload()}
-              className="text-sm font-medium text-purple-600 hover:text-purple-700"
+              className="text-sm font-medium text-brand hover:text-brand-700"
             >
               Book another service
             </button>
@@ -342,7 +342,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
               className="h-12 w-12 rounded-xl object-cover"
             />
           ) : (
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-purple-600 text-lg font-bold text-white">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand text-lg font-bold text-white">
               {business.name.charAt(0)}
             </div>
           )}
@@ -376,7 +376,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                   <button
                     key={svc.id}
                     onClick={() => selectService(svc)}
-                    className="w-full text-left rounded-xl bg-white p-4 shadow-sm border border-gray-100 hover:border-purple-300 hover:shadow-md transition"
+                    className="w-full text-left rounded-xl bg-white p-4 shadow-sm border border-gray-100 hover:border-brand-300 hover:shadow-md transition"
                   >
                     <div className="flex gap-3">
                       {svc.image_url && (
@@ -389,7 +389,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between gap-2">
                           <h3 className="font-semibold text-gray-900 truncate">{svc.name}</h3>
-                          <span className="text-sm font-semibold text-purple-600 whitespace-nowrap">
+                          <span className="text-sm font-semibold text-brand whitespace-nowrap">
                             {svc.price > 0 ? formatPrice(svc.price, cc) : 'Free'}
                           </span>
                         </div>
@@ -440,10 +440,10 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                       d.closed
                         ? 'bg-gray-50 text-gray-300 cursor-not-allowed'
                         : selectedDate === d.date
-                          ? 'bg-purple-600 text-white shadow-md'
+                          ? 'bg-brand text-white shadow-md'
                           : isToday
-                            ? 'bg-purple-50 text-purple-700 border-2 border-purple-200 hover:border-purple-400'
-                            : 'bg-white text-gray-700 border border-gray-100 hover:border-purple-300'
+                            ? 'bg-brand-50 text-brand-700 border-2 border-brand-200 hover:border-brand-400'
+                            : 'bg-white text-gray-700 border border-gray-100 hover:border-brand-300'
                     }`}
                   >
                     <span className="text-[10px] font-medium uppercase">
@@ -479,14 +479,14 @@ export default function BookingForm({ business, services }: BookingFormProps) {
 
             {loadingSlots ? (
               <div className="flex items-center justify-center py-12">
-                <div className="h-6 w-6 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
               </div>
             ) : slots.length === 0 ? (
               <div className="rounded-xl bg-white p-6 text-center shadow-sm">
                 <p className="text-sm text-gray-500">No available slots for this date.</p>
                 <button
                   onClick={goBack}
-                  className="mt-3 text-sm font-medium text-purple-600 hover:text-purple-700"
+                  className="mt-3 text-sm font-medium text-brand hover:text-brand-700"
                 >
                   Pick a different date
                 </button>
@@ -499,8 +499,8 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                     onClick={() => selectTime(slot.time)}
                     className={`rounded-lg py-3 text-sm font-medium transition ${
                       selectedTime === slot.time
-                        ? 'bg-purple-600 text-white shadow-md'
-                        : 'bg-white text-gray-700 border border-gray-100 hover:border-purple-300'
+                        ? 'bg-brand text-white shadow-md'
+                        : 'bg-white text-gray-700 border border-gray-100 hover:border-brand-300'
                     }`}
                   >
                     {slot.time}
@@ -526,7 +526,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                   value={guestName}
                   onChange={(e) => setGuestName(e.target.value)}
                   placeholder="John Doe"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                 />
               </div>
               <div>
@@ -543,18 +543,18 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                   <div>
                     <p className="mb-2 text-xs text-gray-500">Code sent to {guestEmail}</p>
                     <div className="flex gap-2">
-                      <input type="text" inputMode="numeric" maxLength={4} value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="4-digit code" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-purple-500" />
-                      <button type="button" onClick={verifyOtp} disabled={otpLoading || otpCode.length !== 4} className="rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>
+                      <input type="text" inputMode="numeric" maxLength={4} value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="4-digit code" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-brand" />
+                      <button type="button" onClick={verifyOtp} disabled={otpLoading || otpCode.length !== 4} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-600 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>
                     </div>
-                    <button type="button" onClick={sendOtp} disabled={otpLoading} className="mt-1 text-xs text-purple-600 hover:underline">Resend code</button>
+                    <button type="button" onClick={sendOtp} disabled={otpLoading} className="mt-1 text-xs text-brand hover:underline">Resend code</button>
                     {otpError && <p className="mt-1 text-xs text-red-500">{otpError}</p>}
                   </div>
                 ) : (
                   <div>
                     <p className="text-xs text-gray-500 mb-1">We&apos;ll send a code to verify your email — your booking confirmation will be sent here.</p>
                     <div className="flex gap-2">
-                      <input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} placeholder="john@example.com" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500" />
-                      <button type="button" onClick={sendOtp} disabled={otpLoading || !guestEmail.trim()} className="rounded-lg bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>
+                      <input type="email" value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} placeholder="john@example.com" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand" />
+                      <button type="button" onClick={sendOtp} disabled={otpLoading || !guestEmail.trim()} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-600 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>
                     </div>
                     {otpError && <p className="mt-1 text-xs text-red-500">{otpError}</p>}
                   </div>
@@ -572,7 +572,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
               </div>
               <button
                 onClick={goToConfirm}
-                className="w-full rounded-lg bg-purple-600 py-3 text-sm font-semibold text-white hover:bg-purple-700 transition"
+                className="w-full rounded-lg bg-brand py-3 text-sm font-semibold text-white hover:bg-brand-600 transition"
               >
                 Continue
               </button>
@@ -623,17 +623,17 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                   type="checkbox"
                   checked={agreedToTerms}
                   onChange={(e) => setAgreedToTerms(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
                 />
                 <span className="text-xs text-gray-500">
-                  I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-purple-600 underline">Waaiio&apos;s terms</a> and policies
+                  I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-brand underline">Waaiio&apos;s terms</a> and policies
                 </span>
               </label>
 
               <button
                 onClick={handleBooking}
                 disabled={submitting || !agreedToTerms}
-                className="w-full rounded-lg bg-purple-600 py-3 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition"
+                className="w-full rounded-lg bg-brand py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
                 {submitting
                   ? 'Processing...'
@@ -686,7 +686,7 @@ function PoweredByWaaiio() {
         href="https://waaiio.com"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-gray-400 hover:text-purple-500 transition"
+        className="text-gray-400 hover:text-brand transition"
       >
         Waaiio
       </a>

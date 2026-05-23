@@ -248,7 +248,7 @@ export default function EventPurchaseForm({
           {referenceCode && (
             <div className="mt-4 rounded-xl bg-gray-50 px-4 py-3">
               <p className="text-xs text-gray-500">Reference Code</p>
-              <p className="text-lg font-bold text-[#6C2BD9]">{referenceCode}</p>
+              <p className="text-lg font-bold text-brand">{referenceCode}</p>
             </div>
           )}
           <div className="mt-4 rounded-xl bg-gray-50 p-4 text-left">
@@ -265,7 +265,7 @@ export default function EventPurchaseForm({
           <div className="mt-6 border-t border-gray-100 pt-4">
             <a
               href="https://www.waaiio.com"
-              className="text-xs text-gray-400 hover:text-[#6C2BD9]"
+              className="text-xs text-gray-400 hover:text-brand"
             >
               Powered by Waaiio
             </a>
@@ -303,7 +303,7 @@ export default function EventPurchaseForm({
                 className="h-10 w-10 rounded-full object-cover"
               />
             ) : (
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#6C2BD9] text-sm font-bold text-white">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand text-sm font-bold text-white">
                 {business.name.charAt(0)}
               </div>
             )}
@@ -316,14 +316,14 @@ export default function EventPurchaseForm({
           {/* Date & venue */}
           <div className="mt-3 space-y-2">
             <div className="flex items-center gap-3 text-sm text-gray-600">
-              <svg className="h-5 w-5 flex-shrink-0 text-[#6C2BD9]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="h-5 w-5 flex-shrink-0 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
               <span>{dateLabel}</span>
             </div>
             {event.venue && (
               <div className="flex items-center gap-3 text-sm text-gray-600">
-                <svg className="h-5 w-5 flex-shrink-0 text-[#6C2BD9]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="h-5 w-5 flex-shrink-0 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
@@ -463,7 +463,7 @@ export default function EventPurchaseForm({
                     onChange={(e) => setGuestName(e.target.value)}
                     required
                     placeholder="John Doe"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-[#6C2BD9] focus:ring-1 focus:ring-[#6C2BD9]"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                   />
                 </div>
                 <div>
@@ -499,7 +499,7 @@ export default function EventPurchaseForm({
                           type="button"
                           onClick={verifyOtp}
                           disabled={otpLoading || otpCode.length !== 4}
-                          className="rounded-lg bg-[#6C2BD9] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#5a22b8] disabled:opacity-50"
+                          className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                         >
                           {otpLoading ? '...' : 'Verify'}
                         </button>
@@ -508,7 +508,7 @@ export default function EventPurchaseForm({
                         type="button"
                         onClick={sendOtp}
                         disabled={otpLoading}
-                        className="mt-1 text-xs text-[#6C2BD9] hover:underline"
+                        className="mt-1 text-xs text-brand hover:underline"
                       >
                         Resend code
                       </button>
@@ -524,13 +524,13 @@ export default function EventPurchaseForm({
                           onChange={(e) => setGuestEmail(e.target.value)}
                           required
                           placeholder="john@example.com"
-                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-[#6C2BD9] focus:ring-1 focus:ring-[#6C2BD9]"
+                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
                         />
                         <button
                           type="button"
                           onClick={sendOtp}
                           disabled={otpLoading || !guestEmail.trim()}
-                          className="rounded-lg bg-[#6C2BD9] px-4 py-2.5 text-sm font-bold text-white transition hover:bg-[#5a22b8] disabled:opacity-50"
+                          className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                         >
                           {otpLoading ? '...' : 'Verify'}
                         </button>
@@ -555,7 +555,7 @@ export default function EventPurchaseForm({
               {totalPrice > 0 && (
                 <div className="flex items-center justify-between rounded-xl bg-purple-50 px-4 py-3">
                   <span className="text-sm font-medium text-gray-700">Total</span>
-                  <span className="text-lg font-bold text-[#6C2BD9]">
+                  <span className="text-lg font-bold text-brand">
                     {formatCurrency(totalPrice, cc)}
                   </span>
                 </div>
@@ -572,10 +572,10 @@ export default function EventPurchaseForm({
                   type="checkbox"
                   checked={agreedToTerms}
                   onChange={(e) => setAgreedToTerms(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-[#6C2BD9] focus:ring-[#6C2BD9]"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-[#6C2BD9]"
                 />
                 <span className="text-xs text-gray-500">
-                  I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-[#6C2BD9] underline">Waaiio&apos;s terms</a> and policies
+                  I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-brand underline">Waaiio&apos;s terms</a> and policies
                 </span>
               </label>
 
@@ -583,7 +583,7 @@ export default function EventPurchaseForm({
               <button
                 type="submit"
                 disabled={state === 'purchasing' || (hasTicketTypes && !selectedTicketType) || !agreedToTerms}
-                className="w-full rounded-xl bg-[#6C2BD9] py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#5a23b5] disabled:opacity-50"
+                className="w-full rounded-xl bg-brand py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#5a23b5] disabled:opacity-50"
               >
                 {state === 'purchasing'
                   ? 'Processing...'
@@ -604,7 +604,7 @@ export default function EventPurchaseForm({
           <div className="mt-8 border-t border-gray-100 pt-4 text-center">
             <a
               href="https://www.waaiio.com"
-              className="text-xs text-gray-400 hover:text-[#6C2BD9]"
+              className="text-xs text-gray-400 hover:text-brand"
             >
               Powered by Waaiio
             </a>
