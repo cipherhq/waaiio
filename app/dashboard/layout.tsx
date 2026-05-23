@@ -85,7 +85,7 @@ export default async function DashboardLayout({
 
         return (
           <DashboardProvider business={businessWithCaps} userId={user.id}>
-            <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+            <div data-dashboard className="min-h-screen bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
               <ImpersonationBanner businessName={impersonatedBusinessName} />
               <AlertBanner />
@@ -150,7 +150,7 @@ export default async function DashboardLayout({
 
   return (
     <DashboardProvider business={businessWithCaps} userId={user.id}>
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <div data-dashboard className="min-h-screen bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
         <AlertBanner />
         <Sidebar />

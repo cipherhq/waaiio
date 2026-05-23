@@ -96,11 +96,10 @@ export default async function PaymentSuccessPage({
             isVerified = await verifyPayment(supabase, fullPayment.gateway_reference, cc);
           }
 
-          // Stripe redirect to success_url means payment completed — trust it if verify fails
-          // (Stripe only redirects to success_url on successful payment)
+          // If gateway verification fails, do NOT blindly trust the redirect.
+          // The webhook will handle confirmation when it arrives.
           if (!isVerified) {
-            isVerified = true; // Trust the redirect
-            logger.info(`[PAYMENT-SUCCESS] Gateway verify failed for ${params.ref}, trusting Stripe redirect`);
+            logger.warn(`[PAYMENT-SUCCESS] Gateway verify failed for ${params.ref}, waiting for webhook`);
           }
 
           if (isVerified) {

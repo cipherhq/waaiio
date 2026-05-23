@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { verifyOtpToken } from '@/lib/otp-token';
 
 /**
  * POST /api/bookings/public/create
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
       guestEmail,
       guestPhone,
       quantity,
+      otpToken,
     } = body as {
       businessSlug: string;
       serviceId: string;
@@ -33,6 +35,7 @@ export async function POST(request: NextRequest) {
       guestEmail: string;
       guestPhone?: string;
       quantity?: number;
+      otpToken?: string;
     };
 
     // Basic validation
@@ -41,6 +44,15 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields' },
         { status: 400 },
       );
+    }
+
+    // Verify server-side OTP token (proves email was verified)
+    if (!otpToken) {
+      return NextResponse.json({ error: 'Email verification required' }, { status: 403 });
+    }
+    const verifiedEmail = verifyOtpToken(otpToken);
+    if (!verifiedEmail || verifiedEmail !== guestEmail.toLowerCase().trim()) {
+      return NextResponse.json({ error: 'Email verification expired or invalid' }, { status: 403 });
     }
 
     // Validate date format
@@ -74,6 +86,7 @@ export async function POST(request: NextRequest) {
       .from('businesses')
       .select('id, name, slug, country_code, operating_hours, payment_gateway, subscription_tier, metadata, owner_id')
       .eq('slug', businessSlug)
+      .eq('is_active', true)
       .single();
 
     if (bizError || !business) {

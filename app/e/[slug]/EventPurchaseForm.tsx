@@ -66,6 +66,7 @@ export default function EventPurchaseForm({
   const [otpCode, setOtpCode] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
+  const [otpToken, setOtpToken] = useState('');
 
   // Success state
   const [referenceCode, setReferenceCode] = useState('');
@@ -153,6 +154,7 @@ export default function EventPurchaseForm({
       const data = await res.json();
       if (data.verified) {
         setEmailVerified(true);
+        setOtpToken(data.otpToken || '');
         setOtpSent(false);
       } else {
         setOtpError(data.error || 'Invalid code');
@@ -200,6 +202,7 @@ export default function EventPurchaseForm({
           guestName: guestName.trim(),
           guestEmail: guestEmail.trim(),
           guestPhone: guestPhone || undefined,
+          otpToken,
         }),
       });
 

@@ -136,6 +136,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
   const [otpCode, setOtpCode] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
+  const [otpToken, setOtpToken] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
@@ -229,7 +230,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
         body: JSON.stringify({ email: guestEmail.trim(), code: otpCode }),
       });
       const d = await res.json();
-      if (d.verified) { setEmailVerified(true); setOtpSent(false); }
+      if (d.verified) { setEmailVerified(true); setOtpToken(d.otpToken || ''); setOtpSent(false); }
       else { setOtpError(d.error || 'Invalid code'); }
     } catch { setOtpError('Network error'); }
     setOtpLoading(false);
@@ -265,6 +266,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
           guestName: guestName.trim(),
           guestEmail: guestEmail.trim().toLowerCase(),
           guestPhone: guestPhone || undefined,
+          otpToken,
         }),
       });
 

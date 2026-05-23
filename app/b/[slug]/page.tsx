@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
 import BookingForm from './BookingForm';
 
 interface PageProps {
@@ -8,12 +8,13 @@ interface PageProps {
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { slug } = await params;
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   const { data: business } = await supabase
     .from('businesses')
     .select('name, description')
     .eq('slug', slug)
+    .eq('is_active', true)
     .single();
 
   if (!business) {
@@ -34,7 +35,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function PublicBookingPage({ params }: PageProps) {
   const { slug } = await params;
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   const { data: business } = await supabase
     .from('businesses')
@@ -42,6 +43,7 @@ export default async function PublicBookingPage({ params }: PageProps) {
       'id, name, slug, logo_url, description, address, operating_hours, country_code',
     )
     .eq('slug', slug)
+    .eq('is_active', true)
     .single();
 
   if (!business) {

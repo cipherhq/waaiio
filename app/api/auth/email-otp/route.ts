@@ -98,14 +98,24 @@ async function handleVerify(request: NextRequest) {
       return NextResponse.json({ error: 'Code expired. Request a new one.' }, { status: 400 });
     }
 
-    if (stored.code !== String(code).trim()) {
+    const { timingSafeEqual } = await import('crypto');
+    const codeStr = String(code).trim();
+    if (codeStr.length !== stored.code.length || !timingSafeEqual(Buffer.from(stored.code), Buffer.from(codeStr))) {
       return NextResponse.json({ error: 'Incorrect code' }, { status: 401 });
     }
 
-    // Verified — delete from DB
+    // Verified — delete from DB and issue a signed token
     await supabase.from('platform_settings').delete().eq('key', `otp:${emailLower}`);
 
-    return NextResponse.json({ verified: true });
+    // Generate HMAC token proving this email was verified (valid 15 min)
+    const { createHmac } = await import('crypto');
+    const secret = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+    const expiresAtMs = Date.now() + 15 * 60 * 1000;
+    const payload = `${emailLower}:${expiresAtMs}`;
+    const signature = createHmac('sha256', secret).update(payload).digest('hex');
+    const otpToken = `${payload}:${signature}`;
+
+    return NextResponse.json({ verified: true, otpToken });
   } catch {
     return NextResponse.json({ error: 'Verification failed' }, { status: 500 });
   }

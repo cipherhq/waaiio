@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { verifyOtpToken } from '@/lib/otp-token';
 
 export async function POST(request: NextRequest) {
   // Rate limit: 10/min per IP
@@ -16,6 +17,7 @@ export async function POST(request: NextRequest) {
     guestName?: string;
     guestEmail?: string;
     guestPhone?: string;
+    otpToken?: string;
   };
 
   try {
@@ -24,7 +26,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
   }
 
-  const { eventSlug, ticketTypeId, quantity, guestName, guestEmail, guestPhone } = body;
+  const { eventSlug, ticketTypeId, quantity, guestName, guestEmail, guestPhone, otpToken } = body;
 
   // Validate required fields
   if (!eventSlug || !quantity || !guestName || !guestEmail) {
@@ -32,6 +34,15 @@ export async function POST(request: NextRequest) {
       { error: 'Missing required fields: eventSlug, quantity, guestName, guestEmail' },
       { status: 400 },
     );
+  }
+
+  // Verify server-side OTP token (proves email was verified)
+  if (!otpToken) {
+    return NextResponse.json({ error: 'Email verification required' }, { status: 403 });
+  }
+  const verifiedEmail = verifyOtpToken(otpToken);
+  if (!verifiedEmail || verifiedEmail !== guestEmail.toLowerCase().trim()) {
+    return NextResponse.json({ error: 'Email verification expired or invalid' }, { status: 403 });
   }
 
   if (typeof quantity !== 'number' || quantity < 1 || quantity > 20 || !Number.isInteger(quantity)) {

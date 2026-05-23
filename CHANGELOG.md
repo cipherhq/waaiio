@@ -5,6 +5,51 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-23
+
+### Security: Server-side OTP token verification on public purchase/booking APIs
+- **Files:** `lib/otp-token.ts` (new), `app/api/auth/email-otp/route.ts`, `app/api/events/purchase/route.ts`, `app/api/bookings/public/create/route.ts`, `app/e/[slug]/EventPurchaseForm.tsx`, `app/b/[slug]/BookingForm.tsx`
+- OTP verify endpoint now issues HMAC-signed token (15min TTL) proving email was verified
+- Both purchase APIs require and validate `otpToken` server-side — blocks direct API bypass
+- OTP code comparison switched from `!==` to `timingSafeEqual` (timing attack prevention)
+- **Breaking:** Direct API calls without `otpToken` will now get 403
+
+### Security: payment-success no longer blindly trusts Stripe redirect
+- **File:** `app/payment-success/page.tsx`
+- Removed `isVerified = true` fallback when gateway verification fails
+- Unverified payments now wait for webhook confirmation instead of auto-confirming
+- Prevents fraud via crafted `/payment-success?ref=X` URLs
+
+### Security: CSP hardened — removed unsafe-eval, added PayPal
+- **File:** `middleware.ts`
+- Removed `unsafe-eval` from `script-src` (XSS mitigation)
+- Added PayPal domains to `script-src` and `frame-src` for PPCP checkout
+
+### Security: Public pages no longer use service client
+- **Files:** `app/e/[slug]/page.tsx`, `app/b/[slug]/page.tsx`
+- Switched from `createServiceClient()` to `createClient()` (respects RLS)
+- No more `owner_id`, `subscription_tier`, `metadata` leaked to client
+- Added `is_active` filter — inactive/suspended businesses no longer accessible
+
+### Fix: Dark mode scoped to dashboard only
+- **Files:** `app/globals.css`, `app/dashboard/layout.tsx`
+- All `.dark` overrides now require `[data-dashboard]` ancestor
+- Dashboard layout wrapper gets `data-dashboard` attribute
+- Marketing pages (homepage, pricing, events, bookings) no longer corrupted by dark mode
+- Mobile h1/h2 force-resize also scoped to dashboard only
+
+### SEO: Dynamic sitemap with event and business pages
+- **File:** `app/sitemap.ts`
+- Now async — queries published events and active businesses from Supabase
+- Up to 500 event pages (`/e/[slug]`) and 500 business pages (`/b/[slug]`) included
+- Google and other crawlers can now discover and index public commerce pages
+
+### Fix: Inactive businesses blocked from public booking API
+- **File:** `app/api/bookings/public/create/route.ts`
+- Added `.eq('is_active', true)` filter — suspended businesses return 404
+
+---
+
 ## 2026-05-19 (i)
 
 ### Fix: collect_guest_names step rejects comma-separated names on WhatsApp

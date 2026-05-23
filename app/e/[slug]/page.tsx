@@ -1,4 +1,4 @@
-import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
 import type { Metadata } from 'next';
 import EventPurchaseForm from './EventPurchaseForm';
 
@@ -37,7 +37,7 @@ interface EventData {
 }
 
 async function getEvent(slug: string): Promise<EventData | null> {
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   const { data, error } = await supabase
     .from('events')
