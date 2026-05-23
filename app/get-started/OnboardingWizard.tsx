@@ -16,7 +16,7 @@ import {
   type SubscriptionTier,
   type CountryCode,
 } from '@/lib/constants';
-import { getCategoryList, getCategoryByKey } from '@/lib/categoryConfig';
+import { getCategoryList, getCategoryByKey, getCategoryGroups } from '@/lib/categoryConfig';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
 import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
@@ -41,6 +41,27 @@ const FALLBACK_WHATSAPP_NUMBERS: Record<string, string> = {
 
 /* ─── Popular categories for onboarding ─── */
 const POPULAR_CATEGORY_KEYS = ['restaurant', 'barber', 'salon', 'church', 'shop', 'hotel', 'gym', 'events', 'consultant', 'clinic'];
+
+/* ─── Group icons for the 2-phase category picker ─── */
+const CATEGORY_GROUP_ICONS: Record<string, string> = {
+  'Beauty & Wellness': '\uD83D\uDC87',
+  'Health & Medical': '\uD83C\uDFE5',
+  'Food & Dining': '\uD83C\uDF7D\uFE0F',
+  'Delivery & Retail': '\uD83D\uDECD\uFE0F',
+  'Home & Auto Services': '\uD83D\uDD27',
+  'Professional Services': '\uD83D\uDCBC',
+  'Hospitality': '\uD83C\uDFE8',
+  'Events & Entertainment': '\uD83C\uDFAA',
+  'Faith & Community': '\u26EA',
+  'Fitness': '\uD83C\uDFCB\uFE0F',
+  'Transport & Logistics': '\uD83D\uDE9A',
+  'Education & Training': '\uD83C\uDF93',
+  'Pet Services': '\uD83D\uDC3E',
+  'Creative & Media': '\uD83D\uDCF7',
+  'Real Estate & Property': '\uD83C\uDFE0',
+  'Government & Public': '\uD83C\uDFDB\uFE0F',
+  'Other': '\u2728',
+};
 
 type WizardStep = 'auth' | 'category' | 'features' | 'plan' | 'details' | 'success';
 type AuthSubStep = 'phone' | 'otp';
@@ -283,6 +304,7 @@ function OnboardingWizard() {
   const [category, setCategory] = useState<BusinessCategoryKey | ''>('');
   const [categorySearch, setCategorySearch] = useState('');
   const [selectedCapabilities, setSelectedCapabilities] = useState<CapabilityId[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
 
   // Owner details
   const [firstName, setFirstName] = useState('');
@@ -846,7 +868,20 @@ function OnboardingWizard() {
         // Non-fatal — business is created, channel can be retried from dashboard
       }
 
-      setStep('plan');
+      // Free plan: verify immediately and go to success
+      const verifyRes = await fetch('/api/onboarding/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: registerData.business_id, plan: 'free' }),
+      });
+      const verifyData = await verifyRes.json();
+      if (verifyData.bot_code) {
+        setSuccessData({ bot_code: verifyData.bot_code, business_id: verifyData.business_id });
+        setBotCode(verifyData.bot_code);
+        setStep('success');
+      } else {
+        setError(verifyData.message || 'Activation failed');
+      }
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -995,7 +1030,6 @@ function OnboardingWizard() {
   const steps: { key: WizardStep; label: string }[] = [
     { key: 'auth', label: 'Sign Up' },
     { key: 'category', label: 'Industry' },
-    { key: 'features', label: 'Features' },
     { key: 'details', label: 'Details' },
     { key: 'success', label: 'Live!' },
   ];
@@ -1212,12 +1246,9 @@ function OnboardingWizard() {
             {/* ── Step 2: Category ── */}
             {step === 'category' && (
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Where is your business?</h2>
-                <p className="mt-1 text-sm text-gray-500">Select your country and find your business type</p>
-
                 {/* Country selection */}
-                <div className="mt-6">
-                  <label className="mb-2 block text-sm font-medium text-gray-700">Country</label>
+                <div>
+                  <label className="mb-2 block text-sm font-medium text-gray-700">Which country is your business in?</label>
                   <div className="flex flex-wrap gap-2">
                     {countryList.map(c => (
                       <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); }}
@@ -1228,94 +1259,58 @@ function OnboardingWizard() {
                   </div>
                 </div>
 
-                {/* Search */}
-                <div className="mt-8">
-                  <label className="mb-2 block text-sm font-medium text-gray-700">What type of business do you run?</label>
-                  <div className="relative">
-                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    <input
-                      type="text"
-                      value={categorySearch}
-                      onChange={e => setCategorySearch(e.target.value)}
-                      placeholder="Search... e.g. salon, restaurant, church"
-                      className="w-full rounded-xl border border-gray-300 pl-10 pr-4 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
-                    />
-                    {categorySearch && (
-                      <button onClick={() => setCategorySearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                      </button>
-                    )}
+                {!selectedGroup ? (
+                  /* ── Phase 1: Show group buttons ── */
+                  <div className="mt-8">
+                    <h2 className="text-2xl font-bold text-gray-900">What type of business do you run?</h2>
+                    <p className="mt-1 text-sm text-gray-500">30-day free trial. All features included.</p>
+                    <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                      {getCategoryGroups().map(g => (
+                        <button
+                          key={g.group}
+                          type="button"
+                          onClick={() => setSelectedGroup(g.group)}
+                          className="flex flex-col items-center gap-2 rounded-xl border-2 border-gray-200 bg-white px-3 py-4 text-center transition hover:border-brand hover:bg-brand-50/30"
+                        >
+                          <span className="text-2xl">{CATEGORY_GROUP_ICONS[g.group] || '\u2728'}</span>
+                          <span className="text-sm font-medium text-gray-700">{g.group}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-
-                {/* Categories */}
-                <div className="mt-4">
-                  {filteredCategories.length > 0 ? (
-                    <>
-                      {!categorySearch && <p className="text-xs text-gray-400 mb-2">Popular</p>}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                        {(categorySearch ? filteredCategories : popularCategories).map(cat => (
-                          <button key={cat.key} type="button" onClick={() => {
-                            setCategory(cat.key as BusinessCategoryKey);
-                            const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key as BusinessCategoryKey] || ['scheduling'];
-                            setSelectedCapabilities([...defaults]);
-                          }}
-                            className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${category === cat.key ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                ) : (
+                  /* ── Phase 2: Show specific types within the group ── */
+                  <div className="mt-8">
+                    <button type="button" onClick={() => setSelectedGroup(null)} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
+                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+                      Back to groups
+                    </button>
+                    <h2 className="text-2xl font-bold text-gray-900">What specifically?</h2>
+                    <p className="mt-1 text-sm text-gray-500">Pick the one that best matches your business</p>
+                    <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      {getCategoryGroups()
+                        .find(g => g.group === selectedGroup)
+                        ?.categories.map(cat => (
+                          <button
+                            key={cat.key}
+                            type="button"
+                            onClick={() => {
+                              const key = cat.key as BusinessCategoryKey;
+                              setCategory(key);
+                              const defaults = CATEGORY_DEFAULT_CAPABILITIES[key] || ['scheduling'];
+                              setSelectedCapabilities([...defaults]);
+                              setSelectedPlan('free');
+                              setStep('details');
+                            }}
+                            className="flex items-center gap-3 rounded-xl border-2 border-gray-200 bg-white px-3 py-3 text-left transition hover:border-brand hover:bg-brand-50/30"
+                          >
                             <span className="text-xl">{cat.icon}</span>
                             <span className="text-xs font-medium text-gray-700">{cat.label}</span>
                           </button>
                         ))}
-                      </div>
-
-                      {/* All categories (when not searching) */}
-                      {!categorySearch && (
-                        <>
-                          <p className="text-xs text-gray-400 mb-2 mt-6">All categories</p>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                            {allCategoriesSorted.filter(c => !popularKeys.has(c.key)).map(cat => (
-                              <button key={cat.key} type="button" onClick={() => {
-                                setCategory(cat.key as BusinessCategoryKey);
-                                const defaults = CATEGORY_DEFAULT_CAPABILITIES[cat.key as BusinessCategoryKey] || ['scheduling'];
-                                setSelectedCapabilities([...defaults]);
-                              }}
-                                className={`flex items-center gap-3 rounded-xl border-2 px-3 py-3 text-left transition ${category === cat.key ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                                <span className="text-xl">{cat.icon}</span>
-                                <span className="text-xs font-medium text-gray-700">{cat.label}</span>
-                              </button>
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    <div className="text-center py-8">
-                      <p className="text-sm text-gray-500">No match found for &ldquo;{categorySearch}&rdquo;</p>
-                      <p className="text-xs text-gray-400 mt-1">Pick &ldquo;Other&rdquo; below and we&apos;ll set you up</p>
                     </div>
-                  )}
-
-                  {/* Other - always visible */}
-                  <div className="mt-4">
-                    <button type="button" onClick={() => {
-                      setCategory('other' as BusinessCategoryKey);
-                      const defaults = CATEGORY_DEFAULT_CAPABILITIES['other'] || ['appointment', 'feedback', 'chat'];
-                      setSelectedCapabilities([...defaults]);
-                    }}
-                      className={`w-full flex items-center gap-3 rounded-xl border-2 px-4 py-3 text-left transition ${category === 'other' ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
-                      <span className="text-xl">&#x1F3E2;</span>
-                      <div>
-                        <span className="text-sm font-medium text-gray-700">Other</span>
-                        <span className="text-xs text-gray-400 ml-2">Don&apos;t see your type? Start here</span>
-                      </div>
-                    </button>
                   </div>
-                </div>
-
-                <div className="mt-8">
-                  <button type="button" onClick={() => setStep('features')} disabled={!category} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">Continue</button>
-                </div>
+                )}
               </div>
             )}
 
@@ -1655,7 +1650,7 @@ function OnboardingWizard() {
             {/* ── Step 4: Plan ── */}
             {step === 'plan' && (
               <div>
-                <button type="button" onClick={() => setStep('features')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
+                <button type="button" onClick={() => setStep('category')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
                   Back
                 </button>
@@ -1997,7 +1992,7 @@ function OnboardingWizard() {
                 </label>
 
                 <div className="mt-4 flex gap-3">
-                  <button type="button" onClick={() => setStep('features')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
+                  <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
                   <button type="submit" disabled={loading || !agreedToTerms || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
                     {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
                   </button>
@@ -2108,7 +2103,7 @@ function OnboardingWizard() {
                 ) : (
                   <div className="py-16">
                     <p className="text-sm text-gray-500">{error || 'Something went wrong. Please contact support.'}</p>
-                    <button type="button" onClick={() => { setStep('plan'); setError(''); }} className="mt-4 text-sm font-semibold text-brand hover:underline">Try again</button>
+                    <button type="button" onClick={() => { setStep('details'); setError(''); }} className="mt-4 text-sm font-semibold text-brand hover:underline">Try again</button>
                   </div>
                 )}
               </div>
