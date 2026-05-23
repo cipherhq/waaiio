@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger';
 import { sendEmail } from '@/lib/email/client';
 import { ticketConfirmationEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export interface SendTicketsOptions {
   supabase: SupabaseClient;
@@ -182,8 +183,8 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   let email = opts.guestEmail;
   if (!email) {
     // Try to find email from profile
-    const phoneP = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
-    const phoneN = guestPhone.startsWith('+') ? guestPhone.slice(1) : guestPhone;
+    const phoneP = sanitizeFilterValue(guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`);
+    const phoneN = sanitizeFilterValue(guestPhone.startsWith('+') ? guestPhone.slice(1) : guestPhone);
     const { data: profile } = await supabase
       .from('profiles')
       .select('email')

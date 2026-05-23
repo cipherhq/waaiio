@@ -73,7 +73,7 @@ export async function sendProactiveConfirmation(
   if (!customerPhone && payment.invoice_id) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('customer_phone, reference_code, business_id, businesses:business_id(name, country_code)')
+      .select('customer_phone, reference_code, description, business_id, businesses:business_id(name, country_code)')
       .eq('id', payment.invoice_id)
       .single();
 
@@ -84,7 +84,7 @@ export async function sendProactiveConfirmation(
       const biz = invoice.businesses as unknown as { name: string; country_code?: string } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
-      serviceName = 'Invoice';
+      serviceName = invoice.description || `Invoice ${referenceCode}`;
     }
   }
 
@@ -110,7 +110,7 @@ export async function sendProactiveConfirmation(
         const biz = order.businesses as unknown as { name: string; country_code?: string } | null;
         if (biz?.name) businessName = biz.name;
         if (biz?.country_code) countryCode = biz.country_code as CountryCode;
-        serviceName = 'Order';
+        serviceName = `Order ${referenceCode}`;
       }
     }
 
@@ -338,35 +338,24 @@ export async function sendProactiveConfirmation(
       logger.error(`${logPrefix} Ticket send error:`, ticketErr);
     }
 
-    // ── 8b. Send email confirmation for web channel bookings without WhatsApp ──
-    if (!resolved || !customerPhone) {
+    // ── 8b. Send email confirmation — always send if guest has email (WhatsApp + email) ──
+    if (payment.booking_id) {
       try {
-        let guestEmail: string | null = null;
-        let bookingDate = '';
-        let bookingTime = '';
-        let bookingQty = 1;
-        let guestFirstName = 'there';
-        if (payment.booking_id) {
-          const { data: emailBooking } = await supabase
-            .from('bookings')
-            .select('guest_email, guest_name, date, time, party_size')
-            .eq('id', payment.booking_id)
-            .single();
-          guestEmail = emailBooking?.guest_email || null;
-          guestFirstName = emailBooking?.guest_name?.split(' ')[0] || 'there';
-          bookingDate = emailBooking?.date || '';
-          bookingTime = emailBooking?.time || '';
-          bookingQty = emailBooking?.party_size || 1;
-        }
+        const { data: emailBooking } = await supabase
+          .from('bookings')
+          .select('guest_email, guest_name, date, time, party_size')
+          .eq('id', payment.booking_id)
+          .single();
+        const guestEmail = emailBooking?.guest_email || null;
         if (guestEmail) {
           const { sendEmail } = await import('@/lib/email/client');
           const { bookingConfirmationEmail } = await import('@/lib/email/templates');
           const emailContent = bookingConfirmationEmail({
-            firstName: guestFirstName,
+            firstName: emailBooking?.guest_name?.split(' ')[0] || 'there',
             businessName,
-            date: bookingDate,
-            time: bookingTime,
-            quantity: bookingQty,
+            date: emailBooking?.date || '',
+            time: emailBooking?.time || '',
+            quantity: emailBooking?.party_size || 1,
             referenceCode,
             amount: payment.amount,
             formattedAmount: formatCurrency(payment.amount, countryCode),
@@ -374,10 +363,10 @@ export async function sendProactiveConfirmation(
             confirmationEmoji: '✅',
           });
           await sendEmail({ to: guestEmail, ...emailContent });
-          logger.info(`${logPrefix} Email-only confirmation sent to ${guestEmail}`);
+          logger.info(`${logPrefix} Email confirmation sent to ${guestEmail}`);
         }
       } catch (emailErr) {
-        logger.error(`${logPrefix} Web channel email confirmation error:`, emailErr);
+        logger.error(`${logPrefix} Email confirmation error:`, emailErr);
       }
     }
 
