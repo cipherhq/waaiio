@@ -80,7 +80,7 @@ const selectCapabilityStep: FlowStepConfig = {
     const businessId = ctx.business.id;
 
     // Filter out non-user-facing capabilities
-    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
+    const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
     if (capabilities.includes('scheduling')) { nonUserFacing.add('payment'); nonUserFacing.add('invoice'); }
     let userFacing = capabilities.filter(c => !nonUserFacing.has(c));
 
@@ -214,7 +214,7 @@ const selectCapabilityStep: FlowStepConfig = {
   async validate(input: string, ctx: FlowContext) {
     const capabilities = (ctx.session.session_data.capabilities as CapabilityId[]) || [];
     const category = ctx.business?.category || 'other';
-    const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
+    const nonUF = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
     if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
     const userFacing = capabilities.filter(c => !nonUF.has(c));
 

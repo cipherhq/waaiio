@@ -5,6 +5,22 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (h)
+
+### Fix: Bot crash on non-flow capabilities (estimates, packages, class_booking, multi_location)
+
+**Bug:** Selecting `estimates`, `packages`, `class_booking`, or `multi_location` from the WhatsApp bot capability menu caused a silent crash. These capabilities have no standalone flow files — the flow registry returned undefined, executor called methods on it, and the session died.
+
+**Files changed:**
+- `lib/bot/handlers/flow-routing.ts` — Added 4 capabilities to `nonUserFacing` set so they never appear in customer-facing menu. Added explicit `capabilityToFirstStep` cases routing them to `select_service` (scheduling fallback).
+- `lib/bot/flows/capability-selection.flow.ts` — Added same 4 capabilities to both `nonUserFacing` (skipIf) and `nonUF` (validate) sets so they are filtered from menu display and selection.
+
+**What could break:** If a business has ONLY one of these 4 capabilities enabled (and no other user-facing ones), the bot will fall through to scheduling's `select_service` step. This is the intended behavior — estimates use scheduling, packages are purchased during booking, class_booking uses scheduling with is_class=true, multi_location is a step within scheduling.
+
+**Note:** The executor already handles missing steps gracefully (sends "Oops, we hit a snag" + deactivates session + logs to Sentry), so even without this fix the crash was "graceful" from a user perspective — but the session would die instead of routing properly.
+
+---
+
 ## 2026-05-19 (g)
 
 ### CCPA/GDPR Technical Compliance Features

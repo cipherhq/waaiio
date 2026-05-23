@@ -28,7 +28,7 @@ export function getFirstStepFromCapabilities(capabilities: CapabilityId[], flowT
   }
 
   // Filter to user-facing capabilities only (same filter as select_capability prompt)
-  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership']);
+  const nonUserFacing = new Set(['reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff', 'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply', 'membership', 'estimates', 'packages', 'class_booking', 'multi_location']);
   // If scheduling is present, payment/invoice happen within the booking flow — don't show as separate options
   if (capabilities.includes('scheduling') || capabilities.includes('table_reservation')) {
     nonUserFacing.add('payment');
@@ -66,6 +66,10 @@ export function capabilityToFirstStep(cap: CapabilityId): string {
     case 'loyalty': return 'loyalty_menu';
     case 'referral': return 'select_service'; // referral is post-completion
     case 'staff': return 'select_service'; // staff enhances scheduling
+    case 'estimates': return 'select_service'; // quotes initiated from dashboard, falls through to scheduling
+    case 'packages': return 'select_service'; // purchased at point of booking, falls through to scheduling
+    case 'class_booking': return 'select_service'; // uses scheduling flow with is_class=true
+    case 'multi_location': return 'select_service'; // location selection is a step within scheduling
     default: return 'select_service';
   }
 }
