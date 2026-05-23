@@ -996,7 +996,6 @@ function OnboardingWizard() {
     { key: 'auth', label: 'Sign Up' },
     { key: 'category', label: 'Industry' },
     { key: 'features', label: 'Features' },
-    { key: 'plan', label: 'Plan' },
     { key: 'details', label: 'Details' },
     { key: 'success', label: 'Live!' },
   ];
@@ -1628,22 +1627,23 @@ function OnboardingWizard() {
                 </div>
 
                 <div className="mt-6">
+                  <p className="text-center text-xs text-gray-500 mb-3">All features included free for 30 days. No credit card required.</p>
                   <button
                     type="button"
                     onClick={() => {
-                      // Auto-select the minimum required plan based on features, but never downgrade a manual choice
+                      // Auto-select plan based on features (for backend tier assignment)
                       const planOrder = ['free', 'growth', 'business'] as const;
                       const requiredIdx = planOrder.indexOf(requiredPlan);
                       const currentIdx = planOrder.indexOf(selectedPlan);
                       if (requiredIdx > currentIdx) {
                         setSelectedPlan(requiredPlan as SubscriptionTier);
                       }
-                      setStep('plan');
+                      setStep('details');
                     }}
                     disabled={selectedCapabilities.length === 0}
                     className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                   >
-                    Continue
+                    Start Free Trial
                   </button>
                   {selectedCapabilities.length === 0 && (
                     <p className="text-center text-xs text-red-500 mt-2">Please select at least one feature to continue</p>
@@ -1997,7 +1997,7 @@ function OnboardingWizard() {
                 </label>
 
                 <div className="mt-4 flex gap-3">
-                  <button type="button" onClick={() => setStep('plan')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
+                  <button type="button" onClick={() => setStep('features')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
                   <button type="submit" disabled={loading || !agreedToTerms || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
                     {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
                   </button>
