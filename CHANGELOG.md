@@ -5,6 +5,31 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (d)
+
+### Category System Restructure — 16 Industry Groups
+
+**Files changed:**
+- `lib/constants.ts` — BusinessCategoryKey type, BUSINESS_CATEGORIES array, CATEGORY_LABELS, DEFAULT_SERVICES
+- `lib/capabilities/types.ts` — CapabilityId type, CAPABILITIES array, CAPABILITY_TIER_REQUIREMENTS, CATEGORY_DEFAULT_CAPABILITIES
+
+**What changed:**
+- Restructured BUSINESS_CATEGORIES into 16 industry groups (was mixed/inconsistent)
+- Added 30 new category keys: cafe, bar, lounge, food_truck, yoga, pilates, dance, martial_arts, bootcamp, courier, moving, bus, language_school, training_academy, dog_walking, pet_boarding, pet_training, videographer, dj, graphic_designer, content_creator, property_manager, mortgage_broker, handyman, hvac, landscaping, electrician, medspa, lash_tech, waxing, optician, physiotherapy
+- Removed instagram_vendor and mall_vendor from BUSINESS_CATEGORIES and CATEGORY_DEFAULT_CAPABILITIES (merged into 'shop'), kept in BusinessCategoryKey type and CATEGORY_LABELS for backward compat
+- Removed duplicate restaurant entry (was at line 218 and 227)
+- Added 4 new capabilities: estimates, packages, class_booking, multi_location
+- CATEGORY_DEFAULT_CAPABILITIES now uses group-based shared arrays (DRY)
+- Moved categories to correct groups: pet_grooming→Pet Services, photographer→Creative & Media, logistics→Transport & Logistics, car_park→Government & Public, driving_school/school/daycare→Education & Training, real_estate→Real Estate & Property
+- Fixed icons: other '🔧'→'✨', supermarket '🛒'→'🏬'
+
+**What could break:**
+- Any hardcoded group name checks (old groups: 'Food & Drink', 'Fitness & Wellness', 'Shops & Commerce', 'Transport' are now renamed)
+- Any code checking `CATEGORY_DEFAULT_CAPABILITIES['instagram_vendor']` will get undefined (was removed from the map)
+- Existing businesses with instagram_vendor/mall_vendor category in DB still work (type still valid, CATEGORY_LABELS still has entries)
+
+---
+
 ## 2026-05-19 (c)
 
 ### Multi-Agent Live Chat Support

@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'table_reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership';
+export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'table_reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership' | 'estimates' | 'packages' | 'class_booking' | 'multi_location';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -43,6 +43,12 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'waitlist', label: 'Waitlist', description: 'When you\'re fully booked, customers join a waitlist. Auto-notified when a slot opens up.', icon: '📝' },
   { id: 'queue', label: 'Queue', description: 'Walk-in customers check in via WhatsApp, see their position, and get notified when it\'s their turn.', icon: '📋' },
   { id: 'crowdfunding', label: 'Campaigns', description: 'Run fundraising campaigns with goals and progress tracking. Track every donor and amount.', icon: '❤️' },
+
+  // ── NEW ──
+  { id: 'estimates', label: 'Estimates & Quotes', description: 'Send price quotes to customers. They approve and it becomes a booking.', icon: '📋' },
+  { id: 'packages', label: 'Session Packages', description: 'Sell multi-session bundles. Customers buy once, redeem over time.', icon: '🎫' },
+  { id: 'class_booking', label: 'Class Booking', description: 'Group classes with capacity limits. Customers sign up for available slots.', icon: '👥' },
+  { id: 'multi_location', label: 'Multi-Location', description: 'Manage multiple branches. Customers choose their preferred location.', icon: '📍' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -87,6 +93,12 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   waitlist: 'business',   // Auto-manage waitlists when fully booked
   queue: 'business',      // Walk-in queue with turn notifications
   crowdfunding: 'business', // Campaigns with goals + donor tracking (cash cow)
+
+  // ── NEW ──
+  estimates: 'free',        // Send price quotes (free to encourage adoption)
+  packages: 'growth',       // Session bundles (growth feature)
+  class_booking: 'growth',  // Group classes with capacity
+  multi_location: 'growth', // Multi-branch management
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };
@@ -120,64 +132,150 @@ export const TIER_LABELS: Record<SubscriptionTier, string> = {
 /** Default capabilities for each business category.
  * loyalty and referral are OPT-IN — businesses enable them manually from dashboard.
  * They are NOT included in category defaults. */
+// ── Group-based capability defaults ──
+// Each category maps to its industry group's default capabilities.
+// loyalty and referral are OPT-IN only — never in defaults.
+
+// Group capability sets (DRY helper)
+const _BEAUTY: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat', 'staff', 'broadcast', 'reminders', 'auto_reply'];
+const _HEALTH: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat', 'staff', 'queue', 'waitlist', 'reminders', 'reports', 'auto_reply'];
+const _FOOD_DINING: CapabilityId[] = ['table_reservation', 'ordering', 'payment', 'feedback', 'chat', 'waitlist', 'broadcast', 'auto_reply'];
+const _DELIVERY_RETAIL: CapabilityId[] = ['ordering', 'payment', 'feedback', 'chat', 'broadcast'];
+const _HOME_AUTO: CapabilityId[] = ['scheduling', 'payment', 'invoice', 'feedback', 'chat', 'reminders'];
+const _PROFESSIONAL: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'invoice', 'feedback', 'chat', 'reminders', 'recurring', 'whatsapp_sign'];
+const _HOSPITALITY: CapabilityId[] = ['reservation', 'payment', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'survey'];
+const _EVENTS: CapabilityId[] = ['ticketing', 'appointment', 'payment', 'invoice', 'feedback', 'chat', 'broadcast', 'waitlist'];
+const _FAITH: CapabilityId[] = ['giving', 'appointment', 'ticketing', 'payment', 'feedback', 'chat', 'broadcast', 'recurring', 'poll', 'crowdfunding'];
+const _FITNESS: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'recurring', 'membership', 'auto_reply'];
+const _TRANSPORT: CapabilityId[] = ['ticketing', 'payment', 'feedback', 'chat'];
+const _EDUCATION: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'recurring', 'broadcast', 'survey'];
+const _PET: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'reminders'];
+const _CREATIVE: CapabilityId[] = ['appointment', 'payment', 'invoice', 'whatsapp_sign', 'feedback', 'chat'];
+const _REAL_ESTATE: CapabilityId[] = ['appointment', 'payment', 'invoice', 'whatsapp_sign', 'feedback', 'chat', 'broadcast'];
+const _GOVERNMENT: CapabilityId[] = ['payment', 'queue', 'feedback', 'chat'];
+const _OTHER: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat'];
+
 export const CATEGORY_DEFAULT_CAPABILITIES: Record<string, CapabilityId[]> = {
-  restaurant: ['table_reservation', 'ordering', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'auto_reply'],
-  barber: ['appointment', 'feedback', 'chat', 'staff', 'broadcast', 'auto_reply'],
-  spa: ['appointment', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'auto_reply', 'membership'],
-  salon: ['appointment', 'feedback', 'chat', 'staff', 'broadcast', 'auto_reply'],
-  gym: ['appointment', 'feedback', 'chat', 'recurring', 'membership', 'auto_reply'],
-  clinic: ['appointment', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff', 'survey', 'auto_reply'],
-  consultant: ['appointment', 'feedback', 'chat', 'survey', 'recurring', 'auto_reply'],
-  church: ['giving', 'appointment', 'ticketing', 'feedback', 'chat', 'broadcast', 'recurring', 'poll'],
-  mosque: ['giving', 'appointment', 'ticketing', 'feedback', 'chat', 'broadcast', 'recurring', 'poll'],
-  school: ['payment', 'feedback', 'chat', 'survey', 'broadcast', 'recurring'],
-  ngo: ['payment', 'feedback', 'chat', 'survey'],
-  shop: ['ordering', 'feedback', 'chat'],
-  food_delivery: ['ordering', 'feedback'],
-  events: ['ticketing', 'feedback', 'waitlist'],
-  event_services: ['appointment', 'payment', 'invoice', 'chat', 'feedback'],
-  transport: ['ticketing', 'feedback'],
-  cinema: ['ticketing', 'feedback', 'waitlist'],
-  car_park: ['payment', 'feedback'],
-  tattoo: ['appointment', 'payment', 'feedback', 'chat', 'staff'],
-  real_estate: ['appointment', 'payment', 'whatsapp_sign', 'feedback', 'chat'],
-  travel_agency: ['appointment', 'payment', 'ticketing', 'feedback', 'chat'],
-  logistics: ['ordering', 'payment', 'feedback', 'chat'],
-  taxi: ['payment', 'feedback'],
-  government: ['payment', 'feedback'],
-  instagram_vendor: ['ordering', 'feedback', 'chat'],
-  crowdfunding_org: ['crowdfunding', 'payment'],
-  laundry: ['scheduling', 'ordering', 'feedback', 'chat'],
-  veterinary: ['appointment', 'payment', 'reports', 'feedback', 'chat', 'waitlist', 'staff'],
-  dental: ['appointment', 'payment', 'reminders', 'reports', 'queue', 'feedback', 'chat', 'waitlist', 'staff'],
-  coworking: ['appointment', 'payment', 'feedback', 'chat'],
-  tutor: ['appointment', 'payment', 'feedback', 'chat'],
-  photographer: ['appointment', 'payment', 'feedback', 'chat', 'staff'],
-  mall_vendor: ['payment', 'ordering', 'feedback', 'chat'],
-  pharmacy: ['ordering', 'payment', 'feedback', 'chat'],
-  hotel: ['reservation', 'payment', 'feedback', 'chat', 'waitlist', 'staff', 'survey'],
-  car_wash: ['appointment', 'payment', 'feedback', 'chat'],
-  catering: ['ordering', 'payment', 'feedback', 'chat'],
-  funeral: ['payment', 'feedback', 'chat'],
-  tailor: ['ordering', 'payment', 'feedback', 'chat'],
-  shortlet: ['reservation', 'payment', 'feedback', 'chat'],
-  nail_tech: ['appointment', 'payment', 'feedback', 'chat', 'staff'],
-  mua: ['appointment', 'payment', 'feedback', 'chat', 'invoice'],
-  pet_grooming: ['appointment', 'payment', 'feedback', 'chat'],
-  therapy: ['appointment', 'payment', 'chat', 'reminders'],
-  bakery: ['ordering', 'payment', 'feedback', 'chat'],
-  mechanic: ['appointment', 'payment', 'invoice', 'chat'],
-  cleaning: ['appointment', 'payment', 'invoice', 'chat'],
-  plumber: ['appointment', 'payment', 'invoice', 'chat'],
-  pest_control: ['appointment', 'payment', 'invoice', 'chat'],
-  driving_school: ['appointment', 'payment', 'feedback', 'chat'],
-  music_studio: ['appointment', 'payment', 'feedback', 'chat', 'staff'],
-  legal: ['appointment', 'payment', 'invoice', 'chat'],
-  daycare: ['payment', 'reminders', 'chat'],
-  printing: ['ordering', 'payment', 'invoice', 'chat'],
-  car_rental: ['reservation', 'payment', 'invoice', 'chat'],
-  supermarket: ['ordering', 'payment', 'chat'],
-  security: ['appointment', 'scheduling', 'payment', 'invoice', 'chat'],
-  accounting: ['appointment', 'scheduling', 'payment', 'invoice', 'chat'],
-  other: ['appointment', 'feedback', 'chat'],
+  // ── Beauty & Wellness ──
+  salon: _BEAUTY,
+  barber: _BEAUTY,
+  spa: _BEAUTY,
+  tattoo: _BEAUTY,
+  nail_tech: _BEAUTY,
+  mua: _BEAUTY,
+  lash_tech: _BEAUTY,
+  medspa: _BEAUTY,
+  waxing: _BEAUTY,
+
+  // ── Health & Medical ──
+  clinic: _HEALTH,
+  dental: _HEALTH,
+  veterinary: _HEALTH,
+  therapy: _HEALTH,
+  optician: _HEALTH,
+  physiotherapy: _HEALTH,
+
+  // ── Food & Dining ──
+  restaurant: _FOOD_DINING,
+  cafe: _FOOD_DINING,
+  bar: _FOOD_DINING,
+  lounge: _FOOD_DINING,
+  bakery: _FOOD_DINING,
+  catering: _FOOD_DINING,
+  food_truck: _FOOD_DINING,
+
+  // ── Delivery & Retail ──
+  shop: _DELIVERY_RETAIL,
+  food_delivery: _DELIVERY_RETAIL,
+  pharmacy: _DELIVERY_RETAIL,
+  supermarket: _DELIVERY_RETAIL,
+  tailor: _DELIVERY_RETAIL,
+  printing: _DELIVERY_RETAIL,
+
+  // ── Home & Auto Services ──
+  laundry: _HOME_AUTO,
+  car_wash: _HOME_AUTO,
+  mechanic: _HOME_AUTO,
+  cleaning: _HOME_AUTO,
+  plumber: _HOME_AUTO,
+  pest_control: _HOME_AUTO,
+  handyman: _HOME_AUTO,
+  hvac: _HOME_AUTO,
+  landscaping: _HOME_AUTO,
+  electrician: _HOME_AUTO,
+
+  // ── Professional Services ──
+  consultant: _PROFESSIONAL,
+  legal: _PROFESSIONAL,
+  accounting: _PROFESSIONAL,
+  travel_agency: _PROFESSIONAL,
+  coworking: _PROFESSIONAL,
+  security: _PROFESSIONAL,
+
+  // ── Hospitality ──
+  hotel: _HOSPITALITY,
+  shortlet: _HOSPITALITY,
+  car_rental: _HOSPITALITY,
+
+  // ── Events & Entertainment ──
+  events: _EVENTS,
+  event_services: _EVENTS,
+  cinema: _EVENTS,
+  music_studio: _EVENTS,
+
+  // ── Faith & Community ──
+  church: _FAITH,
+  mosque: _FAITH,
+  ngo: _FAITH,
+  crowdfunding_org: _FAITH,
+
+  // ── Fitness ──
+  gym: _FITNESS,
+  yoga: _FITNESS,
+  pilates: _FITNESS,
+  dance: _FITNESS,
+  martial_arts: _FITNESS,
+  bootcamp: _FITNESS,
+
+  // ── Transport & Logistics ──
+  taxi: _TRANSPORT,
+  transport: _TRANSPORT,
+  logistics: _TRANSPORT,
+  courier: _TRANSPORT,
+  moving: _TRANSPORT,
+  bus: _TRANSPORT,
+
+  // ── Education & Training ──
+  school: _EDUCATION,
+  tutor: _EDUCATION,
+  driving_school: _EDUCATION,
+  language_school: _EDUCATION,
+  training_academy: _EDUCATION,
+  daycare: _EDUCATION,
+
+  // ── Pet Services ──
+  pet_grooming: _PET,
+  dog_walking: _PET,
+  pet_boarding: _PET,
+  pet_training: _PET,
+
+  // ── Creative & Media ──
+  photographer: _CREATIVE,
+  videographer: _CREATIVE,
+  dj: _CREATIVE,
+  graphic_designer: _CREATIVE,
+  content_creator: _CREATIVE,
+
+  // ── Real Estate & Property ──
+  real_estate: _REAL_ESTATE,
+  property_manager: _REAL_ESTATE,
+  mortgage_broker: _REAL_ESTATE,
+
+  // ── Government & Public ──
+  government: _GOVERNMENT,
+  car_park: _GOVERNMENT,
+
+  // ── Other ──
+  funeral: _OTHER,
+  other: _OTHER,
 };

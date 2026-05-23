@@ -14,15 +14,37 @@ export type BusinessCategoryKey =
   | 'consultant' | 'church' | 'mosque' | 'school' | 'ngo'
   | 'shop' | 'food_delivery' | 'events' | 'event_services' | 'transport' | 'cinema'
   | 'car_park' | 'tattoo' | 'real_estate' | 'travel_agency'
-  | 'logistics' | 'taxi' | 'government' | 'instagram_vendor'
+  | 'logistics' | 'taxi' | 'government'
   | 'crowdfunding_org' | 'laundry' | 'veterinary' | 'dental'
-  | 'coworking' | 'tutor' | 'photographer' | 'mall_vendor'
+  | 'coworking' | 'tutor' | 'photographer'
   | 'pharmacy' | 'hotel' | 'car_wash' | 'catering'
   | 'funeral' | 'tailor' | 'shortlet'
   | 'nail_tech' | 'mua' | 'pet_grooming' | 'therapy' | 'bakery'
   | 'mechanic' | 'cleaning' | 'plumber' | 'pest_control' | 'driving_school'
   | 'music_studio' | 'legal' | 'daycare' | 'printing' | 'car_rental'
   | 'supermarket' | 'security' | 'accounting'
+  // Food & Dining (new)
+  | 'cafe' | 'bar' | 'lounge' | 'food_truck'
+  // Fitness (new)
+  | 'yoga' | 'pilates' | 'dance' | 'martial_arts' | 'bootcamp'
+  // Transport & Logistics (new)
+  | 'courier' | 'moving' | 'bus'
+  // Education & Training (new)
+  | 'language_school' | 'training_academy'
+  // Pet Services (new)
+  | 'dog_walking' | 'pet_boarding' | 'pet_training'
+  // Creative & Media (new)
+  | 'videographer' | 'dj' | 'graphic_designer' | 'content_creator'
+  // Real Estate & Property (new)
+  | 'property_manager' | 'mortgage_broker'
+  // Home & Auto Services (new)
+  | 'handyman' | 'hvac' | 'landscaping' | 'electrician'
+  // Beauty & Wellness (new)
+  | 'medspa' | 'lash_tech' | 'waxing'
+  // Health & Medical (new)
+  | 'optician' | 'physiotherapy'
+  // Legacy (merged into 'shop', kept for backward compat)
+  | 'instagram_vendor' | 'mall_vendor'
   | 'other';
 export type SubscriptionTier = 'free' | 'growth' | 'business';
 
@@ -215,76 +237,128 @@ export const BUSINESS_CATEGORIES: Array<{
   flow: FlowType;
   group: string;
 }> = [
-  { key: 'restaurant', label: 'Restaurant', icon: '🍽️', flow: 'scheduling', group: 'Food & Drink' },
+  // ── Beauty & Wellness ──
+  { key: 'salon', label: 'Hair Salon', icon: '💇', flow: 'scheduling', group: 'Beauty & Wellness' },
   { key: 'barber', label: 'Barbershop', icon: '💈', flow: 'scheduling', group: 'Beauty & Wellness' },
   { key: 'spa', label: 'Spa', icon: '🧖', flow: 'scheduling', group: 'Beauty & Wellness' },
-  { key: 'salon', label: 'Hair Salon', icon: '💇', flow: 'scheduling', group: 'Beauty & Wellness' },
   { key: 'tattoo', label: 'Tattoo Studio', icon: '🎨', flow: 'scheduling', group: 'Beauty & Wellness' },
-  { key: 'gym', label: 'Gym / Fitness', icon: '🏋️', flow: 'scheduling', group: 'Fitness & Wellness' },
+  { key: 'nail_tech', label: 'Nail Tech', icon: '💅', flow: 'scheduling', group: 'Beauty & Wellness' },
+  { key: 'mua', label: 'Makeup Artist', icon: '💄', flow: 'scheduling', group: 'Beauty & Wellness' },
+  { key: 'lash_tech', label: 'Lash Tech', icon: '👁️', flow: 'scheduling', group: 'Beauty & Wellness' },
+  { key: 'medspa', label: 'Med Spa', icon: '💉', flow: 'scheduling', group: 'Beauty & Wellness' },
+  { key: 'waxing', label: 'Waxing Studio', icon: '✨', flow: 'scheduling', group: 'Beauty & Wellness' },
+
+  // ── Health & Medical ──
   { key: 'clinic', label: 'Clinic / Hospital', icon: '🏥', flow: 'scheduling', group: 'Health & Medical' },
   { key: 'dental', label: 'Dental Clinic', icon: '🦷', flow: 'scheduling', group: 'Health & Medical' },
   { key: 'veterinary', label: 'Veterinary', icon: '🐾', flow: 'scheduling', group: 'Health & Medical' },
-  { key: 'restaurant', label: 'Restaurant', icon: '🍽️', flow: 'scheduling', group: 'Food & Drink' },
-  { key: 'food_delivery', label: 'Food Delivery', icon: '🛵', flow: 'ordering', group: 'Food & Drink' },
-  { key: 'catering', label: 'Catering', icon: '🍳', flow: 'ordering', group: 'Food & Drink' },
-  { key: 'events', label: 'Events & Ticketing', icon: '🎪', flow: 'ticketing', group: 'Events & Entertainment' },
-  { key: 'event_services', label: 'Event Services & Rentals', icon: '🎉', flow: 'scheduling', group: 'Events & Entertainment' },
-  { key: 'photographer', label: 'Photographer', icon: '📷', flow: 'scheduling', group: 'Events & Entertainment' },
-  { key: 'cinema', label: 'Cinema', icon: '🎬', flow: 'ticketing', group: 'Events & Entertainment' },
-  { key: 'consultant', label: 'Professional Services', icon: '💼', flow: 'scheduling', group: 'Professional Services' },
-  { key: 'tutor', label: 'Tutor & Coaching', icon: '📚', flow: 'scheduling', group: 'Professional Services' },
-  { key: 'coworking', label: 'Coworking Space', icon: '🏢', flow: 'scheduling', group: 'Professional Services' },
-  { key: 'real_estate', label: 'Real Estate', icon: '🏠', flow: 'scheduling', group: 'Professional Services' },
-  { key: 'travel_agency', label: 'Travel Agency', icon: '✈️', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'therapy', label: 'Therapy & Counseling', icon: '🧠', flow: 'scheduling', group: 'Health & Medical' },
+  { key: 'optician', label: 'Optician / Eye Care', icon: '👓', flow: 'scheduling', group: 'Health & Medical' },
+  { key: 'physiotherapy', label: 'Physiotherapy', icon: '🦴', flow: 'scheduling', group: 'Health & Medical' },
+
+  // ── Food & Dining ──
+  { key: 'restaurant', label: 'Restaurant', icon: '🍽️', flow: 'scheduling', group: 'Food & Dining' },
+  { key: 'cafe', label: 'Cafe / Coffee Shop', icon: '☕', flow: 'scheduling', group: 'Food & Dining' },
+  { key: 'bar', label: 'Bar', icon: '🍸', flow: 'scheduling', group: 'Food & Dining' },
+  { key: 'lounge', label: 'Lounge', icon: '🥂', flow: 'scheduling', group: 'Food & Dining' },
+  { key: 'bakery', label: 'Bakery', icon: '🧁', flow: 'ordering', group: 'Food & Dining' },
+  { key: 'catering', label: 'Catering', icon: '🍳', flow: 'ordering', group: 'Food & Dining' },
+  { key: 'food_truck', label: 'Food Truck', icon: '🚚', flow: 'ordering', group: 'Food & Dining' },
+
+  // ── Delivery & Retail ──
+  { key: 'shop', label: 'Shop / Retail', icon: '🛍️', flow: 'ordering', group: 'Delivery & Retail' },
+  { key: 'food_delivery', label: 'Food Delivery', icon: '🛵', flow: 'ordering', group: 'Delivery & Retail' },
+  { key: 'pharmacy', label: 'Pharmacy', icon: '💊', flow: 'ordering', group: 'Delivery & Retail' },
+  { key: 'supermarket', label: 'Supermarket / Grocery', icon: '🏬', flow: 'ordering', group: 'Delivery & Retail' },
+  { key: 'tailor', label: 'Tailor & Fashion', icon: '✂️', flow: 'ordering', group: 'Delivery & Retail' },
+  { key: 'printing', label: 'Printing & Signage', icon: '🖨️', flow: 'ordering', group: 'Delivery & Retail' },
+
+  // ── Home & Auto Services ──
   { key: 'laundry', label: 'Laundry & Dry Cleaning', icon: '👔', flow: 'scheduling', group: 'Home & Auto Services' },
   { key: 'car_wash', label: 'Car Wash', icon: '🚿', flow: 'scheduling', group: 'Home & Auto Services' },
-  { key: 'logistics', label: 'Logistics & Shipping', icon: '🚚', flow: 'ordering', group: 'Home & Auto Services' },
-  { key: 'car_park', label: 'Parking', icon: '🅿️', flow: 'payment', group: 'Home & Auto Services' },
-  { key: 'shop', label: 'Shop / Retail', icon: '🛍️', flow: 'ordering', group: 'Shops & Commerce' },
-  { key: 'instagram_vendor', label: 'Online Vendor', icon: '🛒', flow: 'ordering', group: 'Shops & Commerce' },
-  { key: 'mall_vendor', label: 'Mall Vendor', icon: '🏪', flow: 'ordering', group: 'Shops & Commerce' },
-  { key: 'pharmacy', label: 'Pharmacy', icon: '💊', flow: 'ordering', group: 'Shops & Commerce' },
-  { key: 'tailor', label: 'Tailor & Fashion', icon: '✂️', flow: 'ordering', group: 'Shops & Commerce' },
-  { key: 'hotel', label: 'Hotel & Lodge', icon: '🛏️', flow: 'reservation', group: 'Hospitality' },
-  { key: 'shortlet', label: 'Short-term Rental', icon: '🏘️', flow: 'reservation', group: 'Hospitality' },
-  { key: 'church', label: 'Church', icon: '⛪', flow: 'scheduling', group: 'Faith & Community' },
-  { key: 'mosque', label: 'Mosque', icon: '🕌', flow: 'scheduling', group: 'Faith & Community' },
-  { key: 'school', label: 'School', icon: '🎓', flow: 'payment', group: 'Faith & Community' },
-  { key: 'ngo', label: 'NGO / Charity', icon: '🤝', flow: 'payment', group: 'Faith & Community' },
-  { key: 'crowdfunding_org', label: 'Crowdfunding', icon: '❤️', flow: 'payment', group: 'Faith & Community' },
-  { key: 'taxi', label: 'Taxi & Ride-Hailing', icon: '🚕', flow: 'payment', group: 'Transport' },
-  { key: 'transport', label: 'Transport', icon: '🚌', flow: 'ticketing', group: 'Transport' },
-  // Beauty & Wellness (new)
-  { key: 'nail_tech', label: 'Nail Tech', icon: '💅', flow: 'scheduling', group: 'Beauty & Wellness' },
-  { key: 'mua', label: 'Makeup Artist', icon: '💄', flow: 'scheduling', group: 'Beauty & Wellness' },
-  // Health & Medical (new)
-  { key: 'pet_grooming', label: 'Pet Grooming', icon: '🐕', flow: 'scheduling', group: 'Health & Medical' },
-  { key: 'therapy', label: 'Therapy & Counseling', icon: '🧠', flow: 'scheduling', group: 'Health & Medical' },
-  // Food & Drink (new)
-  { key: 'bakery', label: 'Bakery', icon: '🧁', flow: 'ordering', group: 'Food & Drink' },
-  // Home & Auto (new)
   { key: 'mechanic', label: 'Auto Mechanic', icon: '🔧', flow: 'scheduling', group: 'Home & Auto Services' },
   { key: 'cleaning', label: 'Cleaning Services', icon: '🧹', flow: 'scheduling', group: 'Home & Auto Services' },
-  { key: 'plumber', label: 'Plumber / Electrician', icon: '🔌', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'plumber', label: 'Plumber', icon: '🔌', flow: 'scheduling', group: 'Home & Auto Services' },
   { key: 'pest_control', label: 'Pest Control', icon: '🐜', flow: 'scheduling', group: 'Home & Auto Services' },
-  // Professional Services (new)
-  { key: 'driving_school', label: 'Driving School', icon: '🚗', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'handyman', label: 'Handyman', icon: '🛠️', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'hvac', label: 'HVAC', icon: '❄️', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'landscaping', label: 'Landscaping', icon: '🌿', flow: 'scheduling', group: 'Home & Auto Services' },
+  { key: 'electrician', label: 'Electrician', icon: '⚡', flow: 'scheduling', group: 'Home & Auto Services' },
+
+  // ── Professional Services ──
+  { key: 'consultant', label: 'Professional Services', icon: '💼', flow: 'scheduling', group: 'Professional Services' },
   { key: 'legal', label: 'Legal / Notary', icon: '⚖️', flow: 'scheduling', group: 'Professional Services' },
   { key: 'accounting', label: 'Accounting & Tax', icon: '📊', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'travel_agency', label: 'Travel Agency', icon: '✈️', flow: 'scheduling', group: 'Professional Services' },
+  { key: 'coworking', label: 'Coworking Space', icon: '🏢', flow: 'scheduling', group: 'Professional Services' },
   { key: 'security', label: 'Security Services', icon: '🛡️', flow: 'scheduling', group: 'Professional Services' },
-  // Events & Entertainment (new)
-  { key: 'music_studio', label: 'Music / Dance Studio', icon: '🎵', flow: 'scheduling', group: 'Events & Entertainment' },
-  // Faith & Community (new)
-  { key: 'daycare', label: 'Daycare / Creche', icon: '👶', flow: 'payment', group: 'Faith & Community' },
-  // Shops & Commerce (new)
-  { key: 'printing', label: 'Printing & Signage', icon: '🖨️', flow: 'ordering', group: 'Shops & Commerce' },
-  { key: 'supermarket', label: 'Supermarket / Grocery', icon: '🛒', flow: 'ordering', group: 'Shops & Commerce' },
-  // Hospitality (new)
+
+  // ── Hospitality ──
+  { key: 'hotel', label: 'Hotel & Lodge', icon: '🛏️', flow: 'reservation', group: 'Hospitality' },
+  { key: 'shortlet', label: 'Short-term Rental', icon: '🏘️', flow: 'reservation', group: 'Hospitality' },
   { key: 'car_rental', label: 'Car Rental', icon: '🚙', flow: 'reservation', group: 'Hospitality' },
-  // Other
-  { key: 'government', label: 'Government & Utilities', icon: '🏛️', flow: 'payment', group: 'Other' },
+
+  // ── Events & Entertainment ──
+  { key: 'events', label: 'Events & Ticketing', icon: '🎪', flow: 'ticketing', group: 'Events & Entertainment' },
+  { key: 'event_services', label: 'Event Services & Rentals', icon: '🎉', flow: 'scheduling', group: 'Events & Entertainment' },
+  { key: 'cinema', label: 'Cinema', icon: '🎬', flow: 'ticketing', group: 'Events & Entertainment' },
+  { key: 'music_studio', label: 'Music / Recording Studio', icon: '🎵', flow: 'scheduling', group: 'Events & Entertainment' },
+
+  // ── Faith & Community ──
+  { key: 'church', label: 'Church', icon: '⛪', flow: 'scheduling', group: 'Faith & Community' },
+  { key: 'mosque', label: 'Mosque', icon: '🕌', flow: 'scheduling', group: 'Faith & Community' },
+  { key: 'ngo', label: 'NGO / Charity', icon: '🤝', flow: 'payment', group: 'Faith & Community' },
+  { key: 'crowdfunding_org', label: 'Crowdfunding', icon: '❤️', flow: 'payment', group: 'Faith & Community' },
+
+  // ── Fitness ──
+  { key: 'gym', label: 'Gym / Fitness', icon: '🏋️', flow: 'scheduling', group: 'Fitness' },
+  { key: 'yoga', label: 'Yoga Studio', icon: '🧘', flow: 'scheduling', group: 'Fitness' },
+  { key: 'pilates', label: 'Pilates Studio', icon: '🤸', flow: 'scheduling', group: 'Fitness' },
+  { key: 'dance', label: 'Dance Studio', icon: '💃', flow: 'scheduling', group: 'Fitness' },
+  { key: 'martial_arts', label: 'Martial Arts', icon: '🥋', flow: 'scheduling', group: 'Fitness' },
+  { key: 'bootcamp', label: 'Bootcamp / CrossFit', icon: '🔥', flow: 'scheduling', group: 'Fitness' },
+
+  // ── Transport & Logistics ──
+  { key: 'taxi', label: 'Taxi & Ride-Hailing', icon: '🚕', flow: 'payment', group: 'Transport & Logistics' },
+  { key: 'transport', label: 'Transport', icon: '🚌', flow: 'ticketing', group: 'Transport & Logistics' },
+  { key: 'logistics', label: 'Logistics & Shipping', icon: '📦', flow: 'ordering', group: 'Transport & Logistics' },
+  { key: 'courier', label: 'Courier / Delivery', icon: '🏍️', flow: 'ordering', group: 'Transport & Logistics' },
+  { key: 'moving', label: 'Moving Company', icon: '🚛', flow: 'scheduling', group: 'Transport & Logistics' },
+  { key: 'bus', label: 'Bus / Train', icon: '🚆', flow: 'ticketing', group: 'Transport & Logistics' },
+
+  // ── Education & Training ──
+  { key: 'school', label: 'School', icon: '🎓', flow: 'payment', group: 'Education & Training' },
+  { key: 'tutor', label: 'Tutor & Coaching', icon: '📚', flow: 'scheduling', group: 'Education & Training' },
+  { key: 'driving_school', label: 'Driving School', icon: '🚗', flow: 'scheduling', group: 'Education & Training' },
+  { key: 'language_school', label: 'Language School', icon: '🌍', flow: 'scheduling', group: 'Education & Training' },
+  { key: 'training_academy', label: 'Training Academy', icon: '🏫', flow: 'scheduling', group: 'Education & Training' },
+  { key: 'daycare', label: 'Daycare / Creche', icon: '👶', flow: 'payment', group: 'Education & Training' },
+
+  // ── Pet Services ──
+  { key: 'pet_grooming', label: 'Pet Grooming', icon: '🐕', flow: 'scheduling', group: 'Pet Services' },
+  { key: 'dog_walking', label: 'Dog Walking', icon: '🦮', flow: 'scheduling', group: 'Pet Services' },
+  { key: 'pet_boarding', label: 'Pet Boarding', icon: '🏠', flow: 'scheduling', group: 'Pet Services' },
+  { key: 'pet_training', label: 'Pet Training', icon: '🐾', flow: 'scheduling', group: 'Pet Services' },
+
+  // ── Creative & Media ──
+  { key: 'photographer', label: 'Photographer', icon: '📷', flow: 'scheduling', group: 'Creative & Media' },
+  { key: 'videographer', label: 'Videographer', icon: '🎥', flow: 'scheduling', group: 'Creative & Media' },
+  { key: 'dj', label: 'DJ', icon: '🎧', flow: 'scheduling', group: 'Creative & Media' },
+  { key: 'graphic_designer', label: 'Graphic Designer', icon: '🎨', flow: 'scheduling', group: 'Creative & Media' },
+  { key: 'content_creator', label: 'Content Creator', icon: '📱', flow: 'scheduling', group: 'Creative & Media' },
+
+  // ── Real Estate & Property ──
+  { key: 'real_estate', label: 'Real Estate', icon: '🏠', flow: 'scheduling', group: 'Real Estate & Property' },
+  { key: 'property_manager', label: 'Property Manager', icon: '🏗️', flow: 'scheduling', group: 'Real Estate & Property' },
+  { key: 'mortgage_broker', label: 'Mortgage Broker', icon: '🏦', flow: 'scheduling', group: 'Real Estate & Property' },
+
+  // ── Government & Public ──
+  { key: 'government', label: 'Government & Utilities', icon: '🏛️', flow: 'payment', group: 'Government & Public' },
+  { key: 'car_park', label: 'Parking', icon: '🅿️', flow: 'payment', group: 'Government & Public' },
+
+  // ── Other ──
   { key: 'funeral', label: 'Funeral Services', icon: '🌺', flow: 'payment', group: 'Other' },
-  { key: 'other', label: 'Other (Custom)', icon: '🔧', flow: 'scheduling', group: 'Other' },
+  { key: 'other', label: 'Other (Custom)', icon: '✨', flow: 'scheduling', group: 'Other' },
 ];
 
 // ── Category → Flow Map ──
@@ -373,6 +447,48 @@ export const CATEGORY_LABELS: Record<BusinessCategoryKey, {
   supermarket: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🛒', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Product', serviceNamePlural: 'Products', namePlaceholder: 'e.g. Groceries, Household Items', defaultHasPrice: true },
   security: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🛡️', receiptTitle: 'Booking Confirmed', quantityLabel: 'guards', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Event Security, CCTV Installation', defaultHasPrice: true },
   accounting: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '📊', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Tax Filing, Bookkeeping, Advisory', defaultHasPrice: true },
+  // ── New: Food & Dining ──
+  cafe: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '☕', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Table Reservation, Private Event', defaultHasPrice: true },
+  bar: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🍸', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Table Reservation, VIP Booth', defaultHasPrice: true },
+  lounge: { entityName: 'reservation', entityNamePlural: 'reservations', actionVerb: 'Book', confirmationEmoji: '🥂', receiptTitle: 'Booking Confirmed', quantityLabel: 'guests', personLabel: 'Guest', personLabelPlural: 'Guests', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Lounge Reservation, VIP Section', defaultHasPrice: true },
+  food_truck: { entityName: 'order', entityNamePlural: 'orders', actionVerb: 'Order', confirmationEmoji: '🚚', receiptTitle: 'Order Confirmed', quantityLabel: 'items', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Menu Item', serviceNamePlural: 'Menu Items', namePlaceholder: 'e.g. Tacos, Burgers, Smoothies', defaultHasPrice: true },
+  // ── New: Fitness ──
+  yoga: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🧘', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Class', serviceNamePlural: 'Classes', namePlaceholder: 'e.g. Vinyasa Flow, Hot Yoga, Beginner Class', defaultHasPrice: true },
+  pilates: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🤸', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Class', serviceNamePlural: 'Classes', namePlaceholder: 'e.g. Mat Pilates, Reformer, Private Session', defaultHasPrice: true },
+  dance: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '💃', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Class', serviceNamePlural: 'Classes', namePlaceholder: 'e.g. Salsa, Hip Hop, Ballet', defaultHasPrice: true },
+  martial_arts: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🥋', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Class', serviceNamePlural: 'Classes', namePlaceholder: 'e.g. Karate, Jiu-Jitsu, Boxing', defaultHasPrice: true },
+  bootcamp: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🔥', receiptTitle: 'Session Confirmed', quantityLabel: 'people', personLabel: 'Member', personLabelPlural: 'Members', hiddenStatuses: [], serviceName: 'Class', serviceNamePlural: 'Classes', namePlaceholder: 'e.g. HIIT, CrossFit, Morning Bootcamp', defaultHasPrice: true },
+  // ── New: Transport & Logistics ──
+  courier: { entityName: 'delivery', entityNamePlural: 'deliveries', actionVerb: 'Order', confirmationEmoji: '🏍️', receiptTitle: 'Delivery Confirmed', quantityLabel: 'packages', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Same-day Delivery, Express', defaultHasPrice: true },
+  moving: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🚛', receiptTitle: 'Booking Confirmed', quantityLabel: 'jobs', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Local Move, Long-distance, Packing', defaultHasPrice: true },
+  bus: { entityName: 'ticket', entityNamePlural: 'tickets', actionVerb: 'Buy', confirmationEmoji: '🚆', receiptTitle: 'Ticket Confirmed', quantityLabel: 'seats', personLabel: 'Passenger', personLabelPlural: 'Passengers', hiddenStatuses: ['no_show', 'in_progress'], serviceName: 'Route', serviceNamePlural: 'Routes', namePlaceholder: 'e.g. City Express, Interstate Route', defaultHasPrice: true },
+  // ── New: Education & Training ──
+  language_school: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🌍', receiptTitle: 'Session Confirmed', quantityLabel: 'students', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: [], serviceName: 'Course', serviceNamePlural: 'Courses', namePlaceholder: 'e.g. English, French, Spanish', defaultHasPrice: true },
+  training_academy: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🏫', receiptTitle: 'Session Confirmed', quantityLabel: 'students', personLabel: 'Student', personLabelPlural: 'Students', hiddenStatuses: [], serviceName: 'Program', serviceNamePlural: 'Programs', namePlaceholder: 'e.g. Certification Course, Workshop', defaultHasPrice: true },
+  // ── New: Pet Services ──
+  dog_walking: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🦮', receiptTitle: 'Booking Confirmed', quantityLabel: 'pets', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Daily Walk, Group Walk, Puppy Walk', defaultHasPrice: true },
+  pet_boarding: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🏠', receiptTitle: 'Booking Confirmed', quantityLabel: 'pets', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Overnight Stay, Daycare, Extended Stay', defaultHasPrice: true },
+  pet_training: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🐾', receiptTitle: 'Session Confirmed', quantityLabel: 'pets', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Obedience Training, Puppy Class', defaultHasPrice: true },
+  // ── New: Creative & Media ──
+  videographer: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🎥', receiptTitle: 'Session Confirmed', quantityLabel: 'sessions', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Wedding Video, Music Video, Corporate', defaultHasPrice: true },
+  dj: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🎧', receiptTitle: 'Booking Confirmed', quantityLabel: 'events', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Wedding DJ, Club Night, Corporate Event', defaultHasPrice: true },
+  graphic_designer: { entityName: 'project', entityNamePlural: 'projects', actionVerb: 'Book', confirmationEmoji: '🎨', receiptTitle: 'Project Confirmed', quantityLabel: 'projects', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Logo Design, Brand Identity, Flyer', defaultHasPrice: true },
+  content_creator: { entityName: 'project', entityNamePlural: 'projects', actionVerb: 'Book', confirmationEmoji: '📱', receiptTitle: 'Project Confirmed', quantityLabel: 'projects', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Social Media Package, UGC, Collaboration', defaultHasPrice: true },
+  // ── New: Real Estate & Property ──
+  property_manager: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '🏗️', receiptTitle: 'Appointment Confirmed', quantityLabel: 'viewings', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Property Inspection, Tenant Meeting', defaultHasPrice: true },
+  mortgage_broker: { entityName: 'consultation', entityNamePlural: 'consultations', actionVerb: 'Book', confirmationEmoji: '🏦', receiptTitle: 'Consultation Confirmed', quantityLabel: 'attendees', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Mortgage Consultation, Pre-Approval', defaultHasPrice: true },
+  // ── New: Home & Auto Services ──
+  handyman: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🛠️', receiptTitle: 'Booking Confirmed', quantityLabel: 'jobs', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Furniture Assembly, Repairs, Installation', defaultHasPrice: true },
+  hvac: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '❄️', receiptTitle: 'Booking Confirmed', quantityLabel: 'jobs', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. AC Repair, Furnace Service, Installation', defaultHasPrice: true },
+  landscaping: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '🌿', receiptTitle: 'Booking Confirmed', quantityLabel: 'jobs', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Lawn Care, Garden Design, Tree Trimming', defaultHasPrice: true },
+  electrician: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '⚡', receiptTitle: 'Booking Confirmed', quantityLabel: 'jobs', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Wiring, Panel Upgrade, Outlet Install', defaultHasPrice: true },
+  // ── New: Beauty & Wellness ──
+  medspa: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '💉', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Treatment', serviceNamePlural: 'Treatments', namePlaceholder: 'e.g. Botox, Filler, Laser Treatment', defaultHasPrice: true },
+  lash_tech: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '👁️', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Lash Extensions, Lash Lift, Brow Lamination', defaultHasPrice: true },
+  waxing: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '✨', receiptTitle: 'Appointment Confirmed', quantityLabel: 'people', personLabel: 'Client', personLabelPlural: 'Clients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Full Body Wax, Brazilian, Eyebrow Wax', defaultHasPrice: true },
+  // ── New: Health & Medical ──
+  optician: { entityName: 'appointment', entityNamePlural: 'appointments', actionVerb: 'Book', confirmationEmoji: '👓', receiptTitle: 'Appointment Confirmed', quantityLabel: 'patients', personLabel: 'Patient', personLabelPlural: 'Patients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Eye Exam, Contact Lens Fitting', defaultHasPrice: true },
+  physiotherapy: { entityName: 'session', entityNamePlural: 'sessions', actionVerb: 'Book', confirmationEmoji: '🦴', receiptTitle: 'Session Confirmed', quantityLabel: 'patients', personLabel: 'Patient', personLabelPlural: 'Patients', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. Rehab Session, Sports Injury, Assessment', defaultHasPrice: true },
   other: { entityName: 'booking', entityNamePlural: 'bookings', actionVerb: 'Book', confirmationEmoji: '✅', receiptTitle: 'Booking Confirmed', quantityLabel: 'slots', personLabel: 'Customer', personLabelPlural: 'Customers', hiddenStatuses: [], serviceName: 'Service', serviceNamePlural: 'Services', namePlaceholder: 'e.g. General Booking', defaultHasPrice: true },
 };
 
@@ -701,8 +817,9 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
     { name: 'Utility Bill', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
     { name: 'Application Fee', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 },
   ],
-  instagram_vendor: [],
   crowdfunding_org: [],
+  instagram_vendor: [], // legacy — merged into 'shop'
+  mall_vendor: [], // legacy — merged into 'shop'
   laundry: [
     { name: 'Wash & Fold', price: 3000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
     { name: 'Dry Cleaning', price: 5000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 },
@@ -713,7 +830,6 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   coworking: [],
   tutor: [],
   photographer: [],
-  mall_vendor: [],
   pharmacy: [],
   hotel: [],
   car_wash: [],
@@ -751,6 +867,39 @@ export const DEFAULT_SERVICES: Record<BusinessCategoryKey, Array<{
   supermarket: [],
   security: [{ name: 'Event Security', price: 0, price_is_variable: true, duration_minutes: null, deposit_amount: 0 }],
   accounting: [{ name: 'Bookkeeping (monthly)', price: 30000, price_is_variable: false, duration_minutes: null, deposit_amount: 0 }],
+  // ── New categories ──
+  cafe: [],
+  bar: [],
+  lounge: [],
+  food_truck: [],
+  yoga: [],
+  pilates: [],
+  dance: [],
+  martial_arts: [],
+  bootcamp: [],
+  courier: [],
+  moving: [],
+  bus: [],
+  language_school: [],
+  training_academy: [],
+  dog_walking: [],
+  pet_boarding: [],
+  pet_training: [],
+  videographer: [],
+  dj: [],
+  graphic_designer: [],
+  content_creator: [],
+  property_manager: [],
+  mortgage_broker: [],
+  handyman: [],
+  hvac: [],
+  landscaping: [],
+  electrician: [],
+  medspa: [],
+  lash_tech: [],
+  waxing: [],
+  optician: [],
+  physiotherapy: [],
   other: [],
 };
 
