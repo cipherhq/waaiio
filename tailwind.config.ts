@@ -10,6 +10,9 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['var(--font-inter)', 'system-ui', '-apple-system', 'sans-serif'],
+      },
       keyframes: {
         fadeInUp: {
           '0%': { opacity: '0', transform: 'translateY(16px)' },

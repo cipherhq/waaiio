@@ -78,6 +78,12 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
 
   return (
     <>
+      {/* Scroll progress bar */}
+      <motion.div
+        className="fixed top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-brand via-accent to-brand z-[60] origin-left"
+        style={{ scaleX: scrollYProgress }}
+      />
+
       {/* ── 1. Hero ── */}
       <section className="relative min-h-screen overflow-hidden bg-gradient-to-br from-brand-900 via-brand to-brand-700">
         {/* Decorative blobs */}
@@ -103,8 +109,8 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                 Just message. It understands.
               </motion.span>
 
-              <h1 className="mt-6 text-balance text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-[3.5rem]">
-                {'Your WhatsApp. '.split(' ').map((word, i) => (
+              <h1 className="mt-6 text-balance text-4xl font-extrabold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-[3.5rem]">
+                {'Customers Book & Pay'.split(' ').map((word, i) => (
                   <motion.span
                     key={i}
                     initial={{ opacity: 0, y: 30 }}
@@ -116,21 +122,24 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                   </motion.span>
                 ))}
                 <br />
-                <motion.span
-                  initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5, duration: 0.5 }}
-                  className="inline-block mr-[0.25em]"
-                >
-                  Now
-                </motion.span>
+                {'on '.split(' ').map((word, i) => (
+                  <motion.span
+                    key={`w2-${i}`}
+                    initial={{ opacity: 0, y: 30 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.5 + i * 0.07, duration: 0.5 }}
+                    className="inline-block mr-[0.25em]"
+                  >
+                    {word}
+                  </motion.span>
+                ))}
                 <motion.span
                   initial={{ opacity: 0, y: 30 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.6, duration: 0.5 }}
                   className="inline-block text-accent mr-[0.25em]"
                 >
-                  10x
+                  WhatsApp
                 </motion.span>
                 <motion.span
                   initial={{ opacity: 0, y: 30 }}
@@ -138,7 +147,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                   transition={{ delay: 0.7, duration: 0.5 }}
                   className="inline-block"
                 >
-                  Smarter.
+                  &mdash; While You Sleep.
                 </motion.span>
               </h1>
 
@@ -157,28 +166,28 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                 transition={{ delay: 1.1, duration: 0.6 }}
                 className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start"
               >
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
                   <Link
                     href="/get-started"
-                    className="rounded-xl bg-accent px-7 py-3.5 text-sm font-bold text-gray-900 shadow-lg shadow-accent/25 transition hover:bg-accent-400 hover:shadow-accent/40"
+                    className="rounded-2xl bg-accent px-8 py-4 text-base font-bold text-gray-900 shadow-xl shadow-accent/30 transition hover:bg-accent-400 hover:shadow-accent/50"
                   >
                     Get Started Free
                   </Link>
                 </motion.div>
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
                   <Link
                     href="/pricing"
-                    className="rounded-xl border border-white/30 px-7 py-3.5 text-sm font-semibold text-white transition hover:bg-white/10"
+                    className="rounded-2xl border border-white/20 bg-white/5 px-6 py-4 text-sm font-medium text-white/90 backdrop-blur transition hover:bg-white/15"
                   >
                     View Pricing
                   </Link>
                 </motion.div>
-                <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+                <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
                   <a
                     href="https://wa.me/12029226251?text=Hi"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#25D366] px-7 py-3.5 text-sm font-bold text-white shadow-lg shadow-[#25D366]/25 transition hover:bg-[#20bd5a]"
+                    className="inline-flex items-center gap-2 rounded-2xl bg-whatsapp/90 px-5 py-3.5 text-sm font-semibold text-white transition hover:bg-whatsapp"
                   >
                     <svg aria-hidden="true" className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
                     Try on WhatsApp
@@ -194,8 +203,16 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                 className="mt-8 flex items-center justify-center gap-4 lg:justify-start"
               >
                 <div className="flex -space-x-2">
-                  {['bg-brand-300', 'bg-accent', 'bg-green-400', 'bg-blue-400', 'bg-pink-400'].map((c, i) => (
-                    <div key={i} className={`h-8 w-8 rounded-full border-2 border-brand-900 ${c}`} />
+                  {[
+                    { initials: 'AO', gradient: 'from-brand-400 to-brand-600' },
+                    { initials: 'CK', gradient: 'from-accent-400 to-accent-600' },
+                    { initials: 'GN', gradient: 'from-green-400 to-emerald-600' },
+                    { initials: 'TJ', gradient: 'from-blue-400 to-indigo-600' },
+                    { initials: 'FA', gradient: 'from-pink-400 to-rose-600' },
+                  ].map((a, i) => (
+                    <div key={i} className={`flex h-8 w-8 items-center justify-center rounded-full border-2 border-brand-900 bg-gradient-to-br ${a.gradient} text-[10px] font-bold text-white`}>
+                      {a.initials}
+                    </div>
                   ))}
                 </div>
                 <div className="text-left">
@@ -260,43 +277,49 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
         </div>
       </section>
 
-      {/* ── Compact Stats ── */}
-      <section className="border-b border-gray-100 bg-white py-6">
-        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-6 px-4 sm:gap-10">
+      {/* ── Trust Signals ── */}
+      <section className="border-b border-gray-100 bg-white py-8">
+        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-8 px-4 sm:gap-14">
           {[
-            { value: stats?.businesses || '25+', label: 'Active Businesses' },
-            { value: stats?.payments || '95+', label: 'Payments Processed' },
-            { value: stats?.countries || '5', label: 'Countries' },
+            { value: '89+', label: 'Business Types Supported' },
+            { value: '5', label: 'Countries Live' },
+            { value: '30', label: 'Capabilities Built In' },
             { value: '24/7', label: 'Always On' },
           ].map(s => (
             <div key={s.label} className="text-center">
-              <p className="text-lg font-extrabold text-gray-900 sm:text-xl">{s.value}</p>
-              <p className="text-xs text-gray-400">{s.label}</p>
+              <p className="text-3xl font-black tracking-tight text-gray-900">{s.value}</p>
+              <p className="mt-0.5 text-xs font-medium text-gray-400">{s.label}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* ── Payment Partners Trust Bar ── */}
-      <section className="border-b border-gray-100 bg-white py-5">
+      <section className="border-b border-gray-100 bg-white py-6">
         <div className="mx-auto max-w-4xl px-4 text-center">
-          <p className="text-xs font-medium uppercase tracking-widest text-gray-400 mb-3">Payments powered by</p>
-          <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-300 mb-4">Payments powered by</p>
+          <div className="flex flex-wrap items-center justify-center gap-8 sm:gap-12">
             {[
-              { name: 'Stripe', color: '#635BFF' },
-              { name: 'Paystack', color: '#00C3F7' },
-              { name: 'Square', color: '#3E4348' },
-              { name: 'Flutterwave', color: '#F5A623' },
-              { name: 'PayPal', color: '#003087' },
+              { name: 'Stripe', letter: 'S', color: '#635BFF' },
+              { name: 'Paystack', letter: 'P', color: '#00C3F7' },
+              { name: 'Square', letter: 'Sq', color: '#3E4348' },
+              { name: 'Flutterwave', letter: 'F', color: '#F5A623' },
+              { name: 'PayPal', letter: 'PP', color: '#003087' },
             ].map(g => (
-              <span key={g.name} className="text-sm font-bold" style={{ color: g.color }}>{g.name}</span>
+              <span
+                key={g.name}
+                className="text-base font-extrabold tracking-tight text-gray-300 transition-colors duration-300 hover:text-gray-900"
+                style={{ ['--hover-color' as string]: g.color }}
+              >
+                {g.name}
+              </span>
             ))}
           </div>
         </div>
       </section>
 
       {/* ── Live Bot Demo ── */}
-      <section className="bg-gradient-to-b from-gray-50 to-white py-20">
+      <section className="bg-gradient-to-b from-gray-50/80 to-white py-24">
         <div className="mx-auto max-w-6xl px-4">
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Try it yourself</p>
@@ -316,7 +339,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
       </section>
 
       {/* ── How It Works — 3 Steps ── */}
-      <section className="bg-white py-20">
+      <section className="bg-white py-24">
         <div className="mx-auto max-w-5xl px-4">
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Simple setup</p>
@@ -350,17 +373,20 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
               },
             ].map((s, i) => (
               <AnimatedSection key={s.step} delay={i * 0.1}>
-                <div className="relative rounded-2xl border border-gray-100 bg-white p-8 text-center">
-                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10">
+                <motion.div
+                  whileHover={{ y: -4 }}
+                  className="relative rounded-2xl border border-gray-100 bg-white p-8 text-center shadow-sm transition-shadow hover:shadow-xl hover:shadow-brand/5"
+                >
+                  <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-50 to-brand-100">
                     <span className="text-2xl" dangerouslySetInnerHTML={{ __html: s.icon }} />
                   </div>
-                  <div className="mt-1 text-xs font-bold uppercase tracking-widest text-brand">Step {s.step}</div>
+                  <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.2em] text-brand/60">Step {s.step}</div>
                   <h3 className="mt-3 text-lg font-semibold text-gray-900">{s.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{s.desc}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-500">{s.desc}</p>
                   {i < 2 && (
-                    <div className="absolute -right-4 top-1/2 hidden text-2xl text-gray-300 lg:block">&rarr;</div>
+                    <div className="absolute -right-4 top-1/2 hidden text-2xl text-gray-200 lg:block">&rarr;</div>
                   )}
-                </div>
+                </motion.div>
               </AnimatedSection>
             ))}
           </div>
@@ -418,7 +444,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
       </section>
 
       {/* ── How Waaiio Empowers You ── */}
-      <section className="bg-white py-20">
+      <section className="bg-gray-50/60 py-24">
         <div className="mx-auto max-w-6xl px-4 text-center">
           <AnimatedSection>
             <p className="text-xs font-bold uppercase tracking-widest text-brand">What your bot can do</p>
@@ -444,12 +470,14 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
             ].map((f, i) => (
               <AnimatedSection key={f.title} delay={i * 0.06}>
                 <motion.div
-                  whileHover={{ y: -6, boxShadow: '0 20px 40px rgba(108,43,217,0.08)' }}
-                  className="group rounded-2xl border border-gray-100 bg-white p-6 text-left transition hover:border-brand-200"
+                  whileHover={{ y: -6, boxShadow: '0 25px 50px rgba(108,43,217,0.1)' }}
+                  className="group rounded-2xl border border-gray-100 bg-white p-6 text-left transition-all duration-200 hover:border-brand/20"
                 >
-                  <span className="text-3xl" dangerouslySetInnerHTML={{ __html: f.icon }} />
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-brand-50 to-brand-100/50 transition-transform duration-200 group-hover:scale-110">
+                    <span className="text-2xl" dangerouslySetInnerHTML={{ __html: f.icon }} />
+                  </div>
                   <h3 className="mt-4 text-base font-semibold text-gray-900">{f.title}</h3>
-                  <p className="mt-2 text-sm leading-relaxed text-gray-600">{f.desc}</p>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-500">{f.desc}</p>
                 </motion.div>
               </AnimatedSection>
             ))}
@@ -458,7 +486,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
       </section>
 
       {/* ── The Problem — Why Businesses Need This ── */}
-      <section className="bg-white py-20">
+      <section className="bg-white py-24">
         <div className="mx-auto max-w-5xl px-4">
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-red-500">The problem</p>
@@ -741,10 +769,14 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
 
 
       {/* ── FAQ ── */}
-      <section id="faq" className="bg-gray-50 py-16">
+      <section id="faq" className="bg-white py-24">
         <div className="mx-auto max-w-3xl px-4">
-          <h2 className="text-center text-2xl font-bold text-gray-900">Frequently Asked Questions</h2>
-          <div className="mt-8">
+          <AnimatedSection className="text-center">
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">FAQ</p>
+            <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">Frequently Asked Questions</h2>
+            <p className="mt-2 text-gray-500">Everything you need to know about Waaiio</p>
+          </AnimatedSection>
+          <div className="mt-10">
             {FAQ_DATA.map((item) => (
               <FaqItem key={item.question} question={item.question} answer={item.answer} />
             ))}
@@ -1010,23 +1042,25 @@ function PlanCard({ name, price, period, features, highlight, cta }: { name: str
 }
 
 function TestimonialCard({ quote, name, role, stat, metric }: { quote: string; name: string; role: string; stat: string; metric: string }) {
+  const gradients = ['from-brand to-brand-600', 'from-accent to-accent-600', 'from-emerald-500 to-green-600', 'from-blue-500 to-indigo-600', 'from-pink-500 to-rose-600', 'from-purple-500 to-violet-600'];
+  const grad = gradients[name.charCodeAt(0) % gradients.length];
   return (
     <motion.div
       whileHover={{ y: -4 }}
-      className="flex min-w-[85vw] sm:min-w-[280px] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition lg:min-w-0"
+      className="flex min-w-[80vw] sm:min-w-[280px] flex-col rounded-2xl border border-gray-100 bg-white p-6 shadow-sm transition-all duration-200 hover:shadow-lg hover:shadow-brand/5 lg:min-w-0"
     >
       <div className="mb-4 flex items-center justify-between">
         <span className="rounded-full bg-brand-50 px-3 py-1 text-xs font-semibold text-brand">{stat}</span>
-        <span className="text-2xl font-black text-brand/20">{metric}</span>
+        <span className="text-3xl font-black bg-gradient-to-br from-brand/10 to-brand/5 bg-clip-text text-transparent">{metric}</span>
       </div>
-      <p className="flex-1 text-sm leading-relaxed text-gray-700">&ldquo;{quote}&rdquo;</p>
-      <div className="mt-5 flex items-center gap-3 border-t border-gray-100 pt-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand text-xs font-bold text-white">
+      <p className="flex-1 text-sm leading-relaxed text-gray-600">&ldquo;{quote}&rdquo;</p>
+      <div className="mt-5 flex items-center gap-3 border-t border-gray-50 pt-4">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br ${grad} text-xs font-bold text-white ring-2 ring-white`}>
           {name.charAt(0)}
         </div>
         <div>
           <p className="text-sm font-semibold text-gray-900">{name}</p>
-          <p className="text-xs text-gray-500">{role}</p>
+          <p className="text-xs text-gray-400">{role}</p>
         </div>
       </div>
     </motion.div>
@@ -1037,10 +1071,10 @@ function TestimonialCard({ quote, name, role, stat, metric }: { quote: string; n
 function FaqItem({ question, answer }: { question: string; answer: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="border-b border-gray-200 py-4">
+    <div className={`border-b border-gray-100 transition-colors duration-200 ${open ? 'bg-brand-50/30' : ''}`}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between gap-4 text-left"
+        className="flex w-full items-center justify-between gap-4 px-4 py-5 text-left"
       >
         <h3 className="text-sm font-semibold text-gray-900">{question}</h3>
         <motion.svg
@@ -1060,7 +1094,7 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
         transition={{ duration: 0.3 }}
         className="overflow-hidden"
       >
-        <p className="mt-2 text-sm leading-relaxed text-gray-600">{answer}</p>
+        <p className="px-4 pb-2 text-sm leading-relaxed text-gray-500">{answer}</p>
       </motion.div>
     </div>
   );

@@ -3,7 +3,7 @@ import Navbar from '@/components/marketing/Navbar';
 import Footer from '@/components/marketing/Footer';
 
 export const metadata: Metadata = {
-  title: 'Waaiio — Your WhatsApp. Now 10x Smarter.',
+  title: 'Waaiio — Customers Book & Pay on WhatsApp While You Sleep',
   description:
     'Automate bookings, payments, orders, and customer engagement on WhatsApp — for any business, any industry, any country. AI-powered automation for 40+ industries with 20+ capabilities.',
   openGraph: {
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Waaiio — Your WhatsApp. Now 10x Smarter.',
+    title: 'Waaiio — Customers Book & Pay on WhatsApp While You Sleep',
     description: 'Automate bookings, payments, orders, and engagement on WhatsApp — for any business, any industry, any country.',
   },
   keywords: [

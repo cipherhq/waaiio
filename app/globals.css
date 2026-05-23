@@ -9,7 +9,10 @@ html {
 body {
   color: #171717;
   background: #ffffff;
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* Dark mode base styles — scoped to dashboard only */
