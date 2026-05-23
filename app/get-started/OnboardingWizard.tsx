@@ -1288,9 +1288,10 @@ function OnboardingWizard() {
                     <h2 className="text-2xl font-bold text-gray-900">What specifically?</h2>
                     <p className="mt-1 text-sm text-gray-500">Pick the one that best matches your business</p>
                     <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {getCategoryGroups()
+                      {(getCategoryGroups()
                         .find(g => g.group === selectedGroup)
-                        ?.categories.map(cat => (
+                        ?.categories || BUSINESS_CATEGORIES.filter(c => c.group === selectedGroup)
+                      ).map(cat => (
                           <button
                             key={cat.key}
                             type="button"
@@ -1308,6 +1309,23 @@ function OnboardingWizard() {
                             <span className="text-xs font-medium text-gray-700">{cat.label}</span>
                           </button>
                         ))}
+                      {/* "Other" option for every group */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCategory('other' as BusinessCategoryKey);
+                          const groupCats = BUSINESS_CATEGORIES.filter(c => c.group === selectedGroup);
+                          const firstKey = groupCats[0]?.key as BusinessCategoryKey || 'other';
+                          const defaults = CATEGORY_DEFAULT_CAPABILITIES[firstKey] || ['appointment', 'feedback', 'chat'];
+                          setSelectedCapabilities([...defaults]);
+                          setSelectedPlan('free');
+                          setStep('details');
+                        }}
+                        className="flex items-center gap-3 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-left transition hover:border-brand hover:bg-brand-50/30"
+                      >
+                        <span className="text-xl">✨</span>
+                        <span className="text-xs font-medium text-gray-500">Other</span>
+                      </button>
                     </div>
                   </div>
                 )}
