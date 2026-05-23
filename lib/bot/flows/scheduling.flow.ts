@@ -821,15 +821,17 @@ export const schedulingFlow: FlowDefinition = {
           .filter(s => s.remaining > 0);
 
         if (availableSlots.length === 0) {
-          // Deactivate session so "Send Hi" actually starts fresh
+          // Route back to date selection instead of killing the session
           await ctx.supabase
             .from('bot_sessions')
-            .update({ is_active: false })
+            .update({ session_data: { ...ctx.session.session_data, date: null, _no_slots_date: dateStr }, current_step: 'select_date' })
             .eq('id', ctx.session.id);
-          return [{
-            type: 'text',
-            text: `Sorry, all time slots for ${dateLabel} are fully booked. Please send *Hi* to choose a different date.`,
-          }];
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: `All time slots for ${dateLabel} are fully booked. Pick another date below.`,
+          });
+          // Return empty — the executor will re-prompt select_date
+          return [];
         }
 
         const prefLabel = pref ? ` ${pref}` : '';

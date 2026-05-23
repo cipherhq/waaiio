@@ -127,13 +127,13 @@ export class MetaCloudSender implements MessageSender {
           })),
         }];
 
-    const result = await this.cloud.sendList({
+    const result = await withRetry(() => this.cloud.sendList({
       to: msg.to,
       headerText: truncatedTitle,
       bodyText: truncatedBody,
       buttonText: truncatedButtonLabel,
       sections,
-    });
+    }));
     return { success: true, messageId: result.messageId };
   }
 
@@ -143,11 +143,11 @@ export class MetaCloudSender implements MessageSender {
     buttons: Array<{ id: string; title: string }>;
   }) {
     // Enforce WhatsApp API limits: body 1024 chars, button title 20 chars
-    const result = await this.cloud.sendButtons({
+    const result = await withRetry(() => this.cloud.sendButtons({
       to: msg.to,
       bodyText: msg.body.slice(0, 1024),
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
-    });
+    }));
     return { success: true, messageId: result.messageId };
   }
 
@@ -183,10 +183,10 @@ export class MetaCloudSender implements MessageSender {
     to: string;
     audioUrl: string;
   }) {
-    const result = await this.cloud.sendAudio({
+    const result = await withRetry(() => this.cloud.sendAudio({
       to: msg.to,
       audioUrl: msg.audioUrl,
-    });
+    }));
     return { success: true, messageId: result.messageId };
   }
 
@@ -229,17 +229,17 @@ export class MetaCloudSender implements MessageSender {
     screen: string;
     data?: Record<string, unknown>;
   }) {
-    const result = await this.cloud.sendFlow(msg);
+    const result = await withRetry(() => this.cloud.sendFlow(msg));
     return { success: true, messageId: result.messageId };
   }
 
   async sendReaction(msg: { to: string; messageId: string; emoji: string }) {
-    const result = await this.cloud.sendReaction(msg);
+    const result = await withRetry(() => this.cloud.sendReaction(msg));
     return { success: true, messageId: result.messageId };
   }
 
   async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string }) {
-    const result = await this.cloud.sendLocation(msg);
+    const result = await withRetry(() => this.cloud.sendLocation(msg));
     return { success: true, messageId: result.messageId };
   }
 }

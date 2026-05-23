@@ -164,8 +164,11 @@ export class FlowExecutor {
     session.conversation_log.push({ role: 'user', content: input, timestamp: new Date().toISOString() });
 
     // Global escape hatch: cancel / start over at any step
+    // Supports English + Pidgin + Yoruba + French + Hausa + Twi
     const lowerInput = input.toLowerCase().trim();
-    if (lowerInput === 'cancel' || lowerInput === 'stop' || lowerInput === 'quit') {
+    const CANCEL_WORDS = ['cancel', 'stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
+    const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
+    if (CANCEL_WORDS.includes(lowerInput)) {
       const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start again.', session);
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
@@ -173,7 +176,7 @@ export class FlowExecutor {
       await this.sendText(from, cancelMsg);
       return;
     }
-    if (lowerInput === 'start over' || lowerInput === 'restart' || lowerInput === 'reset') {
+    if (RESTART_WORDS.includes(lowerInput)) {
       const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start fresh.', session);
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);

@@ -1876,10 +1876,16 @@ export class BotService {
       return;
     }
 
-    // Check session expiry — clean up and let user start fresh
+    // Check session expiry — clean up and let user start fresh with context
     if (session.expires_at && new Date(session.expires_at) < new Date()) {
       await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
-      await this.sendText(from, 'Your previous session has expired. Send *Hi* to start again or type *switch <business name>* to visit a business. 🙏');
+      // Personalize the expired message with business name if available
+      let expiredMsg = 'Your session has expired.';
+      if (session.business_id) {
+        const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
+        if (biz?.name) expiredMsg = `Your session with *${biz.name}* has expired.`;
+      }
+      await this.sendText(from, `${expiredMsg} Type *Hi* to start again. 🙏`);
       return;
     }
 
