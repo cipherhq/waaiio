@@ -506,8 +506,10 @@ export default function CustomersPage() {
         <EmptyState
           icon="👥"
           title="No customers yet"
-          description="Customers are automatically added when they interact with your WhatsApp bot or web booking page."
-          tip="Test your bot by sending your bot code to the WhatsApp number, or share your booking link."
+          description="Customers are automatically added when they interact with your WhatsApp bot or web booking page. You can also import contacts from a spreadsheet."
+          actionLabel="Share Your WhatsApp Link"
+          actionHref="/dashboard/qr-code"
+          tip="Share your QR code or WhatsApp link to start receiving customers."
         />
       ) : filtered.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 dark:border-gray-700 p-12 text-center">

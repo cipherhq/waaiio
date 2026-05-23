@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
   {
     href: '/dashboard/calendar',
     label: 'Calendar',
-    icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+    icon: 'M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5',
     capabilities: ['scheduling', 'appointment', 'reservation', 'table_reservation'],
     hideForCategories: GIVING_CATEGORIES,
     section: 'main',
@@ -268,14 +268,7 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/forms',
-    label: 'Forms',
-    icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
-    capabilities: ['survey'],
-    section: 'engage',
-  },
-  {
-    href: '/dashboard/surveys',
-    label: 'Surveys',
+    label: 'Surveys & Forms',
     icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01',
     capabilities: ['survey'],
     section: 'engage',
@@ -309,19 +302,19 @@ const navItems: NavItem[] = [
   },
   {
     href: '/dashboard/whatsapp',
-    label: 'Bot Settings',
+    label: 'WhatsApp Setup',
     icon: 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
     section: 'settings',
   },
   {
     href: '/dashboard/faq',
-    label: 'FAQ Answers',
+    label: 'Auto-Replies',
     icon: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
     section: 'settings',
   },
   {
     href: '/dashboard/capabilities',
-    label: 'Explore Features',
+    label: 'Add Features',
     icon: 'M13 10V3L4 14h7v7l9-11h-7z',
     section: 'settings',
   },
@@ -340,9 +333,9 @@ const navItems: NavItem[] = [
 ];
 
 const sectionLabels: Record<string, string> = {
-  manage: 'Manage',
+  manage: 'Your Business',
   money: 'Money',
-  engage: 'Engage',
+  engage: 'Grow',
   settings: 'Settings',
 };
 

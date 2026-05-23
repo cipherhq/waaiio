@@ -179,11 +179,11 @@ export default function CapabilitiesPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            Explore Features
+            Add Features
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Discover all the tools available for your business.
-            {isInTrial && ' Your 30-day trial includes everything.'}
+            Turn features on or off to customize what your WhatsApp bot can do. Enable a feature and it instantly appears in your bot menu.
+            {isInTrial && ' Your 30-day trial includes everything — try them all.'}
           </p>
         </div>
         <div className="flex items-center gap-3">

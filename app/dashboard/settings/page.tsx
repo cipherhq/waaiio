@@ -718,6 +718,7 @@ export default function SettingsPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
+      <p className="mt-1 text-sm text-gray-500">Set up your business profile, operating hours, payment options, and how your WhatsApp bot works.</p>
 
       {/* Tabs */}
       <div className="relative mt-4">
@@ -744,7 +745,7 @@ export default function SettingsPage() {
               activeTab === 'booking' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            Bot & Booking
+            WhatsApp & Booking
           </button>
           {(capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding')) && (
             <button

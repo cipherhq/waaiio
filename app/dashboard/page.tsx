@@ -418,74 +418,9 @@ export default function DashboardOverview() {
         )}
       </div>
 
-      {/* Setup Checklist + WhatsApp Card */}
+      {/* WhatsApp Link Card */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        {/* Setup Checklist */}
-        {!allComplete && (
-          <div className="lg:col-span-2 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Get Started</h2>
-                <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-                  Complete these steps to get the most out of your bot
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="h-2 w-24 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-brand transition-all"
-                    style={{ width: `${(completedSteps / setupSteps.length) * 100}%` }}
-                  />
-                </div>
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {completedSteps}/{setupSteps.length}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-5 space-y-2">
-              {setupSteps.map((step) => (
-                <Link
-                  key={step.id}
-                  href={step.href}
-                  className={`flex items-center gap-4 rounded-lg px-4 py-3 transition ${
-                    step.done
-                      ? 'bg-green-50/50 dark:bg-green-900/20'
-                      : 'bg-gray-50 dark:bg-gray-800/50 hover:bg-brand-50/50 dark:hover:bg-brand-900/20'
-                  }`}
-                >
-                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
-                    step.done ? 'bg-green-100 dark:bg-green-900/30' : 'bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600'
-                  }`}>
-                    {step.done ? (
-                      <svg aria-hidden="true" className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                    ) : (
-                      <svg aria-hidden="true" className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={step.icon} />
-                      </svg>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-sm font-medium ${step.done ? 'text-green-700 dark:text-green-400' : 'text-gray-900 dark:text-gray-100'}`}>
-                      {step.title}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">{step.desc}</p>
-                  </div>
-                  {!step.done && (
-                    <svg aria-hidden="true" className="h-4 w-4 shrink-0 text-gray-300 dark:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                    </svg>
-                  )}
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* WhatsApp Link Card */}
-        <div className={allComplete ? 'lg:col-span-2' : ''}>
+        <div className="lg:col-span-2">
           <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gradient-to-br from-green-50 to-white dark:from-green-900/20 dark:to-gray-800 p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-whatsapp/10">
