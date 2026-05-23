@@ -1240,7 +1240,7 @@ function OnboardingWizard() {
                       type="text"
                       value={categorySearch}
                       onChange={e => setCategorySearch(e.target.value)}
-                      placeholder="Search... e.g. bakery, salon, church"
+                      placeholder="Search... e.g. salon, restaurant, church"
                       className="w-full rounded-xl border border-gray-300 pl-10 pr-4 py-2.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
                     />
                     {categorySearch && (
