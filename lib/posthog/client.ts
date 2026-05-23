@@ -1,21 +1,15 @@
 import posthog from 'posthog-js';
 
-let initialized = false;
-
+/**
+ * Returns the PostHog client instance.
+ * PostHog initialization is now handled by PostHogProvider which
+ * respects cookie consent. This function returns the instance
+ * for direct capture calls — it will no-op if not initialized.
+ */
 export function getPostHogClient() {
   if (typeof window === 'undefined') return null;
 
-  if (!initialized && process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-    posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY, {
-      api_host: process.env.NEXT_PUBLIC_POSTHOG_HOST || 'https://us.i.posthog.com',
-      capture_pageview: true,
-      capture_pageleave: true,
-      loaded: (ph) => {
-        if (process.env.NODE_ENV === 'development') ph.debug();
-      },
-    });
-    initialized = true;
-  }
-
+  // PostHog may not be initialized if user hasn't consented to analytics
+  // In that case, posthog methods will no-op via opt_out_capturing
   return posthog;
 }

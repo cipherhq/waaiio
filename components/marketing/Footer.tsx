@@ -86,6 +86,7 @@ export default function Footer() {
               <li><Link href="/cookies" className="text-sm text-gray-300 transition hover:text-white">Cookie Policy</Link></li>
               <li><Link href="/acceptable-use" className="text-sm text-gray-300 transition hover:text-white">Acceptable Use</Link></li>
               <li><Link href="/dpa" className="text-sm text-gray-300 transition hover:text-white">Data Processing (DPA)</Link></li>
+              <li><Link href="/do-not-sell" className="text-sm text-gray-300 transition hover:text-white">Do Not Sell My Info</Link></li>
               <li><PrivacyChoicesButton /></li>
               <li><Link href="/contact" className="text-sm text-gray-300 transition hover:text-white">Contact</Link></li>
             </ul>

@@ -5,6 +5,27 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (g)
+
+### CCPA/GDPR Technical Compliance Features
+
+**Files changed:**
+- `app/api/account/export/route.ts` — NEW: GDPR Article 20 data export endpoint. Returns all user data (profile, businesses, bookings, orders, payments, invoices, customers, services, products, bot sessions, subscriptions) as downloadable JSON. Rate limited to 1 export per 24 hours per user. Audit logged.
+- `app/api/account/consent/route.ts` — NEW: Consent tracking API. GET returns current consent (marketing, analytics, AI processing). POST updates preferences in profiles.metadata.consent_preferences.
+- `app/api/account/route.ts` — Enhanced: supports 30-day grace period deletion (body: { gracePeriod: true }), handles multiple businesses per user, deactivates bot sessions, sends confirmation email, full audit logging.
+- `lib/email/templates.ts` — Added `accountDeletionConfirmationEmail` (grace period + immediate variants) and `dataBreachNotificationEmail` (GDPR Article 34 template ready for 72-hour breach notification).
+- `components/marketing/CookieConsent.tsx` — Enhanced: granular category toggles (Essential always-on, Analytics, Marketing), syncs to server for logged-in users, dispatches `waaiio:consent` custom event, migrates legacy accept/reject format, exports `getCookieConsent()` helper.
+- `components/PostHogProvider.tsx` — Rewritten: blocks PostHog initialization until analytics consent given, listens for consent changes, uses opt_in/opt_out_capturing dynamically.
+- `lib/posthog/client.ts` — Simplified: PostHog init now handled by provider, client returns instance for direct calls.
+- `components/marketing/Footer.tsx` — Added "Do Not Sell My Info" link to legal section.
+- `app/(marketing)/do-not-sell/page.tsx` — NEW: CCPA "Do Not Sell" page explaining data practices, user rights, and how to exercise them.
+- `app/dashboard/settings/page.tsx` — Added "Privacy & Data" tab with: Download My Data button, consent preference toggles (marketing/analytics/AI), privacy resource links, delete account with grace period modal.
+
+**What it affects:** Account deletion flow, cookie consent behavior, PostHog analytics initialization, footer navigation, dashboard settings
+**What could break:** PostHog no longer initializes by default — requires analytics cookie consent. Users who previously accepted cookies are migrated automatically. Account deletion now accepts a body parameter (existing DELETE calls without body still work as immediate deletion).
+
+---
+
 ## 2026-05-19 (f)
 
 ### Explore Features Page Redesign

@@ -547,3 +547,78 @@ export function ticketConfirmationEmail(details: {
     `),
   };
 }
+
+export function accountDeletionConfirmationEmail(name: string, deletionDate: string, isGracePeriod: boolean) {
+  const subject = isGracePeriod
+    ? 'Your Waaiio account is scheduled for deletion'
+    : 'Your Waaiio account has been deleted';
+
+  const body = isGracePeriod
+    ? `
+      ${h('Account Deletion Scheduled')}
+      ${p(`Hi ${esc(name)}, your Waaiio account has been scheduled for deletion.`)}
+      ${table(
+        kv('Deletion Date', esc(deletionDate)) +
+        kv('Grace Period', '30 days')
+      )}
+      ${p('If you change your mind, simply log back in before the deletion date and your account will be restored.')}
+      ${p('After the deletion date, all your data will be permanently removed and cannot be recovered.')}
+      ${btn('Cancel Deletion', `${appUrl}/login`)}
+    `
+    : `
+      ${h('Account Deleted')}
+      ${p(`Hi ${esc(name)}, your Waaiio account and all associated data have been permanently deleted.`)}
+      ${p('This includes your business profiles, bookings, orders, payments, and customer data.')}
+      ${p('If you believe this was done in error, please contact us immediately at support@waaiio.com.')}
+      ${p('We\'re sorry to see you go. You can always create a new account at any time.')}
+      ${btn('Visit Waaiio', appUrl)}
+    `;
+
+  return { subject, html: wrap(body) };
+}
+
+/**
+ * Data Breach Notification Email
+ * GDPR Article 34 — Communication of a personal data breach to the data subject
+ * Must be sent within 72 hours of discovering a breach.
+ */
+export function dataBreachNotificationEmail(
+  userName: string,
+  breachDate: string,
+  dataAffected: string[],
+  actionsTaken: string[],
+) {
+  const affectedList = dataAffected.map(d => `<li>${esc(d)}</li>`).join('');
+  const actionsList = actionsTaken.map(a => `<li>${esc(a)}</li>`).join('');
+
+  return {
+    subject: 'Important Security Notice — Waaiio',
+    html: wrap(`
+      ${h('Security Notice')}
+      ${p(`Dear ${esc(userName)},`)}
+      ${p('We are writing to inform you of a data security incident that may have affected your personal information.')}
+      ${table(
+        kv('Date Discovered', esc(breachDate)) +
+        kv('Status', 'Under investigation')
+      )}
+      ${p('<strong>What information was affected:</strong>')}
+      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
+        ${affectedList}
+      </ul>
+      ${p('<strong>What we have done:</strong>')}
+      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
+        ${actionsList}
+      </ul>
+      ${p('<strong>What you should do:</strong>')}
+      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
+        <li>Change your Waaiio password immediately</li>
+        <li>If you used the same password elsewhere, change those too</li>
+        <li>Monitor your accounts for suspicious activity</li>
+        <li>Enable two-factor authentication if not already active</li>
+      </ul>
+      ${btn('Change Password', `${appUrl}/forgot-password`)}
+      ${p('We take the security of your data extremely seriously and sincerely apologize for any inconvenience this may cause.')}
+      ${p('If you have any questions or concerns, please contact our Data Protection Officer at <a href="mailto:dpo@waaiio.com" style="color:#7c3aed">dpo@waaiio.com</a>.')}
+    `),
+  };
+}

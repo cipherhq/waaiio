@@ -38,7 +38,23 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'auto_reply' | 'notifications' | 'account'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'auto_reply' | 'notifications' | 'account' | 'privacy'>('profile');
+
+  // Privacy & Data tab state
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [exportSuccess, setExportSuccess] = useState(false);
+  const [marketingConsent, setMarketingConsent] = useState(false);
+  const [analyticsConsent, setAnalyticsConsent] = useState(false);
+  const [aiConsent, setAiConsent] = useState(true);
+  const [consentLoaded, setConsentLoaded] = useState(false);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [consentSaved, setConsentSaved] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteGracePeriod, setDeleteGracePeriod] = useState(true);
+  const [privacyDeleteConfirm, setPrivacyDeleteConfirm] = useState('');
+  const [privacyDeleting, setPrivacyDeleting] = useState(false);
+  const [privacyDeleteError, setPrivacyDeleteError] = useState('');
 
   // Notification preferences state
   const [notifEmailEnabled, setNotifEmailEnabled] = useState(true);
@@ -813,6 +829,30 @@ export default function SettingsPage() {
             }`}
           >
             Account
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('privacy');
+              // Load consent preferences on tab switch
+              if (!consentLoaded) {
+                fetch('/api/account/consent')
+                  .then(r => r.json())
+                  .then(data => {
+                    if (data.consent) {
+                      setMarketingConsent(data.consent.marketing_emails ?? false);
+                      setAnalyticsConsent(data.consent.analytics ?? false);
+                      setAiConsent(data.consent.ai_processing ?? true);
+                    }
+                    setConsentLoaded(true);
+                  })
+                  .catch(() => setConsentLoaded(true));
+              }
+            }}
+            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'privacy' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Privacy &amp; Data
           </button>
         </div>
         <div className="pointer-events-none absolute right-0 top-0 h-full w-8 bg-gradient-to-l from-gray-100 to-transparent rounded-r-lg" />
@@ -3098,7 +3138,331 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+      ) : activeTab === 'privacy' ? (
+        /* Privacy & Data Tab — GDPR/CCPA Compliance */
+        <div className="mt-6 max-w-xl space-y-6">
+          {/* Download My Data */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Download My Data</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Export all your data in JSON format. This includes your profile, businesses,
+              bookings, orders, payments, customers, and more.
+            </p>
+            <p className="mt-1 text-xs text-gray-400">Limited to one export per 24 hours.</p>
+            {exportError && (
+              <p className="mt-2 text-sm text-red-600">{exportError}</p>
+            )}
+            {exportSuccess && (
+              <p className="mt-2 text-sm text-green-600">Data export downloaded successfully.</p>
+            )}
+            <button
+              onClick={async () => {
+                setExporting(true);
+                setExportError('');
+                setExportSuccess(false);
+                try {
+                  const res = await fetch('/api/account/export', { method: 'POST' });
+                  if (!res.ok) {
+                    const data = await res.json();
+                    setExportError(data.error || 'Failed to export data');
+                    setExporting(false);
+                    return;
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `waaiio-data-export-${new Date().toISOString().split('T')[0]}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  setExportSuccess(true);
+                } catch {
+                  setExportError('Something went wrong. Please try again.');
+                } finally {
+                  setExporting(false);
+                }
+              }}
+              disabled={exporting}
+              className="mt-4 rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {exporting ? 'Exporting...' : 'Download My Data'}
+            </button>
+          </div>
+
+          {/* Marketing & Consent Preferences */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Consent Preferences</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Control how your data is used. Changes take effect immediately.
+            </p>
+
+            {!consentLoaded ? (
+              <p className="mt-4 text-sm text-gray-400">Loading preferences...</p>
+            ) : (
+              <div className="mt-4 space-y-4">
+                {/* Marketing emails */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Marketing Emails</p>
+                    <p className="text-xs text-gray-400">Receive product updates, tips, and promotional content</p>
+                  </div>
+                  <button
+                    onClick={() => setMarketingConsent(!marketingConsent)}
+                    className={`flex h-6 w-11 items-center rounded-full transition ${marketingConsent ? 'bg-brand' : 'bg-gray-200'}`}
+                    role="switch"
+                    aria-checked={marketingConsent}
+                    aria-label="Toggle marketing emails"
+                  >
+                    <div className={`h-5 w-5 rounded-full bg-white shadow transition ${marketingConsent ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                {/* Analytics */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">Analytics</p>
+                    <p className="text-xs text-gray-400">Help us improve by allowing anonymous usage data collection</p>
+                  </div>
+                  <button
+                    onClick={() => setAnalyticsConsent(!analyticsConsent)}
+                    className={`flex h-6 w-11 items-center rounded-full transition ${analyticsConsent ? 'bg-brand' : 'bg-gray-200'}`}
+                    role="switch"
+                    aria-checked={analyticsConsent}
+                    aria-label="Toggle analytics"
+                  >
+                    <div className={`h-5 w-5 rounded-full bg-white shadow transition ${analyticsConsent ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                {/* AI Processing */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">AI Processing</p>
+                    <p className="text-xs text-gray-400">Required for WhatsApp bot intent detection and translation</p>
+                  </div>
+                  <button
+                    onClick={() => setAiConsent(!aiConsent)}
+                    className={`flex h-6 w-11 items-center rounded-full transition ${aiConsent ? 'bg-brand' : 'bg-gray-200'}`}
+                    role="switch"
+                    aria-checked={aiConsent}
+                    aria-label="Toggle AI processing"
+                  >
+                    <div className={`h-5 w-5 rounded-full bg-white shadow transition ${aiConsent ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                {!aiConsent && (
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <p className="text-xs text-amber-800">
+                      Disabling AI processing will limit your WhatsApp bot&apos;s ability to understand
+                      natural language messages. The bot will still work with button-based interactions.
+                    </p>
+                  </div>
+                )}
+
+                {consentSaved && (
+                  <p className="text-sm text-green-600">Preferences saved.</p>
+                )}
+
+                <button
+                  onClick={async () => {
+                    setConsentSaving(true);
+                    setConsentSaved(false);
+                    try {
+                      await fetch('/api/account/consent', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          marketing_emails: marketingConsent,
+                          analytics: analyticsConsent,
+                          ai_processing: aiConsent,
+                        }),
+                      });
+                      // Also update localStorage cookie consent to match
+                      const existing = localStorage.getItem('waaiio_cookie_consent');
+                      if (existing) {
+                        try {
+                          const parsed = JSON.parse(existing);
+                          parsed.analytics = analyticsConsent;
+                          parsed.marketing = marketingConsent;
+                          parsed.timestamp = new Date().toISOString();
+                          localStorage.setItem('waaiio_cookie_consent', JSON.stringify(parsed));
+                          window.dispatchEvent(new CustomEvent('waaiio:consent', { detail: parsed }));
+                        } catch { /* ignore parse errors */ }
+                      }
+                      setConsentSaved(true);
+                    } catch { /* silent */ } finally {
+                      setConsentSaving(false);
+                    }
+                  }}
+                  disabled={consentSaving}
+                  className="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                >
+                  {consentSaving ? 'Saving...' : 'Save Preferences'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Privacy Policy Link */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Privacy Resources</h2>
+            <div className="mt-3 space-y-2">
+              <Link href="/privacy" className="flex items-center gap-2 text-sm text-brand hover:underline" target="_blank">
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Privacy Policy
+              </Link>
+              <Link href="/cookies" className="flex items-center gap-2 text-sm text-brand hover:underline" target="_blank">
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Cookie Policy
+              </Link>
+              <Link href="/dpa" className="flex items-center gap-2 text-sm text-brand hover:underline" target="_blank">
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Data Processing Agreement
+              </Link>
+              <Link href="/do-not-sell" className="flex items-center gap-2 text-sm text-brand hover:underline" target="_blank">
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                Do Not Sell My Information (CCPA)
+              </Link>
+            </div>
+          </div>
+
+          {/* Delete Account */}
+          <div className="rounded-xl border-2 border-red-200 bg-white p-6">
+            <h2 className="text-sm font-semibold text-red-600">Delete My Account</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Request deletion of your account and all associated data. You can choose
+              a 30-day grace period or immediate deletion.
+            </p>
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className="mt-4 rounded-lg border border-red-300 px-5 py-2 text-sm font-semibold text-red-600 hover:bg-red-50"
+            >
+              Delete My Account
+            </button>
+          </div>
+        </div>
       ) : null}
+
+      {/* ── Privacy Delete Modal ── */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h2 className="text-lg font-bold text-gray-900">Delete Your Account</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              This will permanently delete your Waaiio account, all businesses, bookings,
+              orders, payments, and customer data. This action cannot be undone.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 cursor-pointer hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name="delete_mode"
+                  checked={deleteGracePeriod}
+                  onChange={() => setDeleteGracePeriod(true)}
+                  className="text-brand"
+                />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">30-day grace period</p>
+                  <p className="text-xs text-gray-500">Account is deactivated immediately. Data is deleted after 30 days. Log back in to cancel.</p>
+                </div>
+              </label>
+              <label className="flex items-center gap-3 rounded-lg border border-gray-200 p-3 cursor-pointer hover:bg-gray-50">
+                <input
+                  type="radio"
+                  name="delete_mode"
+                  checked={!deleteGracePeriod}
+                  onChange={() => setDeleteGracePeriod(false)}
+                  className="text-brand"
+                />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Delete immediately</p>
+                  <p className="text-xs text-gray-500">All data is permanently deleted right now. Cannot be undone.</p>
+                </div>
+              </label>
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Type <span className="font-semibold">&quot;DELETE&quot;</span> to confirm:
+              </label>
+              <input
+                type="text"
+                value={privacyDeleteConfirm}
+                onChange={(e) => {
+                  setPrivacyDeleteConfirm(e.target.value);
+                  setPrivacyDeleteError('');
+                }}
+                placeholder="DELETE"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-red-300"
+              />
+            </div>
+
+            {privacyDeleteError && (
+              <p className="mt-2 text-sm text-red-600">{privacyDeleteError}</p>
+            )}
+
+            <div className="mt-4 flex gap-3">
+              <button
+                onClick={async () => {
+                  setPrivacyDeleting(true);
+                  setPrivacyDeleteError('');
+                  try {
+                    const res = await fetch('/api/account', {
+                      method: 'DELETE',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ gracePeriod: deleteGracePeriod }),
+                    });
+                    if (!res.ok) {
+                      const data = await res.json();
+                      setPrivacyDeleteError(data.error || 'Failed to delete account');
+                      setPrivacyDeleting(false);
+                      return;
+                    }
+                    if (!deleteGracePeriod) {
+                      const supabase = createClient();
+                      await supabase.auth.signOut();
+                      router.push('/');
+                    } else {
+                      const supabase = createClient();
+                      await supabase.auth.signOut();
+                      router.push('/?deleted=scheduled');
+                    }
+                  } catch {
+                    setPrivacyDeleteError('Something went wrong. Please try again.');
+                    setPrivacyDeleting(false);
+                  }
+                }}
+                disabled={privacyDeleteConfirm !== 'DELETE' || privacyDeleting}
+                className="flex-1 rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {privacyDeleting ? 'Processing...' : deleteGracePeriod ? 'Schedule Deletion' : 'Delete Now'}
+              </button>
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setPrivacyDeleteConfirm('');
+                  setPrivacyDeleteError('');
+                }}
+                className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Post-Upgrade Capabilities Modal ── */}
       {showCapModal && upgradedTier && (
