@@ -24,10 +24,10 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Get current loyalty balance
+    // Get loyalty account
     const { data: loyalty } = await supabase
       .from('loyalty_points')
-      .select('id, points_balance, total_redeemed')
+      .select('id, points_balance')
       .eq('business_id', businessId)
       .eq('customer_phone', customerPhone)
       .single();
@@ -36,18 +36,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Customer not found in loyalty program' }, { status: 404 });
     }
 
-    if (loyalty.points_balance < points) {
+    // Atomic deduction with row-level locking (prevents double-redeem)
+    const { data: success } = await supabase.rpc('redeem_loyalty_points', {
+      p_loyalty_id: loyalty.id,
+      p_points: points,
+    });
+
+    if (!success) {
       return NextResponse.json({ error: 'Insufficient points balance' }, { status: 400 });
     }
-
-    // Deduct points
-    await supabase
-      .from('loyalty_points')
-      .update({
-        points_balance: loyalty.points_balance - points,
-        total_redeemed: loyalty.total_redeemed + points,
-      })
-      .eq('id', loyalty.id);
 
     // Record transaction
     await supabase.from('loyalty_transactions').insert({

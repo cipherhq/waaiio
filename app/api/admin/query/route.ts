@@ -95,10 +95,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: corsHeaders() });
     }
 
+    // Support role: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
+    let safeSelect = select;
+    if (profile.role === 'support') {
+      // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
+      safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query: any = count === 'exact'
-      ? supabase.from(table).select(select, { count: 'exact', head: true })
-      : supabase.from(table).select(select);
+      ? supabase.from(table).select(safeSelect, { count: 'exact', head: true })
+      : supabase.from(table).select(safeSelect);
 
     // Apply filters
     for (const f of filters) {

@@ -122,19 +122,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to submit response' }, { status: 500 });
     }
 
-    // Increment response count
-    const { data: currentForm } = await supabase
-      .from('forms')
-      .select('response_count')
-      .eq('id', form.id)
-      .single();
-
-    if (currentForm) {
-      await supabase
-        .from('forms')
-        .update({ response_count: (currentForm.response_count || 0) + 1 })
-        .eq('id', form.id);
-    }
+    // Atomic increment — prevents race condition with concurrent submissions
+    await supabase.rpc('increment_form_response_count', { p_form_id: form.id });
 
     return NextResponse.json({ success: true });
   } catch (error) {

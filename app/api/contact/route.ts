@@ -21,6 +21,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
     }
 
+    // Input length validation (anti-spam)
+    if (name.length > 100 || email.length > 254 || message.length > 5000 || (subject && subject.length > 200)) {
+      return NextResponse.json({ error: 'Input too long' }, { status: 400 });
+    }
+
+    // Honeypot check — if 'website' field is filled, it's a bot
+    if (body.website) {
+      // Silently accept but don't send — bot thinks it succeeded
+      return NextResponse.json({ success: true });
+    }
+
+    // Cloudflare Turnstile verification (if configured)
+    const turnstileSecret = process.env.TURNSTILE_SECRET_KEY;
+    if (turnstileSecret && body.turnstileToken) {
+      const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret: turnstileSecret, response: body.turnstileToken }),
+        signal: AbortSignal.timeout(5000),
+      });
+      const turnstileResult = await verifyRes.json();
+      if (!turnstileResult.success) {
+        return NextResponse.json({ error: 'Bot verification failed. Please try again.' }, { status: 403 });
+      }
+    }
+
     const subjectLine = subject ? `[Waaiio Contact] ${subject}` : `[Waaiio Contact] New message from ${name}`;
 
     await sendEmail({

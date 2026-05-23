@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from('businesses')
     .select(`
-      id, name, category, country_code, city, address, bot_code, wa_method, slug,
+      id, name, category, country_code, city, address, wa_method, slug,
       services:services(id, name, price, duration_minutes)
     `)
     .eq('status', 'active')
