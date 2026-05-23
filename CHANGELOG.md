@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-19 (f)
+
+### Explore Features Page Redesign
+
+**Files changed:**
+- `app/dashboard/capabilities/page.tsx` — Redesigned capabilities page into "Explore Features" with grouped layout (Booking & Scheduling, Payments & Commerce, Events & Tickets, Customer Engagement, Operations, Documents), search/filter, enabled counter (X of 30), tier badges (Pro/Premium), trial-aware toggle (everything unlocked during 30-day trial), sticky save bar, dark mode support, responsive grid layout
+- `components/dashboard/Sidebar.tsx` — Renamed sidebar label from "Features" to "Explore Features"
+
+**What it affects:** Dashboard capabilities page UI/UX, sidebar navigation label
+**What could break:** Nothing — same toggle/save logic preserved, only UI restructured
+
+---
+
 ## 2026-05-19 (e)
 
 ### Class Booking + Multi-Location Bot Routing
