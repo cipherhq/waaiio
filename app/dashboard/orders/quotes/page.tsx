@@ -124,6 +124,16 @@ export default function QuotesPage() {
     setRejecting(false);
   }
 
+  // Stat calculations
+  const totalQuotes = quotes.length;
+  const acceptedQuotes = quotes.filter(q => q.status === 'accepted').length;
+  const conversionRate = totalQuotes > 0 ? Math.round((acceptedQuotes / totalQuotes) * 100) : 0;
+  const quotedAmounts = quotes.filter(q => q.quoted_amount != null).map(q => q.quoted_amount!);
+  const avgQuoteValue = quotedAmounts.length > 0
+    ? Math.round(quotedAmounts.reduce((a, b) => a + b, 0) / quotedAmounts.length)
+    : 0;
+  const pendingQuotes = quotes.filter(q => q.status === 'pending').length;
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -138,6 +148,26 @@ export default function QuotesPage() {
       <p className="mt-1 text-sm text-gray-500">
         Manage pricing for custom orders and items with negotiable prices.
       </p>
+
+      {/* Stat Cards */}
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-gray-100 bg-white p-4">
+          <p className="text-xs font-medium text-gray-500">Total Quotes</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">{totalQuotes}</p>
+        </div>
+        <div className="rounded-xl border border-gray-100 bg-white p-4">
+          <p className="text-xs font-medium text-gray-500">Conversion Rate</p>
+          <p className="mt-1 text-2xl font-bold text-green-600">{conversionRate}%</p>
+        </div>
+        <div className="rounded-xl border border-gray-100 bg-white p-4">
+          <p className="text-xs font-medium text-gray-500">Avg Quote Value</p>
+          <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(avgQuoteValue, country)}</p>
+        </div>
+        <div className="rounded-xl border border-gray-100 bg-white p-4">
+          <p className="text-xs font-medium text-gray-500">Pending</p>
+          <p className="mt-1 text-2xl font-bold text-yellow-600">{pendingQuotes}</p>
+        </div>
+      </div>
 
       {/* Status Tabs */}
       <div className="mt-4 flex gap-2">

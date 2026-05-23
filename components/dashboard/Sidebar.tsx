@@ -195,6 +195,20 @@ const navItems: NavItem[] = [
     section: 'money',
   },
   {
+    href: '/dashboard/orders/quotes',
+    label: 'Quotes',
+    icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
+    capabilities: ['estimates'],
+    section: 'money',
+  },
+  {
+    href: '/dashboard/packages',
+    label: 'Packages',
+    icon: 'M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z',
+    capabilities: ['packages'],
+    section: 'money',
+  },
+  {
     href: '/dashboard/financials',
     label: 'Revenue',
     icon: 'M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z',
