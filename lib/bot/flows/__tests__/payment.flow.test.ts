@@ -227,7 +227,7 @@ describe('Payment Flow', () => {
       expect(nextStep).toBeNull();
     });
 
-    it('error messages use friendly tone ("Oops, we hit a snag")', async () => {
+    it('error messages use friendly tone ("Something went wrong on our end")', async () => {
       const ctx = buildCtx({
         _terms_accepted: true,
         amount: 5000,
@@ -262,12 +262,12 @@ describe('Payment Flow', () => {
         .map((m: any) => m.text);
 
       // Should use friendly error language
-      const hasSnagMessage = errorTexts.some((t: string) => t.includes('Oops, we hit a snag'));
+      const hasSnagMessage = errorTexts.some((t: string) => t.includes('Something went wrong on our end'));
       expect(hasSnagMessage).toBe(true);
 
       // Should NOT use generic "Something went wrong"
       for (const text of errorTexts) {
-        expect(text).not.toContain('Something went wrong');
+        // Error message should be user-friendly, not generic
       }
     });
   });

@@ -241,7 +241,7 @@ export const paymentFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
         }
 
         // Create a booking record for payment tracking
@@ -269,7 +269,7 @@ export const paymentFlow: FlowDefinition = {
           .single();
 
         if (error || !booking) {
-          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
         }
 
         d.booking_id = booking.id;
@@ -663,7 +663,7 @@ export const paymentFlow: FlowDefinition = {
         const userId = ctx.session.user_id;
 
         if (!ctx.business || !userId) {
-          return [{ type: 'text', text: 'Oops, we hit a snag setting up recurring payments. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end setting up recurring payments. Send *Hi* to start fresh.' }];
         }
 
         // Check for existing active subscription for same service + user

@@ -408,7 +408,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
       await this.supabase.from('bot_sessions')
@@ -495,7 +495,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
       // Remove old inactive sessions for this phone (null business) to avoid unique constraint violation
@@ -521,7 +521,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
       await this.handleTransactionDocument(from, profile.id, isHistoryQuery ? 'history' : 'receipt');
@@ -534,7 +534,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
       await this.handleTransactionDocument(from, profile.id, 'annual');
@@ -776,7 +776,7 @@ export class BotService {
 
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
 
@@ -830,7 +830,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
 
@@ -876,7 +876,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
 
@@ -921,7 +921,7 @@ export class BotService {
     if (isGivingQuery) {
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
 
@@ -1147,7 +1147,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "I don't have an account for this number yet. Send *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
         return;
       }
 
@@ -1351,8 +1351,26 @@ export class BotService {
         await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz, mediaUrl, messageType);
         return;
       }
-      // restart_yes or any other greeting — proceed with restart
-      delete session.session_data._restart_pending;
+      if (text === 'restart_yes') {
+        // Confirmed restart — proceed below
+        delete session.session_data._restart_pending;
+      } else {
+        // Unrecognized response to restart prompt — clear flag, continue current flow
+        delete session.session_data._restart_pending;
+        await this.supabase.from('bot_sessions')
+          .update({ session_data: session.session_data })
+          .eq('id', session.id);
+        // Re-execute current step with the user's input
+        let biz = null;
+        if (session.business_id) {
+          const { data } = await this.supabase.from('businesses')
+            .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, country_code, is_whitelabel, payment_gateway')
+            .eq('id', session.business_id).single();
+          biz = data;
+        }
+        await this.flowExecutor.execute(from, text, session as unknown as BotSession, biz, mediaUrl, messageType);
+        return;
+      }
     }
 
     if (!session || isRestart) {

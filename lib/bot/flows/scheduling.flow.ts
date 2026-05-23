@@ -177,10 +177,11 @@ export const schedulingFlow: FlowDefinition = {
         const { data: services } = await query;
 
         if (!services || services.length === 0) {
-          return [];
+          return [{ type: 'text' as const, text: `This business hasn't added any services yet. Please check back later or type *cancel* to go back.` }];
         }
 
         if (services.length === 1) {
+          // Single service — skipIf handles auto-selection, prompt is a no-op
           return [];
         }
 
@@ -1709,7 +1710,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (origError || !originalBooking) {
             console.error('[SCHEDULING] Failed to fetch original booking for reschedule:', origError?.message);
-            return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
           }
 
           const { error: rescheduleError } = await ctx.supabase

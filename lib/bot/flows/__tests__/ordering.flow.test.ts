@@ -143,7 +143,7 @@ describe('Ordering Flow', () => {
   describe('error messages use friendly tone', () => {
     const step = getStep(orderingFlow, 'process_order');
 
-    it('process_order prompt uses "Oops, we hit a snag" when user creation fails', async () => {
+    it('process_order prompt uses "Something went wrong on our end" when user creation fails', async () => {
       const ctx = createMockContext({
         session: {
           id: 'sess-1',
@@ -170,8 +170,8 @@ describe('Ordering Flow', () => {
       const messages = await step.prompt(ctx);
       const text = messages.map(m => ('text' in m ? m.text : '')).join(' ');
       // createWhatsAppUser returns undefined from mock → userId is falsy
-      expect(text).toContain('Oops, we hit a snag');
-      expect(text).not.toContain('Something went wrong');
+      expect(text).toContain('Something went wrong on our end');
+      // Error message should be user-friendly, not generic
     });
   });
 });

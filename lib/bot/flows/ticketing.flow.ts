@@ -27,16 +27,19 @@ export const ticketingFlow: FlowDefinition = {
           .order('date')
           .limit(10);
 
-        if (!events || events.length === 0) {
-          return [{ type: 'text', text: 'No upcoming events right now. Check back soon! 🎪' }];
+        // Filter out sold-out events so customers only see events they can buy
+        const availableEvents = (events || []).filter(e => e.total_tickets - e.tickets_sold > 0);
+
+        if (availableEvents.length === 0) {
+          return [{ type: 'text', text: 'No upcoming events right now. Check back soon! 🎟️' }];
         }
 
         return [{
           type: 'list',
           title: 'Upcoming Events',
-          body: `🎪 Events at ${ctx.business.name}:`,
+          body: `🎟️ Events at ${ctx.business.name}:`,
           buttonLabel: 'View Events',
-          items: events.map(e => {
+          items: availableEvents.map(e => {
             const available = e.total_tickets - e.tickets_sold;
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
             const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString(getLocale(cc), { day: 'numeric', month: 'short' });
@@ -329,7 +332,7 @@ export const ticketingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
 
         // Create booking for ticket
         const { data: booking, error } = await ctx.supabase
@@ -355,7 +358,7 @@ export const ticketingFlow: FlowDefinition = {
           .single();
 
         if (error || !booking) {
-          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
         }
 
         // Update tickets_sold
@@ -431,7 +434,7 @@ export const ticketingFlow: FlowDefinition = {
             return [
               {
                 type: 'text',
-                text: `🎫 *Tickets Reserved!*\n\n🎪 ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, (ctx.business?.country_code || 'NG') as CountryCode)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Your confirmation will arrive automatically after payment.`,
+                text: `🎫 *Tickets Reserved!*\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, (ctx.business?.country_code || 'NG') as CountryCode)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Your confirmation will arrive automatically after payment.`,
               },
               {
                 type: 'buttons',
@@ -443,6 +446,15 @@ export const ticketingFlow: FlowDefinition = {
               },
             ];
           }
+
+          // Payment initialization failed — do NOT fall through to free ticket path
+          console.error(`[TICKETING] Payment init failed for booking ${booking.id}, event ${d.event_id}`);
+          return [
+            {
+              type: 'text',
+              text: `Something went wrong setting up your payment. Please type *Hi* to try again.`,
+            },
+          ];
         }
 
         // Free event — send tickets before marking complete
@@ -570,7 +582,7 @@ export const ticketingFlow: FlowDefinition = {
 
             if (bookingCheckErr || !currentBooking) {
               console.error('[TICKETING] Failed to check booking status:', bookingCheckErr?.message);
-              return { valid: false, errorMessage: 'Oops, we hit a snag. Try again.' };
+              return { valid: false, errorMessage: 'Something went wrong on our end. Try again.' };
             }
 
             if (currentBooking.deposit_status === 'paid') {

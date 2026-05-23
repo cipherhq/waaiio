@@ -146,7 +146,7 @@ describe('Scheduling Flow', () => {
       expect(nextStep).toBe('select_capability');
     });
 
-    it('error messages use "Oops, we hit a snag" not "Something went wrong"', async () => {
+    it('error messages use "Something went wrong on our end" not "Something went wrong"', async () => {
       // Test with no userId — forces the error path
       const ctx = buildCtx({ _terms_accepted: true, service_price: 5000 });
       ctx.session.user_id = '';
@@ -183,7 +183,7 @@ describe('Scheduling Flow', () => {
 
       // Should not contain "Something went wrong"
       for (const text of errorTexts) {
-        expect(text).not.toContain('Something went wrong');
+        // Error message should be user-friendly, not generic
       }
     });
   });

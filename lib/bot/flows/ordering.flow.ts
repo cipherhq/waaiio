@@ -415,7 +415,7 @@ export const orderingFlow: FlowDefinition = {
         const axis = variantOptions[axisIndex];
 
         if (!axis) {
-          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
         }
 
         const messages: PromptMessage[] = [];
@@ -2241,7 +2241,7 @@ export const orderingFlow: FlowDefinition = {
 
         if (error || !quote) {
           logger.error('[ORDERING] Quote request creation failed:', error);
-          return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
         }
 
         // Notify business owner
@@ -2348,7 +2348,7 @@ export const orderingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Oops, we hit a snag. Send *Hi* to start fresh.' }];
+        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
 
         // Create order with new fields
         const orderPayload: Record<string, unknown> = {
@@ -2384,7 +2384,7 @@ export const orderingFlow: FlowDefinition = {
           .single();
 
         if (error || !order) {
-          return [{ type: 'text', text: 'Oops, we hit a snag creating your order. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start fresh.' }];
         }
 
         // Create order items (with addons) and decrement stock
