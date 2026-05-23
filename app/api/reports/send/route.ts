@@ -18,17 +18,17 @@ export async function POST(request: NextRequest) {
     if (!reportIds || !Array.isArray(reportIds) || reportIds.length === 0) {
       return NextResponse.json({ error: 'reportIds required' }, { status: 400 });
     }
+    if (!businessId) {
+      return NextResponse.json({ error: 'businessId required' }, { status: 400 });
+    }
 
     const supabase = createServiceClient();
 
-    // Verify business ownership
-    if (businessId) {
-      const { data: { user } } = await supabase.auth.getUser(request.headers.get('Authorization')?.replace('Bearer ', '') || '');
-      if (user) {
-        const { data: biz } = await supabase.from('businesses').select('id').eq('id', businessId).eq('owner_id', user.id).maybeSingle();
-        if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
-      }
-    }
+    // Verify business ownership (required — not optional)
+    const { data: { user } } = await supabase.auth.getUser(request.headers.get('Authorization')?.replace('Bearer ', '') || '');
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const { data: biz } = await supabase.from('businesses').select('id').eq('id', businessId).eq('owner_id', user.id).maybeSingle();
+    if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
     const resolver = new ChannelResolver(supabase);
     const results: { id: string; status: string }[] = [];
 

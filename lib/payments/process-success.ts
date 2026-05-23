@@ -149,7 +149,8 @@ export async function recordPlatformFee(
 
   const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial);
 
-  await supabase.from('platform_fees').insert({
+  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
+  const { error: feeErr } = await supabase.from('platform_fees').insert({
     business_id: businessId,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
@@ -160,6 +161,9 @@ export async function recordPlatformFee(
     fee_total: feeTotal,
     tier,
   });
+  if (feeErr) {
+    console.error('[PLATFORM-FEE] Insert error (possible duplicate):', feeErr.message);
+  }
 }
 
 /**

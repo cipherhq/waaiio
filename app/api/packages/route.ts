@@ -9,6 +9,15 @@ export async function GET(request: NextRequest) {
   const businessId = request.nextUrl.searchParams.get('business_id');
   if (!businessId) return NextResponse.json({ error: 'Missing business_id' }, { status: 400 });
 
+  // Verify ownership (defense-in-depth — RLS also enforces this)
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('id', businessId)
+    .eq('owner_id', user.id)
+    .single();
+  if (!biz) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
   const { data, error } = await supabase
     .from('service_packages')
     .select('*')

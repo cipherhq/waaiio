@@ -86,6 +86,16 @@ export async function POST(request: NextRequest) {
       if (!matchedPayment) return NextResponse.json({ received: true });
 
       if (paymentStatus === 'COMPLETED' && matchedPayment.status !== 'success') {
+        // Verify amount matches (Square amount is in cents)
+        const totalMoney = payment.total_money as { amount?: number } | undefined;
+        const squareAmountCents = (totalMoney?.amount as number) || 0;
+        const expectedCents = Math.round(matchedPayment.amount * 100);
+        if (squareAmountCents > 0 && Math.abs(squareAmountCents - expectedCents) > 1) {
+          console.error(`[SQUARE-WEBHOOK] Amount mismatch: Square=${squareAmountCents}, expected=${expectedCents} for payment ${matchedPayment.id}`);
+          await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', matchedPayment.id);
+          return NextResponse.json({ received: true, error: 'amount_mismatch' });
+        }
+
         const sourceType = payment.source_type as string | undefined;
 
         await supabase

@@ -85,6 +85,16 @@ export async function POST(request: NextRequest) {
           .single();
 
         if (payment && payment.status !== 'success') {
+          // Verify amount matches (Stripe amount_total is in cents)
+          const stripeAmountCents = (data.amount_total as number) || 0;
+          const stripeCurrency = ((data.currency as string) || '').toUpperCase();
+          // For NGN/GHS amounts are in kobo/pesewas (100x), for USD/GBP/CAD in cents (100x)
+          const expectedCents = Math.round(payment.amount * 100);
+          if (stripeAmountCents > 0 && Math.abs(stripeAmountCents - expectedCents) > 1) {
+            console.error(`[STRIPE-WEBHOOK] Amount mismatch: Stripe=${stripeAmountCents} (${stripeCurrency}), expected=${expectedCents} for payment ${payment.id}`);
+            await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', payment.id);
+            return NextResponse.json({ received: true, error: 'amount_mismatch' });
+          }
           await supabase
             .from('payments')
             .update({
