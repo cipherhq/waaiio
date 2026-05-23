@@ -12,6 +12,7 @@ import {
   CATEGORY_FLOW_MAP,
   formatCurrency,
   getPricingTiers,
+  BUSINESS_CATEGORIES,
   type BusinessCategoryKey,
   type SubscriptionTier,
   type CountryCode,
