@@ -25,6 +25,24 @@
       "skillPath": "posit-dev/describe-design/SKILL.md",
       "computedHash": "1c92f3d79e85979ff642ffeb358847b2129374a65f0370f20a90d027002bcc0f"
     },
+    "design-taste-frontend": {
+      "source": "leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/taste-skill/SKILL.md",
+      "computedHash": "9d1e82c5c409d2b0247245a005bc0f7e4447c0999b78dcea60f568c1ba4a6694"
+    },
+    "emil-design-eng": {
+      "source": "emilkowalski/skill",
+      "sourceType": "github",
+      "skillPath": "skills/emil-design-eng/SKILL.md",
+      "computedHash": "8bdf9e4e6de7a4969147bf4828a4ad2c5aacd9fba4b690b250a85e0467ca387d"
+    },
+    "emilkowal-animations": {
+      "source": "pproenca/dot-skills",
+      "sourceType": "github",
+      "skillPath": "skills/.experimental/emilkowal-animations/SKILL.md",
+      "computedHash": "698404822d129b5f267368f8f2d2bcaebe0e02a3c4547a80edfd1596369b7fa6"
+    },
     "fact-checker": {
       "source": "daymade/claude-code-skills",
       "sourceType": "github",
@@ -49,11 +67,23 @@
       "skillPath": "github-ops/SKILL.md",
       "computedHash": "03d359208695381fe511e4a805aa6ed0f89d604b7cf4e8496505674fdd55b5b9"
     },
+    "high-end-visual-design": {
+      "source": "leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/soft-skill/SKILL.md",
+      "computedHash": "7db385e4c5370e5a7fca9704a1361b056e4504ea6a03924bb86f33a4f00b5c73"
+    },
     "implement": {
       "source": "posit-dev/skills",
       "sourceType": "github",
       "skillPath": "posit-dev/implement/SKILL.md",
       "computedHash": "95ce2a603faf23b82de6f7d763f1a402a69890f79be7138b2665fd877238b50e"
+    },
+    "minimalist-ui": {
+      "source": "leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/minimalist-skill/SKILL.md",
+      "computedHash": "08873a3131d3be27bef9bf3304b310b16b44ca6e3561aebe532797be3443f6bd"
     },
     "pr-create": {
       "source": "posit-dev/skills",
@@ -79,6 +109,12 @@
       "skillPath": "qa-expert/SKILL.md",
       "computedHash": "cb6fafeb55b7e3eeabb69568ca8b80c6ba828c66eeffb3bbcc301029117349d4"
     },
+    "redesign-existing-projects": {
+      "source": "leonxlnx/taste-skill",
+      "sourceType": "github",
+      "skillPath": "skills/redesign-skill/SKILL.md",
+      "computedHash": "b405eee0e0e80fc243f731d9aa368bca307e356db7e6157d27101d369dac6726"
+    },
     "retrospective": {
       "source": "glebis/claude-skills",
       "sourceType": "github",
@@ -86,10 +122,10 @@
       "computedHash": "1eb3ff24edee674a83b9064baefdcdbe53a116f25c75cc1f345af81daa4bae40"
     },
     "skill-creator": {
-      "source": "daymade/claude-code-skills",
+      "source": "anthropics/skills",
       "sourceType": "github",
-      "skillPath": "daymade-skill/skill-creator/SKILL.md",
-      "computedHash": "70256d9e0b88bbdaef08c530da01d317026510369b99705d36d90513949ee9a0"
+      "skillPath": "skills/skill-creator/SKILL.md",
+      "computedHash": "5ea13a6d9f0d4bb694405d79acd00cadec0d21bb138c4dd10fcf3c500cb835c2"
     },
     "supabase": {
       "source": "supabase/agent-skills",
