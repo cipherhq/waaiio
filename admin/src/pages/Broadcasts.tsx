@@ -4,6 +4,8 @@ import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 
 type Channel = 'email' | 'whatsapp' | 'sms';
 type Audience = 'all_users' | 'all_businesses' | 'specific';
@@ -28,6 +30,8 @@ const CHANNEL_OPTIONS: { value: Channel; label: string }[] = [
 ];
 
 export default function Broadcasts() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   // Compose form
   const [channel, setChannel] = useState<Channel>('email');
   const [audience, setAudience] = useState<Audience>('all_users');
@@ -85,7 +89,7 @@ export default function Broadcasts() {
   }
 
   async function handleSend() {
-    if (!message) return;
+    if (!message || !canMutate) return;
     if (channel === 'email' && !subject) {
       alert('Subject is required for email broadcasts');
       return;

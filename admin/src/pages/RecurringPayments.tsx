@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -38,6 +40,8 @@ interface RecurringRecord {
 }
 
 export default function RecurringPayments() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   const [records, setRecords] = useState<RecurringRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -129,7 +133,7 @@ export default function RecurringPayments() {
   }).length;
 
   async function handlePause() {
-    if (!selected) return;
+    if (!selected || !canMutate) return;
     setActionSaving(true);
     try {
       const now = new Date().toISOString();
@@ -141,7 +145,7 @@ export default function RecurringPayments() {
   }
 
   async function handleResume() {
-    if (!selected) return;
+    if (!selected || !canMutate) return;
     setActionSaving(true);
     try {
       await adminDb.from('customer_subscriptions').update({ status: 'active', paused_at: null }).eq('id', selected.id);
@@ -152,7 +156,7 @@ export default function RecurringPayments() {
   }
 
   async function handleCancel() {
-    if (!selected || !confirm('Cancel this recurring subscription? This cannot be undone.')) return;
+    if (!selected || !canMutate || !confirm('Cancel this recurring subscription? This cannot be undone.')) return;
     setActionSaving(true);
     try {
       const now = new Date().toISOString();
@@ -164,7 +168,7 @@ export default function RecurringPayments() {
   }
 
   async function handleRetry() {
-    if (!selected) return;
+    if (!selected || !canMutate) return;
     setActionSaving(true);
     try {
       await adminDb.from('customer_subscriptions').update({ status: 'active', failure_count: 0 }).eq('id', selected.id);

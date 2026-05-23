@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { loadCountries, invalidateCache, type CountryRow } from '@/lib/countries';
 import { logAudit } from '@/lib/auditLog';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { SummaryCard } from '@/components/SummaryCard';
 import { Pagination } from '@/components/Pagination';
 import {
@@ -75,6 +77,8 @@ function rowToForm(r: CountryRow): FormState {
 }
 
 export default function Countries() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   const [countries, setCountries] = useState<CountryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -129,6 +133,7 @@ export default function Countries() {
   }
 
   async function handleSave() {
+    if (!canMutate) return;
     setSaving(true);
     try {
       const { data: session } = await supabase.auth.getSession();
@@ -176,7 +181,7 @@ export default function Countries() {
   }
 
   async function handleDelete(code: string) {
-    if (!confirm(`Delete country ${code}? This cannot be undone.`)) return;
+    if (!canMutate || !confirm(`Delete country ${code}? This cannot be undone.`)) return;
     setDeleting(code);
     try {
       const { error } = await adminDb.from('countries').delete().eq('code', code);

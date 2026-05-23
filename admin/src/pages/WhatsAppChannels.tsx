@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -44,6 +46,8 @@ interface BusinessOption {
 /* ─── Component ─── */
 
 export default function WhatsAppChannels() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   const [tab, setTab] = useState<'channels' | 'configs'>('channels');
 
   // Channels state
@@ -221,7 +225,7 @@ export default function WhatsAppChannels() {
 
   // Toggle config status
   async function handleToggleStatus() {
-    if (!selectedConfig) return;
+    if (!selectedConfig || !canMutate) return;
     setTogglingStatus(true);
 
     try {
@@ -245,7 +249,7 @@ export default function WhatsAppChannels() {
 
   // Save webhook URL
   async function handleSaveWebhook() {
-    if (!selectedConfig) return;
+    if (!selectedConfig || !canMutate) return;
     setSavingWebhook(true);
 
     try {

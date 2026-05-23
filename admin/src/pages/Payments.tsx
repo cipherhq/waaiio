@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { logAudit } from '@/lib/auditLog';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -34,6 +36,8 @@ interface PaymentRecord {
 }
 
 export default function Payments() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [refundRequests, setRefundRequests] = useState<Array<{ id: string; customer_name: string; customer_phone: string; amount: number; reason: string; status: string; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
@@ -264,7 +268,7 @@ export default function Payments() {
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!confirm('Approve this refund request?')) return;
+                      if (!canMutate || !confirm('Approve this refund request?')) return;
                       await adminDb.from('refund_requests').update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', req.id);
                       await loadData();
                     }}
@@ -274,7 +278,7 @@ export default function Payments() {
                   </button>
                   <button
                     onClick={async () => {
-                      if (!confirm('Reject this refund request?')) return;
+                      if (!canMutate || !confirm('Reject this refund request?')) return;
                       await adminDb.from('refund_requests').update({ status: 'rejected', reviewed_at: new Date().toISOString() }).eq('id', req.id);
                       await loadData();
                     }}

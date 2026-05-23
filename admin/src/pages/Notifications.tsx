@@ -6,6 +6,8 @@ import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
 import { sanitizeFilterValue } from '@/lib/sanitize';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 
 interface Notification {
   id: string;
@@ -28,6 +30,8 @@ interface ProfileMatch {
 }
 
 export default function Notifications() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState('all');
@@ -121,7 +125,7 @@ export default function Notifications() {
 
   // Send notification
   async function handleSend() {
-    if (!selectedUser || !sendTitle || !sendMessage) return;
+    if (!selectedUser || !sendTitle || !sendMessage || !canMutate) return;
     setSending(true);
 
     try {

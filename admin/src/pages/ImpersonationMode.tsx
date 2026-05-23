@@ -258,9 +258,15 @@ export default function ImpersonationMode() {
     setEditValue('');
   }
 
-  // Save inline edit
+  // Save inline edit — only allow safe fields
+  const EDITABLE_FIELDS = ['name', 'description', 'address', 'phone', 'email', 'slug', 'category', 'flow_type'];
+
   async function saveEdit() {
     if (!selected || !editingField || !sessionId) return;
+    if (!EDITABLE_FIELDS.includes(editingField)) {
+      alert(`Field "${editingField}" cannot be edited from impersonation mode.`);
+      return;
+    }
 
     setSaving(true);
     try {
