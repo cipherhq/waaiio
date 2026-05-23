@@ -44,6 +44,21 @@ If something breaks, check this log to find what changed and when.
 - Up to 500 event pages (`/e/[slug]`) and 500 business pages (`/b/[slug]`) included
 - Google and other crawlers can now discover and index public commerce pages
 
+### Design: Website elevated from 6/10 to premium quality
+- **Files:** `HomeClient.tsx`, `layout.tsx` (root + auth + marketing), `globals.css`, `tailwind.config.ts`
+- Hero headline: outcome-focused "Customers Book & Pay on WhatsApp — While You Sleep"
+- CTA hierarchy: primary (large accent) > secondary (ghost) > tertiary (small WhatsApp)
+- Avatar social proof: gradient initials instead of colored divs
+- Stats replaced with non-embarrassing numbers (89+ types, 30 capabilities)
+- Payment partners: grayscale-to-color hover effect
+- Section spacing py-24, alternating bg-white/bg-gray-50
+- Feature cards: gradient icon backgrounds, scale-on-hover
+- Testimonial metric: visible gradient treatment
+- FAQ: AnimatedSection + open-state bg
+- Auth layout: gradient background, glassmorphism header, copyright footer
+- Inter font variable properly wired with font smoothing
+- Scroll progress bar (brand→accent gradient)
+
 ### Fix: Inactive businesses blocked from public booking API
 - **File:** `app/api/bookings/public/create/route.ts`
 - Added `.eq('is_active', true)` filter — suspended businesses return 404
