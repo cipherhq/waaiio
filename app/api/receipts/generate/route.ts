@@ -4,17 +4,21 @@ import { generateReceiptPdf, generateHistoryPdf, generateAnnualStatementPdf } fr
 import type { HistoryRow } from '@/lib/pdf/receipt-generator';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify internal token (or allow if not configured — internal API only)
+    // Verify internal token — fail-closed if not configured
     const expectedToken = process.env.INTERNAL_API_TOKEN;
-    if (expectedToken) {
-      const token = request.headers.get('x-internal-token');
-      if (!token || token !== expectedToken) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
+    if (!expectedToken) {
+      logger.error('[RECEIPTS] INTERNAL_API_TOKEN not configured — rejecting request');
+      return NextResponse.json({ error: 'Service unavailable' }, { status: 503 });
+    }
+    const token = request.headers.get('x-internal-token') || '';
+    const { timingSafeEqual } = await import('crypto');
+    if (token.length !== expectedToken.length || !timingSafeEqual(Buffer.from(token), Buffer.from(expectedToken))) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { userId, type, phone, year } = await request.json();
@@ -103,9 +107,9 @@ async function handleReceipt(
     .limit(1)
     .maybeSingle();
 
-  // Fetch most recent campaign donation
-  const phoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const phoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  // Fetch most recent campaign donation — sanitize phone for .or() interpolation
+  const phoneP = sanitizeFilterValue(customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`);
+  const phoneN = sanitizeFilterValue(customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone);
   const { data: recentDonation } = await supabase
     .from('campaign_donations')
     .select('id, amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
@@ -355,8 +359,8 @@ async function handleHistory(
   }
 
   // Fetch campaign donations
-  const histPhoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const histPhoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const histPhoneP = sanitizeFilterValue(customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`);
+  const histPhoneN = sanitizeFilterValue(customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone);
   const { data: donations } = await supabase
     .from('campaign_donations')
     .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')
@@ -527,8 +531,8 @@ async function handleAnnual(
   }
 
   // Fetch campaign donations for the year
-  const annPhoneP = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
-  const annPhoneN = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const annPhoneP = sanitizeFilterValue(customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`);
+  const annPhoneN = sanitizeFilterValue(customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone);
   const { data: annualDonations } = await supabase
     .from('campaign_donations')
     .select('amount, reference_code, created_at, campaigns:campaign_id(name), businesses:business_id(name, country_code)')

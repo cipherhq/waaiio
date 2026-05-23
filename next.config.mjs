@@ -55,7 +55,7 @@ const nextConfig = {
       {
         source: '/api/health',
         headers: [
-          { key: 'Cache-Control', value: 'public, s-maxage=10, stale-while-revalidate=30' },
+          { key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate' },
         ],
       },
     ];

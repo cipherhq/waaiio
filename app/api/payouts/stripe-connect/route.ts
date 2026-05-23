@@ -53,7 +53,8 @@ export async function POST(request: NextRequest) {
     });
 
     if (account.error) {
-      return NextResponse.json({ error: account.error.message }, { status: 400 });
+      console.error('[STRIPE-CONNECT] Account creation error:', account.error.message);
+      return NextResponse.json({ error: 'Failed to create payout account. Please try again.' }, { status: 400 });
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
@@ -67,7 +68,8 @@ export async function POST(request: NextRequest) {
     });
 
     if (link.error) {
-      return NextResponse.json({ error: link.error.message }, { status: 400 });
+      console.error('[STRIPE-CONNECT] Onboarding link error:', link.error.message);
+      return NextResponse.json({ error: 'Failed to generate onboarding link. Please try again.' }, { status: 400 });
     }
 
     return NextResponse.json({ url: link.url });

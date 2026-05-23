@@ -71,8 +71,10 @@ export async function POST(request: NextRequest) {
       .update({ otp_attempts: (record.otp_attempts || 0) + 1 })
       .eq('id', record.id);
 
-    // Check code
-    if (record.otp_code !== otp) {
+    // Check code (timing-safe comparison)
+    const { timingSafeEqual } = await import('crypto');
+    const otpStr = String(otp).trim();
+    if (otpStr.length !== record.otp_code.length || !timingSafeEqual(Buffer.from(record.otp_code), Buffer.from(otpStr))) {
       return NextResponse.json({ error: 'Invalid code' }, { status: 400 });
     }
 

@@ -92,7 +92,8 @@ export async function POST(request: NextRequest) {
     if (!error) {
       inserted += batch.length;
     } else {
-      errors.push({ row: i + 1, reason: `Batch insert failed: ${error.message}` });
+      console.error('[PRODUCTS-BULK] Batch insert error:', error.message);
+      errors.push({ row: i + 1, reason: 'Batch insert failed. Check product data and try again.' });
     }
   }
 

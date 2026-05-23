@@ -64,7 +64,8 @@ function createLogger(context?: LogContext): Logger {
       if (isDev) console.log(...formatArgs('DEBUG', args));
     },
     info(...args: unknown[]) {
-      if (isDev) console.log(...formatArgs('INFO', args));
+      // Info is visible in production — needed for payment confirmations, cron summaries, etc.
+      console.log(...formatArgs('INFO', args));
     },
     warn(...args: unknown[]) {
       console.warn(...formatArgs('WARN', args));

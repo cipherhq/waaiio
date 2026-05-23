@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 
 /**
  * Verify that a cron request is authorized.
  * Accepts requests from:
  * 1. Vercel Cron (Authorization: Bearer <CRON_SECRET>)
- * 2. Requests with matching CRON_SECRET header
- * 3. If CRON_SECRET is not set, all requests are allowed (dev mode)
+ * 2. If CRON_SECRET is not set in production, blocks all requests (fail-closed)
  */
 export function verifyCronAuth(request: NextRequest): NextResponse | null {
   const secret = process.env.CRON_SECRET;
@@ -18,8 +18,11 @@ export function verifyCronAuth(request: NextRequest): NextResponse | null {
     return null; // Allow in local development only
   }
 
-  const authHeader = request.headers.get('authorization');
-  if (authHeader === `Bearer ${secret}`) return null; // Vercel cron
+  const authHeader = request.headers.get('authorization') || '';
+  const expected = `Bearer ${secret}`;
+  if (authHeader.length === expected.length && timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected))) {
+    return null; // Authorized
+  }
 
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 }

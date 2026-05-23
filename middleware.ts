@@ -124,6 +124,8 @@ export async function middleware(request: NextRequest) {
       || request.nextUrl.pathname.startsWith('/api/payments/square-webhook')
       || request.nextUrl.pathname.startsWith('/api/payments/paypal-webhook')
       || request.nextUrl.pathname.startsWith('/api/payments/byo-webhook')
+      || request.nextUrl.pathname.startsWith('/api/payments/webhook')
+      || request.nextUrl.pathname.startsWith('/api/payments/flutterwave-webhook')
       || request.nextUrl.pathname.startsWith('/api/cron');
 
     if (!isWebhookRoute) {

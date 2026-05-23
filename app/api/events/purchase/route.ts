@@ -67,6 +67,7 @@ export async function POST(request: NextRequest) {
     `)
     .eq('slug', eventSlug)
     .eq('status', 'published')
+    .gte('date', new Date().toISOString().split('T')[0])
     .single();
 
   if (eventError || !event) {
