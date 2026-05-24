@@ -117,10 +117,20 @@ const selectCapabilityStep: FlowStepConfig = {
             .eq('business_id', businessId).eq('status', 'active');
           return [cap, (count || 0) > 0];
         }
+        case 'reservation': {
+          const { count } = await ctx.supabase.from('properties').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
+          return [cap, (count || 0) > 0];
+        }
+        case 'table_reservation': {
+          const { count } = await ctx.supabase.from('services').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
+          return [cap, (count || 0) > 0];
+        }
         case 'waitlist':
           return [cap, false]; // waitlist is never shown as a menu option — triggered automatically when no slots
         default:
-          return [cap, true]; // chat, queue — always available
+          return [cap, true]; // chat, queue, payment — always available
       }
     }));
     userFacing = checks.filter(([, hasData]) => hasData).map(([cap]) => cap);
@@ -379,8 +389,8 @@ const myAccountMenuStep: FlowStepConfig = {
       { title: 'My Invoices', description: 'View and pay invoices', postbackText: 'acct_invoices', show: hasCapability('invoice') },
       // My Contracts — show if whatsapp_sign capability enabled
       { title: 'My Contracts', description: 'Sign or view contracts', postbackText: 'acct_contracts', show: hasCapability('whatsapp_sign') },
-      // My Quotes — always show (generic)
-      { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes', show: true },
+      // My Quotes — show if estimates capability enabled
+      { title: 'My Quotes', description: 'Price request status', postbackText: 'acct_quotes', show: hasCapability('estimates') },
       // My Points — show if loyalty capability enabled
       { title: 'My Points', description: 'Loyalty balance', postbackText: 'acct_loyalty', show: hasCapability('loyalty') },
       // Subscriptions — show if recurring capability enabled

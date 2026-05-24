@@ -41,11 +41,11 @@ describe('My Account Menu', () => {
     const step = getStep(capabilitySelectionFlow, 'my_account_menu');
 
     it('shows menu items filtered by capabilities', async () => {
-      // With all capabilities enabled, should show all 9 items
+      // With all capabilities enabled, should show all items
       const ctx = createMockContext({
         session: {
           id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu',
-          session_data: { capabilities: ['scheduling', 'ordering', 'giving', 'invoice', 'whatsapp_sign', 'loyalty', 'recurring'] },
+          session_data: { capabilities: ['scheduling', 'ordering', 'giving', 'invoice', 'whatsapp_sign', 'loyalty', 'recurring', 'estimates'] },
         },
       });
       const messages = await step.prompt(ctx);

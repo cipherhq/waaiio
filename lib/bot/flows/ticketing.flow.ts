@@ -6,6 +6,7 @@ import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
 import { notifyOwnerNewTicketSale } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
+import { handlePostCompletion } from './shared/post-completion';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
 
@@ -725,6 +726,20 @@ export const ticketingFlow: FlowDefinition = {
                 tier: ctx.business.subscription_tier as SubscriptionTier,
                 isInTrial,
               }).catch(err => console.error('[TICKETING] recordPlatformFee error:', err));
+
+              // Post-completion: loyalty points, feedback request, referral tracking
+              handlePostCompletion({
+                supabase: ctx.supabase,
+                businessId: ctx.business.id,
+                customerPhone: ctx.from,
+                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim() || null,
+                serviceType: 'ticketing',
+                referenceId: d.booking_id as string,
+                sender: ctx.sender,
+                amountPaid: d.total_amount as number,
+                serviceName: d.event_name as string,
+                referenceCode: d.reference_code as string,
+              }).catch(err => console.error('[TICKETING] Post-completion error:', err));
             }
 
             return { valid: true, data: { _action: 'payment_confirmed' } };
