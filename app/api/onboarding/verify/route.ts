@@ -78,7 +78,8 @@ export async function POST(request: NextRequest) {
     const periodEnd = new Date();
     periodEnd.setDate(periodEnd.getDate() + 30);
 
-    await service.from('subscriptions').insert({
+    // Upsert: one subscription per business (prevent duplicates on re-onboarding)
+    await service.from('subscriptions').upsert({
       business_id: businessId,
       plan,
       status: 'active',
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
       paystack_customer_code: null,
       current_period_start: new Date().toISOString(),
       current_period_end: periodEnd.toISOString(),
-    });
+    }, { onConflict: 'business_id' });
 
     await service
       .from('businesses')
