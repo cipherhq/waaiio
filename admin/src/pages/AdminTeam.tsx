@@ -21,7 +21,9 @@ interface AdminProfile {
 
 const ADMIN_ROLES = [
   { value: 'admin', label: 'Admin', desc: 'Full access — can manage everything' },
-  { value: 'support', label: 'Support', desc: 'Read-only access — can view businesses, bookings, and respond to support tickets' },
+  { value: 'support', label: 'Support', desc: 'View businesses, bookings, tickets, chat — respond to customer issues' },
+  { value: 'finance', label: 'Finance', desc: 'View payments, payouts, revenue, subscriptions, giving — financial oversight' },
+  { value: 'operations', label: 'Operations', desc: 'View businesses, bookings, orders, events, bot sessions, WhatsApp channels' },
 ];
 
 export default function AdminTeam() {
@@ -54,7 +56,7 @@ export default function AdminTeam() {
       const { data } = await adminDb
         .from('profiles')
         .select('id, email, first_name, last_name, created_at, last_sign_in_at, role')
-        .in('role', ['admin', 'support'])
+        .in('role', ['admin', 'support', 'finance', 'operations'])
         .order('created_at', { ascending: false });
 
       setAdmins(data || []);
@@ -249,8 +251,13 @@ export default function AdminTeam() {
                   </td>
                   <td className="px-4 py-3 text-gray-600">{admin.email}</td>
                   <td className="px-4 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${admin.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
-                      {admin.role === 'admin' ? 'Admin' : 'Support'}
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                      admin.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                      admin.role === 'finance' ? 'bg-green-100 text-green-700' :
+                      admin.role === 'operations' ? 'bg-amber-100 text-amber-700' :
+                      'bg-blue-100 text-blue-700'
+                    }`}>
+                      {ADMIN_ROLES.find(r => r.value === admin.role)?.label || admin.role}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-500">{fmtDate(admin.created_at)}</td>

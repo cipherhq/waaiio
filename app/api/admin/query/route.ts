@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
     .eq('id', user.id)
     .maybeSingle();
 
-  if (!profile || !['admin', 'support'].includes(profile.role)) {
+  if (!profile || !['admin', 'support', 'finance', 'operations'].includes(profile.role)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
 

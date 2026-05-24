@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-export type AdminRole = 'admin' | 'support';
+export type AdminRole = 'admin' | 'support' | 'finance' | 'operations';
 
 export interface AdminSession {
   userId: string;
@@ -8,7 +8,7 @@ export interface AdminSession {
   role: AdminRole;
 }
 
-const ALLOWED_ROLES: AdminRole[] = ['admin', 'support'];
+const ALLOWED_ROLES: AdminRole[] = ['admin', 'support', 'finance', 'operations'];
 
 export async function requireAdminSession(): Promise<AdminSession> {
   const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
