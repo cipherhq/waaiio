@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
       business_id: businessId,
       plan,
       status: 'active',
-      amount: amountKobo ? Math.round(amountKobo / 100) : (tier.price || 15000),
+      amount: amountKobo ? Math.round(amountKobo / 100) : (tier.price ?? 0),
       paystack_subscription_code: null,
       paystack_customer_code: null,
       current_period_start: new Date().toISOString(),
