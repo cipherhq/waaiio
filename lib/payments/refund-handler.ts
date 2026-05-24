@@ -25,7 +25,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   // 1. Load payment record
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
-    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, metadata')
+    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, business_id, metadata')
     .eq('id', paymentId)
     .single();
 
@@ -50,7 +50,12 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     return { success: false, errorMessage: `Refund amount (${amount}) exceeds remaining refundable amount (${remaining})` };
   }
 
-  // 3. Check if business uses direct_split payout mode
+  // 3. Cross-validate businessId matches the payment's actual business
+  if (payment.business_id && payment.business_id !== businessId) {
+    return { success: false, errorMessage: 'Business ID does not match the payment record' };
+  }
+
+  // 4. Check if business uses direct_split payout mode
   const { data: business } = await supabase
     .from('businesses')
     .select('payout_mode')

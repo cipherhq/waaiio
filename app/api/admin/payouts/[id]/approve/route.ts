@@ -111,6 +111,30 @@ export async function POST(
     }, { status: 400 });
   }
 
+  // Re-verify balance before approving — prevent overpayment
+  const { data: balancePayments } = await supabase
+    .from('platform_fees')
+    .select('transaction_amount, fee_total')
+    .eq('business_id', payout.business_id)
+    .is('refunded_at', null);
+
+  const { data: priorPayouts } = await supabase
+    .from('business_payouts')
+    .select('net_amount')
+    .eq('business_id', payout.business_id)
+    .in('status', ['paid', 'processing', 'approved'])
+    .neq('id', id);
+
+  const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
+  const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
+  const availableBalance = totalEarned - totalPaidOut;
+
+  if (payout.net_amount > availableBalance + 0.01) {
+    return NextResponse.json({
+      error: `Payout amount (${payout.net_amount}) exceeds available balance (${availableBalance.toFixed(2)}). Cannot approve.`,
+    }, { status: 400 });
+  }
+
   try {
     let gatewayTransferCode: string | null = null;
     let finalStatus = 'paid';

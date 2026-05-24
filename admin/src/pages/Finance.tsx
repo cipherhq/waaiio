@@ -269,7 +269,7 @@ export default function Finance() {
     return Array.from(byMonthCur.values())
       .sort((a, b) => b.month.localeCompare(a.month) || a.currency.localeCompare(b.currency))
       .slice(0, 24)
-      .map(row => ({ ...row, net: row.fees }));
+      .map(row => ({ ...row, net: row.gross - row.refunds - row.fees }));
   }, [payments, fees, payouts, refunds, bizCurrencyMap]);
 
   // Category revenue breakdown (per currency)
