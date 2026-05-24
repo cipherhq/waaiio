@@ -15,8 +15,8 @@ function corsHeaders(origin?: string | null) {
   };
 }
 
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: corsHeaders() });
+export async function OPTIONS(request: NextRequest) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(request.headers.get('origin')) });
 }
 
 /**
@@ -32,17 +32,20 @@ export async function OPTIONS() {
  * - count: 'exact' | undefined (optional — head count only)
  */
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  const cors = corsHeaders(origin);
+
   // Verify admin auth
   const authHeader = request.headers.get('Authorization');
   const token = authHeader?.replace('Bearer ', '');
   if (!token) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
 
   const supabase = createServiceClient();
   const { data: { user } } = await supabase.auth.getUser(token);
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
 
   const { data: profile } = await supabase
@@ -52,7 +55,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!profile || !['admin', 'support'].includes(profile.role)) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
   }
 
   try {
@@ -60,7 +63,7 @@ export async function POST(request: NextRequest) {
     const { table, select = '*', filters = [], order, limit, count } = body;
 
     if (!table || typeof table !== 'string') {
-      return NextResponse.json({ error: 'Missing table' }, { status: 400, headers: corsHeaders() });
+      return NextResponse.json({ error: 'Missing table' }, { status: 400, headers: cors });
     }
 
     // Whitelist allowed tables — admin gets full access, support gets restricted
@@ -92,7 +95,7 @@ export async function POST(request: NextRequest) {
     const allowedTables = profile.role === 'admin' ? ADMIN_TABLES : SUPPORT_TABLES;
 
     if (!allowedTables.includes(table)) {
-      return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: corsHeaders() });
+      return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
     // Support role: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
@@ -136,12 +139,12 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       logger.error('[ADMIN QUERY] db error:', error);
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders() });
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
-    return NextResponse.json({ data, count: rowCount }, { headers: corsHeaders() });
+    return NextResponse.json({ data, count: rowCount }, { headers: cors });
   } catch (error) {
     logger.error('[ADMIN QUERY] error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders() });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
   }
 }
