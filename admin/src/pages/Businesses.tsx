@@ -116,6 +116,14 @@ export default function Businesses() {
   const [selectedServiceStats, setSelectedServiceStats] = useState<ServiceStats | null>(null);
   const [selectedCaps, setSelectedCaps] = useState<string[]>([]);
   const [selectedOverrides, setSelectedOverrides] = useState<string[]>([]);
+  const [selectedFinancials, setSelectedFinancials] = useState<{
+    totalRevenue: number;
+    totalFees: number;
+    totalPayouts: number;
+    totalRefunds: number;
+    bookingCount: number;
+    payoutHistory: Array<{ id: string; net_amount: number; status: string; period_start: string; period_end: string; paid_at: string | null }>;
+  } | null>(null);
   const [capSaving, setCapSaving] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState('');
   const [tierSaving, setTierSaving] = useState(false);
@@ -160,6 +168,7 @@ export default function Businesses() {
       setSelectedServiceStats(null);
       setSelectedCaps([]);
       setSelectedOverrides([]);
+      setSelectedFinancials(null);
       setSelectedTier('');
       setSelectedStatus('');
       return;
@@ -200,6 +209,25 @@ export default function Businesses() {
       .select('capability')
       .eq('business_id', selected.id)
       .then(({ data }) => setSelectedOverrides((data || []).map(r => r.capability)));
+
+    // Load financial summary
+    Promise.all([
+      adminDb.from('payments').select('amount').eq('business_id', selected.id).eq('status', 'success'),
+      adminDb.from('platform_fees').select('fee_total').eq('business_id', selected.id).is('refunded_at', null),
+      adminDb.from('business_payouts').select('net_amount, status').eq('business_id', selected.id).in('status', ['paid', 'processing']),
+      adminDb.from('payments').select('refund_amount').eq('business_id', selected.id).gt('refund_amount', 0),
+      adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', selected.id),
+      adminDb.from('business_payouts').select('id, net_amount, status, period_start, period_end, paid_at').eq('business_id', selected.id).order('created_at', { ascending: false }).limit(10),
+    ]).then(([payments, fees, payouts, refunds, bookings, payoutHistory]) => {
+      setSelectedFinancials({
+        totalRevenue: (payments.data || []).reduce((sum, p) => sum + Number(p.amount || 0), 0),
+        totalFees: (fees.data || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0),
+        totalPayouts: (payouts.data || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
+        totalRefunds: (refunds.data || []).reduce((sum, r) => sum + Number(r.refund_amount || 0), 0),
+        bookingCount: bookings.count || 0,
+        payoutHistory: payoutHistory.data || [],
+      });
+    });
   }, [selected]);
 
   async function handleTierChange() {
@@ -683,6 +711,52 @@ export default function Businesses() {
                   <DetailRow label="Recurring Services" value={String(selectedServiceStats.recurring)} />
                   <DetailRow label="Featured Services" value={String(selectedServiceStats.featured)} />
                 </div>
+              </div>
+            )}
+
+            {/* Financial Summary */}
+            {selectedFinancials && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Financial Summary</p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-lg bg-white p-3 text-center">
+                    <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue)}</p>
+                    <p className="text-[10px] text-gray-500">Total Revenue</p>
+                  </div>
+                  <div className="rounded-lg bg-white p-3 text-center">
+                    <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees)}</p>
+                    <p className="text-[10px] text-gray-500">Platform Fees</p>
+                  </div>
+                  <div className="rounded-lg bg-white p-3 text-center">
+                    <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts)}</p>
+                    <p className="text-[10px] text-gray-500">Total Payouts</p>
+                  </div>
+                  <div className="rounded-lg bg-white p-3 text-center">
+                    <p className="text-lg font-bold text-red-500">{fmtCurrency(selectedFinancials.totalRefunds)}</p>
+                    <p className="text-[10px] text-gray-500">Refunds</p>
+                  </div>
+                </div>
+                <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
+                  <span>{selectedFinancials.bookingCount} total bookings</span>
+                  <span>Net: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds)}</span>
+                  <span>Balance: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds - selectedFinancials.totalPayouts)}</span>
+                </div>
+
+                {/* Payout History */}
+                {selectedFinancials.payoutHistory.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase mb-1">Recent Payouts</p>
+                    <div className="space-y-1">
+                      {selectedFinancials.payoutHistory.map(p => (
+                        <div key={p.id} className="flex items-center justify-between rounded bg-white px-2 py-1.5 text-xs">
+                          <span className="text-gray-600">{fmtDate(p.period_start)} — {fmtDate(p.period_end)}</span>
+                          <span className="font-medium text-gray-900">{fmtCurrency(Number(p.net_amount))}</span>
+                          <StatusBadge status={p.status} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
