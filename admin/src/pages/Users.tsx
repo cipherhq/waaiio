@@ -65,6 +65,7 @@ export default function UserManagement() {
         .order('created_at', { ascending: false })
         .limit(500);
 
+      console.log('[Users] Session user:', sessionData.session.user.email, 'Profiles returned:', data?.length ?? 0, error ? 'ERROR: ' + error.message : 'OK');
       if (error) console.error('Profiles query error:', error);
       setProfiles(data || []);
     } catch (error) {
