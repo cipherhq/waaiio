@@ -67,6 +67,81 @@ function formatValue(val: unknown): string {
   return JSON.stringify(val, null, 2);
 }
 
+/** Render a friendly editor based on the setting's value type */
+function renderSettingEditor(
+  setting: PlatformSetting,
+  currentVal: string,
+  changed: boolean,
+  onChange: (val: string) => void,
+) {
+  const borderClass = changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50';
+
+  // Boolean toggle (maintenance_mode, etc.)
+  if (setting.value === true || setting.value === false) {
+    const isOn = currentVal === 'true';
+    return (
+      <button
+        onClick={() => onChange(isOn ? 'false' : 'true')}
+        className={`relative h-7 w-14 rounded-full transition ${isOn ? 'bg-brand' : 'bg-gray-300'}`}
+      >
+        <div className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-all" style={{ left: isOn ? '30px' : '2px' }} />
+        <span className="sr-only">{isOn ? 'Enabled' : 'Disabled'}</span>
+      </button>
+    );
+  }
+
+  // Simple string or number
+  if (typeof setting.value !== 'object' || setting.value === null) {
+    return (
+      <input
+        type={typeof setting.value === 'number' ? 'number' : 'text'}
+        value={currentVal}
+        onChange={e => onChange(e.target.value)}
+        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none transition ${borderClass} focus:border-brand`}
+      />
+    );
+  }
+
+  // Flat key-value object (e.g., contact_emails: { dpo: "email", support: "email" })
+  const parsed = (() => { try { return JSON.parse(currentVal); } catch { return null; } })();
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    const isFlat = entries.every(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean');
+
+    if (isFlat) {
+      return (
+        <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
+          {entries.map(([k, v]) => (
+            <div key={k} className="flex items-center gap-2">
+              <label className="w-32 text-xs font-medium text-gray-500 capitalize shrink-0">{k.replace(/_/g, ' ')}</label>
+              <input
+                type="text"
+                value={String(v)}
+                onChange={e => {
+                  const updated = { ...parsed, [k]: e.target.value };
+                  onChange(JSON.stringify(updated, null, 2));
+                }}
+                className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+              />
+            </div>
+          ))}
+        </div>
+      );
+    }
+  }
+
+  // Fallback: JSON textarea with line count
+  const lines = currentVal.split('\n').length;
+  return (
+    <textarea
+      value={currentVal}
+      onChange={e => onChange(e.target.value)}
+      rows={Math.min(Math.max(3, lines), 12)}
+      className={`w-full rounded-lg border px-3 py-2 font-mono text-xs outline-none transition ${borderClass} focus:border-brand`}
+    />
+  );
+}
+
 export default function PlatformSettings() {
   const session = useAdminSession();
   const isFullAdmin = session?.role === 'admin';
@@ -275,7 +350,7 @@ export default function PlatformSettings() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Platform Settings</h1>
-          <p className="mt-1 text-sm text-gray-500">Manage database-backed platform configuration</p>
+          <p className="mt-1 text-sm text-gray-500">Configure how the platform works — emails, greetings, pricing, and more</p>
         </div>
         <button
           onClick={() => setShowAdd(true)}
@@ -404,21 +479,8 @@ export default function PlatformSettings() {
                       {setting.description && (
                         <p className="mb-2 text-xs text-gray-500">{setting.description}</p>
                       )}
-                      {isSimple ? (
-                        <input
-                          type="text"
-                          value={val}
-                          onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
-                          className={`w-full rounded-lg border px-3 py-2 text-sm outline-none transition ${changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50'} focus:border-brand`}
-                        />
-                      ) : (
-                        <textarea
-                          value={val}
-                          onChange={e => setEdits(prev => ({ ...prev, [setting.key]: e.target.value }))}
-                          rows={Math.min(Math.max(3, lines), 12)}
-                          className={`w-full rounded-lg border px-3 py-2 font-mono text-xs outline-none transition ${changed ? 'border-brand bg-brand/5' : 'border-gray-200 bg-gray-50'} focus:border-brand`}
-                        />
-                      )}
+                      {/* Smart editor based on value type */}
+                      {renderSettingEditor(setting, val, changed, (newVal) => setEdits(prev => ({ ...prev, [setting.key]: newVal })))}
                       {setting.updated_at && (
                         <p className="mt-1 text-xs text-gray-400">Updated {fmtDateTime(setting.updated_at)}</p>
                       )}
