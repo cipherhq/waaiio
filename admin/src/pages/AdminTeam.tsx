@@ -14,9 +14,15 @@ interface AdminProfile {
   email: string;
   first_name: string | null;
   last_name: string | null;
+  role?: string;
   created_at: string;
   last_sign_in_at: string | null;
 }
+
+const ADMIN_ROLES = [
+  { value: 'admin', label: 'Admin', desc: 'Full access — can manage everything' },
+  { value: 'support', label: 'Support', desc: 'Read-only access — can view businesses, bookings, and respond to support tickets' },
+];
 
 export default function AdminTeam() {
   const session = useAdminSession();
@@ -40,13 +46,15 @@ export default function AdminTeam() {
   const [inviteError, setInviteError] = useState('');
   const [inviteSuccess, setInviteSuccess] = useState('');
 
+  const [inviteRole, setInviteRole] = useState<string>('support');
+
   async function loadData() {
     setLoading(true);
     try {
       const { data } = await adminDb
         .from('profiles')
-        .select('id, email, first_name, last_name, created_at, last_sign_in_at')
-        .eq('role', 'admin')
+        .select('id, email, first_name, last_name, created_at, last_sign_in_at, role')
+        .in('role', ['admin', 'support'])
         .order('created_at', { ascending: false });
 
       setAdmins(data || []);
@@ -78,59 +86,58 @@ export default function AdminTeam() {
 
       if (lookupError) throw lookupError;
 
+      const roleLabel = ADMIN_ROLES.find(r => r.value === inviteRole)?.label || inviteRole;
+
       if (existing) {
-        // Promote existing user
-        if (existing.role === 'admin') {
-          setInviteError('This user is already an admin.');
+        if (existing.role === inviteRole) {
+          setInviteError(`This user already has the ${roleLabel} role.`);
           return;
         }
 
         const { error: updateError } = await adminDb
           .from('profiles')
-          .update({ role: 'admin' })
+          .update({ role: inviteRole })
           .eq('id', existing.id);
 
         if (updateError) throw updateError;
 
         await logAudit({
-          action: 'promote_to_admin',
+          action: 'change_team_role',
           entity_type: 'profile',
           entity_id: existing.id,
           details: {
             email: existing.email,
             previous_role: existing.role,
+            new_role: inviteRole,
           },
         });
 
-        setInviteSuccess(`${existing.email} has been promoted to admin.`);
+        setInviteSuccess(`${existing.email} has been assigned the ${roleLabel} role.`);
       } else {
-        // No existing user — create a placeholder profile entry
-        // The user will need to sign up separately with this email
         const { error: insertError } = await adminDb
           .from('profiles')
           .insert({
             email: inviteEmail.trim().toLowerCase(),
             first_name: inviteFirstName.trim() || null,
             last_name: inviteLastName.trim() || null,
-            role: 'admin',
+            role: inviteRole,
           });
 
         if (insertError) throw insertError;
 
         await logAudit({
-          action: 'invite_admin',
+          action: 'invite_team_member',
           entity_type: 'profile',
           entity_id: inviteEmail.trim().toLowerCase(),
           details: {
             email: inviteEmail.trim().toLowerCase(),
-            first_name: inviteFirstName.trim(),
-            last_name: inviteLastName.trim(),
+            role: inviteRole,
             note: 'Placeholder profile created — user must sign up separately',
           },
         });
 
         setInviteSuccess(
-          `Admin profile created for ${inviteEmail.trim()}. The user must sign up with this email to gain access.`
+          `${roleLabel} profile created for ${inviteEmail.trim()}. They must sign up at admin.waaiio.com with this email to gain access.`
         );
       }
 
@@ -204,13 +211,13 @@ export default function AdminTeam() {
           className="flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600"
         >
           <UserPlus className="h-4 w-4" />
-          Add Admin
+          Add Team Member
         </button>
       </div>
 
       {/* Summary Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SummaryCard label="Total Admins" value={admins.length} icon={Shield} color="indigo" />
+        <SummaryCard label="Total Team" value={admins.length} icon={Shield} color="indigo" />
       </div>
 
       {/* Table */}
@@ -223,6 +230,7 @@ export default function AdminTeam() {
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Name</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Email</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Role</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Created</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Last Login</th>
               </tr>
@@ -240,6 +248,11 @@ export default function AdminTeam() {
                       : '—'}
                   </td>
                   <td className="px-4 py-3 text-gray-600">{admin.email}</td>
+                  <td className="px-4 py-3">
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${admin.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                      {admin.role === 'admin' ? 'Admin' : 'Support'}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-gray-500">{fmtDate(admin.created_at)}</td>
                   <td className="px-4 py-3 text-gray-500">
                     {admin.last_sign_in_at ? fmtRelative(admin.last_sign_in_at) : '—'}
@@ -294,7 +307,7 @@ export default function AdminTeam() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-gray-900">Add Admin</h3>
+              <h3 className="text-lg font-semibold text-gray-900">Add Team Member</h3>
               <button onClick={() => setShowInvite(false)} className="text-gray-400 hover:text-gray-600">
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -303,10 +316,24 @@ export default function AdminTeam() {
             </div>
 
             <p className="mt-2 text-sm text-gray-500">
-              If the email matches an existing user, they will be promoted to admin. Otherwise, a placeholder profile will be created and they must sign up separately.
+              If the email matches an existing user, their role will be updated. Otherwise, a placeholder profile will be created and they must sign up at admin.waaiio.com.
             </p>
 
             <div className="mt-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Role</label>
+                <div className="mt-1 space-y-2">
+                  {ADMIN_ROLES.map(r => (
+                    <label key={r.value} className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition ${inviteRole === r.value ? 'border-brand bg-brand-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                      <input type="radio" name="role" value={r.value} checked={inviteRole === r.value} onChange={() => setInviteRole(r.value)} className="text-brand focus:ring-brand" />
+                      <div>
+                        <span className="text-sm font-medium text-gray-900">{r.label}</span>
+                        <p className="text-xs text-gray-500">{r.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700">Email</label>
                 <input
@@ -359,7 +386,7 @@ export default function AdminTeam() {
                 disabled={inviting || !inviteEmail.trim()}
                 className="flex-1 rounded-xl bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
               >
-                {inviting ? 'Adding...' : 'Add Admin'}
+                {inviting ? 'Adding...' : 'Add Team Member'}
               </button>
               <button
                 onClick={() => setShowInvite(false)}
