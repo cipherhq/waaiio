@@ -39,7 +39,7 @@ export default function Payments() {
   const adminSession = useAdminSession();
   const canMutate = isFullAdmin(adminSession);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; customer_name: string; customer_phone: string; amount: number; reason: string; status: string; created_at: string }>>([]);
+  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; payment_id: string; business_id: string; customer_name: string; customer_phone: string; amount: number; reason: string; status: string; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -268,13 +268,28 @@ export default function Payments() {
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!canMutate || !confirm('Approve this refund request?')) return;
-                      await adminDb.from('refund_requests').update({ status: 'approved', reviewed_at: new Date().toISOString() }).eq('id', req.id);
-                      await loadData();
+                      if (!canMutate || !confirm(`Approve and process refund of ${fmtCurrency(req.amount)} to ${req.customer_name || req.customer_phone}?`)) return;
+                      try {
+                        // Call the actual refund API to process the gateway refund
+                        const apiUrl = import.meta.env.VITE_API_URL || '';
+                        const { data: session } = await supabase.auth.getSession();
+                        const token = session?.session?.access_token;
+                        const res = await fetch(`${apiUrl}/api/admin/payments/refund`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                          body: JSON.stringify({ paymentId: req.payment_id, businessId: req.business_id, amount: req.amount, reason: req.reason || 'Approved refund request' }),
+                        });
+                        const data = await res.json();
+                        if (!res.ok) { alert(data.error || 'Refund failed'); return; }
+                        // Mark request as approved
+                        await adminDb.from('refund_requests').update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: session?.session?.user?.id }).eq('id', req.id);
+                        await logAudit({ action: 'approve_refund_request', entity_type: 'refund_request', entity_id: req.id, details: { payment_id: req.payment_id, amount: req.amount } });
+                        await loadData();
+                      } catch { alert('Failed to process refund'); }
                     }}
                     className="rounded px-2 py-1 text-xs font-medium text-green-700 bg-green-100 hover:bg-green-200"
                   >
-                    Approve
+                    Approve & Refund
                   </button>
                   <button
                     onClick={async () => {
