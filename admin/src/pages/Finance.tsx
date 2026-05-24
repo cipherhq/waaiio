@@ -439,7 +439,7 @@ export default function Finance() {
                   <span className="text-gray-600 capitalize">{gw}</span>
                 </div>
                 <div className="text-right">
-                  <span className="font-medium text-gray-900">{data.count} txns</span>
+                  <span className="font-medium text-gray-900">{data.count} payments</span>
                   <span className="ml-2 text-gray-500">({formatMoney(data.amount)})</span>
                 </div>
               </div>
