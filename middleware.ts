@@ -73,6 +73,8 @@ export async function middleware(request: NextRequest) {
     const origin = request.headers.get('origin') || '';
     const allowedOrigins = [
       process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+      'https://admin.waaiio.com',
+      'https://admin-staging.waaiio.com',
       'http://localhost:8083', // dev
     ];
     if (!allowedOrigins.includes(origin)) {
@@ -102,6 +104,8 @@ export async function middleware(request: NextRequest) {
       // Include both www and non-www variants
       appOrigin.includes('www.') ? appOrigin.replace('www.', '') : appOrigin.replace('://', '://www.'),
       process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+      'https://admin.waaiio.com',
+      'https://admin-staging.waaiio.com',
       'http://localhost:3000',
       'http://localhost:8083',
     ];
@@ -198,12 +202,15 @@ export async function middleware(request: NextRequest) {
     const origin = request.headers.get('origin') || '';
     const allowedOrigins = [
       process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+      'https://admin.waaiio.com',
+      'https://admin-staging.waaiio.com',
       'http://localhost:8083', // dev
     ];
     if (allowedOrigins.includes(origin)) {
       supabaseResponse.headers.set('Access-Control-Allow-Origin', origin);
       supabaseResponse.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       supabaseResponse.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      supabaseResponse.headers.set('Access-Control-Allow-Credentials', 'true');
     }
   }
 
