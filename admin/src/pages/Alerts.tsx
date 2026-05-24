@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { Pagination } from '@/components/Pagination';
 import { SummaryCard } from '@/components/SummaryCard';
 import { StatusBadge } from '@/components/StatusBadge';
 import { fmtDateTime } from '@/lib/formatters';
-import { AlertTriangle, Bell, AlertOctagon, Zap } from 'lucide-react';
+import { AlertTriangle, Bell, AlertOctagon, Zap, CheckCircle, ExternalLink, Trash2 } from 'lucide-react';
 
 interface AlertRecord {
   id: string;
@@ -20,6 +22,8 @@ interface AlertRecord {
 }
 
 export default function Alerts() {
+  const adminSession = useAdminSession();
+  const canMutate = isFullAdmin(adminSession);
   const [alerts, setAlerts] = useState<AlertRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -86,6 +90,28 @@ export default function Alerts() {
 
   useEffect(() => { loadData(); }, []);
 
+  async function toggleRead(id: string, currentlyRead: boolean) {
+    await adminDb.from('alerts').update({ is_read: !currentlyRead }).eq('id', id);
+    setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_read: !currentlyRead } : a));
+    if (currentlyRead) setUnreadCount(c => c + 1); else setUnreadCount(c => Math.max(0, c - 1));
+  }
+
+  async function markAllRead() {
+    if (!canMutate) return;
+    const unreadIds = alerts.filter(a => !a.is_read).map(a => a.id);
+    if (unreadIds.length === 0) return;
+    await adminDb.from('alerts').update({ is_read: true }).in('id', unreadIds);
+    setAlerts(prev => prev.map(a => ({ ...a, is_read: true })));
+    setUnreadCount(0);
+  }
+
+  async function dismissAlert(id: string) {
+    if (!canMutate || !confirm('Dismiss this alert?')) return;
+    await adminDb.from('alerts').delete().eq('id', id);
+    setAlerts(prev => prev.filter(a => a.id !== id));
+    setTotalCount(c => c - 1);
+  }
+
   // Apply filters
   const filtered = alerts.filter(r => {
     if (typeFilter !== 'all' && r.type !== typeFilter) return false;
@@ -111,7 +137,15 @@ export default function Alerts() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Alerts</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900">Alerts</h1>
+        {unreadCount > 0 && canMutate && (
+          <button onClick={markAllRead} className="flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition">
+            <CheckCircle className="h-3.5 w-3.5" />
+            Mark All Read ({unreadCount})
+          </button>
+        )}
+      </div>
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -168,14 +202,18 @@ export default function Alerts() {
               <th className="px-4 py-3">Severity</th>
               <th className="px-4 py-3">Title</th>
               <th className="px-4 py-3">Message</th>
-              <th className="px-4 py-3">Read</th>
+              <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
             {paginated.map(alert => (
               <tr key={alert.id} className={`transition ${alert.is_read ? '' : 'bg-blue-50/30'}`}>
                 <td className="whitespace-nowrap px-4 py-3 text-gray-500">{fmtDateTime(alert.created_at)}</td>
-                <td className="px-4 py-3 text-gray-700">{alert.business_name}</td>
+                <td className="px-4 py-3">
+                  <a href={`/businesses?search=${encodeURIComponent(alert.business_name || '')}`} className="text-brand hover:underline font-medium">
+                    {alert.business_name}
+                  </a>
+                </td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">
                     {alert.type.replace(/_/g, ' ')}
@@ -186,7 +224,35 @@ export default function Alerts() {
                 </td>
                 <td className="px-4 py-3 font-medium text-gray-900">{alert.title}</td>
                 <td className="max-w-[250px] truncate px-4 py-3 text-gray-600">{alert.message}</td>
-                <td className="px-4 py-3 text-gray-400">{alert.is_read ? 'Yes' : 'No'}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => toggleRead(alert.id, alert.is_read)}
+                      title={alert.is_read ? 'Mark unread' : 'Mark read'}
+                      className={`rounded p-1 transition ${alert.is_read ? 'text-gray-300 hover:text-brand' : 'text-brand hover:text-brand-600'}`}
+                    >
+                      <CheckCircle className="h-4 w-4" />
+                    </button>
+                    {alert.business_id && (
+                      <a
+                        href={`/businesses?search=${encodeURIComponent(alert.business_name || '')}`}
+                        title="View business"
+                        className="rounded p-1 text-gray-300 hover:text-brand transition"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    )}
+                    {canMutate && (
+                      <button
+                        onClick={() => dismissAlert(alert.id)}
+                        title="Dismiss"
+                        className="rounded p-1 text-gray-300 hover:text-red-500 transition"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </td>
               </tr>
             ))}
             {paginated.length === 0 && (
