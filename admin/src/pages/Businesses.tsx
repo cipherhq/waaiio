@@ -562,8 +562,17 @@ export default function Businesses() {
                 <span className="text-gray-500 capitalize">{field}</span>
                 {editField === field ? (
                   <div className="flex items-center gap-1.5">
-                    <input value={editValue} onChange={e => setEditValue(e.target.value)}
-                      className="rounded border border-brand px-2 py-0.5 text-sm w-40 focus:outline-none" autoFocus />
+                    {field === 'category' ? (
+                      <select value={editValue} onChange={e => setEditValue(e.target.value)}
+                        className="rounded border border-brand px-2 py-1 text-sm w-48 focus:outline-none" autoFocus>
+                        {categories.map(c => (
+                          <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input value={editValue} onChange={e => setEditValue(e.target.value)}
+                        className="rounded border border-brand px-2 py-0.5 text-sm w-40 focus:outline-none" autoFocus />
+                    )}
                     <button onClick={handleEditSave} disabled={editSaving}
                       className="text-xs text-brand font-semibold">{editSaving ? '...' : 'Save'}</button>
                     <button onClick={() => setEditField(null)}
