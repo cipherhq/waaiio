@@ -73,6 +73,11 @@ export default function AdminTeam() {
   async function handleInvite() {
     if (!isFullAdmin) { setInviteError('Only full admins can manage team members.'); return; }
     if (!inviteEmail.trim()) return;
+    // Prevent changing your own role
+    if (inviteEmail.trim().toLowerCase() === session?.email?.toLowerCase()) {
+      setInviteError('You cannot change your own role from here.');
+      return;
+    }
 
     setInviting(true);
     setInviteError('');
