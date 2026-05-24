@@ -51,12 +51,21 @@ export default function UserManagement() {
   async function loadData() {
     setLoading(true);
     try {
-      const { data } = await adminDb
+      // Ensure auth session is ready before querying
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session) {
+        console.warn('No auth session — skipping profiles load');
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await adminDb
         .from('profiles')
         .select('id, email, first_name, last_name, phone, role, country_code, metadata, created_at')
         .order('created_at', { ascending: false })
         .limit(500);
 
+      if (error) console.error('Profiles query error:', error);
       setProfiles(data || []);
     } catch (error) {
       console.warn('Failed to load users:', error);
