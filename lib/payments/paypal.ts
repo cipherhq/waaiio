@@ -83,6 +83,7 @@ export class PayPalGateway implements PaymentGateway {
           booking_id: opts.bookingId || null,
           invoice_id: opts.invoiceId || null,
           campaign_id: opts.campaignId || null,
+          business_id: opts.businessId || null,
           user_id: opts.userId,
           amount: opts.amount,
           currency: opts.currency,

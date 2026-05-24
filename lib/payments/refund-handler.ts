@@ -25,7 +25,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   // 1. Load payment record
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
-    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, metadata')
+    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, metadata')
     .eq('id', paymentId)
     .single();
 
@@ -157,13 +157,34 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       .eq('id', payment.booking_id);
   }
 
-  // 9. Reverse platform fee on full refund
-  if (isFullyRefunded && payment.booking_id) {
-    await supabase
-      .from('platform_fees')
-      .update({ refunded_at: new Date().toISOString() })
-      .eq('booking_id', payment.booking_id)
-      .is('refunded_at', null);
+  // 9. Reverse platform fee on refund (full or partial)
+  const feeEntityCol = payment.booking_id ? 'booking_id' : payment.invoice_id ? 'invoice_id' : payment.campaign_id ? 'campaign_id' : null;
+  const feeEntityVal = payment.booking_id || payment.invoice_id || payment.campaign_id;
+  if (feeEntityCol && feeEntityVal) {
+    if (isFullyRefunded) {
+      // Full refund — mark fee as refunded entirely
+      await supabase
+        .from('platform_fees')
+        .update({ refunded_at: new Date().toISOString() })
+        .eq(feeEntityCol, feeEntityVal)
+        .is('refunded_at', null);
+    } else {
+      // Partial refund — reduce fee proportionally
+      const { data: fee } = await supabase
+        .from('platform_fees')
+        .select('id, fee_total, transaction_amount')
+        .eq(feeEntityCol, feeEntityVal)
+        .is('refunded_at', null)
+        .maybeSingle();
+      if (fee && fee.transaction_amount > 0) {
+        const refundRatio = amount / fee.transaction_amount;
+        const feeReduction = Math.round(fee.fee_total * refundRatio * 100) / 100;
+        await supabase
+          .from('platform_fees')
+          .update({ fee_total: Math.max(0, fee.fee_total - feeReduction) })
+          .eq('id', fee.id);
+      }
+    }
   }
 
   // 10. Check if a payout was already sent for this payment's period — if so, create adjustment

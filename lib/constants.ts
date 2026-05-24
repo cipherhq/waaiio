@@ -505,7 +505,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   free: {
     name: 'Starter',
     price: 0,
-    feePercentage: 2.0,
+    feePercentage: 2.5,
     feeFlat: 0,
     maxBookings: 50,
     whitelabel: false,
@@ -584,7 +584,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
   free: {
     marketingName: 'Starter',
     description: 'Perfect for trying out Waaiio with zero risk.',
-    feePercentage: 2.0,
+    feePercentage: 2.5,
     maxBookings: 50,
     whitelabel: false,
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat'],

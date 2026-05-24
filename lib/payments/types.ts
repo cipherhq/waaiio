@@ -34,6 +34,8 @@ export interface InitPaymentOpts {
   connectAccountId?: string;
   /** Campaign ID for donation tracking — set on payment record at creation to avoid webhook race */
   campaignId?: string;
+  /** Business ID — stored on payment record for payout reconciliation */
+  businessId?: string;
 }
 
 export interface InitPaymentResult {

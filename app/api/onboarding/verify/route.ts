@@ -41,6 +41,13 @@ export async function POST(request: NextRequest) {
       plan = metadata?.plan || bodyPlan;
       amountKobo = data.data.amount || 0;
     } else if (bodyBusinessId && bodyPlan) {
+      // Only allow free tier without payment verification
+      if (bodyPlan !== 'free') {
+        return NextResponse.json(
+          { message: 'Payment reference required for paid plans' },
+          { status: 402 },
+        );
+      }
       businessId = bodyBusinessId;
       plan = bodyPlan;
     }

@@ -2487,17 +2487,8 @@ export const orderingFlow: FlowDefinition = {
           p_is_order: true,
         });
 
-        // Record platform fee
-        if (ctx.business && total > 0) {
-          const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
-          await recordPlatformFee(ctx.supabase, {
-            businessId: ctx.business.id,
-            orderId: order.id,
-            transactionAmount: total,
-            tier: ctx.business.subscription_tier as SubscriptionTier,
-            isInTrial,
-          });
-        }
+        // Platform fee is recorded AFTER payment verification (by webhook or "I've Paid" flow)
+        // — NOT here before payment. See processSuccessfulPayment in process-success.ts.
 
         if (total > 0) {
           // Initialize payment (uses correct gateway per country: Paystack, Stripe, Square, etc.)

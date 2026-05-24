@@ -225,28 +225,36 @@ export async function processCampaignDonation(
       .is('payment_id', null);
   }
 
-  // Increment campaign stats
+  // Atomic increment of campaign stats (prevents double-counting under race)
+  if (typeof supabase.rpc === 'function') {
+    await supabase.rpc('increment_campaign_donation', {
+      p_campaign_id: campaignId,
+      p_amount: amount,
+      p_donor_count: 1,
+    });
+  } else {
+    // Fallback for test environments without RPC support
+    const { data: camp } = await supabase.from('campaigns').select('raised_amount, donor_count').eq('id', campaignId).single();
+    if (camp) {
+      await supabase.from('campaigns').update({
+        raised_amount: Number(camp.raised_amount || 0) + amount,
+        donor_count: (camp.donor_count || 0) + 1,
+      }).eq('id', campaignId);
+    }
+  }
+
+  // Record platform fee (unique index prevents duplicates)
   const { data: campaign } = await supabase
     .from('campaigns')
-    .select('raised_amount, donor_count, business_id')
+    .select('business_id')
     .eq('id', campaignId)
     .single();
 
-  if (campaign) {
-    await supabase
-      .from('campaigns')
-      .update({
-        raised_amount: Number(campaign.raised_amount || 0) + amount,
-        donor_count: (campaign.donor_count || 0) + 1,
-      })
-      .eq('id', campaignId);
-
-    if (campaign.business_id) {
-      recordPlatformFee(supabase, {
-        campaignId,
-        businessId: campaign.business_id,
-        paymentAmount: amount,
-      }).catch(err => logger.error('[PLATFORM-FEE] Campaign fee error:', err));
-    }
+  if (campaign?.business_id) {
+    await recordPlatformFee(supabase, {
+      campaignId,
+      businessId: campaign.business_id,
+      paymentAmount: amount,
+    });
   }
 }
