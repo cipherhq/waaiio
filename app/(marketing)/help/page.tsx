@@ -22,7 +22,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Getting Started',
     question: 'How do I get started?',
-    answer: 'Sign up at waaiio.com/get-started, pick your industry, choose your features, and add your business details. It takes about 5 minutes. Your WhatsApp bot will be ready immediately.',
+    answer: 'Sign up at waaiio.com/get-started, pick your industry, add your business details, and you are live. It takes about 5 minutes. Your 30-day free trial includes all features — your WhatsApp bot will be ready immediately.',
   },
   {
     category: 'Getting Started',

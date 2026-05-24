@@ -3,11 +3,11 @@ import { stripPlus, ensurePlus, phonePair } from '../phone';
 
 describe('stripPlus', () => {
   it('removes leading +', () => {
-    expect(stripPlus('+15712746425')).toBe('15712746425');
+    expect(stripPlus('+12029226251')).toBe('12029226251');
   });
 
   it('returns as-is without +', () => {
-    expect(stripPlus('15712746425')).toBe('15712746425');
+    expect(stripPlus('12029226251')).toBe('12029226251');
   });
 
   it('handles empty string', () => {
@@ -17,11 +17,11 @@ describe('stripPlus', () => {
 
 describe('ensurePlus', () => {
   it('adds + when missing', () => {
-    expect(ensurePlus('15712746425')).toBe('+15712746425');
+    expect(ensurePlus('12029226251')).toBe('+12029226251');
   });
 
   it('returns as-is with +', () => {
-    expect(ensurePlus('+15712746425')).toBe('+15712746425');
+    expect(ensurePlus('+12029226251')).toBe('+12029226251');
   });
 
   it('handles empty string', () => {
@@ -37,8 +37,8 @@ describe('phonePair', () => {
   });
 
   it('returns both formats from non-+ number', () => {
-    const result = phonePair('15712746425');
-    expect(result.withPlus).toBe('+15712746425');
-    expect(result.withoutPlus).toBe('15712746425');
+    const result = phonePair('12029226251');
+    expect(result.withPlus).toBe('+12029226251');
+    expect(result.withoutPlus).toBe('12029226251');
   });
 });
