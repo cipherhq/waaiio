@@ -687,6 +687,34 @@ export default function Businesses() {
                       : fmtCurrency(selected.payout_limit_monthly || 0, getCurrencyCode((selected.country_code || 'NG') as CountryCode))
                 } />
               </div>
+              {isFullAdmin && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {['unverified', 'basic', 'standard', 'full'].map(level => (
+                    <button
+                      key={level}
+                      disabled={selected.verification_level === level}
+                      onClick={async () => {
+                        if (!confirm(`Set verification to "${level}" for ${selected.name}?`)) return;
+                        const limits: Record<string, number> = { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 };
+                        await adminDb.from('businesses').update({
+                          verification_level: level,
+                          verification_status: level === 'unverified' ? 'unverified' : 'verified',
+                          payout_limit_monthly: limits[level] || 0,
+                        }).eq('id', selected.id);
+                        await logAudit({ action: 'set_verification', entity_type: 'business', entity_id: selected.id, details: { level, previous: selected.verification_level } });
+                        setSelected({ ...selected, verification_level: level, verification_status: level === 'unverified' ? 'unverified' : 'verified', payout_limit_monthly: limits[level] || 0 });
+                      }}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                        selected.verification_level === level
+                          ? 'bg-brand text-white'
+                          : 'bg-white border border-gray-200 text-gray-600 hover:border-brand hover:text-brand'
+                      } disabled:opacity-50`}
+                    >
+                      {level.charAt(0).toUpperCase() + level.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {selectedPayout && (
