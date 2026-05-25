@@ -89,19 +89,42 @@ function table(rows: string): string {
 // ─── Templates ────────────────────────────────────────────────────
 
 export function welcomeEmail(name: string) {
+  const firstName = name.split(' ')[0] || name;
   return {
-    subject: 'Welcome to Waaiio!',
+    subject: `Welcome to Waaiio, ${firstName}!`,
     html: wrap(`
-      ${h(`Welcome, ${esc(name)}!`)}
-      ${p("Thanks for joining Waaiio. You're on your way to automating your business with AI-powered WhatsApp bots.")}
-      ${p('Here\'s what you can do next:')}
-      <ul style="margin:0 0 12px;padding-left:20px;font-size:14px;line-height:1.8;color:#3f3f46">
-        <li>Register your business</li>
-        <li>Customize your bot greeting</li>
-        <li>Share your WhatsApp link</li>
-      </ul>
-      ${btn('Go to Dashboard', `${appUrl}/dashboard`)}
-      ${p("If you have any questions, reply to this email. We're happy to help!")}
+      ${h(`Hi ${esc(firstName)},`)}
+      ${p("My name is Babajide, founder of Waaiio. Thank you for signing up — I'm genuinely excited to have you on board!")}
+      ${p("I started Waaiio with a simple goal: <strong>help every business automate bookings, payments, and customer engagement on WhatsApp</strong> — without writing a single line of code. Today, we serve businesses across 16 industries in 5 countries, and I'm thrilled to give you the same tools.")}
+      ${p("Your 30-day free trial is now active with <strong>all features unlocked</strong>. Here's how to get started:")}
+      <table width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0">
+        <tr>
+          <td style="padding:12px 16px;background:#f5f0ff;border-radius:8px;border-left:4px solid #7c3aed">
+            <p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#3f3f46">Step 1: Add your services or products</p>
+            <p style="margin:0;font-size:13px;color:#71717a">Tell customers what you offer — the bot uses this to handle bookings and orders.</p>
+          </td>
+        </tr>
+        <tr><td style="height:8px"></td></tr>
+        <tr>
+          <td style="padding:12px 16px;background:#f0fdf4;border-radius:8px;border-left:4px solid #25D366">
+            <p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#3f3f46">Step 2: Share your WhatsApp link</p>
+            <p style="margin:0;font-size:13px;color:#71717a">Send your link to customers or post it on social media. They message, the bot handles the rest.</p>
+          </td>
+        </tr>
+        <tr><td style="height:8px"></td></tr>
+        <tr>
+          <td style="padding:12px 16px;background:#fffbeb;border-radius:8px;border-left:4px solid #f59e0b">
+            <p style="margin:0 0 6px;font-size:14px;font-weight:600;color:#3f3f46">Step 3: Watch bookings roll in</p>
+            <p style="margin:0;font-size:13px;color:#71717a">Your bot works 24/7 — taking bookings, collecting payments, and sending confirmations while you sleep.</p>
+          </td>
+        </tr>
+      </table>
+      ${p("Need help setting up? Use <strong>Ace</strong>, our AI setup assistant — it can read your menu or price list and create your services automatically.")}
+      ${btn('Go to Your Dashboard', `${appUrl}/dashboard`)}
+      ${p("I genuinely care about your success. If there's anything at all I can do to help, just reply to this email — it comes straight to me.")}
+      <p style="margin:24px 0 4px;font-size:14px;color:#3f3f46">Thank you, and welcome to Waaiio!</p>
+      <p style="margin:0;font-size:14px;font-weight:600;color:#3f3f46">Babajide Ace</p>
+      <p style="margin:2px 0 0;font-size:12px;color:#a1a1aa">Founder, Waaiio</p>
     `),
   };
 }
