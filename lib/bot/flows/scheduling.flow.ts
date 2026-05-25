@@ -1260,7 +1260,53 @@ export const schedulingFlow: FlowDefinition = {
         // Free text input
         return { valid: true, data: { special_requests: input } };
       },
-      async next() { return 'select_delivery'; },
+      async next() { return 'pre_booking_questions'; },
+    },
+
+    // ── Pre-Booking Questions (business-defined, self-looping) ──
+    {
+      id: 'pre_booking_questions',
+      async skipIf(ctx: FlowContext) {
+        const questions = (ctx.business?.metadata as Record<string, unknown>)?.pre_booking_questions as Array<{ id: string; question: string; required?: boolean }> | undefined;
+        if (!questions || questions.length === 0) return true;
+        // Skip if all questions already answered
+        const idx = (ctx.session.session_data._pbq_index as number) || 0;
+        return idx >= questions.length;
+      },
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const questions = (ctx.business?.metadata as Record<string, unknown>)?.pre_booking_questions as Array<{ id: string; question: string; required?: boolean }>;
+        const idx = (ctx.session.session_data._pbq_index as number) || 0;
+        if (!questions || idx >= questions.length) return [];
+        const q = questions[idx];
+        const progress = questions.length > 1 ? ` (${idx + 1}/${questions.length})` : '';
+        return [{
+          type: 'text',
+          text: `📋 ${q.question}${progress}${q.required === false ? '\n\n_Type *skip* to skip this question_' : ''}`,
+        }];
+      },
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        const questions = (ctx.business?.metadata as Record<string, unknown>)?.pre_booking_questions as Array<{ id: string; question: string; required?: boolean }>;
+        const idx = (ctx.session.session_data._pbq_index as number) || 0;
+        if (!questions || idx >= questions.length) return { valid: true, data: {} };
+        const q = questions[idx];
+        const answer = input.trim();
+        if (!answer && q.required !== false) {
+          return { valid: false, errorMessage: 'Please answer this question to continue.' };
+        }
+        // Store answer
+        const answers = (ctx.session.session_data._pbq_answers as Record<string, string>) || {};
+        if (answer.toLowerCase() !== 'skip') {
+          answers[q.id] = answer;
+        }
+        return { valid: true, data: { _pbq_answers: answers, _pbq_index: idx + 1 } };
+      },
+      async next(ctx: FlowContext) {
+        const questions = (ctx.business?.metadata as Record<string, unknown>)?.pre_booking_questions as Array<{ id: string; question: string }>;
+        const idx = (ctx.session.session_data._pbq_index as number) || 0;
+        // More questions? Loop back to same step
+        if (questions && idx < questions.length) return 'pre_booking_questions';
+        return 'select_delivery';
+      },
     },
 
     // ── Select Delivery/Pickup for drop-off services ──
@@ -1930,6 +1976,15 @@ export const schedulingFlow: FlowDefinition = {
           }
 
           booking = { id: slotResult.booking_id, reference_code: slotResult.reference_code };
+
+          // Save pre-booking question answers if any
+          const pbqAnswers = d._pbq_answers as Record<string, string> | undefined;
+          if (pbqAnswers && Object.keys(pbqAnswers).length > 0) {
+            await ctx.supabase
+              .from('bookings')
+              .update({ metadata: { custom_answers: pbqAnswers } })
+              .eq('id', slotResult.booking_id);
+          }
         }
 
         if (isNewBooking) {

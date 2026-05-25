@@ -150,6 +150,9 @@ export default function SettingsPage() {
   const [specialRequestOptions, setSpecialRequestOptions] = useState<string>(
     ((meta.special_request_options as Array<{ id: string; title: string }>)?.map(o => o.title).join('\n')) || ''
   );
+  const [preBookingQuestions, setPreBookingQuestions] = useState<Array<{ id: string; question: string; required: boolean }>>(
+    (meta.pre_booking_questions as Array<{ id: string; question: string; required: boolean }>) || []
+  );
 
   // Delivery Zones state
   interface DeliveryZone {
@@ -1445,6 +1448,61 @@ export default function SettingsPage() {
             )}
           </div>
 
+          {/* Pre-Booking Questions */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Pre-Booking Questions</h2>
+              <p className="mt-1 text-xs text-gray-500">Custom questions asked before a booking is confirmed. Answers are saved with the booking.</p>
+            </div>
+            <div className="mt-4 space-y-2">
+              {preBookingQuestions.map((q, i) => (
+                <div key={q.id} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={q.question}
+                    onChange={e => {
+                      const updated = [...preBookingQuestions];
+                      updated[i] = { ...updated[i], question: e.target.value };
+                      setPreBookingQuestions(updated);
+                    }}
+                    placeholder="e.g. Do you have any allergies?"
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  />
+                  <label className="flex items-center gap-1 text-xs text-gray-500 shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={q.required !== false}
+                      onChange={e => {
+                        const updated = [...preBookingQuestions];
+                        updated[i] = { ...updated[i], required: e.target.checked };
+                        setPreBookingQuestions(updated);
+                      }}
+                      className="rounded border-gray-300 text-brand focus:ring-brand"
+                    />
+                    Required
+                  </label>
+                  <button
+                    onClick={() => setPreBookingQuestions(preBookingQuestions.filter((_, j) => j !== i))}
+                    className="rounded p-1 text-gray-300 hover:text-red-500 transition"
+                  >
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </div>
+              ))}
+              {preBookingQuestions.length < 3 && (
+                <button
+                  onClick={() => setPreBookingQuestions([...preBookingQuestions, { id: `q${Date.now()}`, question: '', required: true }])}
+                  className="text-sm font-medium text-brand hover:text-brand-600 transition"
+                >
+                  + Add Question {preBookingQuestions.length > 0 && `(${preBookingQuestions.length}/3)`}
+                </button>
+              )}
+              {preBookingQuestions.length === 0 && (
+                <p className="text-xs text-gray-400">No questions yet. Add up to 3 questions that customers answer before booking.</p>
+              )}
+            </div>
+          </div>
+
           {/* Save */}
           <button
             onClick={async () => {
@@ -1471,6 +1529,9 @@ export default function SettingsPage() {
                     max_ticket_quantity: maxTicketQuantity,
                     special_requests_enabled: specialRequestsEnabled,
                     special_request_options: parsedOptions.length > 0 ? parsedOptions : null,
+                    pre_booking_questions: preBookingQuestions.filter(q => q.question.trim()).length > 0
+                      ? preBookingQuestions.filter(q => q.question.trim())
+                      : null,
                   },
                 })
                 .eq('id', business.id);
