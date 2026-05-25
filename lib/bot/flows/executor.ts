@@ -154,7 +154,7 @@ export class FlowExecutor {
           .from('bot_sessions')
           .update({ session_data: session.session_data, conversation_log: session.conversation_log })
           .eq('id', session.id);
-        await this.sendMessages(from, messages);
+        await this.sendMessages(from, messages, session);
       }
       return;
     }
@@ -331,9 +331,10 @@ export class FlowExecutor {
     // Show next step's prompt (possibly customized)
     if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
       if (!session.conversation_log) session.conversation_log = [];
-      session.conversation_log.push({ role: 'bot', content: nextOverride.customPrompt, timestamp: new Date().toISOString() });
+      const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session);
+      session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
-      await this.sendText(from, nextOverride.customPrompt);
+      await this.sendText(from, translatedCustom);
     } else {
       const messages = await nextStep.prompt(ctx);
       this.logPromptMessages(session, messages);
@@ -342,13 +343,17 @@ export class FlowExecutor {
     }
   }
 
-  private async sendMessages(to: string, messages: PromptMessage[]): Promise<void> {
+  private async sendMessages(to: string, messages: PromptMessage[], session?: { session_data: Record<string, unknown> }): Promise<void> {
     if (messages.length === 0) return;
-    // Send messages sequentially to preserve order in WhatsApp
+
+    // Translate all messages if session has a non-English language
+    const lang = session?.session_data?._detected_language as string | undefined;
+    const shouldTranslate = lang && lang !== 'en';
+
     for (let i = 0; i < messages.length; i++) {
       try {
-        await this.sendSingleMessage(to, messages[i]);
-        // Small delay between messages to prevent WhatsApp reordering
+        const msg = shouldTranslate ? await this.translateMessage(messages[i], lang!) : messages[i];
+        await this.sendSingleMessage(to, msg);
         if (i < messages.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 300));
         }
@@ -356,9 +361,42 @@ export class FlowExecutor {
         logger.error('[EXECUTOR] Failed to send message', i + 1, 'of', messages.length, 'to', to, ':', err);
       }
     }
-    // Track outbound message count (non-blocking, count batch as 1)
     if (this.currentBusinessId) {
       trackOutboundMessage(this.supabase, this.currentBusinessId).catch(() => {});
+    }
+  }
+
+  /** Translate a single prompt message — text, body, button labels, list items */
+  private async translateMessage(msg: PromptMessage, lang: string): Promise<PromptMessage> {
+    switch (msg.type) {
+      case 'text':
+        return { ...msg, text: await translateBotResponse(msg.text, lang) };
+      case 'buttons':
+        return {
+          ...msg,
+          body: await translateBotResponse(msg.body, lang),
+          buttons: await Promise.all(msg.buttons.map(async b => ({
+            ...b,
+            title: await translateBotResponse(b.title, lang),
+          }))),
+        };
+      case 'list':
+        return {
+          ...msg,
+          body: await translateBotResponse(msg.body, lang),
+          items: await Promise.all(msg.items.map(async item => ({
+            ...item,
+            description: item.description ? await translateBotResponse(item.description, lang) : item.description,
+            // Keep title as-is for service/product names — business entered them
+          }))),
+        };
+      case 'image':
+        return {
+          ...msg,
+          caption: msg.caption ? await translateBotResponse(msg.caption, lang) : msg.caption,
+        };
+      default:
+        return msg;
     }
   }
 
