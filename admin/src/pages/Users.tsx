@@ -51,21 +51,12 @@ export default function UserManagement() {
   async function loadData() {
     setLoading(true);
     try {
-      // Ensure auth session is ready before querying
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData?.session) {
-        console.warn('No auth session — skipping profiles load');
-        setLoading(false);
-        return;
-      }
-
       const { data, error } = await adminDb
         .from('profiles')
         .select('id, email, first_name, last_name, phone, role, country_code, metadata, created_at')
         .order('created_at', { ascending: false })
         .limit(500);
 
-      console.log('[Users] Session user:', sessionData.session.user.email, 'Profiles returned:', data?.length ?? 0, error ? 'ERROR: ' + error.message : 'OK');
       if (error) console.error('Profiles query error:', error);
       setProfiles(data || []);
     } catch (error) {
@@ -75,7 +66,8 @@ export default function UserManagement() {
     }
   }
 
-  useEffect(() => { loadData(); }, []);
+  // Wait for admin session to be ready before loading data
+  useEffect(() => { if (adminSession) loadData(); }, [adminSession]);
 
   // Load detail data when a user is selected
   useEffect(() => {
