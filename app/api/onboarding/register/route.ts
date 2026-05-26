@@ -30,6 +30,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
 
+    // Limit businesses per user (prevent abuse)
+    const svcCheck = createServiceClient();
+    const { count: bizCount } = await svcCheck
+      .from('businesses')
+      .select('id', { count: 'exact', head: true })
+      .eq('owner_id', user.id);
+    if ((bizCount || 0) >= 20) {
+      return NextResponse.json({ message: 'Maximum number of businesses reached (20). Contact support to increase.' }, { status: 400 });
+    }
+
     await loadCountries();
     await loadCategories();
     const body = await request.json();

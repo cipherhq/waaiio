@@ -49,7 +49,7 @@ function LoginForm() {
         } else if (signInError.message.includes('rate limit')) {
           setError('Too many login attempts. Please wait a few minutes and try again.');
         } else {
-          setError(signInError.message);
+          setError('Something went wrong. Please try again.');
         }
         getPostHogClient()?.capture('login_failed', { reason: signInError.message });
         return;

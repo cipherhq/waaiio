@@ -120,8 +120,8 @@ export async function POST(request: NextRequest) {
         case 'gte': query = query.gte(column, value); break;
         case 'lt': query = query.lt(column, value); break;
         case 'lte': query = query.lte(column, value); break;
-        case 'like': query = query.like(column, value); break;
-        case 'ilike': query = query.ilike(column, value); break;
+        case 'like': query = query.like(column, String(value).replace(/\\/g, '\\\\')); break;
+        case 'ilike': query = query.ilike(column, String(value).replace(/\\/g, '\\\\')); break;
         case 'in': query = query.in(column, value); break;
         case 'is': query = query.is(column, value); break;
       }
