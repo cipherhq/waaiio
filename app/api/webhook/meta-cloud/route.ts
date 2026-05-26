@@ -283,6 +283,11 @@ export async function POST(request: NextRequest) {
 
           msgLog.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
 
+          // Mark message as read immediately (blue ticks — shows business is active)
+          if (resolved.cloud && msg.id) {
+            resolved.cloud.markAsRead(msg.id).catch(() => {});
+          }
+
           const standalone = new StandaloneService(supabase);
           const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 

@@ -23,6 +23,7 @@ interface ChannelRecord {
 export interface ResolvedChannel {
   channel: ChannelRecord;
   sender: MessageSender;
+  cloud?: MetaCloudService;
 }
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -35,6 +36,23 @@ export class ChannelResolver {
   /**
    * Build the correct MessageSender for a channel based on its provider.
    */
+  private buildResolved(channel: ChannelRecord): ResolvedChannel {
+    if (channel.provider === 'meta_cloud' && channel.phone_number_id) {
+      let accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
+      try {
+        const { decryptToken } = require('@/lib/encryption');
+        accessToken = decryptToken(accessToken);
+      } catch { /* use raw */ }
+      const cloud = new MetaCloudService({
+        accessToken,
+        phoneNumberId: channel.phone_number_id,
+        wabaId: channel.waba_id || undefined,
+      });
+      return { channel, sender: new MetaCloudSender(cloud), cloud };
+    }
+    return { channel, sender: this.buildSender(channel) };
+  }
+
   private buildSender(channel: ChannelRecord): MessageSender {
     if (channel.provider === 'meta_cloud' && channel.phone_number_id) {
       // Use channel-specific token, falling back to env var for shared channels
@@ -46,13 +64,12 @@ export class ChannelResolver {
       } catch (err) {
         logger.error('[CHANNEL] Token decryption failed, using raw value:', err);
       }
-      return new MetaCloudSender(
-        new MetaCloudService({
-          accessToken,
-          phoneNumberId: channel.phone_number_id,
-          wabaId: channel.waba_id || undefined,
-        })
-      );
+      const cloud = new MetaCloudService({
+        accessToken,
+        phoneNumberId: channel.phone_number_id,
+        wabaId: channel.waba_id || undefined,
+      });
+      return new MetaCloudSender(cloud);
     }
     // Default: Gupshup
     return GupshupService.fromChannel(channel);
@@ -84,7 +101,7 @@ export class ChannelResolver {
     this.cache.set(`phone:${normalized}`, { data: record, ts: Date.now() });
 
     if (!record) return null;
-    return { channel: record, sender: this.buildSender(record) };
+    return this.buildResolved(record);
   }
 
   /**
@@ -113,7 +130,7 @@ export class ChannelResolver {
     this.cache.set(cacheKey, { data: record, ts: Date.now() });
 
     if (!record) return null;
-    return { channel: record, sender: this.buildSender(record) };
+    return this.buildResolved(record);
   }
 
   /**
@@ -132,7 +149,7 @@ export class ChannelResolver {
 
     if (data) {
       const record = data as ChannelRecord;
-      return { channel: record, sender: this.buildSender(record) };
+      return this.buildResolved(record);
     }
     return null;
   }
@@ -170,7 +187,7 @@ export class ChannelResolver {
       if (assigned) {
         const record = assigned as ChannelRecord;
         this.cache.set(cacheKey, { data: record, ts: Date.now() });
-        return { channel: record, sender: this.buildSender(record) };
+        return this.buildResolved(record);
       }
     }
 
@@ -186,7 +203,7 @@ export class ChannelResolver {
     if (data) {
       const record = data as ChannelRecord;
       this.cache.set(cacheKey, { data: record, ts: Date.now() });
-      return { channel: record, sender: this.buildSender(record) };
+      return this.buildResolved(record);
     }
 
     // 3. Shared channel for the business's country
@@ -210,7 +227,7 @@ export class ChannelResolver {
     if (anyShared) {
       const record = anyShared as ChannelRecord;
       this.cache.set(cacheKey, { data: record, ts: Date.now() });
-      return { channel: record, sender: this.buildSender(record) };
+      return this.buildResolved(record);
     }
 
     this.cache.set(cacheKey, { data: null, ts: Date.now() });
@@ -241,6 +258,6 @@ export class ChannelResolver {
     this.cache.set(cacheKey, { data: record, ts: Date.now() });
 
     if (!record) return null;
-    return { channel: record, sender: this.buildSender(record) };
+    return this.buildResolved(record);
   }
 }
