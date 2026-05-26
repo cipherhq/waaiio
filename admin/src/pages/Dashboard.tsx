@@ -35,6 +35,10 @@ export default function Dashboard() {
   const [recentAlerts, setRecentAlerts] = useState<{ id: string; severity: string; title: string; business_name: string; created_at: string }[]>([]);
   const [whatsappBookings, setWhatsappBookings] = useState(0);
   const [webBookings, setWebBookings] = useState(0);
+  // Feature adoption + top businesses + customer insights
+  const [featureAdoption, setFeatureAdoption] = useState<Array<{ capability: string; count: number }>>([]);
+  const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
+  const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
 
   useEffect(() => {
     async function loadStats() {
@@ -253,6 +257,47 @@ export default function Dashboard() {
 
         setWhatsappBookings(waBookingsRes.count || 0);
         setWebBookings(webBookingsRes.count || 0);
+
+        // Feature adoption — which capabilities are most used
+        const capRes = await adminQuery('business_capabilities', { select: 'capability, business_id', filters: [{ column: 'is_enabled', op: 'eq', value: true }] });
+        const capCounts = new Map<string, number>();
+        for (const r of capRes.data || []) {
+          capCounts.set(r.capability, (capCounts.get(r.capability) || 0) + 1);
+        }
+        setFeatureAdoption(
+          Array.from(capCounts.entries())
+            .map(([capability, count]) => ({ capability, count }))
+            .sort((a, b) => b.count - a.count)
+        );
+
+        // Top businesses by bookings + revenue
+        const bizBookingsRes = await adminQuery('bookings', { select: 'business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }] });
+        const bizBookingCounts = new Map<string, number>();
+        for (const b of bizBookingsRes.data || []) {
+          bizBookingCounts.set(b.business_id, (bizBookingCounts.get(b.business_id) || 0) + 1);
+        }
+        const topBizIds = Array.from(bizBookingCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id]) => id);
+        if (topBizIds.length > 0) {
+          const topBizDetails = await adminQuery('businesses', { select: 'id, name, country_code', filters: [{ column: 'id', op: 'in', value: topBizIds }] });
+          const topBizPayments = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'business_id', op: 'in', value: topBizIds }, { column: 'status', op: 'eq', value: 'success' }, { column: 'created_at', op: 'gte', value: monthStart }] });
+          const bizRevMap = new Map<string, number>();
+          for (const p of topBizPayments.data || []) { bizRevMap.set(p.business_id, (bizRevMap.get(p.business_id) || 0) + Number(p.amount || 0)); }
+          const bizDetailMap = new Map((topBizDetails.data || []).map(b => [b.id, b]));
+          setTopBusinesses(topBizIds.map(id => {
+            const d = bizDetailMap.get(id);
+            return { name: d?.name || 'Unknown', bookings: bizBookingCounts.get(id) || 0, revenue: bizRevMap.get(id) || 0, country: d?.country_code || 'NG' };
+          }));
+        }
+
+        // Customer insights
+        const totalCustomersRes = await adminQuery('customer_profiles', { select: 'id', count: 'exact' });
+        const returningRes = await adminQuery('customer_profiles', { select: 'id', filters: [{ column: 'visit_count', op: 'gt', value: 1 }], count: 'exact' });
+        const newCustomersRes = await adminQuery('customer_profiles', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' });
+        setCustomerInsights({
+          total: totalCustomersRes.count || 0,
+          returning: returningRes.count || 0,
+          thisMonth: newCustomersRes.count || 0,
+        });
 
         // Enrich alerts with business names
         const alertBizIds = [...new Set((recentAlertsRes.data || []).map((a: Record<string, unknown>) => a.business_id as string).filter(Boolean))];
@@ -473,6 +518,86 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Platform Insights */}
+      <div className="mt-8 grid gap-6 lg:grid-cols-3">
+        {/* Feature Adoption */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Feature Adoption</h3>
+          <p className="mt-0.5 text-xs text-gray-400">Which capabilities businesses enable</p>
+          <div className="mt-4 space-y-2">
+            {featureAdoption.slice(0, 10).map(f => {
+              const total = featureAdoption[0]?.count || 1;
+              const pct = Math.round((f.count / total) * 100);
+              return (
+                <div key={f.capability} className="flex items-center gap-2">
+                  <span className="w-28 truncate text-xs text-gray-600 capitalize">{f.capability.replace(/_/g, ' ')}</span>
+                  <div className="flex-1 h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div className="h-2 rounded-full bg-brand" style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="w-8 text-right text-xs font-medium text-gray-700">{f.count}</span>
+                </div>
+              );
+            })}
+            {featureAdoption.length === 0 && <p className="text-xs text-gray-400">No data yet</p>}
+          </div>
+        </div>
+
+        {/* Top Businesses */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Top Businesses</h3>
+          <p className="mt-0.5 text-xs text-gray-400">Most active this month</p>
+          <div className="mt-4 space-y-3">
+            {topBusinesses.map((b, i) => (
+              <div key={b.name} className="flex items-center gap-3">
+                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-white ${i === 0 ? 'bg-amber-500' : i === 1 ? 'bg-gray-400' : i === 2 ? 'bg-amber-700' : 'bg-gray-300'}`}>{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">{b.name}</p>
+                  <p className="text-[10px] text-gray-400">{b.bookings} bookings · {b.country}</p>
+                </div>
+                <span className="text-xs font-semibold text-gray-700">{formatMoney(b.revenue, b.country === 'NG' ? 'NGN' : b.country === 'GH' ? 'GHS' : b.country === 'GB' ? 'GBP' : 'USD')}</span>
+              </div>
+            ))}
+            {topBusinesses.length === 0 && <p className="text-xs text-gray-400">No bookings this month</p>}
+          </div>
+        </div>
+
+        {/* Customer Insights */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5">
+          <h3 className="text-sm font-semibold text-gray-900">Customer Insights</h3>
+          <p className="mt-0.5 text-xs text-gray-400">Across all businesses</p>
+          <div className="mt-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-600">Total Customers</span>
+              <span className="text-lg font-bold text-gray-900">{customerInsights.total.toLocaleString()}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-600">Returning Customers</span>
+              <div className="text-right">
+                <span className="text-lg font-bold text-green-600">{customerInsights.returning.toLocaleString()}</span>
+                {customerInsights.total > 0 && (
+                  <span className="ml-1 text-xs text-gray-400">({Math.round((customerInsights.returning / customerInsights.total) * 100)}%)</span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-600">New This Month</span>
+              <span className="text-lg font-bold text-brand">{customerInsights.thisMonth.toLocaleString()}</span>
+            </div>
+            {customerInsights.total > 0 && (
+              <div>
+                <div className="flex justify-between text-[10px] text-gray-400 mb-1">
+                  <span>New</span>
+                  <span>Returning</span>
+                </div>
+                <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-3 rounded-full bg-green-500" style={{ width: `${(customerInsights.returning / customerInsights.total) * 100}%` }} />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
