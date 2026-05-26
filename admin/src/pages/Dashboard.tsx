@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [featureAdoption, setFeatureAdoption] = useState<Array<{ capability: string; count: number }>>([]);
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
+  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number }>>([]);
 
   useEffect(() => {
     async function loadStats() {
@@ -298,6 +299,40 @@ export default function Dashboard() {
           returning: returningRes.count || 0,
           thisMonth: newCustomersRes.count || 0,
         });
+
+        // Category breakdown — businesses, bookings, revenue per category
+        const allBizRes = await adminQuery('businesses', { select: 'id, category, country_code', filters: [{ column: 'status', op: 'eq', value: 'active' }] });
+        const allBookingsRes = await adminQuery('bookings', { select: 'business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }] });
+        const allPaymentsRes = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'status', op: 'eq', value: 'success' }, { column: 'created_at', op: 'gte', value: monthStart }] });
+
+        const bizCatMap = new Map((allBizRes.data || []).map(b => [b.id, b.category]));
+        const catStats = new Map<string, { count: number; bookings: number; revenue: number }>();
+
+        // Count businesses per category
+        for (const b of allBizRes.data || []) {
+          const cat = b.category || 'other';
+          const existing = catStats.get(cat) || { count: 0, bookings: 0, revenue: 0 };
+          existing.count++;
+          catStats.set(cat, existing);
+        }
+        // Count bookings per category
+        for (const bk of allBookingsRes.data || []) {
+          const cat = bizCatMap.get(bk.business_id) || 'other';
+          const existing = catStats.get(cat);
+          if (existing) existing.bookings++;
+        }
+        // Sum revenue per category
+        for (const p of allPaymentsRes.data || []) {
+          const cat = bizCatMap.get(p.business_id) || 'other';
+          const existing = catStats.get(cat);
+          if (existing) existing.revenue += Number(p.amount || 0);
+        }
+
+        setCategoryBreakdown(
+          Array.from(catStats.entries())
+            .map(([category, data]) => ({ category, ...data }))
+            .sort((a, b) => b.count - a.count)
+        );
 
         // Enrich alerts with business names
         const alertBizIds = [...new Set((recentAlertsRes.data || []).map((a: Record<string, unknown>) => a.business_id as string).filter(Boolean))];
@@ -601,6 +636,45 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Category Breakdown */}
+      {categoryBreakdown.length > 0 && (
+        <div className="mt-8">
+          <h2 className="text-lg font-semibold text-gray-900">By Business Category</h2>
+          <p className="mt-0.5 text-sm text-gray-500">Businesses, bookings, and revenue per category this month</p>
+          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="border-b border-gray-100 bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Businesses</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Bookings</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Revenue</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-500 w-40">Activity</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {categoryBreakdown.map(cat => {
+                  const maxBookings = categoryBreakdown[0]?.bookings || 1;
+                  return (
+                    <tr key={cat.category} className="hover:bg-gray-50 transition">
+                      <td className="px-4 py-3 font-medium text-gray-900 capitalize">{cat.category.replace(/_/g, ' ')}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{cat.count}</td>
+                      <td className="px-4 py-3 text-right text-gray-700">{cat.bookings}</td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900">{cat.revenue > 0 ? formatMoney(cat.revenue) : '—'}</td>
+                      <td className="px-4 py-3">
+                        <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
+                          <div className="h-2 rounded-full bg-brand" style={{ width: `${Math.max(2, (cat.bookings / maxBookings) * 100)}%` }} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Quick Actions */}
       <div className="mt-8">
