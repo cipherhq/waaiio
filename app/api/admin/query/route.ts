@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
       'ai_usage', 'conversation_usage', 'countries', 'customer_reports',
       'platform_settings', 'queue_entries', 'site_pages', 'verification_requests',
       'refund_requests', 'campaign_donations', 'reservations',
+      'customer_profiles',
     ];
 
     // Support role: read-only access to non-sensitive tables only

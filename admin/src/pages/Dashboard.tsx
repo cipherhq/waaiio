@@ -292,7 +292,7 @@ export default function Dashboard() {
 
         // Customer insights
         const totalCustomersRes = await adminQuery('customer_profiles', { select: 'id', count: 'exact' });
-        const returningRes = await adminQuery('customer_profiles', { select: 'id', filters: [{ column: 'visit_count', op: 'gt', value: 1 }], count: 'exact' });
+        const returningRes = await adminQuery('customer_profiles', { select: 'id', filters: [{ column: 'total_visits', op: 'gt', value: 1 }], count: 'exact' });
         const newCustomersRes = await adminQuery('customer_profiles', { select: 'id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }], count: 'exact' });
         setCustomerInsights({
           total: totalCustomersRes.count || 0,
