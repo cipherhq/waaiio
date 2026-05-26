@@ -55,6 +55,8 @@ export default function WhatsAppPage() {
     bot_payment_receipt_template: '',
     bot_order_status_template: '',
   });
+  const [followupMessage, setFollowupMessage] = useState('');
+  const [followupDelayHours, setFollowupDelayHours] = useState(24);
   const [savingTemplates, setSavingTemplates] = useState(false);
   const [savingButtons, setSavingButtons] = useState(false);
   const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
@@ -138,6 +140,8 @@ export default function WhatsAppPage() {
           bot_payment_receipt_template: data.bot_payment_receipt_template || '',
           bot_order_status_template: data.bot_order_status_template || '',
         });
+        setFollowupMessage(data.followup_message || '');
+        setFollowupDelayHours(data.followup_delay_hours ?? 24);
       }
       setLoading(false);
     }
@@ -185,6 +189,8 @@ export default function WhatsAppPage() {
         bot_order_confirmation_template: templates.bot_order_confirmation_template || null,
         bot_payment_receipt_template: templates.bot_payment_receipt_template || null,
         bot_order_status_template: templates.bot_order_status_template || null,
+        followup_message: followupMessage.trim() || null,
+        followup_delay_hours: followupDelayHours,
       })
       .eq('business_id', business.id);
     if (error) setTemplatesError('Failed to save templates. Please try again.');
@@ -537,6 +543,66 @@ export default function WhatsAppPage() {
                 )}
               </div>
             ))}
+          </div>
+
+          {/* Follow-Up Message */}
+          <div className="mt-4 rounded-lg border border-gray-100">
+            <button
+              onClick={() => setExpandedTemplate(expandedTemplate === 'followup' ? null : 'followup')}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <div>
+                <p className="text-sm font-medium text-gray-900">Follow-Up Message</p>
+                <p className="text-xs text-gray-400">Sent after the service is completed — ask for feedback or say thanks</p>
+              </div>
+              <svg aria-hidden="true" className={`h-4 w-4 text-gray-400 transition ${expandedTemplate === 'followup' ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {expandedTemplate === 'followup' && (
+              <div className="border-t border-gray-100 px-4 py-3">
+                <textarea
+                  value={followupMessage}
+                  onChange={(e) => setFollowupMessage(e.target.value)}
+                  rows={3}
+                  placeholder="Thanks for visiting {business_name}, {customer_name}! How was your experience? We'd love your feedback."
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <div className="mt-3 flex items-center gap-3">
+                  <label className="text-sm font-medium text-gray-700">Send after</label>
+                  <select
+                    value={followupDelayHours}
+                    onChange={(e) => setFollowupDelayHours(Number(e.target.value))}
+                    className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                  >
+                    <option value={2}>2 hours</option>
+                    <option value={6}>6 hours</option>
+                    <option value={12}>12 hours</option>
+                    <option value={24}>24 hours (next day)</option>
+                    <option value={48}>48 hours</option>
+                    <option value={72}>3 days</option>
+                  </select>
+                  <span className="text-xs text-gray-400">after service date</span>
+                </div>
+                {followupMessage && (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-gray-500">Preview:</p>
+                    <div className="mt-1 whitespace-pre-line rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-700">
+                      {(followupMessage || 'Thanks for visiting {business_name}, {customer_name}! How was your experience?')
+                        .replace(/\{business_name\}/g, business.name)
+                        .replace(/\{customer_name\}/g, 'John')
+                        .replace(/\{service_name\}/g, 'Haircut')}
+                    </div>
+                  </div>
+                )}
+                <button
+                  onClick={() => { setFollowupMessage(''); setFollowupDelayHours(24); }}
+                  className="mt-2 text-xs text-gray-400 hover:text-gray-600"
+                >
+                  Reset to Default
+                </button>
+              </div>
+            )}
           </div>
 
           {templatesError && (

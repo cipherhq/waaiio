@@ -216,26 +216,57 @@ Deno.serve(async () => {
     }
   }
 
-  // ── Post-service follow-ups (24h after completion) ──
-  const yesterdayDate = new Date(now);
-  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-  const ydStr = yesterdayDate.toISOString().split('T')[0];
+  // ── Post-service follow-ups (configurable delay per business) ──
+  // Load follow-up config per business
+  const { data: followupConfigs } = await supabase
+    .from('whatsapp_config')
+    .select('business_id, followup_message, followup_delay_hours')
+    .not('business_id', 'is', null);
+
+  const followupMap = new Map<string, { message: string | null; delayHours: number }>();
+  for (const fc of followupConfigs || []) {
+    followupMap.set(fc.business_id, {
+      message: fc.followup_message,
+      delayHours: fc.followup_delay_hours ?? 24,
+    });
+  }
+
+  // Query completed bookings from the last 3 days (covers all possible delay settings)
+  const threeDaysAgo = new Date(now);
+  threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+  const threeDaysAgoStr = threeDaysAgo.toISOString().split('T')[0];
 
   const { data: completedBookings } = await supabase
     .from('bookings')
-    .select('id, guest_phone, guest_name, business_id, service_id, businesses!inner(name, slug)')
+    .select('id, guest_phone, guest_name, business_id, service_id, date, services(name), businesses!inner(name, slug)')
     .eq('status', 'completed')
     .eq('feedback_requested', false)
-    .eq('date', ydStr)
+    .gte('date', threeDaysAgoStr)
     .is('deleted_at', null)
-    .limit(50);
+    .limit(100);
 
   for (const booking of completedBookings || []) {
     if (!booking.guest_phone) continue;
     const biz = (booking as Record<string, unknown>).businesses as Record<string, string>;
     const bizName = biz?.name || 'us';
+    const svc = (booking as Record<string, unknown>).services as Record<string, string> | null;
+    const svcName = svc?.name || '';
 
-    const msg = `Thanks for visiting *${bizName}*, ${booking.guest_name || 'there'}! 🙏\n\nWe'd love to have you back! Send *Hi* to book again anytime.\n\nHave a great day! ✨`;
+    // Check if enough time has passed based on business's configured delay
+    const config = followupMap.get(booking.business_id);
+    const delayHours = config?.delayHours ?? 24;
+    const bookingDate = new Date(booking.date + 'T23:59:59');
+    const sendAfter = new Date(bookingDate.getTime() + delayHours * 60 * 60 * 1000);
+    if (now < sendAfter) continue; // Not time yet
+
+    // Use custom follow-up message or default
+    const template = config?.message
+      || `Thanks for visiting *{business_name}*, {customer_name}! 🙏\n\nWe'd love to have you back! Send *Hi* to book again anytime.\n\nHave a great day! ✨`;
+
+    const msg = template
+      .replace(/\{business_name\}/g, bizName)
+      .replace(/\{customer_name\}/g, booking.guest_name || 'there')
+      .replace(/\{service_name\}/g, svcName);
 
     const sent = await sendWhatsApp(booking.guest_phone, msg);
     if (sent) {
