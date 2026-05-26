@@ -303,7 +303,7 @@ export default function Dashboard() {
         // Category breakdown — businesses, bookings, revenue per category
         const allBizRes = await adminQuery('businesses', { select: 'id, category, country_code', filters: [{ column: 'status', op: 'eq', value: 'active' }] });
         const allBookingsRes = await adminQuery('bookings', { select: 'business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }] });
-        const allPaymentsRes = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'status', op: 'eq', value: 'success' }, { column: 'created_at', op: 'gte', value: monthStart }] });
+        const allPaymentsRes = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'status', op: 'eq', value: 'success' }] });
 
         const bizCatMap = new Map((allBizRes.data || []).map(b => [b.id, b.category]));
         const catStats = new Map<string, { count: number; bookings: number; revenue: number }>();
@@ -641,7 +641,7 @@ export default function Dashboard() {
       {categoryBreakdown.length > 0 && (
         <div className="mt-8">
           <h2 className="text-lg font-semibold text-gray-900">By Business Category</h2>
-          <p className="mt-0.5 text-sm text-gray-500">Businesses, bookings, and revenue per category this month</p>
+          <p className="mt-0.5 text-sm text-gray-500">Active businesses, bookings this month, and total revenue per category</p>
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
