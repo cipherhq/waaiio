@@ -34,6 +34,9 @@ export default function MobileMenu({ isOpen, onClose, links, loggedIn }: MobileM
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
           className="fixed inset-0 z-50 flex flex-col bg-gray-950/95 backdrop-blur-xl"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Navigation menu"
         >
           <div className="flex items-center justify-end px-6 pt-5">
             <button

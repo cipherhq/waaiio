@@ -562,9 +562,11 @@ export default function EventPurchaseForm({
               )}
 
               {/* Error message */}
-              {errorMsg && (
-                <p className="text-sm text-red-600">{errorMsg}</p>
-              )}
+              <div aria-live="polite" role="alert">
+                {errorMsg && (
+                  <p className="text-sm text-red-600">{errorMsg}</p>
+                )}
+              </div>
 
               {/* Terms checkbox */}
               <label className="flex items-start gap-2 cursor-pointer">

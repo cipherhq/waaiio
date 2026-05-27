@@ -358,11 +358,13 @@ export default function BookingForm({ business, services }: BookingFormProps) {
       <div className="mx-auto max-w-lg px-4 pt-6">
         <StepIndicator currentStep={step} />
 
-        {error && (
-          <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
+        <div aria-live="polite" role="alert">
+          {error && (
+            <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+        </div>
 
         {/* Step 1: Service Selection */}
         {step === 1 && (
