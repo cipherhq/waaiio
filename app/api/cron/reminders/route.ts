@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { bookingReminderEmail } from '@/lib/email/templates';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,7 +25,19 @@ export async function GET(request: NextRequest) {
   if (authError) return authError;
 
   const supabase = createServiceClient();
+  const resolver = new ChannelResolver(supabase);
   let remindersSent = 0;
+  let whatsappSent = 0;
+
+  // Helper: send WhatsApp message to a phone via the business's channel
+  async function sendWhatsApp(businessId: string, phone: string, text: string): Promise<boolean> {
+    try {
+      const resolved = await resolver.resolveByBusinessId(businessId);
+      if (!resolved) return false;
+      await resolved.sender.sendText({ to: phone.replace(/^\+/, ''), text });
+      return true;
+    } catch { return false; }
+  }
 
   // Get all businesses with their reminder config and tier
   const { data: businesses } = await supabase
@@ -83,10 +96,22 @@ export async function GET(request: NextRequest) {
         email = profile?.email;
       }
 
+      const businessName = (booking as any).businesses?.name || 'Your business';
+      const serviceName = (booking as any).services?.name || 'your appointment';
+      const customerName = booking.guest_name || 'there';
+
+      // Send WhatsApp reminder
+      if (booking.guest_phone) {
+        const timeLabel = booking.time || '';
+        const hoursLabel = hoursAhead >= 24 ? 'tomorrow' : `in ${hoursAhead} hours`;
+        const waMsg = `Hi ${customerName}! Just a reminder — your ${serviceName} at *${businessName}* is ${hoursLabel}${timeLabel ? ` at ${timeLabel}` : ''}.\n\nRef: *${booking.reference_code || ''}*\n\nSee you there! 🙏`;
+        const sent = await sendWhatsApp(booking.business_id, booking.guest_phone, waMsg);
+        if (sent) whatsappSent++;
+      }
+
+      // Send email reminder
       if (email) {
-        const businessName = (booking as any).businesses?.name || 'Your business';
-        const serviceName = (booking as any).services?.name || 'your appointment';
-        const { subject, html } = bookingReminderEmail(businessName, booking.guest_name || 'Customer', serviceName, booking.date, booking.time || '', booking.reference_code || '');
+        const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
         await sendEmail({ to: email, subject, html }).catch(() => {});
         remindersSent++;
       }
@@ -150,5 +175,5 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ ok: true, remindersSent });
+  return NextResponse.json({ ok: true, emailsSent: remindersSent, whatsappSent });
 }
