@@ -454,7 +454,7 @@ export default function PrivacyPolicyPage() {
                   <a href="mailto:legal@waaiio.com" className="text-brand underline">legal@waaiio.com</a>
                 </li>
                 <li><strong>Company:</strong> CipherHQ LLC (d/b/a Waaiio)</li>
-                <li><strong>Mailing address:</strong> CipherHQ LLC, 1209 Orange Street, Wilmington, DE 19801, United States</li>
+                <li><strong>Mailing address:</strong> CipherHQ LLC, 2986 Brubeck Ter, Ijamsville, MD 21754, United States</li>
               </ul>
             </section>
           </div>
