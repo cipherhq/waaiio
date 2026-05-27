@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { createClient } from '@/lib/supabase/server';
 import BookingForm from './BookingForm';
 
+export const revalidate = 30; // ISR: regenerate every 30 seconds
+
 interface PageProps {
   params: Promise<{ slug: string }>;
 }

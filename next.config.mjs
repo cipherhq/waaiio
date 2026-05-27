@@ -58,6 +58,39 @@ const nextConfig = {
           { key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate' },
         ],
       },
+      // Cache OG image generation (expensive PNG, immutable content)
+      {
+        source: '/api/tickets/image',
+        headers: [
+          { key: 'Cache-Control', value: 'public, s-maxage=3600, stale-while-revalidate=86400' },
+        ],
+      },
+      {
+        source: '/api/receipts/image',
+        headers: [
+          { key: 'Cache-Control', value: 'public, s-maxage=3600, stale-while-revalidate=86400' },
+        ],
+      },
+      // Cache public event/booking APIs
+      {
+        source: '/api/events/public/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, s-maxage=10, stale-while-revalidate=30' },
+        ],
+      },
+      {
+        source: '/api/bookings/public/:path*',
+        headers: [
+          { key: 'Cache-Control', value: 'public, s-maxage=10, stale-while-revalidate=30' },
+        ],
+      },
+      // New legal pages
+      {
+        source: '/(dmca|refund-policy|aml-kyc|do-not-sell)',
+        headers: [
+          { key: 'Cache-Control', value: 'public, s-maxage=60, stale-while-revalidate=300' },
+        ],
+      },
     ];
   },
 };

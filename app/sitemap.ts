@@ -2,9 +2,8 @@ import type { MetadataRoute } from 'next';
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
-// Force dynamic so sitemap is generated at request time (needs DB access)
-export const dynamic = 'force-dynamic';
-export const revalidate = 3600; // Cache for 1 hour
+// ISR: regenerate sitemap every hour (queries DB for dynamic pages)
+export const revalidate = 3600;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticPages: MetadataRoute.Sitemap = [

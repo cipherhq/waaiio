@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import type { Metadata } from 'next';
 import EventPurchaseForm from './EventPurchaseForm';
 
+export const revalidate = 30; // ISR: regenerate every 30 seconds
+
 interface EventData {
   id: string;
   name: string;

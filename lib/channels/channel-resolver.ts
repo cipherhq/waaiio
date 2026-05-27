@@ -30,8 +30,20 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export class ChannelResolver {
   private cache = new Map<string, { data: ChannelRecord | null; ts: number }>();
+  private static readonly MAX_CACHE_SIZE = 500;
 
   constructor(private readonly supabase: SupabaseClient) {}
+
+  private cacheSet(key: string, data: ChannelRecord | null) {
+    this.cache.set(key, { data, ts: Date.now() });
+    // Evict oldest entries if cache exceeds max size
+    if (this.cache.size > ChannelResolver.MAX_CACHE_SIZE) {
+      const oldest = Array.from(this.cache.entries()).sort((a, b) => a[1].ts - b[1].ts);
+      for (let i = 0; i < oldest.length - ChannelResolver.MAX_CACHE_SIZE; i++) {
+        this.cache.delete(oldest[i][0]);
+      }
+    }
+  }
 
   /**
    * Build the correct MessageSender for a channel based on its provider.
@@ -98,7 +110,7 @@ export class ChannelResolver {
       .single();
 
     const record = data as ChannelRecord | null;
-    this.cache.set(`phone:${normalized}`, { data: record, ts: Date.now() });
+    this.cacheSet(`phone:${normalized}`, record);
 
     if (!record) return null;
     return this.buildResolved(record);
@@ -127,7 +139,7 @@ export class ChannelResolver {
       .single();
 
     const record = data as ChannelRecord | null;
-    this.cache.set(cacheKey, { data: record, ts: Date.now() });
+    this.cacheSet(cacheKey, record);
 
     if (!record) return null;
     return this.buildResolved(record);
@@ -186,7 +198,7 @@ export class ChannelResolver {
 
       if (assigned) {
         const record = assigned as ChannelRecord;
-        this.cache.set(cacheKey, { data: record, ts: Date.now() });
+        this.cacheSet(cacheKey, record);
         return this.buildResolved(record);
       }
     }
@@ -202,7 +214,7 @@ export class ChannelResolver {
 
     if (data) {
       const record = data as ChannelRecord;
-      this.cache.set(cacheKey, { data: record, ts: Date.now() });
+      this.cacheSet(cacheKey, record);
       return this.buildResolved(record);
     }
 
@@ -210,7 +222,7 @@ export class ChannelResolver {
     if (bizData?.country_code) {
       const shared = await this.getSharedChannelForCountry(bizData.country_code as CountryCode);
       if (shared) {
-        this.cache.set(cacheKey, { data: shared.channel, ts: Date.now() });
+        this.cacheSet(cacheKey, shared.channel);
         return shared;
       }
     }
@@ -226,11 +238,11 @@ export class ChannelResolver {
 
     if (anyShared) {
       const record = anyShared as ChannelRecord;
-      this.cache.set(cacheKey, { data: record, ts: Date.now() });
+      this.cacheSet(cacheKey, record);
       return this.buildResolved(record);
     }
 
-    this.cache.set(cacheKey, { data: null, ts: Date.now() });
+    this.cacheSet(cacheKey, null);
     return null;
   }
 
@@ -255,7 +267,7 @@ export class ChannelResolver {
       .single();
 
     const record = data as ChannelRecord | null;
-    this.cache.set(cacheKey, { data: record, ts: Date.now() });
+    this.cacheSet(cacheKey, record);
 
     if (!record) return null;
     return this.buildResolved(record);
