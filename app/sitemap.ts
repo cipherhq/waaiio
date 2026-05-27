@@ -21,6 +21,9 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${BASE_URL}/acceptable-use`, changeFrequency: 'yearly', priority: 0.2, lastModified: new Date() },
     { url: `${BASE_URL}/do-not-sell`, changeFrequency: 'yearly', priority: 0.2, lastModified: new Date() },
     { url: `${BASE_URL}/dpa`, changeFrequency: 'yearly', priority: 0.2, lastModified: new Date() },
+    { url: `${BASE_URL}/dmca`, changeFrequency: 'yearly', priority: 0.2, lastModified: new Date() },
+    { url: `${BASE_URL}/refund-policy`, changeFrequency: 'yearly', priority: 0.2, lastModified: new Date() },
+    { url: `${BASE_URL}/aml-kyc`, changeFrequency: 'yearly', priority: 0.2, lastModified: new Date() },
   ];
 
   // Dynamic pages: published events and active businesses with slugs
