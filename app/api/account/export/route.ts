@@ -9,10 +9,12 @@ import { logger } from '@/lib/logger';
  *
  * Generates a JSON export of ALL user data.
  * Rate limited to 1 export per 24 hours per user.
+ *
+ * Rate limit uses platform_settings table with key `export:{userId}`
+ * instead of in-memory Map (which doesn't persist across serverless invocations).
  */
 
 const EXPORT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
-const exportTimestamps = new Map<string, number>();
 
 export async function POST() {
   try {
@@ -22,17 +24,26 @@ export async function POST() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Rate limit: 1 export per 24 hours
-    const lastExport = exportTimestamps.get(user.id);
-    if (lastExport && Date.now() - lastExport < EXPORT_COOLDOWN_MS) {
-      const retryAfterSecs = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - lastExport)) / 1000);
-      return NextResponse.json(
-        { error: 'You can only request one data export every 24 hours.' },
-        { status: 429, headers: { 'Retry-After': String(retryAfterSecs) } },
-      );
-    }
-
     const serviceClient = createServiceClient();
+
+    // Rate limit: 1 export per 24 hours (persisted in DB)
+    const exportKey = `export:${user.id}`;
+    const { data: exportRecord } = await serviceClient
+      .from('platform_settings')
+      .select('value')
+      .eq('key', exportKey)
+      .maybeSingle();
+
+    if (exportRecord) {
+      const lastExportTime = Number(exportRecord.value);
+      if (!isNaN(lastExportTime) && Date.now() - lastExportTime < EXPORT_COOLDOWN_MS) {
+        const retryAfterSecs = Math.ceil((EXPORT_COOLDOWN_MS - (Date.now() - lastExportTime)) / 1000);
+        return NextResponse.json(
+          { error: 'You can only request one data export every 24 hours.' },
+          { status: 429, headers: { 'Retry-After': String(retryAfterSecs) } },
+        );
+      }
+    }
 
     // Fetch user profile
     const { data: profile } = await serviceClient
@@ -110,8 +121,13 @@ export async function POST() {
       subscriptions: subscriptionsResult.data || [],
     };
 
-    // Record export timestamp for rate limiting
-    exportTimestamps.set(user.id, Date.now());
+    // Record export timestamp in DB for rate limiting (upsert)
+    await serviceClient
+      .from('platform_settings')
+      .upsert(
+        { key: exportKey, value: String(Date.now()) },
+        { onConflict: 'key' },
+      );
 
     // Audit log
     logger.info(`[DATA-EXPORT] User ${user.id} requested data export. Tables: ${Object.keys(exportData).length}, Records: ${

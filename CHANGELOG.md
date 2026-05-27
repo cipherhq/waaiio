@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-23
 
+### Legal: 3 new legal pages + Privacy Policy gaps + export rate limit fix
+- **New files:** `app/(marketing)/dmca/page.tsx`, `app/(marketing)/refund-policy/page.tsx`, `app/(marketing)/aml-kyc/page.tsx`
+- **Modified:** `app/(marketing)/privacy/page.tsx` — added dpo@waaiio.com contact, physical mailing address, PIPEDA section for Canada, right to appeal for CCPA denials
+- **Modified:** `app/api/account/export/route.ts` — replaced in-memory Map rate limit with DB-backed check using `platform_settings` table (key `export:{userId}`). In-memory Map was unreliable across serverless invocations.
+- **Modified:** `components/marketing/Footer.tsx` — added links to Refund Policy, DMCA, and AML & KYC pages
+- **Impact:** Footer now shows 3 additional legal links. Export rate limit persists across cold starts.
+
 ### Security: Server-side OTP token verification on public purchase/booking APIs
 - **Files:** `lib/otp-token.ts` (new), `app/api/auth/email-otp/route.ts`, `app/api/events/purchase/route.ts`, `app/api/bookings/public/create/route.ts`, `app/e/[slug]/EventPurchaseForm.tsx`, `app/b/[slug]/BookingForm.tsx`
 - OTP verify endpoint now issues HMAC-signed token (15min TTL) proving email was verified

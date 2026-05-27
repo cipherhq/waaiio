@@ -87,6 +87,9 @@ export default function Footer() {
               <li><Link href="/acceptable-use" className="text-sm text-gray-300 transition hover:text-white">Acceptable Use</Link></li>
               <li><Link href="/dpa" className="text-sm text-gray-300 transition hover:text-white">Data Processing (DPA)</Link></li>
               <li><Link href="/do-not-sell" className="text-sm text-gray-300 transition hover:text-white">Do Not Sell My Info</Link></li>
+              <li><Link href="/refund-policy" className="text-sm text-gray-300 transition hover:text-white">Refund Policy</Link></li>
+              <li><Link href="/dmca" className="text-sm text-gray-300 transition hover:text-white">DMCA / IP Takedown</Link></li>
+              <li><Link href="/aml-kyc" className="text-sm text-gray-300 transition hover:text-white">AML &amp; KYC</Link></li>
               <li><PrivacyChoicesButton /></li>
               <li><Link href="/contact" className="text-sm text-gray-300 transition hover:text-white">Contact</Link></li>
             </ul>

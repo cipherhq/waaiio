@@ -4,7 +4,7 @@ import AnimatedSection from '@/components/marketing/AnimatedSection';
 export const metadata: Metadata = {
   title: 'Privacy Policy — Waaiio',
   description:
-    'How Waaiio collects, uses, stores, and protects personal information. Covers CCPA, GDPR, UK GDPR, NDPR, and Ghana DPA compliance.',
+    'How Waaiio collects, uses, stores, and protects personal information. Covers CCPA, GDPR, UK GDPR, NDPR, PIPEDA, and Ghana DPA compliance.',
 };
 
 export default function PrivacyPolicyPage() {
@@ -263,6 +263,15 @@ export default function PrivacyPolicyPage() {
                 or use the account deletion feature in your dashboard settings. We will verify your
                 identity and respond within 45 days.
               </p>
+              <p className="mt-3 leading-relaxed">
+                <strong>Right to appeal:</strong> If we deny your CCPA request in whole or in part,
+                you have the right to appeal the decision. To submit an appeal, email{' '}
+                <a href="mailto:privacy@waaiio.com" className="text-brand underline">privacy@waaiio.com</a>{' '}
+                with the subject line &ldquo;CCPA Appeal&rdquo; within 30 days of receiving our
+                denial. We will review your appeal and respond within 60 days. If you are not
+                satisfied with the outcome of the appeal, you may contact the California Attorney
+                General&rsquo;s office to file a complaint.
+              </p>
             </section>
 
             {/* ── GDPR Rights ─────────────────────────────────── */}
@@ -293,6 +302,34 @@ export default function PrivacyPolicyPage() {
               <h2 className="text-xl font-semibold text-gray-900">8. Ghana Data Protection Act (Act 843)</h2>
               <p className="mt-2 leading-relaxed">
                 If you are located in Ghana, the Data Protection Act, 2012 (Act 843) provides you with rights similar to those described in Section 7, including the right to access, correct, and delete your personal data. Waaiio is committed to processing data in accordance with Act 843 and the regulations issued by the Data Protection Commission of Ghana.
+              </p>
+            </section>
+
+            {/* ── PIPEDA (Canada) ──────────────────────────────── */}
+            <section>
+              <h2 className="text-xl font-semibold text-gray-900">8A. Personal Information Protection and Electronic Documents Act (PIPEDA) — Canada</h2>
+              <p className="mt-2 leading-relaxed">
+                If you are located in Canada, the Personal Information Protection and Electronic
+                Documents Act (PIPEDA) and applicable provincial privacy legislation provide you
+                with the following rights:
+              </p>
+              <ul className="mt-3 list-disc space-y-1.5 pl-5">
+                <li><strong>Right of access:</strong> You may request access to your personal information held by Waaiio, including information about how it has been used and to whom it has been disclosed.</li>
+                <li><strong>Right to correction:</strong> You may request correction of any inaccurate or incomplete personal information.</li>
+                <li><strong>Right to withdraw consent:</strong> You may withdraw your consent for the collection, use, or disclosure of your personal information, subject to legal or contractual restrictions and reasonable notice.</li>
+                <li><strong>Right to challenge compliance:</strong> You may challenge our compliance with PIPEDA by contacting our Privacy Officer (see Section 16 below) or by filing a complaint with the Office of the Privacy Commissioner of Canada.</li>
+              </ul>
+              <p className="mt-3 leading-relaxed">
+                Waaiio collects, uses, and discloses personal information only for purposes that a
+                reasonable person would consider appropriate in the circumstances, and only with
+                meaningful consent. We limit collection to what is necessary for the identified
+                purposes and retain personal information only as long as necessary to fulfill those
+                purposes.
+              </p>
+              <p className="mt-3 leading-relaxed">
+                To exercise your rights under PIPEDA, contact{' '}
+                <a href="mailto:privacy@waaiio.com" className="text-brand underline">privacy@waaiio.com</a>.
+                We will respond within 30 days.
               </p>
             </section>
 
@@ -410,11 +447,14 @@ export default function PrivacyPolicyPage() {
                 <li><strong>Privacy inquiries:</strong>{' '}
                   <a href="mailto:privacy@waaiio.com" className="text-brand underline">privacy@waaiio.com</a>
                 </li>
+                <li><strong>Data Protection Officer:</strong>{' '}
+                  <a href="mailto:dpo@waaiio.com" className="text-brand underline">dpo@waaiio.com</a>
+                </li>
                 <li><strong>Legal inquiries:</strong>{' '}
                   <a href="mailto:legal@waaiio.com" className="text-brand underline">legal@waaiio.com</a>
                 </li>
                 <li><strong>Company:</strong> CipherHQ LLC (d/b/a Waaiio)</li>
-                <li><strong>Location:</strong> United States</li>
+                <li><strong>Mailing address:</strong> CipherHQ LLC, 1209 Orange Street, Wilmington, DE 19801, United States</li>
               </ul>
             </section>
           </div>
