@@ -36,7 +36,7 @@ export default function MarketingLayout({
     <>
       <a href="#main-content" className="skip-link">Skip to content</a>
       <Navbar />
-      <main id="main-content">{children}</main>
+      <main id="main-content" style={{ overflowX: 'clip' }}>{children}</main>
       <Footer />
       {/* Floating WhatsApp contact button */}
       <a
