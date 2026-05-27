@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
+import { checkRateLimit } from '@/lib/rate-limit';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
@@ -66,6 +67,13 @@ export class BotService {
     try {
     const text = messageText.trim();
     logger.debug('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
+
+    // Pre-check 0: Per-phone rate limit (prevents bot spam burning AI/WhatsApp credits)
+    const phoneRateLimit = checkRateLimit(`bot:${from}`, 20, 60_000); // 20 messages per minute per phone
+    if (!phoneRateLimit.allowed) {
+      logger.warn(`[BOT] Rate limited phone ${from} — ${phoneRateLimit.remaining} remaining`);
+      return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
+    }
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
