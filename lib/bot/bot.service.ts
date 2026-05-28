@@ -1316,10 +1316,12 @@ export class BotService {
     const hasRichIntent = hasRichBookingIntent || hasRichPaymentIntent || hasRichOrderIntent;
     const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability'
       || (isAtCapabilitySelect && hasRichIntent);
+    // Bare action words ("pay", "order", "book") should NOT restart — they should route to capability selection
+    const isBareActionWord = /^(pay|order|buy|book|ticket|donate|give|reserve)$/i.test(text);
     const isRestart = !isFreeTextStep && (
       /^(start|restart)$/i.test(text) ||
       isGreetingText ||
-      (!isMidFlow && isBookingText) ||
+      (!isMidFlow && isBookingText && !isBareActionWord) ||
       isBotCodeRestart
     );
 
