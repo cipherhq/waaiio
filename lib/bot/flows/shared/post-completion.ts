@@ -61,8 +61,47 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
   }
 
   const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+  const phoneWithPlus = customerPhone.startsWith('+') ? customerPhone : `+${customerPhone}`;
   const bizName = biz?.name ?? 'Business';
   const meta = (biz?.metadata ?? {}) as Record<string, unknown>;
+
+  // Auto-create customer profile if not exists (so Customers tab has data immediately)
+  try {
+    const { data: existing } = await supabase
+      .from('customer_profiles')
+      .select('id')
+      .eq('business_id', businessId)
+      .eq('phone', phoneWithPlus)
+      .maybeSingle();
+
+    if (existing) {
+      // Update existing — increment counters
+      await supabase.rpc('increment_customer_visit', {
+        p_business_id: businessId,
+        p_phone: phoneWithPlus,
+        p_amount: amountPaid || 0,
+      }).catch(() => {
+        // Fallback if RPC doesn't exist — just update last_seen
+        supabase.from('customer_profiles')
+          .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
+          .eq('id', existing.id);
+      });
+    } else {
+      // Create new
+      await supabase.from('customer_profiles').insert({
+        business_id: businessId,
+        phone: phoneWithPlus,
+        name: customerName || null,
+        total_bookings: 1,
+        total_visits: 1,
+        total_spent: amountPaid || 0,
+        last_seen_at: new Date().toISOString(),
+        first_seen_at: new Date().toISOString(),
+      });
+    }
+  } catch {
+    // Non-critical — don't block the flow
+  }
 
   // 0. Auto-receipt — send payment confirmation with receipt details
   if (amountPaid && amountPaid > 0) {
