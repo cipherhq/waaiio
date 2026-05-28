@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -47,7 +48,9 @@ export async function POST(request: NextRequest) {
   const path = `${businessId}/products/${Date.now()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
-  const { error: uploadError } = await supabase.storage
+  // Use service client for storage upload (bypasses storage RLS — ownership already verified above)
+  const serviceClient = createServiceClient();
+  const { error: uploadError } = await serviceClient.storage
     .from('business-documents')
     .upload(path, buffer, {
       contentType: file.type,
@@ -55,10 +58,11 @@ export async function POST(request: NextRequest) {
     });
 
   if (uploadError) {
-    return NextResponse.json({ error: 'Upload failed: ' + uploadError.message }, { status: 500 });
+    console.error('[PRODUCT-UPLOAD] Storage error:', uploadError.message);
+    return NextResponse.json({ error: 'Upload failed. Please try again.' }, { status: 500 });
   }
 
-  const { data: urlData } = supabase.storage
+  const { data: urlData } = serviceClient.storage
     .from('business-documents')
     .getPublicUrl(path);
 
