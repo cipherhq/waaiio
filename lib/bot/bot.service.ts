@@ -1632,7 +1632,14 @@ export class BotService {
       if (business && waConfig && tierInfo) {
         // Standalone bot greeting — use pre-fetched config (no extra queries)
         let greeting: string;
-        if (waConfig.alias) {
+        const isCustomGreeting = waConfig.templates.greeting !== 'Welcome! How can I help you today?';
+        if (isCustomGreeting) {
+          // Custom greeting set by business owner — always use it
+          greeting = this.standaloneService.fillTemplate(waConfig.templates.greeting, {
+            restaurant_name: business.name,
+            business_name: business.name,
+          });
+        } else if (waConfig.alias) {
           const catLabels = getCategoryLabels(business.category);
           greeting = this.intelligence.getPersonaGreeting(waConfig.alias, business.name, catLabels.confirmationEmoji);
         } else {
