@@ -43,7 +43,8 @@ export async function POST(request: NextRequest) {
   }
 
   const ext = file.name.split('.').pop() || 'jpg';
-  const path = `products/${businessId}/${Date.now()}.${ext}`;
+  // Path must start with business_id — storage RLS checks (foldername(name))[1] = business_id
+  const path = `${businessId}/products/${Date.now()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadError } = await supabase.storage
