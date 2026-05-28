@@ -610,41 +610,31 @@ export const ticketingFlow: FlowDefinition = {
                 }),
               });
 
-              // Dedup path: webhook confirmed payment, but may not have sent tickets.
-              // Check if tickets exist and send the codes as fallback.
-              const { data: existingTickets } = await ctx.supabase
-                .from('event_tickets')
-                .select('ticket_code')
-                .eq('booking_id', d.booking_id as string);
-
-              if (existingTickets && existingTickets.length > 0) {
-                // Send rich ticket images with event details + QR code
-                const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-                for (const t of existingTickets) {
-                  try {
-                    await ctx.sender.sendImage({
-                      to: ctx.from,
-                      imageUrl: `${appUrl}/api/tickets/image?code=${t.ticket_code}`,
-                      caption: `🎟️ *${t.ticket_code}* — Show this at the entrance\n\n🔗 ${appUrl}/tickets/${t.ticket_code}`,
-                    });
-                  } catch (imgErr) {
-                    // Fallback: bare QR
-                    try {
-                      await ctx.sender.sendImage({
-                        to: ctx.from,
-                        imageUrl: `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${appUrl}/tickets/${t.ticket_code}`)}`,
-                        caption: `🎟️ *${t.ticket_code}* — Show this QR at the entrance`,
-                      });
-                    } catch { /* text fallback below */ }
-                  }
-                }
-                // Always send text fallback
-                const codes = existingTickets.map((t: { ticket_code: string }) =>
-                  `🎟️ *${t.ticket_code}*\n🔗 ${appUrl}/tickets/${t.ticket_code}`
-                ).join('\n\n');
+              // Dedup path: webhook confirmed payment but doesn't generate tickets.
+              // Generate and send tickets now.
+              const dedupQty = (d.ticket_quantity as number) || 1;
+              try {
+                await sendTicketsAfterPurchase({
+                  supabase: ctx.supabase,
+                  sender: ctx.sender,
+                  businessId: ctx.business!.id,
+                  bookingId: d.booking_id as string,
+                  eventId: d.event_id as string,
+                  eventName: d.event_name as string,
+                  eventDate: dedupDateLabel,
+                  eventTime: d.event_time as string | undefined,
+                  venue: (d.event_venue as string) || '',
+                  guestName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                  guestPhone: ctx.from,
+                  referenceCode: d.reference_code as string,
+                  quantity: dedupQty,
+                });
+              } catch (ticketErr) {
+                console.error('[TICKETING] Dedup sendTicketsAfterPurchase FAILED:', ticketErr);
+                // Text fallback with reference code
                 await ctx.sender.sendText({
                   to: ctx.from,
-                  text: `Your ticket${existingTickets.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow at the entrance or type *my bookings* to view tickets.`,
+                  text: `🎟️ Your booking is confirmed!\nRef: *${d.reference_code}*\n\nShow this at the entrance or type *my bookings* to view tickets.`,
                 });
               }
 
