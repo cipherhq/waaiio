@@ -314,7 +314,8 @@ export class BotService {
     };
 
     // Detect "my orders" / tracking keywords — must check BEFORE bookings so "orders" routes correctly
-    const isOrdersQuery = /^(my\s+)?orders?$/i.test(text)
+    // "Order" alone is ambiguous — only treat as past-orders query if it says "my order(s)" or has tracking keywords
+    const isOrdersQuery = /^my\s+orders?$/i.test(text)
       || /^(check|view|show|list|see)\s+(my\s+)?orders?$/i.test(text)
       || /^(order\s+status|track\s+(my\s+)?order|where'?s?\s+(is\s+)?(my\s+)?order|delivery\s+status|order\s+history)$/i.test(text)
       || /^track\s+my\s+order$/i.test(text)
@@ -1309,7 +1310,9 @@ export class BotService {
     const hasRichBookingIntent = isBookingText && /\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\s*(am|pm)|morning|afternoon|evening|next\s+week)\b/i.test(normalizedForRestart);
     const hasRichPaymentIntent = /\b(pay\s*tithe|pay\s*offering|give\s*tithe|give\s*offering|donate|sadaqah|zakat|sow\s*seed)\b/i.test(normalizedForRestart)
       || (/\b(pay|tithe|offering|donate|give|sow)\b/i.test(normalizedForRestart) && /\d{3,}/.test(normalizedForRestart));
-    const hasRichOrderIntent = /\b(order|buy|reorder)\b/i.test(normalizedForRestart) && /\b(\d+\s+\w|reorder|same\s+again)\b/i.test(normalizedForRestart);
+    const hasRichOrderIntent = /\b(order|buy)\b/i.test(normalizedForRestart) && /\b(\d+\s+\w|reorder|same\s+again|\w+\s+\w+)\b/i.test(normalizedForRestart)
+      || /\b(reorder|same\s+again)\b/i.test(normalizedForRestart)
+      || (/\b(order|buy)\b/i.test(normalizedForRestart) && normalizedForRestart.split(/\s+/).length >= 2 && !isOrdersQuery);
     const hasRichIntent = hasRichBookingIntent || hasRichPaymentIntent || hasRichOrderIntent;
     const isMidFlow = !!session?.business_id && !!currentStep && currentStep !== 'greeting' && currentStep !== 'select_capability'
       || (isAtCapabilitySelect && hasRichIntent);
