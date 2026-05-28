@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
     </svg>
   `;
 
-  const composites: sharp.OverlayOptions[] = [];
+  const composites: Array<{ input: Buffer; top: number; left: number }> = [];
 
   if (flyerBuffer) {
     // Flyer ticket: flyer on top, details strip on bottom
