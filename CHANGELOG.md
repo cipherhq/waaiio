@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-05-23
 
+### Fix: Church "Pay tithe" / "Pay offering" routing to payment instead of giving
+- **Root cause:** Migration 041 seeded `bot_keywords` with `{"capability":"payment"}` for "tithe" and "offering" keywords in church category. The `giving` capability was added later but keywords were never updated.
+- **Impact:** When a church user typed "Pay tithe" or "Pay offering", the unified keyword matcher (bot.service.ts line 1970) intercepted BEFORE the flow executor, called `executeKeywordAction` which set `active_capability = 'payment'`. The payment flow's `select_category` then filtered for `service_type != 'giving'`, found nothing, and showed "No payment categories are set up yet."
+- **Fix:** Migration 163 updates church keywords to route to `giving` capability. Also adds giving keywords for mosque and NGO categories.
+- **File:** `supabase/migrations/163_fix_church_giving_keywords.sql`
+- **What could break:** Nothing. Only changes keyword routing from `payment` to `giving` for faith-related giving terms.
+
 ### Legal: 3 new legal pages + Privacy Policy gaps + export rate limit fix
 - **New files:** `app/(marketing)/dmca/page.tsx`, `app/(marketing)/refund-policy/page.tsx`, `app/(marketing)/aml-kyc/page.tsx`
 - **Modified:** `app/(marketing)/privacy/page.tsx` — added dpo@waaiio.com contact, physical mailing address, PIPEDA section for Canada, right to appeal for CCPA denials
