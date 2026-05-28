@@ -349,6 +349,7 @@ export const ticketingFlow: FlowDefinition = {
           .insert({
             business_id: ctx.business!.id,
             user_id: userId,
+            event_id: d.event_id as string,
             date: d.event_date as string,
             time: (d.event_time as string) || '00:00',
             party_size: qty,
