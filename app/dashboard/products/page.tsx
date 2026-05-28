@@ -903,7 +903,7 @@ export default function ProductsPage() {
               <input
                 ref={imageInputRef}
                 type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
+                accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml,image/heic,.jpg,.jpeg,.png,.webp,.gif,.svg,.heic"
                 onChange={handleImageSelect}
                 className="hidden"
               />
@@ -1565,7 +1565,7 @@ export default function ProductsPage() {
                               <input
                                 ref={(el) => { variantImageRefs.current[idx] = el; }}
                                 type="file"
-                                accept="image/jpeg,image/png,image/webp,image/gif"
+                                accept="image/jpeg,image/png,image/webp,image/gif,image/svg+xml,image/heic,.jpg,.jpeg,.png,.webp,.gif,.svg,.heic"
                                 onChange={(e) => handleVariantImageSelect(idx, e)}
                                 className="hidden"
                               />
