@@ -76,16 +76,17 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
     if (existing) {
       // Update existing — increment counters
-      await supabase.rpc('increment_customer_visit', {
+      const { error: rpcErr } = await supabase.rpc('increment_customer_visit', {
         p_business_id: businessId,
         p_phone: phoneWithPlus,
         p_amount: amountPaid || 0,
-      }).catch(() => {
+      });
+      if (rpcErr) {
         // Fallback if RPC doesn't exist — just update last_seen
-        supabase.from('customer_profiles')
+        await supabase.from('customer_profiles')
           .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
           .eq('id', existing.id);
-      });
+      }
     } else {
       // Create new
       await supabase.from('customer_profiles').insert({
