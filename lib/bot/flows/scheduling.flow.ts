@@ -1922,11 +1922,12 @@ export const schedulingFlow: FlowDefinition = {
           // Use atomic booking function to prevent double-booking race condition
           const svcMetaBooking = d._service_metadata as Record<string, unknown> | undefined;
           const maxCapacity = svcMetaBooking?.is_dropoff ? 9999 : ((d._service_max_capacity as number) || 1);
+          const isAppointment = d._is_appointment === true;
           const { data: slotResult, error: slotError } = await ctx.supabase
             .rpc('book_slot_atomic' as string, {
               p_business_id: ctx.business!.id,
               p_user_id: userId,
-              p_service_id: (d.service_id as string) || null,
+              p_service_id: isAppointment ? null : ((d.service_id as string) || null),
               p_staff_id: (d.staff_id as string) || null,
               p_date: d.date as string,
               p_time: d.time as string,
@@ -1947,6 +1948,7 @@ export const schedulingFlow: FlowDefinition = {
               p_total_amount: totalDeposit,
               p_staff_name: (d.staff_name as string) || null,
               p_location_id: (d.location_id as string) || null,
+              p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
             })
             .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

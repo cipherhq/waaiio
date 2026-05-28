@@ -204,6 +204,9 @@ export async function executeKeywordAction(
 
       case 'start_capability': {
         const capability = (payload.capability as string) || kw.payload;
+        // Don't hijack active flows — only route from greeting/capability selection
+        const isRoutingStep = !step || step === 'greeting' || step === 'select_capability';
+        if (!isRoutingStep) return false;
         if (session.business_id) {
           session.session_data.active_capability = capability;
           const capFirstStep = capabilityToFirstStep(capability as CapabilityId);
