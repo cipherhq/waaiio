@@ -411,9 +411,15 @@ export class FlowExecutor {
       case 'buttons':
         await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });
         break;
-      case 'image':
-        await this.sender.sendImage({ to, imageUrl: msg.imageUrl, caption: msg.caption });
+      case 'image': {
+        // WhatsApp doesn't support WebP — convert via Supabase image transform
+        let imageUrl = msg.imageUrl;
+        if (imageUrl.toLowerCase().endsWith('.webp') && imageUrl.includes('/storage/v1/object/public/')) {
+          imageUrl = imageUrl.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?format=jpeg';
+        }
+        await this.sender.sendImage({ to, imageUrl, caption: msg.caption });
         break;
+      }
       case 'document':
         await this.sender.sendDocument({ to, documentUrl: msg.url, filename: msg.filename, caption: msg.caption });
         break;

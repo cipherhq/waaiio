@@ -184,19 +184,16 @@ export const ticketingFlow: FlowDefinition = {
 
         // With image: send image first with event details as caption,
         // persist to session so executor doesn't re-send, wait, then return buttons
-        // WhatsApp doesn't support WebP — skip image if WebP format
-        const imgUrl = d.event_image_url as string;
-        const isWebP = imgUrl.toLowerCase().endsWith('.webp');
-        if (!isWebP) {
-          await ctx.sender.sendImage({
-            to: ctx.from,
-            imageUrl: imgUrl,
-            caption: eventDetails,
-          });
-        } else {
-          // Send event details as text instead
-          await ctx.sender.sendText({ to: ctx.from, text: eventDetails });
+        // WhatsApp doesn't support WebP — convert via Supabase image transform
+        let imgUrl = d.event_image_url as string;
+        if (imgUrl.toLowerCase().endsWith('.webp') && imgUrl.includes('/storage/v1/object/public/')) {
+          imgUrl = imgUrl.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?format=jpeg';
         }
+        await ctx.sender.sendImage({
+          to: ctx.from,
+          imageUrl: imgUrl,
+          caption: eventDetails,
+        });
 
         // Mark that image was already sent (avoid re-send on validation retry)
         ctx.session.session_data._image_sent = true;
