@@ -260,9 +260,11 @@ const selectCapabilityStep: FlowStepConfig = {
         if (!capId) {
           if (/\b(book|appoint|schedule|reserv)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'scheduling' || c === 'reservation') || null;
-          } else if (/\b(give|tith|offer|donat|sadaqah|zakat)\b/i.test(input)) {
+          } else if (/\b(give|tithe?|offer|donat|sadaqah|zakat|pay\s*tithe?|pay\s*offer|pay\s*seed)\b/i.test(input)) {
             // Prioritize giving over payment — "pay tithe" should go to giving, not payment
             capId = userFacing.find(c => c === 'giving') || userFacing.find(c => c === 'payment') || null;
+          } else if (/\b(pay|fee|bill|dues|levy)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'payment') || null;
           } else if (/\b(order|buy|shop|menu|food)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'ordering') || null;
           } else if (/\b(ticket|event|show|concert)\b/i.test(input)) {
