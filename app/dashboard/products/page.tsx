@@ -593,7 +593,7 @@ export default function ProductsPage() {
       business_id: business.id,
       name: form.name.trim(),
       description: form.description?.trim() || null,
-      price: form.has_variants ? 0 : (form.price || 0),
+      price: form.has_variants ? 0 : Math.round(form.price || 0),
       image_url: imageUrl,
       category: form.category?.trim() || null,
       stock_quantity: form.has_variants ? null : form.stock_quantity,
@@ -604,7 +604,7 @@ export default function ProductsPage() {
       refundable: form.refundable,
       allow_promo: form.allow_promo,
       has_variants: form.has_variants,
-      shipping_cost: form.shipping_cost,
+      shipping_cost: form.shipping_cost ? Math.round(form.shipping_cost) : null,
       min_order_qty: form.min_order_qty || 1,
     };
 
