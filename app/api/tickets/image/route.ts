@@ -30,8 +30,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Ticket not found' }, { status: 404 });
   }
 
-  const event = ticket.event as { name: string; date: string; time: string; venue: string; image_url: string | null } | null;
-  const booking = ticket.booking as { reference_code: string; business_id: string } | null;
+  const eventRaw = ticket.event as unknown;
+  const event = (Array.isArray(eventRaw) ? eventRaw[0] : eventRaw) as { name: string; date: string; time: string; venue: string; image_url: string | null } | null;
+  const bookingRaw = ticket.booking as unknown;
+  const booking = (Array.isArray(bookingRaw) ? bookingRaw[0] : bookingRaw) as { reference_code: string; business_id: string } | null;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
   const verifyUrl = `${appUrl}/tickets/${code}`;
 
