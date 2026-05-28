@@ -297,21 +297,19 @@ export async function sendProactiveConfirmation(
       if (payment.booking_id) {
         const { data: ticketBooking } = await supabase
           .from('bookings')
-          .select('flow_type, date, time, party_size, guest_name, guest_phone, guest_email, notes')
+          .select('flow_type, event_id, date, time, party_size, guest_name, guest_phone, guest_email, notes')
           .eq('id', payment.booking_id)
           .single();
 
-        if (ticketBooking?.flow_type === 'ticketing') {
+        if (ticketBooking?.flow_type === 'ticketing' && ticketBooking.event_id) {
           const { data: event } = await supabase
             .from('events')
             .select('id, name, date, time, venue')
-            .eq('business_id', businessId)
-            .eq('date', ticketBooking.date)
-            .limit(1)
-            .maybeSingle();
+            .eq('id', ticketBooking.event_id)
+            .single();
 
           const eventName = event?.name || ticketBooking.notes?.replace('Tickets for: ', '') || 'Event';
-          const dateLabel = new Date(ticketBooking.date + 'T00:00').toLocaleDateString('en-US', {
+          const dateLabel = new Date((event?.date || ticketBooking.date) + 'T00:00').toLocaleDateString('en-US', {
             weekday: 'long', day: 'numeric', month: 'long',
           });
 
@@ -321,7 +319,7 @@ export async function sendProactiveConfirmation(
             sender: resolved?.sender,  // undefined for web-only purchases (email-only delivery)
             businessId,
             bookingId: payment.booking_id,
-            eventId: event?.id || '',
+            eventId: ticketBooking.event_id,
             eventName, eventDate: dateLabel,
             eventTime: event?.time || ticketBooking.time || undefined,
             venue: event?.venue || '',
