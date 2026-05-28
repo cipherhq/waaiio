@@ -682,16 +682,16 @@ function SummaryRow({ label, value, bold }: { label: string; value: string; bold
 
 function PoweredByWaaiio() {
   return (
-    <p className="mt-8 text-center text-xs text-gray-300">
-      Powered by{' '}
+    <div className="mt-8 text-center">
       <a
-        href="https://waaiio.com"
+        href="https://waaiio.com/get-started"
         target="_blank"
         rel="noopener noreferrer"
-        className="text-gray-400 hover:text-brand transition"
+        className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-brand-50 hover:text-brand"
       >
-        Waaiio
+        <span className="text-brand font-bold">waaiio</span> — Automate your business on WhatsApp
+        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
       </a>
-    </p>
+    </div>
   );
 }

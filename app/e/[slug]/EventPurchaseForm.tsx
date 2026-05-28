@@ -262,12 +262,13 @@ export default function EventPurchaseForm({
           <p className="mt-2 text-xs text-gray-400">
             A confirmation has been sent to {guestEmail}
           </p>
-          <div className="mt-6 border-t border-gray-100 pt-4">
+          <div className="mt-6 border-t border-gray-100 pt-4 text-center">
             <a
-              href="https://www.waaiio.com"
-              className="text-xs text-gray-400 hover:text-brand"
+              href="https://www.waaiio.com/get-started"
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-brand-50 hover:text-brand"
             >
-              Powered by Waaiio
+              <span className="text-brand font-bold">waaiio</span> — Run your own events on WhatsApp
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
             </a>
           </div>
         </div>
@@ -602,13 +603,14 @@ export default function EventPurchaseForm({
             </form>
           )}
 
-          {/* Footer */}
-          <div className="mt-8 border-t border-gray-100 pt-4 text-center">
+          {/* Footer — growth loop */}
+          <div className="mt-8 border-t border-gray-100 pt-4 text-center space-y-2">
             <a
-              href="https://www.waaiio.com"
-              className="text-xs text-gray-400 hover:text-brand"
+              href="https://www.waaiio.com/get-started"
+              className="inline-flex items-center gap-1.5 rounded-full bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-brand-50 hover:text-brand"
             >
-              Powered by Waaiio
+              <span className="text-brand font-bold">waaiio</span> — Automate your business on WhatsApp
+              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
             </a>
           </div>
         </div>
