@@ -146,32 +146,44 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
   }
 
-  // 4. Send rich ticket images via WhatsApp (skip for web-only purchases without sender)
+  // 4. Send event flyer + QR codes via WhatsApp
   if (sender) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-    for (const ticket of tickets) {
-      try {
-        // Rich ticket image generated server-side with event details + QR
-        const ticketImageUrl = `${appUrl}/api/tickets/image?code=${ticket.ticketCode}`;
 
-        await sender.sendImage({
-          to: phone,
-          imageUrl: ticketImageUrl,
-          caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this at the entrance\n\n🔗 ${appUrl}/tickets/${ticket.ticketCode}`,
-        });
-        logger.info('[TICKETS] Rich ticket image sent for', ticket.ticketCode);
-      } catch (imgErr) {
-        // Fallback: send bare QR code
-        try {
-          const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${appUrl}/tickets/${ticket.ticketCode}`)}`;
+    // Send event flyer image once (if available)
+    if (eventId) {
+      try {
+        const { data: evt } = await supabase.from('events').select('image_url').eq('id', eventId).single();
+        if (evt?.image_url) {
+          let flyerUrl = evt.image_url;
+          // WebP → JPEG conversion for WhatsApp
+          if (flyerUrl.toLowerCase().endsWith('.webp')) {
+            flyerUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(flyerUrl)}`;
+          }
           await sender.sendImage({
             to: phone,
-            imageUrl: qrImageUrl,
-            caption: `🎟️ *${ticket.ticketCode}* — Show this QR at the entrance`,
+            imageUrl: flyerUrl,
+            caption: `🎟️ *${eventName}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n\nRef: *${referenceCode}*`,
           });
-        } catch (qrErr) {
-          logger.error('[TICKETS] Both ticket image and QR failed for', ticket.ticketCode, ':', qrErr);
+          logger.info('[TICKETS] Event flyer sent for', eventName);
         }
+      } catch (flyerErr) {
+        logger.error('[TICKETS] Flyer send failed (non-fatal):', flyerErr);
+      }
+    }
+
+    // Send QR code for each ticket
+    for (const ticket of tickets) {
+      try {
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${appUrl}/tickets/${ticket.ticketCode}`)}`;
+        await sender.sendImage({
+          to: phone,
+          imageUrl: qrImageUrl,
+          caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this QR at the entrance\n\n🔗 ${appUrl}/tickets/${ticket.ticketCode}`,
+        });
+        logger.info('[TICKETS] QR sent for', ticket.ticketCode);
+      } catch (qrErr) {
+        logger.error('[TICKETS] QR send failed for', ticket.ticketCode, ':', qrErr);
       }
     }
     logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
