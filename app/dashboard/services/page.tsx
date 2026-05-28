@@ -1034,6 +1034,28 @@ export default function ServicesPage() {
             </button>
           )}
         </div>
+
+        {/* Pre-booking questions hint */}
+        <div className="mt-6 rounded-xl border border-brand-100 bg-brand-50/30 p-4">
+          <p className="text-sm font-medium text-gray-900">Want to collect info before each booking?</p>
+          <p className="mt-1 text-xs text-gray-500">
+            Add pre-booking questions that customers answer before confirming. Great for:
+          </p>
+          <ul className="mt-2 space-y-1 text-xs text-gray-500">
+            <li>🅿️ Parking — <span className="text-gray-700">"What is your license plate number?"</span></li>
+            <li>💇 Salon — <span className="text-gray-700">"Do you have any hair allergies?"</span></li>
+            <li>🍽️ Restaurant — <span className="text-gray-700">"Any dietary requirements?"</span></li>
+            <li>📸 Photography — <span className="text-gray-700">"Indoor or outdoor shoot?"</span></li>
+            <li>🏥 Clinic — <span className="text-gray-700">"Are you on any medication?"</span></li>
+          </ul>
+          <a
+            href="/dashboard/settings"
+            className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-brand hover:text-brand-600 transition"
+          >
+            Set up in Settings → WhatsApp & Booking
+            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+          </a>
+        </div>
       </div>
     );
   }
