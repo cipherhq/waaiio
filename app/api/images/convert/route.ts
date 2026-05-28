@@ -24,10 +24,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch image' }, { status: 502 });
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const jpeg = await sharp(buffer).jpeg({ quality: 85 }).toBuffer();
+    const arrayBuf = await response.arrayBuffer();
+    const jpeg = await sharp(Buffer.from(arrayBuf)).jpeg({ quality: 85 }).toBuffer();
 
-    return new NextResponse(jpeg, {
+    return new NextResponse(new Uint8Array(jpeg), {
       headers: {
         'Content-Type': 'image/jpeg',
         'Cache-Control': 'public, max-age=86400, s-maxage=86400',
