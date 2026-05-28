@@ -184,10 +184,11 @@ export const ticketingFlow: FlowDefinition = {
 
         // With image: send image first with event details as caption,
         // persist to session so executor doesn't re-send, wait, then return buttons
-        // WhatsApp doesn't support WebP — convert via Supabase image transform
+        // WhatsApp doesn't support WebP — convert via our API proxy
         let imgUrl = d.event_image_url as string;
-        if (imgUrl.toLowerCase().endsWith('.webp') && imgUrl.includes('/storage/v1/object/public/')) {
-          imgUrl = imgUrl.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?format=jpeg';
+        if (imgUrl.toLowerCase().endsWith('.webp')) {
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          imgUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(imgUrl)}`;
         }
         await ctx.sender.sendImage({
           to: ctx.from,

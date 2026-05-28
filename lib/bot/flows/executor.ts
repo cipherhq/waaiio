@@ -412,10 +412,11 @@ export class FlowExecutor {
         await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });
         break;
       case 'image': {
-        // WhatsApp doesn't support WebP — convert via Supabase image transform
+        // WhatsApp doesn't support WebP — convert via our API proxy
         let imageUrl = msg.imageUrl;
-        if (imageUrl.toLowerCase().endsWith('.webp') && imageUrl.includes('/storage/v1/object/public/')) {
-          imageUrl = imageUrl.replace('/storage/v1/object/public/', '/storage/v1/render/image/public/') + '?format=jpeg';
+        if (imageUrl.toLowerCase().endsWith('.webp')) {
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          imageUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(imageUrl)}`;
         }
         await this.sender.sendImage({ to, imageUrl, caption: msg.caption });
         break;
