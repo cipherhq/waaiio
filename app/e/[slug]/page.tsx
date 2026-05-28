@@ -77,12 +77,15 @@ export async function generateMetadata(
     ? event.description.slice(0, 160)
     : `Get tickets for ${event.name} by ${business.name}`;
 
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
   return {
     title: `${event.name} | ${business.name}`,
     description,
+    alternates: { canonical: `${baseUrl}/e/${slug}` },
     openGraph: {
       title: event.name,
       description,
+      url: `${baseUrl}/e/${slug}`,
       ...(event.image_url ? { images: [{ url: event.image_url }] } : {}),
       type: 'website',
     },

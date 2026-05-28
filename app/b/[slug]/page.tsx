@@ -23,14 +23,17 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return { title: 'Business Not Found | Waaiio' };
   }
 
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const desc = business.description || `Book services online with ${business.name} on Waaiio.`;
   return {
     title: `Book with ${business.name} | Waaiio`,
-    description:
-      business.description || `Book services online with ${business.name} on Waaiio.`,
+    description: desc,
+    alternates: { canonical: `${baseUrl}/b/${slug}` },
     openGraph: {
       title: `Book with ${business.name}`,
-      description:
-        business.description || `Book services online with ${business.name} on Waaiio.`,
+      description: desc,
+      url: `${baseUrl}/b/${slug}`,
+      images: [{ url: `${baseUrl}/opengraph-image` }],
     },
   };
 }

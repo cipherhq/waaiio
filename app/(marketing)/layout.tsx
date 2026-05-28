@@ -5,11 +5,11 @@ import Footer from '@/components/marketing/Footer';
 export const metadata: Metadata = {
   title: 'Waaiio — Customers Book & Pay on WhatsApp While You Sleep',
   description:
-    'Automate bookings, payments, orders, and customer engagement on WhatsApp — for any business, any industry, any country. AI-powered automation for 40+ industries with 20+ capabilities.',
+    'Automate bookings, payments, orders, and customer engagement on WhatsApp — for any business, any industry, any country. AI-powered automation for 89+ business types across 16 industries with 30 capabilities.',
   openGraph: {
     title: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
-    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp. 40+ industries, 5 countries, 25 capabilities.',
-    url: '/',
+    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp. 89+ business types across 16 industries, 5 countries, 30 capabilities.',
+    url: process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com',
     siteName: 'Waaiio',
     type: 'website',
     locale: 'en_US',
