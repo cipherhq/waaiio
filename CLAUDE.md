@@ -182,6 +182,21 @@ NEXT_PUBLIC_POSTHOG_KEY
 - WhatsApp Green: #25D366
 - Dark mode: class-based toggle
 
+## Two-Function Traps (MUST check which version)
+- `recordPlatformFee` — `shared/payment.ts` (needs tier + isInTrial args) vs `process-success.ts` (resolves tier itself from DB)
+- `createClient` — `client.ts` (browser) vs `server.ts` (SSR/cookies) vs `service.ts` (bypasses RLS)
+- `sendTicketsAfterPurchase` — called from bot flows AND `send-confirmation.ts` (webhooks). Has internal dedup.
+- `handlePostCompletion` — called from bot flows AND `send-confirmation.ts`. Non-blocking (.catch).
+- `sanitizeFilterValue` — MUST use in every `.or()` filter with interpolated values. Never interpolate raw.
+- `getCapabilityLabel` — returns display label for bot menu. `default: return cap` falls through to raw ID for undocumented caps.
+
+## Pre-Change Checklist (enforced by preflight-check skill)
+1. READ the file + 50 lines of surrounding context
+2. GREP for every caller of the function/type being changed
+3. VERIFY DB column types, enums, and constraints before INSERT/UPDATE
+4. CHECK which version of a two-function trap you're importing
+5. RUN `npm run test` after every change (318 tests, 27 suites)
+
 ## Common Tasks
 - **New dashboard page:** Create `app/dashboard/{name}/page.tsx`, add to Sidebar.tsx with capability gate
 - **New bot flow:** Create `lib/bot/flows/{name}.flow.ts`, register in `registry.ts`, add capability routing in `capability-selection.flow.ts`
