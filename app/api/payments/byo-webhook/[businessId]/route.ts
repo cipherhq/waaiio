@@ -80,7 +80,8 @@ export async function POST(
     }
 
     // Delegate to shared handlers (payment events only — no subscription events for BYO)
-    if (event === 'charge.success') {
+    // Paystack uses 'charge.success', Flutterwave uses 'charge.completed'
+    if (event === 'charge.success' || event === 'charge.completed') {
       await processPaystackChargeSuccess(data, reference, supabase);
     } else if (event === 'charge.failed') {
       await processPaystackChargeFailed(data, reference, supabase);

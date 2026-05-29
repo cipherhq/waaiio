@@ -3,6 +3,7 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { handlePostCompletion } from './shared/post-completion';
+import { recordPlatformFee } from './shared/payment';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 const selectCampaignStep: FlowStepConfig = {
@@ -419,6 +420,16 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             '• Type *Hi* to give again',
           ].join('\n'),
         });
+
+        // Record platform fee (safety net — webhook also records, but may not fire)
+        const campaignId = sd.campaign_id as string;
+        if (campaignId && ctx.business) {
+          recordPlatformFee(ctx.supabase, {
+            campaignId,
+            businessId: ctx.business.id,
+            paymentAmount: amount,
+          }).catch(err => console.error('[CROWDFUNDING] Platform fee error:', err));
+        }
 
         // Notify owner: email + WhatsApp
         if (ctx.business) {

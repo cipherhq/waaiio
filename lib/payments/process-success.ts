@@ -10,6 +10,8 @@ interface PaymentRecord {
   booking_id: string | null;
   invoice_id: string | null;
   campaign_id: string | null;
+  order_id?: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 /**
@@ -73,6 +75,28 @@ export async function processSuccessfulPayment(
   if (payment.campaign_id) {
     await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount);
   }
+
+  // 4. Confirm order
+  const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
+  if (orderId) {
+    try {
+      await supabase
+        .from('orders')
+        .update({
+          status: 'confirmed',
+          paid_at: new Date().toISOString(),
+        })
+        .eq('id', orderId)
+        .in('status', ['pending']); // Only confirm if still pending (idempotent)
+
+      await recordPlatformFee(supabase, {
+        orderId,
+        paymentAmount: payment.amount,
+      });
+    } catch (err) {
+      logger.error('[PROCESS-SUCCESS] Order confirmation error:', err);
+    }
+  }
 }
 
 /**
@@ -103,6 +127,7 @@ export async function recordPlatformFee(
     bookingId?: string;
     invoiceId?: string;
     campaignId?: string;
+    orderId?: string;
     businessId?: string;
     paymentAmount: number;
   },
@@ -120,6 +145,17 @@ export async function recordPlatformFee(
     if (!booking?.business_id) return;
     businessId = booking.business_id;
     transactionAmount = booking.total_amount || opts.paymentAmount;
+  }
+
+  if (opts.orderId && !businessId) {
+    const { data: order } = await supabase
+      .from('orders')
+      .select('business_id, total_amount')
+      .eq('id', opts.orderId)
+      .single();
+    if (!order?.business_id) return;
+    businessId = order.business_id;
+    transactionAmount = order.total_amount || opts.paymentAmount;
   }
 
   if (opts.invoiceId && !businessId) {

@@ -10,6 +10,7 @@ import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
@@ -896,7 +897,7 @@ export const schedulingFlow: FlowDefinition = {
           .select('id, name, price, is_required')
           .eq('business_id', ctx.business.id)
           .eq('is_active', true)
-          .or(serviceId ? `service_id.eq.${serviceId},service_id.is.null` : 'service_id.is.null')
+          .or(serviceId ? `service_id.eq.${sanitizeFilterValue(serviceId)},service_id.is.null` : 'service_id.is.null')
           .order('sort_order');
         if (!addons || addons.length === 0) return true;
         ctx.session.session_data._available_addons = addons;

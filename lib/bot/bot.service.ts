@@ -1522,9 +1522,14 @@ export class BotService {
       if (businessId) {
         const { data: biz } = await this.supabase
           .from('businesses')
-          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel')
+          .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway, is_whitelabel, status')
           .eq('id', businessId)
           .single();
+        // Reject suspended/deactivated businesses
+        if (biz && (biz as Record<string, unknown>).status !== 'active') {
+          await this.sendText(from, 'This business is currently unavailable. Please try again later.');
+          return;
+        }
         business = biz as BusinessRecord | null;
       }
 

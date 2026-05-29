@@ -159,9 +159,12 @@ export class FlowExecutor {
       return;
     }
 
-    // Log user input to conversation_log
+    // Log user input to conversation_log (cap at 100 entries to prevent JSONB bloat)
     if (!session.conversation_log) session.conversation_log = [];
     session.conversation_log.push({ role: 'user', content: input, timestamp: new Date().toISOString() });
+    if (session.conversation_log.length > 100) {
+      session.conversation_log = session.conversation_log.slice(-100);
+    }
 
     // Global escape hatch: cancel / start over at any step
     // Supports English + Pidgin + Yoruba + French + Hausa + Twi
@@ -216,6 +219,7 @@ export class FlowExecutor {
           currentStep: session.current_step,
           customerName,
         });
+        await this.persistConversationLog(session.id, session.conversation_log || []);
         return;
       }
     }
