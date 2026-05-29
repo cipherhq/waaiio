@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
   const businessName = business?.name || '';
 
   // QR code URL
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&format=png&color=1a1a1a&bgcolor=ffffff&data=${encodeURIComponent(`https://waaiio.com/tickets/${ticketCode}`)}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=png&color=1a1a1a&bgcolor=ffffff&data=${encodeURIComponent(`https://waaiio.com/tickets/${ticketCode}`)}`;
 
   const flyerUrl = event?.image_url || null;
 
@@ -137,20 +137,20 @@ export async function GET(request: NextRequest) {
         {/* Right side — QR code */}
         <div
           style={{
-            width: '240px',
+            width: '260px',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            padding: '30px',
+            padding: '20px',
             borderLeft: '2px dashed rgba(255,255,255,0.15)',
             zIndex: 1,
           }}
         >
           {/* QR Code */}
-          <div style={{ background: 'white', borderRadius: '12px', padding: '12px', display: 'flex' }}>
+          <div style={{ background: 'white', borderRadius: '12px', padding: '14px', display: 'flex' }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={qrUrl} width={160} height={160} alt="QR" />
+            <img src={qrUrl} width={180} height={180} alt="QR" />
           </div>
 
           <div style={{ fontSize: 11, color: '#a0a0c0', marginTop: '12px', textAlign: 'center', display: 'flex' }}>
