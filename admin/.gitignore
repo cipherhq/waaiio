@@ -3,3 +3,4 @@
 .env.shortest
 
 .vercel
+.env*.local

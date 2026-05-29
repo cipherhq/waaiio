@@ -892,10 +892,10 @@ export default function PayoutsPage() {
                     </div>
                   )}
                   {balance.total_bookings > 0 && (
-                    <div className="rounded-lg bg-purple-50 px-3 py-2.5">
-                      <p className="text-xs text-purple-600">{isFaith ? 'Giving' : 'Bookings / Payments'}</p>
-                      <p className="text-lg font-bold text-purple-900">{balance.total_bookings}</p>
-                      <p className="text-xs text-purple-600">{formatCurrency(balance.pending_booking_revenue, country)} pending</p>
+                    <div className="rounded-lg bg-brand-50 px-3 py-2.5">
+                      <p className="text-xs text-brand-600">{isFaith ? 'Giving' : 'Bookings / Payments'}</p>
+                      <p className="text-lg font-bold text-brand-900">{balance.total_bookings}</p>
+                      <p className="text-xs text-brand-600">{formatCurrency(balance.pending_booking_revenue, country)} pending</p>
                     </div>
                   )}
                 </div>

@@ -386,7 +386,7 @@ export default function PropertiesPage() {
               <div className="flex flex-wrap gap-3">
                 {photos.map((url, i) => (
                   <div key={i} className="group relative h-24 w-24 overflow-hidden rounded-lg border border-gray-200">
-                    <img src={url} alt="" className="h-full w-full object-cover" />
+                    <img src={url} alt={`${form.name || 'Property'} photo ${i + 1}`} className="h-full w-full object-cover" />
                     <button type="button" onClick={() => setPhotos(photos.filter((_, j) => j !== i))}
                       className="absolute right-1 top-1 hidden rounded-full bg-black/50 p-1 text-white group-hover:block">
                       <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

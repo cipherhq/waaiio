@@ -314,7 +314,7 @@ export default function PaymentRequestPage() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setSendVia('whatsapp')}
-                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'whatsapp' ? 'border-[#25D366] bg-[#25D366]/10 text-[#25D366]' : 'border-gray-200 text-gray-500'}`}
+                  className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${sendVia === 'whatsapp' ? 'border-whatsapp bg-whatsapp/10 text-whatsapp' : 'border-gray-200 text-gray-500'}`}
                 >
                   WhatsApp
                 </button>

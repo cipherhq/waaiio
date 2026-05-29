@@ -51,28 +51,28 @@ body {
 .dark [data-dashboard] .divide-gray-100 > * + * { border-color: #374151 !important; }
 .dark [data-dashboard] .divide-gray-50 > * + * { border-color: #1f2937 !important; }
 
-/* Mobile responsive dashboard fixes */
+/* Mobile responsive dashboard fixes — scoped to dashboard only */
 @media (max-width: 640px) {
   /* Make tables horizontally scrollable */
-  table { display: block; overflow-x: auto; white-space: nowrap; }
+  [data-dashboard] table { display: block; overflow-x: auto; white-space: nowrap; }
 
   /* Stack grid cards on mobile */
-  .grid-cols-2, .grid-cols-3, .grid-cols-4 {
+  [data-dashboard] .grid-cols-2, [data-dashboard] .grid-cols-3, [data-dashboard] .grid-cols-4 {
     grid-template-columns: 1fr !important;
   }
-  .sm\:grid-cols-2 { grid-template-columns: 1fr !important; }
-  .sm\:grid-cols-3 { grid-template-columns: 1fr !important; }
+  [data-dashboard] .sm\:grid-cols-2 { grid-template-columns: 1fr !important; }
+  [data-dashboard] .sm\:grid-cols-3 { grid-template-columns: 1fr !important; }
 
   /* Reduce padding on mobile */
-  .px-6 { padding-left: 1rem !important; padding-right: 1rem !important; }
-  .p-6 { padding: 1rem !important; }
+  [data-dashboard] .px-6 { padding-left: 1rem !important; padding-right: 1rem !important; }
+  [data-dashboard] .p-6 { padding: 1rem !important; }
 
   /* Make headings smaller on mobile — dashboard only */
   [data-dashboard] h1 { font-size: 1.5rem !important; }
   [data-dashboard] h2 { font-size: 1.25rem !important; }
 
   /* Full-width buttons on mobile */
-  .flex.gap-3 button { min-width: 0; }
+  [data-dashboard] .flex.gap-3 button { min-width: 0; }
 
   /* Fix fixed hamburger button overlap with content */
   .lg\:pl-64 { padding-top: 3.5rem; }

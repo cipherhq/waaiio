@@ -11,6 +11,18 @@ export default defineConfig({
       '**/__shortest__/**',
       '**/admin/__shortest__/**',
     ],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      exclude: [
+        'node_modules/**',
+        'admin/**',
+        'e2e/**',
+        '**/__shortest__/**',
+        '**/*.config.*',
+        '**/*.d.ts',
+      ],
+    },
   },
   resolve: {
     alias: {

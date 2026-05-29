@@ -142,7 +142,7 @@ export default function RecurringDashboardPage() {
           <p className="text-xs font-medium text-gray-500">Monthly Recurring</p>
           <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(mrr, cc)}</p>
         </div>
-        <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+        <div className="rounded-xl border border-brand-100 bg-brand-50 p-4">
           <p className="text-xs font-medium text-gray-500">Weekly Recurring</p>
           <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(wrr, cc)}</p>
         </div>

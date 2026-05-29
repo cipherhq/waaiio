@@ -531,7 +531,7 @@ export default function DashboardOverview() {
                 </svg>
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Bot Settings</p>
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">WhatsApp Setup</p>
                 <p className="text-xs text-gray-400 dark:text-gray-500">Customize replies</p>
               </div>
             </Link>

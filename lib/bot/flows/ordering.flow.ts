@@ -1550,7 +1550,7 @@ export const orderingFlow: FlowDefinition = {
             let desc = z.is_pickup ? 'Pickup' : z.price > 0 ? formatCurrency(z.price, cc) : 'FREE';
             if (z.estimated_time) desc += ` \u2022 ${z.estimated_time}`;
             if (z.is_negotiable) desc += ' (Negotiable)';
-            return { title: z.name, description: desc, postbackText: z.id };
+            return { title: z.name.slice(0, 24), description: desc, postbackText: z.id };
           }),
         }];
       },

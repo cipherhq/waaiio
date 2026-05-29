@@ -1334,7 +1334,7 @@ export default function SettingsPage() {
           )}
 
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">General Bot Settings</h2>
+            <h2 className="text-sm font-semibold text-gray-900">General WhatsApp Settings</h2>
             <p className="mt-1 text-xs text-gray-500">Settings that apply across all bot flows (ordering, ticketing, payments, etc.).</p>
 
             <div className="mt-5 space-y-5">
@@ -1708,8 +1708,8 @@ export default function SettingsPage() {
                   disabled={connectingGateway === 'stripe'}
                   className="flex w-full items-center gap-3 rounded-lg border-2 border-gray-200 p-4 text-left transition hover:border-brand hover:bg-brand-50/30 disabled:opacity-60"
                 >
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-purple-50">
-                    <svg aria-hidden="true" className="h-5 w-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-brand-50">
+                    <svg aria-hidden="true" className="h-5 w-5 text-brand-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                     </svg>
                   </div>
@@ -2868,7 +2868,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     onClick={() => setNotifWhatsAppEnabled(!notifWhatsAppEnabled)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${notifWhatsAppEnabled ? 'bg-[#25D366]' : 'bg-gray-300'}`}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${notifWhatsAppEnabled ? 'bg-whatsapp' : 'bg-gray-300'}`}
                   >
                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${notifWhatsAppEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                   </button>

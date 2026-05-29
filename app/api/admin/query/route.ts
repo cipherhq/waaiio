@@ -93,15 +93,36 @@ export async function POST(request: NextRequest) {
       'notifications', 'queue_entries', 'customer_subscriptions', 'surveys', 'survey_responses',
     ];
 
-    const allowedTables = profile.role === 'admin' ? ADMIN_TABLES : SUPPORT_TABLES;
+    // Finance role: access to payment/revenue tables
+    const FINANCE_TABLES = [
+      ...SUPPORT_TABLES,
+      'payments', 'platform_fees', 'business_payouts', 'refunds', 'refund_requests',
+      'subscriptions', 'payout_accounts', 'campaign_donations', 'customer_profiles',
+    ];
+
+    // Operations role: access to business ops tables
+    const OPERATIONS_TABLES = [
+      ...SUPPORT_TABLES,
+      'whatsapp_channels', 'whatsapp_config', 'bot_sessions', 'bot_keywords',
+      'business_capabilities', 'capability_overrides', 'business_staff',
+      'delivery_zones', 'reservations', 'loyalty_points',
+    ];
+
+    const TABLE_MAP: Record<string, string[]> = {
+      admin: ADMIN_TABLES,
+      finance: FINANCE_TABLES,
+      operations: OPERATIONS_TABLES,
+      support: SUPPORT_TABLES,
+    };
+    const allowedTables = TABLE_MAP[profile.role] || SUPPORT_TABLES;
 
     if (!allowedTables.includes(table)) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
-    // Support role: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
+    // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
     let safeSelect = select;
-    if (profile.role === 'support') {
+    if (profile.role !== 'admin') {
       // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
     }

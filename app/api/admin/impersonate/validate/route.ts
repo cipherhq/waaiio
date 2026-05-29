@@ -39,7 +39,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Token has expired' }, { status: 400 });
     }
 
-    // Verify the admin is still valid (admin or support role)
+    // Verify the requesting user is the admin who generated this token
+    if (user.id !== tokenRecord.admin_id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    // Verify the admin is still valid (admin role)
     const { data: adminProfile } = await supabase
       .from('profiles')
       .select('role')

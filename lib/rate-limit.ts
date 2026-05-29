@@ -88,14 +88,29 @@ function checkInMemory(key: string, maxRequests: number, windowMs: number): Rate
 }
 
 /**
- * Check rate limit for a given key.
+ * Check rate limit for a given key (sync, in-memory only).
  */
 export function checkRateLimit(
   key: string,
   maxRequests: number,
   windowMs: number,
 ): RateLimitResult {
-  // In-memory path (sync) — used when Redis not configured or for sync callers
+  return checkInMemory(key, maxRequests, windowMs);
+}
+
+/**
+ * Async rate limit check — uses Redis when available for cross-instance limiting.
+ */
+export async function checkRateLimitAsync(
+  key: string,
+  maxRequests: number,
+  windowMs: number,
+): Promise<RateLimitResult> {
+  if (useRedis) {
+    const rl = getRedisLimiter(maxRequests, windowMs);
+    const { success, remaining, reset } = await rl.limit(key);
+    return { allowed: success, remaining, resetAt: reset };
+  }
   return checkInMemory(key, maxRequests, windowMs);
 }
 

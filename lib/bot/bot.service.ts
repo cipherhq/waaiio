@@ -1,7 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
-import { checkRateLimit } from '@/lib/rate-limit';
+import { checkRateLimitAsync } from '@/lib/rate-limit';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
 import { BotIntelligenceService } from './bot-intelligence';
@@ -69,7 +69,7 @@ export class BotService {
     logger.debug('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
 
     // Pre-check 0: Per-phone rate limit (prevents bot spam burning AI/WhatsApp credits)
-    const phoneRateLimit = checkRateLimit(`bot:${from}`, 20, 60_000); // 20 messages per minute per phone
+    const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, 20, 60_000); // 20 messages per minute per phone
     if (!phoneRateLimit.allowed) {
       logger.warn(`[BOT] Rate limited phone ${from} — ${phoneRateLimit.remaining} remaining`);
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
@@ -858,6 +858,12 @@ export class BotService {
         return;
       }
 
+      const caps = await getEnabledCapabilities(this.supabase, resolvedBusinessId);
+      if (!caps.includes('loyalty')) {
+        await this.sendText(from, "This business doesn't have a loyalty program. Type *Hi* to get started!");
+        return;
+      }
+
       await this.supabase.from('bot_sessions').delete()
         .eq('whatsapp_number', from).eq('is_active', false);
 
@@ -952,7 +958,7 @@ export class BotService {
       ]);
 
       // Combine and show
-      const allGiving: Array<{ amount: number; date: string; label: string }> = [];
+      const allGiving: Array<{ amount: number; date: string; label: string; _ts: number }> = [];
 
       if (givingBookings) {
         for (const b of givingBookings) {
@@ -963,6 +969,7 @@ export class BotService {
             amount: Number(b.total_amount || 0),
             date: new Date(b.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
             label: svc.name || biz?.name || 'Offering',
+            _ts: new Date(b.created_at).getTime(),
           });
         }
       }
@@ -973,12 +980,13 @@ export class BotService {
             amount: Number(d.amount),
             date: new Date(d.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
             label: `Campaign (${d.reference_code})`,
+            _ts: new Date(d.created_at).getTime(),
           });
         }
       }
 
-      // Sort by date descending
-      allGiving.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      // Sort by date descending (using raw timestamp, not formatted string)
+      allGiving.sort((a, b) => b._ts - a._ts);
 
       if (allGiving.length === 0) {
         await this.sendText(from, "You don't have any giving history yet. Send *Hi* to get started!");
@@ -1607,7 +1615,8 @@ export class BotService {
       // Auto-detect language from first message — tier-gated (Growth+ only)
       const bizTier = business?.subscription_tier || 'free';
       if (text.length >= 3 && isLanguageAllowed(bizTier, 'non-en')) {
-        detectLanguage(text).then(async (lang) => {
+        try {
+          const lang = await detectLanguage(text);
           if (lang !== 'en') {
             // Store as pending — don't activate until user confirms
             await this.supabase.from('bot_sessions')
@@ -1629,7 +1638,7 @@ export class BotService {
               logger.error('[BOT] Language confirm send error:', err);
             }
           }
-        }).catch(() => {});
+        } catch { /* language detection failed — continue in English */ }
       }
 
       session = newSession as BotSession;
@@ -2315,7 +2324,7 @@ export class BotService {
               to: ownerEmail,
               subject: `New chat message from ${displayName} — ${biz.name}`,
               html: `<p><strong>${displayName}</strong> sent you a message:</p>
-                     <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text}</blockquote>
+                     <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
                      <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
                      <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
             }).catch(() => {});
@@ -2462,7 +2471,7 @@ export class BotService {
                 to: ownerEmailAddr,
                 subject: `New chat message from ${displayName} — ${bizForEmail.name}`,
                 html: `<p><strong>${displayName}</strong> sent you a message:</p>
-                       <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text}</blockquote>
+                       <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
                        <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
                        <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
               }).catch(() => {});

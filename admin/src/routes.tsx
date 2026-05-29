@@ -1,6 +1,22 @@
 import { createBrowserRouter, Navigate } from 'react-router';
-import { AdminLayout } from './components/AdminLayout';
+import { AdminLayout, useAdminSession } from './components/AdminLayout';
+import type { AdminRole } from './lib/adminAuth';
 import Login from './pages/Login';
+
+function RoleGuard({ roles, children }: { roles: AdminRole[]; children: React.ReactNode }) {
+  const session = useAdminSession();
+  if (!session || !roles.includes(session.role)) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">Access Restricted</h2>
+          <p className="text-gray-500">You don't have permission to view this page.</p>
+        </div>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
 import Dashboard from './pages/Dashboard';
 import Businesses from './pages/Businesses';
 import Payouts from './pages/Payouts';
@@ -59,14 +75,14 @@ export const router = createBrowserRouter([
       { path: 'businesses', Component: Businesses },
       { path: 'verification', Component: Verification },
       { path: 'category-templates', Component: CategoryTemplates },
-      { path: 'impersonation', Component: ImpersonationMode },
-      { path: 'impersonation-audit', Component: ImpersonationAudit },
+      { path: 'impersonation', element: <RoleGuard roles={['admin']}><ImpersonationMode /></RoleGuard> },
+      { path: 'impersonation-audit', element: <RoleGuard roles={['admin']}><ImpersonationAudit /></RoleGuard> },
       // Operations
       { path: 'bookings', Component: Bookings },
       { path: 'orders', Component: Orders },
-      { path: 'payments', Component: Payments },
-      { path: 'subscriptions', Component: Subscriptions },
-      { path: 'recurring', Component: RecurringPayments },
+      { path: 'payments', element: <RoleGuard roles={['admin', 'finance']}><Payments /></RoleGuard> },
+      { path: 'subscriptions', element: <RoleGuard roles={['admin', 'finance']}><Subscriptions /></RoleGuard> },
+      { path: 'recurring', element: <RoleGuard roles={['admin', 'finance']}><RecurringPayments /></RoleGuard> },
       { path: 'tickets', Component: Tickets },
       { path: 'alerts', Component: Alerts },
       { path: 'reports', Component: Reports },
@@ -77,25 +93,25 @@ export const router = createBrowserRouter([
       { path: 'bot-management', Component: BotManagement },
       { path: 'bot-keywords', Component: BotKeywords },
       { path: 'llm-logs', Component: LLMClassifications },
-      { path: 'whatsapp-channels', Component: WhatsAppChannels },
+      { path: 'whatsapp-channels', element: <RoleGuard roles={['admin', 'operations']}><WhatsAppChannels /></RoleGuard> },
       { path: 'whatsapp-templates', Component: WhatsAppTemplates },
-      { path: 'notifications', Component: Notifications },
-      { path: 'broadcasts', Component: Broadcasts },
+      { path: 'notifications', element: <RoleGuard roles={['admin']}><Notifications /></RoleGuard> },
+      { path: 'broadcasts', element: <RoleGuard roles={['admin']}><Broadcasts /></RoleGuard> },
       { path: 'support', Component: Support },
       { path: 'chat-history', Component: ChatHistory },
       // Finance
-      { path: 'payouts', Component: Payouts },
-      { path: 'finance', Component: Finance },
+      { path: 'payouts', element: <RoleGuard roles={['admin', 'finance']}><Payouts /></RoleGuard> },
+      { path: 'finance', element: <RoleGuard roles={['admin', 'finance']}><Finance /></RoleGuard> },
       // Content & System
       { path: 'content', Component: ContentManagement },
       { path: 'events', Component: Events },
       { path: 'campaigns', Component: Campaigns },
-      { path: 'countries', Component: Countries },
+      { path: 'countries', element: <RoleGuard roles={['admin']}><Countries /></RoleGuard> },
       { path: 'surveys', Component: Surveys },
       { path: 'ai-setup-log', Component: AISetupLog },
       { path: 'ai-usage', Component: AIUsage },
       { path: 'conversation-usage', Component: ConversationUsage },
-      { path: 'platform-settings', Component: PlatformSettings },
+      { path: 'platform-settings', element: <RoleGuard roles={['admin']}><PlatformSettings /></RoleGuard> },
       { path: 'audit-log', Component: AuditLog },
       { path: 'system-health', Component: SystemHealth },
     ],

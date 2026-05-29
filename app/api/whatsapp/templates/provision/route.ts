@@ -223,8 +223,8 @@ export async function POST(request: NextRequest) {
         logger.info(`[PROVISION] Created template "${templateDef.name}" on WABA ${channel.waba_id} for business ${business_id}:`, result);
         results.push({ name: templateDef.name, status: result.status, action: 'created' });
       } catch (err) {
-        console.error(`[PROVISION] Failed to create "${templateDef.name}":`, err);
-        results.push({ name: templateDef.name, status: 'error', action: err instanceof Error ? err.message : 'failed' });
+        console.error(`[PROVISION] Failed to create "${templateDef.name}":`, err instanceof Error ? err.message : err);
+        results.push({ name: templateDef.name, status: 'error', action: 'creation_failed' });
       }
     }
 

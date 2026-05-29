@@ -66,6 +66,20 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
+    // Idempotency: atomic dedup via ON CONFLICT
+    const eventId = `flw-${txRef}`;
+    const { data: inserted } = await supabase
+      .from('processed_webhook_events')
+      .upsert(
+        { event_id: eventId, gateway: 'flutterwave', event_type: 'charge.completed', processed_at: new Date().toISOString() },
+        { onConflict: 'event_id', ignoreDuplicates: true },
+      )
+      .select('id');
+
+    if (!inserted || inserted.length === 0) {
+      return NextResponse.json({ message: 'Already processed' }, { status: 200 });
+    }
+
     // Find the payment record
     const { data: payment } = await supabase
       .from('payments')
@@ -79,7 +93,7 @@ export async function POST(request: NextRequest) {
 
     // Verify amount matches
     const webhookAmount = data.amount as number;
-    if (webhookAmount !== payment.amount) {
+    if (Math.abs(webhookAmount - payment.amount) > 0.01) {
       return NextResponse.json({ message: 'Amount mismatch' }, { status: 400 });
     }
 

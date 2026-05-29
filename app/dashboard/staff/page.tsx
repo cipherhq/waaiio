@@ -402,7 +402,7 @@ export default function StaffPage() {
             title={view === 'add' ? 'Save first, then upload photo' : 'Click to upload photo'}
           >
             {form.photo_url ? (
-              <img src={form.photo_url} alt="" className="h-full w-full object-cover" />
+              <img src={form.photo_url} alt={firstName || 'Staff member'} className="h-full w-full object-cover" />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-brand-100 text-brand text-xl font-bold">
                 {getInitials(firstName || 'S')}
@@ -783,7 +783,7 @@ export default function StaffPage() {
                     member.color ? `ring-2 ${ringClass}` : ''
                   }`}>
                     {member.photo_url ? (
-                      <img src={member.photo_url} alt="" className="h-full w-full object-cover" />
+                      <img src={member.photo_url} alt={member.name} className="h-full w-full object-cover" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-brand-100 text-brand text-sm font-bold">
                         {getInitials(member.name)}

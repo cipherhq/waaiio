@@ -88,7 +88,10 @@ export default async function BlogPostPage({ params }: PageProps) {
   function formatInline(text: string): string {
     return text
       .replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-gray-900">$1</strong>')
-      .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" class="text-brand hover:underline">$1</a>');
+      .replace(/\[(.+?)\]\((.+?)\)/g, (_, label, href) => {
+        const safeHref = /^(https?:\/\/|\/[^/])/.test(href) ? href : '#';
+        return `<a href="${safeHref}" class="text-brand hover:underline">${label}</a>`;
+      });
   }
 
   return (

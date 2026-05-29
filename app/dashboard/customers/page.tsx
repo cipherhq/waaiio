@@ -110,7 +110,7 @@ const TAG_COLORS: Record<string, string> = {
 };
 
 function tagColor(tag: string): string {
-  return TAG_COLORS[tag.toLowerCase()] || 'bg-purple-100 text-purple-700';
+  return TAG_COLORS[tag.toLowerCase()] || 'bg-brand-100 text-brand-700';
 }
 
 /* ------------------------------------------------------------------ */
@@ -964,9 +964,9 @@ export default function CustomersPage() {
                             {loyalty.total_earned}
                           </p>
                         </div>
-                        <div className="rounded-lg bg-purple-50 p-3">
-                          <p className="text-xs text-purple-600">Redeemed</p>
-                          <p className="mt-1 text-lg font-bold text-purple-700">
+                        <div className="rounded-lg bg-brand-50 p-3">
+                          <p className="text-xs text-brand-600">Redeemed</p>
+                          <p className="mt-1 text-lg font-bold text-brand-700">
                             {loyalty.total_redeemed}
                           </p>
                         </div>

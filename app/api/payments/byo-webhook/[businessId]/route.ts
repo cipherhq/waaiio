@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
+import { decryptToken } from '@/lib/encryption';
 
 /**
  * BYO (Bring Your Own) Payment Webhook
@@ -34,10 +35,15 @@ export async function POST(
       return NextResponse.json({ error: 'No active BYO credentials' }, { status: 404 });
     }
 
-    // Validate webhook signature using business's secret key
+    const decryptedKey = decryptToken(creds.secret_key);
+    if (!decryptedKey) {
+      return NextResponse.json({ error: 'Invalid BYO credentials' }, { status: 400 });
+    }
+
+    // Validate webhook signature using business's own secret key
     if (creds.gateway === 'paystack') {
       const signature = request.headers.get('x-paystack-signature') || '';
-      const hash = createHmac('sha512', creds.secret_key)
+      const hash = createHmac('sha512', decryptedKey)
         .update(rawBody)
         .digest('hex');
 
@@ -50,8 +56,7 @@ export async function POST(
       }
     } else if (creds.gateway === 'flutterwave') {
       const verifyHash = request.headers.get('verif-hash') || '';
-      const secretHash = process.env.FLW_SECRET_HASH || creds.secret_key;
-      if (!verifyHash || !secretHash || !timingSafeEqual(Buffer.from(verifyHash), Buffer.from(secretHash))) {
+      if (!verifyHash || !timingSafeEqual(Buffer.from(verifyHash), Buffer.from(decryptedKey))) {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 400 });
       }
     }

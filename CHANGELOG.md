@@ -5,6 +5,55 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-29
+
+### Comprehensive Platform Audit — 62 issues across 6 domains
+
+**CRITICAL fixes:**
+- `supabase/functions/generate-sign-link/index.ts` — Added Bearer token auth + restricted CORS (was completely unauthenticated)
+- `app/api/webhooks/flutterwave/route.ts` — Added idempotency dedup via `processed_webhook_events` (only gateway missing it) + float amount tolerance
+- `middleware.ts` — CSRF exemption scoped to specific webhook receiver paths (was broad `/api/webhooks` prefix covering user-facing CRUD)
+- `admin/.env` — Fixed VITE_API_URL to include `www` (POST bodies stripped on non-www redirect)
+- `.env.example` — Expanded from ~5 vars to 70+ with categories (DevOps agent)
+- `components/dashboard/PageSkeleton.tsx` — Fixed dynamic Tailwind class that JIT couldn't compile
+
+**HIGH fixes:**
+- `app/api/payments/byo-webhook/[businessId]/route.ts` — Added `decryptToken()` for encrypted secret keys + removed platform secret fallback
+- `app/api/admin/query/route.ts` — Added per-role table whitelists (FINANCE_TABLES, OPERATIONS_TABLES) + applied safeSelect to all non-admin roles
+- `app/api/payments/stripe-webhook/route.ts` — Now fetches `campaign_id` from payment record (was hardcoded null)
+- `app/api/admin/impersonate/validate/route.ts` — Added `user.id !== tokenRecord.admin_id` check
+- `app/api/whatsapp/templates/provision/route.ts` — Replaced `err.message` with generic `'creation_failed'`
+- `app/api/directory/route.ts` — Switched from `createServiceClient()` to anon `createClient()`
+- `admin/src/routes.tsx` — Added RoleGuard component for route-level access control
+- `admin/src/pages/AdminTeam.tsx` — Blocked self-demotion via "Remove Admin Role"
+- `admin/src/pages/Finance.tsx` — Fixed `row.refunds` → `row.refunded` (NaN in monthly net column)
+- 50+ `purple-*` replaced with `brand-*` tokens; `bg-[#25D366]` replaced with `bg-whatsapp`
+- `components/dashboard/RefundModal.tsx` — Added `role="dialog"`, `aria-modal`, Escape key handler
+- `app/globals.css` — Scoped mobile grid overrides to `[data-dashboard]` only
+
+**MEDIUM fixes:**
+- `lib/bot/flows/scheduling.flow.ts` — Empty `select_location` now returns helpful message instead of `[]`
+- `lib/bot/bot.service.ts` — Language detection now `await`ed (was fire-and-forget race condition)
+- `lib/bot/bot.service.ts` — Giving history sorts by raw timestamp instead of parsed locale string
+- `lib/rate-limit.ts` + `bot.service.ts` — Bot rate limit now uses Redis-backed async check (was in-memory only per Lambda instance)
+- 5 flow files — List item titles truncated to 24 chars (ordering, scheduling, reservation, ticketing)
+- `lib/bot/bot.service.ts` — Loyalty query now checks `caps.includes('loyalty')` before routing
+- `lib/bot/bot.service.ts` — Email HTML blockquotes now escape user text (XSS prevention)
+- `app/(marketing)/blog/[slug]/page.tsx` — formatInline validates link protocol (blocks `javascript:` hrefs)
+- 3 cron routes — Added `force-dynamic` (backup, balance-reminder, customer-intelligence)
+- 3 cron routes — Removed dead `verifyCronSecret` functions
+- `sentry.client.config.ts` — `replaysOnErrorSampleRate` set to 0.1 (was 0)
+- `vitest.config.ts` — Added coverage config with v8 provider
+- `supabase/migrations/151_multi_agent_chat.sql` → renamed to `168_multi_agent_chat.sql` (duplicate number fix)
+- Dashboard labels: "Bot Settings" → "WhatsApp Setup" in 3 remaining locations
+- Alt text added to staff/property/product images
+- Mobile sidebar overlay given dialog semantics
+
+**Files changed:** 30+ files across main app, admin panel, bot flows, middleware, edge functions, and config
+**Could break:** Flutterwave webhook now has dedup (legitimate retries will be deduplicated). CSRF now covers `/api/webhooks` CRUD. generate-sign-link requires Bearer token. Admin routes now role-gated.
+
+---
+
 ## 2026-05-28
 
 ### Fix: Appointment booking crash (FK violation)

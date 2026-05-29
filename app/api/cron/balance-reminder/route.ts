@@ -4,6 +4,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 /**

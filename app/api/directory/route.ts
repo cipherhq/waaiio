@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
 
 /**
  * GET /api/directory?country=US&category=barber&search=cuts
@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
   const category = searchParams.get('category');
   const search = searchParams.get('search');
 
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   // Fetch businesses and directory settings in parallel
   let query = supabase

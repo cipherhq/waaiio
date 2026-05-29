@@ -158,7 +158,7 @@ export default function PublicFormPage() {
         {/* Header */}
         <div className="mb-6">
           {form.business_logo && (
-            <img src={form.business_logo} alt="" className="mb-3 h-10 rounded" />
+            <img src={form.business_logo} alt={form.business_name} className="mb-3 h-10 rounded" />
           )}
           <p className="text-xs font-medium text-gray-400">{form.business_name}</p>
           <h1 className="text-2xl font-bold text-gray-900">{form.title}</h1>

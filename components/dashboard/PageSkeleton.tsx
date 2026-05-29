@@ -5,9 +5,11 @@
  * Shows while data is being fetched — prevents blank screen on slow connections.
  */
 
+const gridCols: Record<number, string> = { 2: 'lg:grid-cols-2', 3: 'lg:grid-cols-3', 4: 'lg:grid-cols-4', 5: 'lg:grid-cols-5', 6: 'lg:grid-cols-6' };
+
 export function StatCardSkeleton({ count = 4 }: { count?: number }) {
   return (
-    <div className={`grid gap-4 sm:grid-cols-2 lg:grid-cols-${count}`}>
+    <div className={`grid gap-4 sm:grid-cols-2 ${gridCols[count] || 'lg:grid-cols-4'}`}>
       {Array.from({ length: count }).map((_, i) => (
         <div key={i} className="animate-pulse rounded-xl border border-gray-100 bg-white p-5 dark:border-gray-700 dark:bg-gray-800">
           <div className="h-4 w-24 rounded bg-gray-200 dark:bg-gray-700" />

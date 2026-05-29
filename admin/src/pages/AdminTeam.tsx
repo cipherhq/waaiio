@@ -164,6 +164,10 @@ export default function AdminTeam() {
   async function handleRemoveAdmin() {
     if (!isFullAdmin) return;
     if (!selected) return;
+    if (selected.id === session?.userId) {
+      alert('You cannot remove your own admin role.');
+      return;
+    }
     if (!confirm(`Remove admin role from ${selected.email}? They will be demoted to "customer".`)) return;
 
     setRemoving(true);

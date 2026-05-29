@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       if (paymentStatus === 'paid' && sessionId) {
         const { data: payment } = await supabase
           .from('payments')
-          .select('id, booking_id, invoice_id, amount, status')
+          .select('id, booking_id, invoice_id, campaign_id, amount, status')
           .eq('gateway_reference', sessionId)
           .single();
 
@@ -105,24 +105,20 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', payment.id);
 
-          // Confirm booking, record platform fees, process invoice
-          await processSuccessfulPayment(supabase, {
+          const paymentForShared = {
             id: payment.id,
             amount: payment.amount,
             booking_id: payment.booking_id,
             invoice_id: payment.invoice_id || null,
-            campaign_id: null,
-          });
+            campaign_id: payment.campaign_id || null,
+          };
+
+          // Confirm booking, record platform fees, process invoice/campaign
+          await processSuccessfulPayment(supabase, paymentForShared);
 
           // Proactive confirmation: send WhatsApp message + post-completion
           try {
-            await sendProactiveConfirmation(supabase, {
-              id: payment.id,
-              amount: payment.amount,
-              booking_id: payment.booking_id,
-              invoice_id: payment.invoice_id || null,
-              campaign_id: null,
-            }, '[STRIPE WEBHOOK]');
+            await sendProactiveConfirmation(supabase, paymentForShared, '[STRIPE WEBHOOK]');
           } catch (confirmErr) {
             logger.error('[STRIPE WEBHOOK] Proactive confirmation error:', confirmErr);
           }

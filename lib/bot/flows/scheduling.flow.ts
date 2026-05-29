@@ -119,7 +119,9 @@ export const schedulingFlow: FlowDefinition = {
           .eq('is_active', true)
           .order('is_primary', { ascending: false });
 
-        if (!locations || locations.length === 0) return [];
+        if (!locations || locations.length === 0) {
+          return [{ type: 'text', text: 'No locations are currently available. Please try again later or type *cancel* to exit.' }];
+        }
 
         return [{
           type: 'list',
@@ -485,7 +487,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const buttons = staff.slice(0, 2).map(s => ({
           id: `staff_${s.id}`,
-          title: s.name,
+          title: s.name.slice(0, 20),
         }));
         buttons.push({ id: 'staff_any', title: 'Any available' });
 

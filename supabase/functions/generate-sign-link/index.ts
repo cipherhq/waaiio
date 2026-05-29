@@ -56,11 +56,23 @@ async function sendWhatsApp(to: string, text: string): Promise<boolean> {
   return res.ok;
 }
 
+const allowedOrigins = [
+  Deno.env.get('APP_URL') || 'https://www.waaiio.com',
+  'https://www.waaiio.com',
+  'https://waaiio.com',
+  'https://admin.waaiio.com',
+];
+
+function getCorsOrigin(req: Request): string {
+  const origin = req.headers.get('origin') || '';
+  return allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, {
       headers: {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': getCorsOrigin(req),
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       },
@@ -69,6 +81,18 @@ Deno.serve(async (req) => {
 
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
+  }
+
+  // Auth: require Bearer token (INTERNAL_API_TOKEN or SUPABASE_SERVICE_ROLE_KEY)
+  const authHeader = req.headers.get('authorization') || '';
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, '');
+  const validTokens = [
+    Deno.env.get('INTERNAL_API_TOKEN'),
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY'),
+  ].filter(Boolean);
+
+  if (!bearerToken || !validTokens.includes(bearerToken)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
   }
 
   try {
@@ -95,7 +119,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Business not found' }), { status: 404 });
     }
 
-    const token = generateToken(24);
+    const signToken = generateToken(24);
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
     const { data: contract, error } = await supabase
@@ -107,7 +131,7 @@ Deno.serve(async (req) => {
         signer_name: signer_name || null,
         signer_phone,
         signer_email: signer_email || null,
-        token,
+        token: signToken,
         token_expires_at: expiresAt,
         status: 'pending',
       })
@@ -119,7 +143,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Failed to create contract' }), { status: 500 });
     }
 
-    const signUrl = `${appUrl}/sign/${token}`;
+    const signUrl = `${appUrl}/sign/${signToken}`;
 
     // Optionally send WhatsApp message
     if (send_whatsapp !== false) {
@@ -141,14 +165,14 @@ Deno.serve(async (req) => {
       JSON.stringify({
         sign_url: signUrl,
         contract_id: contract.id,
-        token,
+        token: signToken,
         expires_at: expiresAt,
       }),
       {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': getCorsOrigin(req),
         },
       },
     );

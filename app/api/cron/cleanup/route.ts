@@ -1,21 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
-
-function verifyCronSecret(authHeader: string | null): boolean {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  const expected = `Bearer ${secret}`;
-  if (!authHeader || authHeader.length !== expected.length) return false;
-  try {
-    return timingSafeEqual(Buffer.from(authHeader), Buffer.from(expected));
-  } catch { return false; }
-}
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);

@@ -242,10 +242,10 @@ export default function WhatsAppPage() {
             )}
           </div>
 
-          {/* Bot Settings */}
+          {/* WhatsApp Settings */}
           {config && (
             <div className="rounded-xl border border-gray-100 bg-white p-6">
-              <h2 className="text-sm font-semibold text-gray-900">Bot Settings</h2>
+              <h2 className="text-sm font-semibold text-gray-900">WhatsApp Settings</h2>
 
               <div className="mt-4 space-y-4">
                 <div>

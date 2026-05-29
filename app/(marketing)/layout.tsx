@@ -43,7 +43,7 @@ export default function MarketingLayout({
         href="https://wa.me/12029226251?text=Hi%2C%20I%20have%20a%20question%20about%20Waaiio"
         target="_blank"
         rel="noopener noreferrer"
-        className="fixed bottom-20 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg hover:bg-[#1ebe5d] transition sm:bottom-6"
+        className="fixed bottom-20 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-whatsapp text-white shadow-lg hover:bg-whatsapp/85 transition sm:bottom-6"
         aria-label="Chat with us on WhatsApp"
       >
         <svg aria-hidden="true" className="h-7 w-7" fill="currentColor" viewBox="0 0 24 24">

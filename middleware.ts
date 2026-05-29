@@ -94,7 +94,14 @@ export async function middleware(request: NextRequest) {
   // CSRF protection: verify Origin header on state-mutating API requests
   const isStateMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
   const isApiRoute = request.nextUrl.pathname.startsWith('/api/');
-  const isWebhook = request.nextUrl.pathname.startsWith('/api/webhook') || request.nextUrl.pathname.startsWith('/api/webhooks');
+  const webhookReceiverPaths = [
+    '/api/webhook/meta-cloud', '/api/webhook/whatsapp',
+    '/api/webhooks/flutterwave', '/api/webhooks/paystack-transfer', '/api/webhooks/stripe-transfer',
+    '/api/payments/stripe-webhook', '/api/payments/square-webhook', '/api/payments/paypal-webhook',
+    '/api/payments/byo-webhook', '/api/payments/webhook', '/api/payments/flutterwave-webhook',
+    '/api/payments/paystack-webhook',
+  ];
+  const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {
     const origin = request.headers.get('origin');
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';

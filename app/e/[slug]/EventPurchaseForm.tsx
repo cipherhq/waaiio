@@ -234,7 +234,7 @@ export default function EventPurchaseForm({
   // Success state
   if (state === 'success') {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-purple-50 to-indigo-50 px-4">
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-indigo-50 px-4">
         <div className="w-full max-w-md rounded-2xl bg-white p-8 text-center shadow-xl">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
             <svg className="h-8 w-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -277,7 +277,7 @@ export default function EventPurchaseForm({
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-indigo-50">
+    <div className="min-h-screen bg-gradient-to-br from-brand-50 to-indigo-50">
       <div className="mx-auto max-w-lg">
         {/* Hero image */}
         {event.image_url && (
@@ -372,7 +372,7 @@ export default function EventPurchaseForm({
                             ttSoldOut
                               ? 'cursor-not-allowed border-gray-100 bg-gray-50 opacity-50'
                               : selectedTicketType === tt.id
-                                ? 'border-[#6C2BD9] bg-purple-50'
+                                ? 'border-brand bg-brand-50'
                                 : 'border-gray-200 hover:border-gray-300'
                           }`}
                         >
@@ -554,7 +554,7 @@ export default function EventPurchaseForm({
 
               {/* Total price */}
               {totalPrice > 0 && (
-                <div className="flex items-center justify-between rounded-xl bg-purple-50 px-4 py-3">
+                <div className="flex items-center justify-between rounded-xl bg-brand-50 px-4 py-3">
                   <span className="text-sm font-medium text-gray-700">Total</span>
                   <span className="text-lg font-bold text-brand">
                     {formatCurrency(totalPrice, cc)}

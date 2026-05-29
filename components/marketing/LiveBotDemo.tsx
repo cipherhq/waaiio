@@ -215,7 +215,7 @@ export default function LiveBotDemo() {
           <button
             onClick={() => handleSend()}
             disabled={!input.trim()}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-[#25D366] text-white transition hover:bg-[#20BD5A] disabled:opacity-30"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-whatsapp text-white transition hover:bg-whatsapp/85 disabled:opacity-30"
           >
             <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
               <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />

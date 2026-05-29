@@ -53,7 +53,7 @@ export const reservationFlow: FlowDefinition = {
           body: 'What would you like to book?',
           buttonLabel: 'Choose',
           items: listings.map(p => ({
-            title: p.name,
+            title: p.name.slice(0, 24),
             description: p.price > 0 ? `${formatCurrency(p.price, cc)}/night${p.max_guests ? ` • up to ${p.max_guests} guests` : ''}` : '',
             postbackText: p.id,
           })),
