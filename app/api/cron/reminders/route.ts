@@ -100,8 +100,8 @@ export async function GET(request: NextRequest) {
 
       // Send email reminder
       if (email) {
-        const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
-        await sendEmail({ to: email, subject, html }).catch(() => {});
+        const { subject, html, from } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
+        await sendEmail({ to: email, subject, html, from }).catch(() => {});
         remindersSent++;
       }
     }
@@ -119,8 +119,8 @@ export async function GET(request: NextRequest) {
     let email = (res as any).guest_email;
     if (email) {
       const bizName = (res as any).businesses?.name || 'Your stay';
-      const { subject, html } = bookingReminderEmail(bizName, res.guest_name || 'Guest', 'your stay', res.check_in, '', res.reference_code || '');
-      await sendEmail({ to: email, subject, html }).catch(() => {});
+      const { subject, html, from } = bookingReminderEmail(bizName, res.guest_name || 'Guest', 'your stay', res.check_in, '', res.reference_code || '');
+      await sendEmail({ to: email, subject, html, from }).catch(() => {});
       remindersSent++;
     }
   }

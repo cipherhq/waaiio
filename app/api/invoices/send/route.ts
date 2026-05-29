@@ -258,8 +258,7 @@ export async function POST(request: NextRequest) {
 
       await sendEmail({
         to: invoice.customer_email,
-        subject: emailContent.subject,
-        html: emailContent.html,
+        ...emailContent,
       });
     }
 

@@ -45,6 +45,6 @@ export async function sendBookingEmail(
     confirmationEmoji: string;
   },
 ): Promise<void> {
-  const { subject, html } = bookingConfirmationEmail(details);
-  await sendEmail({ to, subject, html });
+  const { subject, html, from } = bookingConfirmationEmail(details);
+  await sendEmail({ to, subject, html, from });
 }

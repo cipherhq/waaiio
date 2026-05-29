@@ -15,13 +15,31 @@ function esc(str: string): string {
 
 // ─── Branded wrapper ──────────────────────────────────────────────
 
-function wrap(body: string): string {
+interface WrapOptions {
+  businessName?: string;
+  logoUrl?: string;
+}
+
+function wrap(body: string, opts?: WrapOptions): string {
+  const biz = opts?.businessName ? esc(opts.businessName) : '';
+  const logo = opts?.logoUrl || '';
+
+  const headerContent = biz
+    ? `<table cellpadding="0" cellspacing="0" width="100%"><tr>
+        ${logo ? `<td style="width:40px;padding-right:12px"><img src="${logo}" width="36" height="36" style="border-radius:8px;display:block" alt="${biz}" /></td>` : ''}
+        <td style="font-size:16px;font-weight:700;color:#ffffff">${biz}</td>
+        <td style="text-align:right;font-size:11px;color:#B5A3E0">via <span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
+      </tr></table>`
+    : `<table cellpadding="0" cellspacing="0"><tr>
+        <td style="font-size:18px;font-weight:700"><span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
+      </tr></table>`;
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Waaiio</title>
+<title>${biz || 'Waaiio'}</title>
 </head>
 <body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:32px 16px">
@@ -30,9 +48,7 @@ function wrap(body: string): string {
   <!-- Header -->
   <tr>
     <td style="background:#7c3aed;padding:24px 32px">
-      <table cellpadding="0" cellspacing="0"><tr>
-        <td style="font-size:18px;font-weight:700"><span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
-      </tr></table>
+      ${headerContent}
     </td>
   </tr>
   <!-- Body -->
@@ -84,6 +100,15 @@ function kv(label: string, value: string): string {
 
 function table(rows: string): string {
   return `<table cellpadding="0" cellspacing="0" style="width:100%;margin:16px 0;border-collapse:collapse">${rows}</table>`;
+}
+
+// ─── Sender helper ───────────────────────────────────────────────
+
+export function businessFrom(businessName?: string): string | undefined {
+  if (!businessName) return undefined;
+  // Sanitize business name for email From header (remove quotes, angle brackets)
+  const safe = businessName.replace(/[<>"]/g, '').trim();
+  return `${safe} via Waaiio <noreply@waaiio.com>`;
 }
 
 // ─── Templates ────────────────────────────────────────────────────
@@ -247,6 +272,7 @@ export function kycRejectedEmail(businessName: string, reason: string) {
 export function bookingConfirmationEmail(details: {
   firstName: string;
   businessName: string;
+  businessLogoUrl?: string;
   date: string;
   time: string;
   quantity: number;
@@ -256,10 +282,11 @@ export function bookingConfirmationEmail(details: {
   quantityLabel: string;
   confirmationEmoji: string;
 }) {
-  const { firstName, businessName, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji } = details;
+  const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji } = details;
   const amountDisplay = formattedAmount || (amount > 0 ? amount.toLocaleString() : '');
   return {
     subject: `Confirmed at ${businessName} ${confirmationEmoji}`,
+    from: businessFrom(businessName),
     html: wrap(`
       ${h(`Confirmed ${confirmationEmoji}`)}
       ${p(`Hi ${esc(firstName)}, you're all set with <strong>${esc(businessName)}</strong>!`)}
@@ -271,7 +298,7 @@ export function bookingConfirmationEmail(details: {
         (amount > 0 ? kv('Amount', esc(amountDisplay)) : '')
       )}
       ${p("We'll send you a reminder beforehand. See you soon!")}
-    `),
+    `, { businessName, logoUrl: businessLogoUrl }),
   };
 }
 
@@ -282,9 +309,11 @@ export function bookingReminderEmail(
   date: string,
   time: string,
   referenceCode: string,
+  businessLogoUrl?: string,
 ) {
   return {
     subject: `Reminder: ${businessName} is tomorrow`,
+    from: businessFrom(businessName),
     html: wrap(`
       ${h('Reminder')}
       ${p(`Hi ${esc(guestName)}, this is a friendly reminder about <strong>${esc(businessName)}</strong> tomorrow.`)}
@@ -295,7 +324,7 @@ export function bookingReminderEmail(
         kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
       ${p('If you need to reschedule or cancel, please contact the business directly.')}
-    `),
+    `, { businessName, logoUrl: businessLogoUrl }),
   };
 }
 
@@ -487,6 +516,7 @@ export function weeklyDigestEmail(businessName: string, stats: {
 
 export function invoiceEmail(details: {
   businessName: string;
+  businessLogoUrl?: string;
   referenceCode: string;
   totalAmount: string;
   dueDate: string;
@@ -495,7 +525,7 @@ export function invoiceEmail(details: {
   invoiceUrl: string;
   currency: string;
 }) {
-  const { businessName, referenceCode, totalAmount, dueDate, customerName, items, invoiceUrl } = details;
+  const { businessName, businessLogoUrl, referenceCode, totalAmount, dueDate, customerName, items, invoiceUrl } = details;
 
   const itemRows = items.map(i =>
     `<tr>
@@ -507,6 +537,7 @@ export function invoiceEmail(details: {
 
   return {
     subject: `Invoice ${referenceCode} from ${businessName}`,
+    from: businessFrom(businessName),
     html: wrap(`
       ${h(`Invoice from ${esc(businessName)}`)}
       ${p(`Hi ${esc(customerName)}, you have received an invoice from <strong>${esc(businessName)}</strong>.`)}
@@ -529,13 +560,14 @@ export function invoiceEmail(details: {
       ${btn('View & Pay Invoice', invoiceUrl)}
       ${p('You can also copy and paste this link into your browser:')}
       ${p(`<a href="${invoiceUrl}" style="color:#7c3aed;word-break:break-all">${invoiceUrl}</a>`)}
-    `),
+    `, { businessName, logoUrl: businessLogoUrl }),
   };
 }
 
 export function ticketConfirmationEmail(details: {
   firstName: string;
   businessName: string;
+  businessLogoUrl?: string;
   eventName: string;
   eventDate: string;
   eventTime?: string;
@@ -545,12 +577,13 @@ export function ticketConfirmationEmail(details: {
   formattedAmount: string;
   ticketCodes: string[];
 }) {
-  const { firstName, businessName, eventName, eventDate, eventTime, venue, quantity, referenceCode, formattedAmount, ticketCodes } = details;
+  const { firstName, businessName, businessLogoUrl, eventName, eventDate, eventTime, venue, quantity, referenceCode, formattedAmount, ticketCodes } = details;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
   const ticketList = ticketCodes.map((code, i) => kv(`Ticket ${i + 1}`, `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(code)}</code>`)).join('');
 
   return {
     subject: `Your ${ticketLabel} for ${eventName} 🎫`,
+    from: businessFrom(businessName),
     html: wrap(`
       ${h(`Ticket Confirmed! 🎫`)}
       ${p(`Hi ${esc(firstName)}, your ${quantity} ${ticketLabel} for <strong>${esc(eventName)}</strong> ${quantity === 1 ? 'is' : 'are'} confirmed!`)}
@@ -567,7 +600,7 @@ export function ticketConfirmationEmail(details: {
       ${ticketList ? `${p('<strong>Your Ticket Codes:</strong>')}${table(ticketList)}` : ''}
       ${p('Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.')}
       ${p('Enjoy the event! 🎉')}
-    `),
+    `, { businessName, logoUrl: businessLogoUrl }),
   };
 }
 
