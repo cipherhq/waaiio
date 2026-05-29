@@ -146,44 +146,75 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.error('[TICKETS] PDF generation failed (continuing to QR):', pdfErr);
   }
 
-  // 4. Send event flyer + QR codes via WhatsApp
+  // 4. Send ticket images via WhatsApp (flyer + QR composited)
   if (sender) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
 
-    // Send event flyer image once (if available)
+    // Fetch event flyer once (reuse for all tickets)
+    let flyerBuffer: Buffer | null = null;
     if (eventId) {
       try {
         const { data: evt } = await supabase.from('events').select('image_url').eq('id', eventId).single();
         if (evt?.image_url) {
           let flyerUrl = evt.image_url;
-          // WebP → JPEG conversion for WhatsApp
           if (flyerUrl.toLowerCase().endsWith('.webp')) {
             flyerUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(flyerUrl)}`;
           }
-          await sender.sendImage({
-            to: phone,
-            imageUrl: flyerUrl,
-            caption: `🎟️ *${eventName}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n\nRef: *${referenceCode}*`,
-          });
-          logger.info('[TICKETS] Event flyer sent for', eventName);
+          const res = await fetch(flyerUrl);
+          if (res.ok) flyerBuffer = Buffer.from(await res.arrayBuffer());
         }
-      } catch (flyerErr) {
-        logger.error('[TICKETS] Flyer send failed (non-fatal):', flyerErr);
+      } catch {
+        logger.error('[TICKETS] Flyer fetch failed (will send QR only)');
       }
     }
 
-    // Send QR code for each ticket
     for (const ticket of tickets) {
+      const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
+      const caption = `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\nShow this at the entrance\n\n🔗 ${verifyUrl}`;
+
       try {
-        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(`${appUrl}/tickets/${ticket.ticketCode}`)}`;
-        await sender.sendImage({
-          to: phone,
-          imageUrl: qrImageUrl,
-          caption: `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\nShow this QR at the entrance\n\n🔗 ${appUrl}/tickets/${ticket.ticketCode}`,
-        });
-        logger.info('[TICKETS] QR sent for', ticket.ticketCode);
-      } catch (qrErr) {
-        logger.error('[TICKETS] QR send failed for', ticket.ticketCode, ':', qrErr);
+        // Try compositing QR onto flyer
+        if (flyerBuffer) {
+          const sharp = (await import('sharp')).default;
+          const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 200, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
+
+          // Resize flyer to standard width, then composite QR in bottom-right with white padding
+          const flyer = sharp(flyerBuffer).resize(800, null, { withoutEnlargement: true });
+          const flyerMeta = await flyer.metadata();
+          const flyerH = flyerMeta.height || 800;
+
+          // White background behind QR for visibility
+          const qrWithBg = await sharp(Buffer.from(
+            `<svg width="220" height="220"><rect width="220" height="220" rx="12" fill="white"/></svg>`
+          )).composite([{ input: qrPng, top: 10, left: 10 }]).png().toBuffer();
+
+          const composited = await flyer
+            .composite([{ input: qrWithBg, top: flyerH - 230, left: 570, }])
+            .jpeg({ quality: 90 })
+            .toBuffer();
+
+          // Upload to storage for a public URL
+          const storagePath = `tickets/${businessId}/${ticket.ticketCode}.jpg`;
+          const { error: uploadErr } = await supabase.storage
+            .from('business-documents')
+            .upload(storagePath, composited, { contentType: 'image/jpeg', upsert: true });
+
+          if (!uploadErr) {
+            const { data: urlData } = supabase.storage.from('business-documents').getPublicUrl(storagePath);
+            await sender.sendImage({ to: phone, imageUrl: urlData.publicUrl, caption });
+            logger.info('[TICKETS] Flyer+QR image sent for', ticket.ticketCode);
+            continue; // Success — skip fallbacks
+          }
+        }
+
+        // Fallback: QR code only (no flyer or compositing failed)
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(verifyUrl)}`;
+        await sender.sendImage({ to: phone, imageUrl: qrImageUrl, caption });
+        logger.info('[TICKETS] QR-only sent for', ticket.ticketCode);
+      } catch (err) {
+        logger.error('[TICKETS] Ticket image failed for', ticket.ticketCode, ':', err);
+        // Text fallback
+        await sender.sendText({ to: phone, text: caption }).catch(() => {});
       }
     }
     logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);
