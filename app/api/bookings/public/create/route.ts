@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
         p_promo_code_id: null,
         p_total_amount: totalDeposit,
         p_staff_name: null,
-        p_channel: 'web',
+        p_appointment_id: null,
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean } | null;
