@@ -5,6 +5,109 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-05-28
+
+### Fix: Appointment booking crash (FK violation)
+- **File:** `supabase/migrations/166_fix_appointment_booking.sql`, `lib/bot/flows/scheduling.flow.ts`
+- **What:** `book_slot_atomic` RPC now accepts `p_appointment_id`. Appointments from the `appointments` table were being passed as `service_id`, violating the FK constraint to `services(id)`.
+- **Affects:** All appointment bookings via WhatsApp bot. Web API also updated for forward-compatibility.
+- **Could break:** Nothing — additive change, existing bookings unaffected.
+
+### Fix: Campaign "Donate Now" hijacking giving flow
+- **File:** `lib/bot/handlers/keyword-actions.ts`
+- **What:** `start_capability` and `start_flow` keyword actions now only fire at `greeting`/`select_capability` steps. Previously, button postback `donate_yes` containing "donate" matched the keyword matcher and hijacked mid-flow.
+- **Affects:** All keyword-triggered flow routing.
+- **Could break:** Nothing — mid-flow keyword matching was always a bug.
+
+### Fix: Tickets never generated after paid events
+- **File:** `lib/bot/flows/ticketing.flow.ts`, `lib/payments/send-confirmation.ts`
+- **What:** Dedup path (webhook confirms before user taps "I've Paid") now calls `sendTicketsAfterPurchase`. Webhook ticket generation uses `event_id` from booking (was fragile date-match).
+- **Affects:** All paid ticketing purchases across all 5 gateways.
+
+### Fix: WebP images not showing in WhatsApp
+- **File:** `app/api/images/convert/route.ts`, `lib/bot/flows/executor.ts`, `lib/bot/flows/ticketing.flow.ts`
+- **What:** New `/api/images/convert` endpoint converts WebP→JPEG via Sharp. Executor auto-converts WebP URLs for all flows. Ticketing direct sends also converted.
+- **Affects:** Any WebP image in events, products, services, style photos.
+
+### Fix: QR code composited onto event flyer
+- **File:** `lib/bot/flows/shared/send-tickets.ts`
+- **What:** Each ticket now gets the event flyer with QR code overlaid (bottom-right, white background). Uploaded to Supabase storage and sent as single image. Falls back to standalone QR if compositing fails.
+- **Affects:** All ticket purchases with event flyer images.
+
+### Fix: Order confirmation after webhook payment
+- **File:** `supabase/migrations/167_order_payment_fixes.sql`, `lib/payments/process-success.ts`, `lib/payments/webhook-handler.ts`
+- **What:** Added `order_id` column to `payments` table. `processSuccessfulPayment` now confirms orders and records platform fees. Previously orders stayed "pending" forever if customer didn't tap "I've Paid".
+- **Affects:** All order payments via webhooks (all 5 gateways).
+
+### Fix: Flutterwave BYO webhook event name
+- **File:** `app/api/payments/byo-webhook/[businessId]/route.ts`
+- **What:** Now accepts both `charge.success` (Paystack) and `charge.completed` (Flutterwave). Previously only checked Paystack's event name.
+- **Affects:** Any business using their own Flutterwave account.
+
+### Fix: Crowdfunding platform fee + customer profile
+- **File:** `lib/bot/flows/crowdfunding.flow.ts`
+- **What:** "I've Paid" path now records platform fee as safety net (webhook also records, dedup via unique index). Also calls `handlePostCompletion` for donor customer profiles.
+- **Affects:** Campaign donation payments via bot.
+
+### Fix: Conversation log unbounded growth
+- **File:** `lib/bot/flows/executor.ts`
+- **What:** Capped `conversation_log` at 100 entries, trimming oldest. Prevents JSONB bloat on `bot_sessions` table.
+- **Affects:** All bot conversations. Normal sessions are 10-30 entries — no visible change.
+
+### Fix: Suspended businesses accepted by bot
+- **File:** `lib/bot/bot.service.ts`
+- **What:** Bot now checks `business.status === 'active'` on session creation. Suspended/deactivated businesses get rejected.
+- **Affects:** Only businesses explicitly suspended by admin.
+
+### Fix: Sanitization gaps
+- **File:** `lib/bot/flows/scheduling.flow.ts`
+- **What:** `serviceId` in `.or()` filter now wrapped in `sanitizeFilterValue()`.
+- **Affects:** Defense-in-depth — service IDs are always UUIDs, but now explicitly sanitized.
+
+### Fix: Escalation log not persisted
+- **File:** `lib/bot/flows/executor.ts`
+- **What:** `persistConversationLog` now called after `escalateToHuman`. Previously the last user message before escalation was lost.
+
+### Fix: Recurring subscription cancel crash
+- **File:** `lib/bot/flows/recurring-manage.flow.ts`
+- **What:** Gateway cancel calls (Paystack/Stripe) wrapped in try/catch. Previously a gateway error crashed the session.
+
+### Fix: Custom bot greeting overridden by persona alias
+- **File:** `lib/bot/bot.service.ts`
+- **What:** Custom `bot_greeting` now takes priority over generic persona template when set by business owner.
+
+### Fix: Loyalty error message
+- **File:** `lib/bot/flows/loyalty.flow.ts`
+- **What:** Changed "Oops, something went wrong" to "Something went wrong on our end" (project standard).
+
+### Enhancement: JHDC church bot intro
+- **What:** Custom greeting for JHDC with mission statement. Alias "Grace". Welcome buttons for Give/Tickets/Appointment.
+
+### Enhancement: Category defaults expanded
+- **File:** `lib/capabilities/types.ts`
+- **What:** Added `packages` (beauty/fitness/professional), `estimates` (home/professional/creative), `class_booking` (fitness/education), `multi_location` (hospitality). Only affects NEW businesses.
+
+### Enhancement: Locations sidebar link
+- **File:** `components/dashboard/Sidebar.tsx`
+- **What:** Added Locations page link gated on `multi_location` capability.
+
+### Enhancement: Event detail emojis
+- **File:** `lib/bot/flows/ticketing.flow.ts`
+- **What:** Added 🎟️📅📍💰🎫 emojis to event details shown after flyer image.
+
+### Infrastructure: Bot test harness
+- **File:** `lib/bot/__tests__/bot-harness.ts`, `lib/bot/__tests__/bot-conversations.test.ts`
+- **What:** Mock sender captures messages, mock DB fully chainable, fixtures for salon/church/events. 29 conversation tests covering capability selection, scheduling, ticketing, appointment, crowdfunding, ordering, step chain integrity. Total: 318 tests, 27 suites.
+
+### Infrastructure: Preflight-check skill
+- **File:** `.claude/skills/preflight-check/skill.md`, `CLAUDE.md`
+- **What:** Mandatory pre-change impact analysis. Traces callers, checks DB constraints, verifies two-function traps, maps blast radius. Documented in CLAUDE.md for auto-loading.
+
+### Infrastructure: MCP servers
+- **What:** Installed `sequential-thinking` and `codex` MCP servers for enhanced reasoning.
+
+---
+
 ## 2026-05-23
 
 ### Fix: Church "Pay tithe" / "Pay offering" routing to payment instead of giving
