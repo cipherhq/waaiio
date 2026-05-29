@@ -154,11 +154,11 @@ export const ticketingFlow: FlowDefinition = {
         const maxShow = Math.min(available, maxTickets);
 
         const eventDetails = [
-          `*${d.event_name}*`,
-          `${new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' })}`,
-          d.event_venue ? `${d.event_venue}` : '',
-          `${formatCurrency(d.event_price as number, (ctx.business?.country_code || 'NG') as CountryCode)} per ticket`,
-          `${available} tickets available`,
+          `🎟️ *${d.event_name}*`,
+          `📅 ${new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' })}`,
+          d.event_venue ? `📍 ${d.event_venue}` : '',
+          `💰 ${formatCurrency(d.event_price as number, (ctx.business?.country_code || 'NG') as CountryCode)} per ticket`,
+          `🎫 ${available} tickets available`,
         ].filter(Boolean).join('\n');
 
         // Send event details + buttons together, image as follow-up.
