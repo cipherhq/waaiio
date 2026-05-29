@@ -228,8 +228,8 @@ export default function AppointmentsManagementPage() {
             {/* Drop-off Service */}
             <div className="flex items-center justify-between py-2">
               <div>
-                <p className="text-sm font-medium text-gray-700">Drop-off Service <Tooltip text={"Skip date/time — customer just pays and drops off (e.g. wig revamp, laundry)"} /></p>
-                <p className="text-xs text-gray-400">No scheduling needed</p>
+                <p className="text-sm font-medium text-gray-700">Drop-off Service <Tooltip text={"A drop-off service is when customers bring in an item and leave it with you for processing — like wig revamps, laundry, phone repairs, or tailoring. There's no appointment time needed. The customer pays upfront, drops off their item, and picks it up when it's ready."} /></p>
+                <p className="text-xs text-gray-400">Customer drops off an item for processing — no appointment needed</p>
               </div>
               <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, is_dropoff: !(form.metadata?.is_dropoff as boolean) } })}
                 className={`relative h-6 w-11 shrink-0 rounded-full transition ${(form.metadata?.is_dropoff as boolean) ? 'bg-brand' : 'bg-gray-200'}`}>
