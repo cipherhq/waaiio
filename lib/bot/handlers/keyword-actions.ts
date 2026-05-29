@@ -197,6 +197,9 @@ export async function executeKeywordAction(
       }
 
       case 'start_flow': {
+        // Don't hijack active flows — only route from greeting/capability selection
+        const isRoutingStepForFlow = !step || step === 'greeting' || step === 'select_capability';
+        if (!isRoutingStepForFlow) return false;
         await deactivateSession(session.id);
         await onRestart(from, 'Hi', 'text', undefined, session.business_id || undefined);
         return true;

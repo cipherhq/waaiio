@@ -307,9 +307,15 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
 
     // Send style photo as separate image message if available
     if (customOrderData?.style_photo_url) {
+      let styleUrl = customOrderData.style_photo_url;
+      // WhatsApp doesn't support WebP — convert via proxy
+      if (styleUrl.toLowerCase().endsWith('.webp')) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        styleUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(styleUrl)}`;
+      }
       sender.sendImage({
         to: phone,
-        imageUrl: customOrderData.style_photo_url,
+        imageUrl: styleUrl,
         caption: `Style reference from ${customerName}`,
       }).catch(err => logger.error('[NOTIFY-OWNER] Style photo send error:', err));
     }

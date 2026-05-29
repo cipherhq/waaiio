@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
+import { handlePostCompletion } from './shared/post-completion';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 const selectCampaignStep: FlowStepConfig = {
@@ -440,6 +441,16 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             channel: 'whatsapp',
             body: `New donation of ${formatCurrency(amount, cc)} for ${sd.campaign_title}${(sd.donor_display_name as string) ? ` from ${sd.donor_display_name}` : ' (Anonymous)'}. Ref: ${refCode}`,
           }).catch(err => console.error('[CROWDFUNDING] Notification error:', err));
+
+          // Auto-create/update customer profile
+          handlePostCompletion({
+            supabase: ctx.supabase,
+            sender: ctx.sender,
+            businessId: ctx.business.id,
+            customerPhone: ctx.from,
+            customerName: (sd.donor_display_name as string) || null,
+            amountPaid: amount,
+          }).catch(err => console.error('[CROWDFUNDING] Post-completion error:', err));
         }
 
         return { valid: true, data: { _action: 'payment_confirmed' } };
