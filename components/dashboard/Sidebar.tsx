@@ -127,6 +127,13 @@ const navItems: NavItem[] = [
     section: 'manage',
   },
   {
+    href: '/dashboard/locations',
+    label: 'Locations',
+    icon: 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z',
+    capabilities: ['multi_location'],
+    section: 'manage',
+  },
+  {
     href: '/dashboard/promo-codes',
     label: 'Promo Codes',
     icon: 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z',

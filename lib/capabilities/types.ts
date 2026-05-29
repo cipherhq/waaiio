@@ -137,20 +137,20 @@ export const TIER_LABELS: Record<SubscriptionTier, string> = {
 // loyalty and referral are OPT-IN only — never in defaults.
 
 // Group capability sets (DRY helper)
-const _BEAUTY: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat', 'staff', 'broadcast', 'reminders', 'auto_reply'];
+const _BEAUTY: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat', 'staff', 'broadcast', 'reminders', 'auto_reply', 'packages'];
 const _HEALTH: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat', 'staff', 'queue', 'waitlist', 'reminders', 'reports', 'auto_reply'];
 const _FOOD_DINING: CapabilityId[] = ['table_reservation', 'ordering', 'payment', 'feedback', 'chat', 'waitlist', 'broadcast', 'auto_reply'];
 const _DELIVERY_RETAIL: CapabilityId[] = ['ordering', 'payment', 'feedback', 'chat', 'broadcast'];
-const _HOME_AUTO: CapabilityId[] = ['scheduling', 'payment', 'invoice', 'feedback', 'chat', 'reminders'];
-const _PROFESSIONAL: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'invoice', 'feedback', 'chat', 'reminders', 'recurring', 'whatsapp_sign'];
-const _HOSPITALITY: CapabilityId[] = ['reservation', 'payment', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'survey'];
+const _HOME_AUTO: CapabilityId[] = ['scheduling', 'payment', 'invoice', 'feedback', 'chat', 'reminders', 'estimates'];
+const _PROFESSIONAL: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'invoice', 'feedback', 'chat', 'reminders', 'recurring', 'whatsapp_sign', 'estimates', 'packages'];
+const _HOSPITALITY: CapabilityId[] = ['reservation', 'payment', 'feedback', 'chat', 'waitlist', 'staff', 'broadcast', 'survey', 'multi_location'];
 const _EVENTS: CapabilityId[] = ['ticketing', 'appointment', 'payment', 'invoice', 'feedback', 'chat', 'broadcast', 'waitlist'];
 const _FAITH: CapabilityId[] = ['giving', 'appointment', 'ticketing', 'payment', 'feedback', 'chat', 'broadcast', 'recurring', 'poll', 'crowdfunding'];
-const _FITNESS: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'recurring', 'membership', 'auto_reply'];
+const _FITNESS: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'recurring', 'membership', 'auto_reply', 'class_booking', 'packages'];
 const _TRANSPORT: CapabilityId[] = ['ticketing', 'payment', 'feedback', 'chat'];
-const _EDUCATION: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'recurring', 'broadcast', 'survey'];
+const _EDUCATION: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'recurring', 'broadcast', 'survey', 'class_booking'];
 const _PET: CapabilityId[] = ['appointment', 'scheduling', 'payment', 'feedback', 'chat', 'reminders'];
-const _CREATIVE: CapabilityId[] = ['appointment', 'payment', 'invoice', 'whatsapp_sign', 'feedback', 'chat'];
+const _CREATIVE: CapabilityId[] = ['appointment', 'payment', 'invoice', 'whatsapp_sign', 'feedback', 'chat', 'estimates'];
 const _REAL_ESTATE: CapabilityId[] = ['appointment', 'payment', 'invoice', 'whatsapp_sign', 'feedback', 'chat', 'broadcast'];
 const _GOVERNMENT: CapabilityId[] = ['payment', 'queue', 'feedback', 'chat'];
 const _OTHER: CapabilityId[] = ['appointment', 'payment', 'feedback', 'chat'];

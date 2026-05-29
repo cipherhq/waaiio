@@ -172,13 +172,18 @@ export const recurringManageFlow: FlowDefinition = {
 
         // Cancel on gateway
         let cancelled = false;
-        if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
-          const emailToken = (ctx.session.session_data._recurring_email_token as string) || '';
-          cancelled = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
-        } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
-          cancelled = await cancelStripeSub(sub.gateway_subscription_code);
-        } else {
-          cancelled = true; // No gateway subscription to cancel
+        try {
+          if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
+            const emailToken = (ctx.session.session_data._recurring_email_token as string) || '';
+            cancelled = await cancelPaystackSub(sub.gateway_subscription_code, emailToken);
+          } else if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
+            cancelled = await cancelStripeSub(sub.gateway_subscription_code);
+          } else {
+            cancelled = true; // No gateway subscription to cancel
+          }
+        } catch (err) {
+          console.error('[RECURRING] Gateway cancel error (continuing with DB cancel):', err);
+          cancelled = false;
         }
 
         // Update DB regardless

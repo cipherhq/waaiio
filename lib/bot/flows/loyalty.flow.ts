@@ -277,7 +277,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
       logger.error('[LOYALTY] Redemption error:', err);
       await ctx.sender.sendText({
         to: ctx.from,
-        text: 'Oops, something went wrong. Please try again in a few minutes, or send *Hi* to start over.',
+        text: 'Something went wrong on our end. Please try again in a few minutes, or send *Hi* to start over.',
       });
     }
 
