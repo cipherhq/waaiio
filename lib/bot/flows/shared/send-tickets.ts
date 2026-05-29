@@ -188,8 +188,10 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
             `<svg width="220" height="220"><rect width="220" height="220" rx="12" fill="white"/></svg>`
           )).composite([{ input: qrPng, top: 10, left: 10 }]).png().toBuffer();
 
+          const flyerW = flyerMeta.width || 800;
+          const qrSize = 220;
           const composited = await flyer
-            .composite([{ input: qrWithBg, top: flyerH - 230, left: 570, }])
+            .composite([{ input: qrWithBg, top: Math.round((flyerH - qrSize) / 2), left: Math.round((flyerW - qrSize) / 2) }])
             .jpeg({ quality: 90 })
             .toBuffer();
 
