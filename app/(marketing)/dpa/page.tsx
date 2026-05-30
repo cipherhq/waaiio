@@ -21,7 +21,7 @@ export default function DPAPage() {
 
       <AnimatedSection>
         <div className="mx-auto max-w-3xl px-4 py-16">
-          <p className="mt-2 text-sm text-gray-400">Last updated: May 23, 2026</p>
+          <p className="mt-2 text-sm text-gray-400">Last updated: May 28, 2026</p>
 
           <div className="prose-pages mt-10 space-y-8 text-gray-700">
 
@@ -202,6 +202,16 @@ export default function DPAPage() {
                       <td className="py-2 pr-4">Vercel</td>
                       <td className="py-2 pr-4">Application hosting and edge functions</td>
                       <td className="py-2">US / Global</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 pr-4">Upstash</td>
+                      <td className="py-2 pr-4">API rate limiting and bot spam prevention</td>
+                      <td className="py-2">US (Global Edge)</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 pr-4">OpenAI</td>
+                      <td className="py-2 pr-4">Whisper voice-to-text transcription</td>
+                      <td className="py-2">US</td>
                     </tr>
                   </tbody>
                 </table>

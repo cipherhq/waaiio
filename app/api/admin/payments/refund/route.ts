@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { processRefund } from '@/lib/payments/refund-handler';
+import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -64,6 +65,22 @@ export async function POST(request: NextRequest) {
     if (!result.success) {
       return NextResponse.json({ error: result.errorMessage }, { status: 400 });
     }
+
+    // Audit log for refund approval
+    const serviceClient = createServiceClient();
+    await serviceClient.from('admin_audit_logs').insert({
+      actor_id: user.id,
+      action: 'refund_approved',
+      entity_type: 'payment',
+      entity_id: paymentId,
+      details: {
+        business_id: businessId,
+        amount,
+        reason: reason || null,
+        refund_id: result.refundId,
+        is_direct_split: result.isDirectSplit,
+      },
+    });
 
     return NextResponse.json({
       success: true,

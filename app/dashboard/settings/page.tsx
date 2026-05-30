@@ -3313,6 +3313,12 @@ export default function SettingsPage() {
                     setCurrentPassword('');
                     setNewPassword('');
                     setConfirmPassword('');
+                    // Audit log
+                    fetch('/api/account/audit', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action: 'password_changed' }),
+                    }).catch(() => {});
                   }
                 } catch {
                   setPasswordError('Something went wrong. Please try again.');
@@ -3365,6 +3371,12 @@ export default function SettingsPage() {
                     setEmailError(error.message || 'Failed to update email.');
                   } else {
                     setEmailSuccess('A confirmation link has been sent to your new email address. Please check your inbox and click the link to complete the change.');
+                    // Audit log
+                    fetch('/api/account/audit', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ action: 'email_changed', details: { new_email: newEmail } }),
+                    }).catch(() => {});
                     setNewEmail('');
                   }
                 } catch {
@@ -3598,6 +3610,19 @@ export default function SettingsPage() {
                         } catch { /* ignore parse errors */ }
                       }
                       setConsentSaved(true);
+                      // Audit log
+                      fetch('/api/account/audit', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          action: 'consent_updated',
+                          details: {
+                            marketing_emails: marketingConsent,
+                            analytics: analyticsConsent,
+                            ai_processing: aiConsent,
+                          },
+                        }),
+                      }).catch(() => {});
                     } catch { /* silent */ } finally {
                       setConsentSaving(false);
                     }

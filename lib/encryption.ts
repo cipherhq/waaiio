@@ -25,8 +25,12 @@ export function encryptToken(plaintext: string): string {
     encrypted += cipher.final('hex');
     const authTag = cipher.getAuthTag().toString('hex');
     return `${iv.toString('hex')}:${authTag}:${encrypted}`;
-  } catch {
-    // If encryption key not configured, return plaintext (development mode)
+  } catch (err) {
+    // In production, never fall back to plaintext — fail closed
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Encryption failed: TOKEN_ENCRYPTION_KEY must be configured in production');
+    }
+    // In development, return plaintext for convenience
     return plaintext;
   }
 }
@@ -52,8 +56,12 @@ export function decryptToken(stored: string): string {
     let decrypted = decipher.update(ciphertext, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
-  } catch {
-    // If decryption fails, assume it's plaintext (migration period)
+  } catch (err) {
+    // In production, decryption failure is a real error — don't silently return ciphertext
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Decryption failed: TOKEN_ENCRYPTION_KEY may be incorrect or data is corrupted');
+    }
+    // In development, assume it's plaintext (migration period)
     return stored;
   }
 }

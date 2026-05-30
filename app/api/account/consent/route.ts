@@ -19,6 +19,8 @@ interface ConsentPreferences {
   analytics: boolean;
   ai_processing: boolean;
   updated_at: string;
+  policy_version?: string;
+  consented_at?: string;
 }
 
 const DEFAULT_CONSENT: ConsentPreferences = {
@@ -87,11 +89,30 @@ export async function POST(request: NextRequest) {
 
     const existingMetadata = (profile?.metadata || {}) as Record<string, unknown>;
 
+    // Fetch current privacy policy version from platform_settings
+    let policyVersion = '2026-05-23'; // fallback
+    const { data: versionRow } = await serviceClient
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'privacy_version')
+      .maybeSingle();
+
+    if (versionRow?.value) {
+      // value is stored as JSON string e.g. '"1.0"'
+      try {
+        policyVersion = JSON.parse(versionRow.value);
+      } catch {
+        policyVersion = versionRow.value;
+      }
+    }
+
     const consentPreferences: ConsentPreferences = {
       marketing_emails,
       analytics,
       ai_processing,
       updated_at: new Date().toISOString(),
+      policy_version: policyVersion,
+      consented_at: new Date().toISOString(),
     };
 
     // Merge with existing metadata

@@ -21,7 +21,7 @@ export default function PrivacyPolicyPage() {
 
       <AnimatedSection>
         <div className="mx-auto max-w-3xl px-4 py-16">
-          <p className="mt-2 text-sm text-gray-400">Last updated: May 23, 2026</p>
+          <p className="mt-2 text-sm text-gray-400">Last updated: May 28, 2026</p>
 
           <div className="prose-pages mt-10 space-y-8 text-gray-700">
 
@@ -215,6 +215,16 @@ export default function PrivacyPolicyPage() {
                       <td className="py-2 pr-4">Gupshup</td>
                       <td className="py-2 pr-4">WhatsApp Business API provider</td>
                       <td className="py-2">Phone numbers, message content</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 pr-4">Upstash</td>
+                      <td className="py-2 pr-4">Rate limiting and caching</td>
+                      <td className="py-2">IP addresses, request timestamps, rate limit counters</td>
+                    </tr>
+                    <tr>
+                      <td className="py-2 pr-4">OpenAI</td>
+                      <td className="py-2 pr-4">Voice transcription (Whisper)</td>
+                      <td className="py-2">Audio messages (WhatsApp voice notes)</td>
                     </tr>
                   </tbody>
                 </table>

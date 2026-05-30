@@ -95,6 +95,19 @@ export async function DELETE(request: NextRequest) {
       }
     }
 
+    // Audit log BEFORE deletion (deletion cascades and destroys profile data)
+    await serviceClient.from('admin_audit_logs').insert({
+      actor_id: user.id,
+      action: 'account_deletion',
+      entity_type: 'profile',
+      entity_id: user.id,
+      details: {
+        email: user.email,
+        grace_period: gracePeriod,
+        businesses_affected: businessIds,
+      },
+    });
+
     if (gracePeriod) {
       // 30-day grace period: mark for deletion instead of immediate delete
       const deletionDate = new Date();
@@ -183,6 +196,64 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     logger.error('[ACCOUNT] DELETE error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+/**
+ * Cancel scheduled account deletion (grace period).
+ * Removes deletion_scheduled metadata and reactivates businesses.
+ */
+export async function PATCH() {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const serviceClient = createServiceClient();
+
+    // Check if deletion is actually scheduled
+    const { data: profile } = await serviceClient
+      .from('profiles')
+      .select('metadata')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    const metadata = (profile?.metadata || {}) as Record<string, unknown>;
+    if (!metadata.deletion_scheduled) {
+      return NextResponse.json({ error: 'No deletion scheduled' }, { status: 400 });
+    }
+
+    // Remove deletion metadata
+    const { deletion_scheduled, deletion_date, deletion_requested_at, ...cleanMetadata } = metadata;
+    await serviceClient
+      .from('profiles')
+      .update({ metadata: cleanMetadata })
+      .eq('id', user.id);
+
+    // Reactivate businesses that were soft-deleted
+    const { data: businesses } = await serviceClient
+      .from('businesses')
+      .select('id')
+      .eq('owner_id', user.id)
+      .eq('status', 'deleted');
+
+    if (businesses && businesses.length > 0) {
+      for (const biz of businesses) {
+        await serviceClient
+          .from('businesses')
+          .update({ status: 'active' })
+          .eq('id', biz.id);
+      }
+    }
+
+    logger.info(`[ACCOUNT] User ${user.id} cancelled scheduled deletion`);
+
+    return NextResponse.json({ success: true, message: 'Account deletion cancelled' });
+  } catch (error) {
+    logger.error('[ACCOUNT] PATCH error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -325,6 +325,7 @@ function OnboardingWizard() {
   // Bot persona
   const [botAlias, setBotAlias] = useState('');
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [agreedToDataProcessing, setAgreedToDataProcessing] = useState(false);
   const [botGreeting, setBotGreeting] = useState('');
 
   // WhatsApp connection
@@ -1997,16 +1998,29 @@ function OnboardingWizard() {
                     required
                   />
                   <span className="text-xs text-gray-500 leading-relaxed">
-                    By signing up, I agree to Waaiio&apos;s{' '}
-                    <a href="/terms" target="_blank" className="text-brand underline hover:text-brand-600">Terms of Service</a>{' '}
-                    and{' '}
+                    I agree to Waaiio&apos;s{' '}
+                    <a href="/terms" target="_blank" className="text-brand underline hover:text-brand-600">Terms of Service</a>.
+                  </span>
+                </label>
+
+                {/* Data Processing Consent (GDPR — separate from Terms) */}
+                <label className="mt-3 flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={agreedToDataProcessing}
+                    onChange={e => setAgreedToDataProcessing(e.target.checked)}
+                    className="mt-0.5 rounded border-gray-300"
+                    required
+                  />
+                  <span className="text-xs text-gray-500 leading-relaxed">
+                    I consent to Waaiio processing my business and customer data as described in the{' '}
                     <a href="/privacy" target="_blank" className="text-brand underline hover:text-brand-600">Privacy Policy</a>.
                   </span>
                 </label>
 
                 <div className="mt-4 flex gap-3">
                   <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="submit" disabled={loading || !agreedToTerms || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
+                  <button type="submit" disabled={loading || !agreedToTerms || !agreedToDataProcessing || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
                     {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
                   </button>
                 </div>
