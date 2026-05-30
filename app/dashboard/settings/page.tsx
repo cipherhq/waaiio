@@ -3041,11 +3041,33 @@ export default function SettingsPage() {
                           if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits and capabilities that require Pro or Premium plans.')) return;
                           setDowngrading(true);
                           const supabase = createClient();
-                          // Update subscription tier
+                          // Update subscription tier on business
                           await supabase
                             .from('businesses')
                             .update({ subscription_tier: 'free' })
                             .eq('id', business.id);
+                          // Cancel the active subscription
+                          await supabase
+                            .from('subscriptions')
+                            .update({
+                              status: 'cancelled',
+                              cancelled_at: new Date().toISOString(),
+                              cancellation_reason: 'User-initiated downgrade to Free plan',
+                            })
+                            .eq('business_id', business.id)
+                            .eq('status', 'active');
+                          // Record downgrade in subscription_payments
+                          await supabase
+                            .from('subscription_payments')
+                            .insert({
+                              business_id: business.id,
+                              amount: 0,
+                              currency: 'NGN',
+                              gateway: 'none',
+                              plan: 'free',
+                              action: 'downgrade',
+                              status: 'success',
+                            });
                           // Remove capabilities that require a higher tier
                           const freeCaps: CapabilityId[] = (Object.entries(CAPABILITY_TIER_REQUIREMENTS) as [CapabilityId, string][])
                             .filter(([, tier]) => tier === 'free')

@@ -15,13 +15,63 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { reference, business_id: bodyBusinessId, plan: bodyPlan } = body;
 
-    const paystackKey = process.env.PAYSTACK_SECRET_KEY;
-
     let businessId: string | undefined;
     let plan: string | undefined;
-    let amountKobo = 0;
+    let amountSmallest = 0; // amount in smallest currency unit (kobo/cents)
+    let gateway: string = 'none';
+    let currency: string = 'NGN';
 
-    if (reference && paystackKey) {
+    // ── Stripe verification (checkout session IDs start with cs_) ──
+    if (reference && reference.startsWith('cs_')) {
+      const stripeKey = process.env.STRIPE_SECRET_KEY;
+      if (!stripeKey) {
+        return NextResponse.json(
+          { message: 'Payment gateway not configured' },
+          { status: 500 },
+        );
+      }
+
+      const response = await fetch(
+        `https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(reference)}`,
+        {
+          headers: { Authorization: `Bearer ${stripeKey}` },
+          signal: AbortSignal.timeout(15000),
+        },
+      );
+
+      const session = await response.json();
+
+      if (session.error) {
+        return NextResponse.json(
+          { message: 'Invalid payment reference' },
+          { status: 400 },
+        );
+      }
+
+      if (session.payment_status !== 'paid') {
+        return NextResponse.json(
+          { message: 'Payment not yet confirmed', stripe_status: session.payment_status },
+          { status: 402 },
+        );
+      }
+
+      const metadata = session.metadata as Record<string, string> | undefined;
+      businessId = metadata?.business_id || bodyBusinessId;
+      plan = metadata?.plan || bodyPlan;
+      amountSmallest = session.amount_total || 0;
+      gateway = 'stripe';
+      currency = (session.currency || 'usd').toUpperCase();
+    }
+    // ── Paystack verification ──
+    else if (reference) {
+      const paystackKey = process.env.PAYSTACK_SECRET_KEY;
+      if (!paystackKey) {
+        return NextResponse.json(
+          { message: 'Payment gateway not configured' },
+          { status: 500 },
+        );
+      }
+
       const response = await fetch(
         `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
         { headers: { Authorization: `Bearer ${paystackKey}` } },
@@ -39,9 +89,12 @@ export async function POST(request: NextRequest) {
       const metadata = data.data.metadata as Record<string, string> | undefined;
       businessId = metadata?.business_id || bodyBusinessId;
       plan = metadata?.plan || bodyPlan;
-      amountKobo = data.data.amount || 0;
-    } else if (bodyBusinessId && bodyPlan) {
-      // Only allow free tier without payment verification
+      amountSmallest = data.data.amount || 0;
+      gateway = 'paystack';
+      currency = (data.data.currency || 'NGN').toUpperCase();
+    }
+    // ── Free tier (no payment required) ──
+    else if (bodyBusinessId && bodyPlan) {
       if (bodyPlan !== 'free') {
         return NextResponse.json(
           { message: 'Payment reference required for paid plans' },
@@ -61,7 +114,7 @@ export async function POST(request: NextRequest) {
 
     const { data: ownerCheck } = await supabase
       .from('businesses')
-      .select('owner_id')
+      .select('owner_id, subscription_tier')
       .eq('id', businessId)
       .single();
 
@@ -78,17 +131,38 @@ export async function POST(request: NextRequest) {
     const periodEnd = new Date();
     periodEnd.setDate(periodEnd.getDate() + 30);
 
+    // Determine action: upgrade vs renewal
+    const previousTier = ownerCheck.subscription_tier || 'free';
+    const action = previousTier === plan ? 'renewal' : 'upgrade';
+
     // Upsert: one subscription per business (prevent duplicates on re-onboarding)
-    await service.from('subscriptions').upsert({
+    const { data: subscription } = await service.from('subscriptions').upsert({
       business_id: businessId,
       plan,
       status: 'active',
-      amount: amountKobo ? Math.round(amountKobo / 100) : (tier.price ?? 0),
+      amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
+      gateway: gateway !== 'none' ? gateway : null,
+      currency,
       paystack_subscription_code: null,
       paystack_customer_code: null,
       current_period_start: new Date().toISOString(),
       current_period_end: periodEnd.toISOString(),
-    }, { onConflict: 'business_id' });
+    }, { onConflict: 'business_id' }).select('id').single();
+
+    // Record subscription payment (only for paid plans)
+    if (plan !== 'free' && gateway !== 'none') {
+      await service.from('subscription_payments').insert({
+        business_id: businessId,
+        subscription_id: subscription?.id || null,
+        amount: amountSmallest,
+        currency,
+        gateway,
+        gateway_reference: reference,
+        plan,
+        action,
+        status: 'success',
+      });
+    }
 
     await service
       .from('businesses')

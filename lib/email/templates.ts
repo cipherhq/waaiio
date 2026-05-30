@@ -458,6 +458,44 @@ export function trialEndedEmail(businessName: string) {
   };
 }
 
+export function subscriptionExpiringEmail(businessName: string, daysLeft: number, renewUrl: string) {
+  const urgency = daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`;
+  const urgencyTitle = daysLeft === 1 ? 'Your Subscription Expires Tomorrow' : 'Your Subscription Is Expiring Soon';
+  return {
+    subject: `Your subscription expires ${urgency} — ${businessName}`,
+    html: wrap(`
+      ${h(urgencyTitle)}
+      ${p(`The paid subscription for <strong>${esc(businessName)}</strong> expires <strong>${urgency}</strong>.`)}
+      ${p('After expiry, your business will be moved to the <strong>Free plan</strong>. You will lose access to premium features and your per-transaction fee will increase.')}
+      ${table(
+        kv('Business', esc(businessName)) +
+        kv('Expires', urgency) +
+        kv('After Expiry', 'Free plan (2.5% per transaction)')
+      )}
+      ${btn('Renew Subscription', renewUrl)}
+      ${p('Renew now to keep your current plan and avoid any interruption to your premium features.')}
+    `),
+  };
+}
+
+export function subscriptionExpiredEmail(businessName: string, renewUrl: string) {
+  return {
+    subject: `Your subscription has expired — ${businessName}`,
+    html: wrap(`
+      ${h('Subscription Expired')}
+      ${p(`The paid subscription for <strong>${esc(businessName)}</strong> has expired.`)}
+      ${p('Your business has been moved to the <strong>Free plan</strong>. A 2.5% per-transaction fee now applies, and premium features have been disabled.')}
+      ${table(
+        kv('Business', esc(businessName)) +
+        kv('Current Plan', 'Free') +
+        kv('Transaction Fee', '2.5%')
+      )}
+      ${p('Your bot is still active and will continue to serve customers. Upgrade anytime to restore your previous plan and lower fees.')}
+      ${btn('Renew Subscription', renewUrl)}
+    `),
+  };
+}
+
 export function payoutFailedEmail(businessName: string, amount: string, reason: string) {
   return {
     subject: `Payout failed — ${amount}`,
