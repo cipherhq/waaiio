@@ -494,7 +494,7 @@ export default function EventPurchaseForm({
                           value={otpCode}
                           onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
                           placeholder="4-digit code"
-                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-[#6C2BD9]"
+                          className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-brand"
                         />
                         <button
                           type="button"
@@ -575,7 +575,7 @@ export default function EventPurchaseForm({
                   type="checkbox"
                   checked={agreedToTerms}
                   onChange={(e) => setAgreedToTerms(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-[#6C2BD9]"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
                 />
                 <span className="text-xs text-gray-500">
                   I agree to {business.name}&apos;s and <a href="/terms" target="_blank" className="text-brand underline">Waaiio&apos;s terms</a> and policies
@@ -586,7 +586,7 @@ export default function EventPurchaseForm({
               <button
                 type="submit"
                 disabled={state === 'purchasing' || (hasTicketTypes && !selectedTicketType) || !agreedToTerms}
-                className="w-full rounded-xl bg-brand py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-[#5a23b5] disabled:opacity-50"
+                className="w-full rounded-xl bg-brand py-3.5 text-sm font-semibold text-white shadow-lg transition hover:bg-brand-700 disabled:opacity-50"
               >
                 {state === 'purchasing'
                   ? 'Processing...'

@@ -37,7 +37,7 @@ export default function PricingPage() {
             Simple, transparent pricing
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-gray-600">
-            30-day free trial with zero fees, then 2% per transaction. No monthly fees on Starter. Free reservations don&apos;t count.
+            30-day free trial with zero fees, then 2.5% per transaction. No monthly fees on Starter. Free reservations don&apos;t count.
           </p>
 
           {/* Country picker */}
@@ -94,7 +94,7 @@ export default function PricingPage() {
                   country={country}
                 />
                 <p className="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-center text-xs text-gray-500">
-                  After trial: 2% per paid transaction. Free bookings (no deposit) are always free.
+                  After trial: 2.5% per paid transaction. Free bookings (no deposit) are always free.
                 </p>
               </div>
               <TierCard
@@ -392,7 +392,7 @@ export default function PricingPage() {
               />
               <PricingFaqItem
                 question="What happens after my 30-day trial?"
-                answer="After 30 days, the Starter plan's per-transaction fees kick in (2% + flat fee). Your bot keeps working — there's no interruption."
+                answer="After 30 days, the Starter plan's per-transaction fees kick in (2.5% + flat fee). Your bot keeps working — there's no interruption."
               />
               <PricingFaqItem
                 question="Are there any hidden fees?"

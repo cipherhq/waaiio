@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { createClient } from '@/lib/supabase/client';
 
 interface FormField {
   id: string;
@@ -31,6 +32,7 @@ export default function PublicFormPage() {
   const [state, setState] = useState<PageState>('loading');
   const [errorMsg, setErrorMsg] = useState('');
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     async function loadForm() {
@@ -55,6 +57,30 @@ export default function PublicFormPage() {
 
   function updateAnswer(fieldId: string, value: unknown) {
     setAnswers(prev => ({ ...prev, [fieldId]: value }));
+  }
+
+  async function handleFileUpload(fieldId: string, file: File) {
+    setUploading(prev => ({ ...prev, [fieldId]: true }));
+    try {
+      const supabase = createClient();
+      const ext = file.name.split('.').pop() || 'bin';
+      const path = `form-uploads/${token}/${fieldId}-${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from('business-documents')
+        .upload(path, file, { upsert: true });
+      if (uploadError) {
+        setErrorMsg(`Upload failed: ${uploadError.message}`);
+        return;
+      }
+      const { data: urlData } = supabase.storage
+        .from('business-documents')
+        .getPublicUrl(path);
+      updateAnswer(fieldId, urlData.publicUrl);
+    } catch {
+      setErrorMsg('File upload failed. Please try again.');
+    } finally {
+      setUploading(prev => ({ ...prev, [fieldId]: false }));
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -255,6 +281,26 @@ export default function PublicFormPage() {
                       className="rounded border-gray-300 text-violet-600 focus:ring-violet-500" />
                     <span className="text-sm text-gray-600">Yes</span>
                   </label>
+                )}
+                {field.type === 'file' && (
+                  <div>
+                    <input
+                      type="file"
+                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                      onChange={e => {
+                        const file = e.target.files?.[0];
+                        if (file) handleFileUpload(field.id, file);
+                      }}
+                      disabled={uploading[field.id]}
+                      className="w-full text-sm text-gray-500 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-violet-700 hover:file:bg-violet-100 disabled:opacity-50"
+                    />
+                    {uploading[field.id] && (
+                      <p className="mt-1 text-xs text-gray-400">Uploading...</p>
+                    )}
+                    {!!answers[field.id] && !uploading[field.id] && (
+                      <p className="mt-1 text-xs text-green-600">File uploaded successfully</p>
+                    )}
+                  </div>
                 )}
               </div>
             ))}

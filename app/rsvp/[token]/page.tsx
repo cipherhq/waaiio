@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
 
 interface EventOrPartyDetails {
   id: string;
@@ -49,46 +48,29 @@ export default function RSVPPage() {
 
   useEffect(() => {
     async function load() {
-      const supabase = createClient();
+      try {
+        const res = await fetch(`/api/rsvp/${token}`);
+        if (!res.ok) {
+          setState('not_found');
+          return;
+        }
 
-      // First try with event join (existing behavior)
-      const { data: dataWithEvent } = await supabase
-        .from('event_invites')
-        .select(`
-          id, invite_token, guest_phone, guest_name, status, plus_ones, dietary_notes,
-          events (
-            id, name, description, date, time, venue, image_url,
-            allow_plus_ones, max_plus_ones, ask_dietary, invite_message,
-            businesses!inner ( name, slug )
-          ),
-          parties (
-            id, name, description, date, time, venue, image_url,
-            allow_plus_ones, max_plus_ones, ask_dietary, invite_message, dress_code,
-            businesses!inner ( name, slug )
-          )
-        `)
-        .eq('invite_token', token as string)
-        .single();
+        const { invite: inviteData } = await res.json() as { invite: InviteData };
 
-      if (!dataWithEvent) {
+        if (!inviteData || (!inviteData.events && !inviteData.parties)) {
+          setState('not_found');
+          return;
+        }
+
+        setInvite(inviteData);
+
+        if (inviteData.status !== 'pending') {
+          setState('already_responded');
+        } else {
+          setState('rsvp_form');
+        }
+      } catch {
         setState('not_found');
-        return;
-      }
-
-      const inviteData = dataWithEvent as unknown as InviteData;
-
-      // Must have either event or party data
-      if (!inviteData.events && !inviteData.parties) {
-        setState('not_found');
-        return;
-      }
-
-      setInvite(inviteData);
-
-      if (inviteData.status !== 'pending') {
-        setState('already_responded');
-      } else {
-        setState('rsvp_form');
       }
     }
 
@@ -99,28 +81,28 @@ export default function RSVPPage() {
     if (!response || !invite) return;
     setState('submitting');
 
-    const supabase = createClient();
-    const updateData: Record<string, unknown> = {
-      status: response,
-      plus_ones: response === 'accepted' ? plusOnes : 0,
-      responded_at: new Date().toISOString(),
-    };
-    if (dietary.trim()) updateData.dietary_notes = dietary.trim();
+    try {
+      const res = await fetch(`/api/rsvp/${token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: response,
+          plus_ones: response === 'accepted' ? plusOnes : 0,
+          dietary_notes: dietary.trim() || undefined,
+        }),
+      });
 
-    const { error } = await supabase
-      .from('event_invites')
-      .update(updateData)
-      .eq('id', invite.id);
+      if (!res.ok) {
+        setState('rsvp_form');
+        return;
+      }
 
-    if (error) {
-      console.error('RSVP error:', error);
+      // Update local state
+      setInvite({ ...invite, status: response, plus_ones: response === 'accepted' ? plusOnes : 0 });
+      setState('done');
+    } catch {
       setState('rsvp_form');
-      return;
     }
-
-    // Update local state
-    setInvite({ ...invite, status: response, plus_ones: response === 'accepted' ? plusOnes : 0 });
-    setState('done');
   }
 
   // Format date/time

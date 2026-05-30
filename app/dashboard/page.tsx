@@ -263,6 +263,27 @@ export default function DashboardOverview() {
 
   return (
     <div>
+      {/* Incomplete setup banner */}
+      {business.status === 'pending' && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <svg aria-hidden="true" className="h-6 w-6 text-orange-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-orange-900">Your business setup is incomplete.</p>
+              <p className="text-xs text-orange-700">Complete setup to go live.</p>
+            </div>
+          </div>
+          <Link
+            href="/get-started"
+            className="shrink-0 rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-700 transition"
+          >
+            Complete Setup
+          </Link>
+        </div>
+      )}
+
       {/* Pending payout banner */}
       {showPayoutBanner && (
         <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">

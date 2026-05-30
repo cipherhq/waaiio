@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
 
     const stripeBody = new URLSearchParams({
       'payment_method_types[0]': 'card',
-      'line_items[0][price_data][currency]': country?.currency_code ?? 'NGN'.toLowerCase(),
+      'line_items[0][price_data][currency]': (country?.currency_code ?? 'USD').toLowerCase(),
       'line_items[0][price_data][product_data][name]': `Waaiio ${tier.name} Plan`,
       'line_items[0][price_data][unit_amount]': String(amountInCents),
       'line_items[0][quantity]': '1',

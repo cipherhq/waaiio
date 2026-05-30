@@ -98,8 +98,7 @@ export async function middleware(request: NextRequest) {
     '/api/webhook/meta-cloud', '/api/webhook/whatsapp',
     '/api/webhooks/flutterwave', '/api/webhooks/paystack-transfer', '/api/webhooks/stripe-transfer',
     '/api/payments/stripe-webhook', '/api/payments/square-webhook', '/api/payments/paypal-webhook',
-    '/api/payments/byo-webhook', '/api/payments/webhook', '/api/payments/flutterwave-webhook',
-    '/api/payments/paystack-webhook',
+    '/api/payments/byo-webhook', '/api/payments/webhook',
   ];
   const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {
@@ -131,12 +130,6 @@ export async function middleware(request: NextRequest) {
 
     // Exempt webhook endpoints (authenticated via signatures, not IP)
     const isWebhookRoute = isWebhook
-      || request.nextUrl.pathname.startsWith('/api/payments/stripe-webhook')
-      || request.nextUrl.pathname.startsWith('/api/payments/square-webhook')
-      || request.nextUrl.pathname.startsWith('/api/payments/paypal-webhook')
-      || request.nextUrl.pathname.startsWith('/api/payments/byo-webhook')
-      || request.nextUrl.pathname.startsWith('/api/payments/webhook')
-      || request.nextUrl.pathname.startsWith('/api/payments/flutterwave-webhook')
       || request.nextUrl.pathname.startsWith('/api/cron');
 
     if (!isWebhookRoute) {
