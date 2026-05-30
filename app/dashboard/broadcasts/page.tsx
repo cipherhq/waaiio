@@ -64,6 +64,11 @@ export default function BroadcastsPage() {
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [showRecipients, setShowRecipients] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [importMode, setImportMode] = useState<'csv' | 'paste'>('paste');
+  const [pasteInput, setPasteInput] = useState('');
+  const [importCount, setImportCount] = useState<number | null>(null);
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
@@ -245,6 +250,70 @@ export default function BroadcastsPage() {
       // Non-critical
     }
     setPreviewLoading(false);
+  }
+
+  function removeContact(phone: string) {
+    setContacts(prev => prev.filter(c => c.phone !== phone));
+  }
+
+  function handlePasteImport() {
+    if (!pasteInput.trim()) return;
+    const lines = pasteInput.split(/[,\n]+/).map(l => l.trim()).filter(Boolean);
+    const existing = new Set(contacts.map(c => c.phone));
+    const newContacts: BroadcastContact[] = [];
+    for (const line of lines) {
+      // Support "phone" or "phone name" or "name phone" formats
+      const parts = line.split(/\s+/);
+      const phonePart = parts.find(p => /^\+?\d[\d\s-]{6,}$/.test(p.replace(/[\s-]/g, '')));
+      const phone = (phonePart || parts[0]).replace(/[\s-]/g, '');
+      if (!phone || existing.has(phone)) continue;
+      existing.add(phone);
+      const nameParts = parts.filter(p => p !== phonePart);
+      newContacts.push({
+        phone,
+        first_name: nameParts[0] || null,
+        last_name: nameParts.slice(1).join(' ') || null,
+        last_interaction: '',
+      });
+    }
+    setContacts(prev => [...prev, ...newContacts]);
+    setImportCount(newContacts.length);
+    setPasteInput('');
+    setTimeout(() => setImportCount(null), 3000);
+  }
+
+  function handleCsvUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      if (!text) return;
+      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+      const existing = new Set(contacts.map(c => c.phone));
+      const newContacts: BroadcastContact[] = [];
+      // Skip header if it looks like one
+      const start = /phone/i.test(lines[0]) ? 1 : 0;
+      for (let i = start; i < lines.length; i++) {
+        const cols = lines[i].split(',').map(c => c.trim().replace(/^["']|["']$/g, ''));
+        const phone = (cols[0] || '').replace(/[\s-]/g, '');
+        if (!phone || existing.has(phone)) continue;
+        existing.add(phone);
+        const nameParts = (cols[1] || '').split(/\s+/);
+        newContacts.push({
+          phone,
+          first_name: nameParts[0] || null,
+          last_name: nameParts.slice(1).join(' ') || null,
+          last_interaction: '',
+        });
+      }
+      setContacts(prev => [...prev, ...newContacts]);
+      setImportCount(newContacts.length);
+      setTimeout(() => setImportCount(null), 3000);
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be re-uploaded
+    e.target.value = '';
   }
 
   // Derived usage state — don't block if usage hasn't loaded yet
@@ -509,7 +578,95 @@ export default function BroadcastsPage() {
           <div className="lg:col-span-3 space-y-4">
             {/* Audience Segmentation */}
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Audience</h2>
+                <div className="relative">
+                  <button
+                    onClick={() => setShowImport(!showImport)}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition"
+                  >
+                    <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                    Import
+                  </button>
+
+                  {/* Import Dropdown */}
+                  {showImport && (
+                    <div className="absolute right-0 top-full z-10 mt-2 w-80 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-xl">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Import Contacts</h3>
+                        <button onClick={() => setShowImport(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                          <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+
+                      {/* Mode tabs */}
+                      <div className="flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1 mb-3">
+                        <button
+                          onClick={() => setImportMode('paste')}
+                          className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${importMode === 'paste' ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}
+                        >
+                          Paste Numbers
+                        </button>
+                        <button
+                          onClick={() => setImportMode('csv')}
+                          className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${importMode === 'csv' ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}
+                        >
+                          CSV Upload
+                        </button>
+                      </div>
+
+                      {importMode === 'paste' ? (
+                        <>
+                          <textarea
+                            value={pasteInput}
+                            onChange={(e) => setPasteInput(e.target.value)}
+                            rows={4}
+                            placeholder={"Enter phone numbers separated by commas or new lines:\n+2348012345678\n+1234567890, +4412345678"}
+                            className="w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-xs outline-none focus:border-brand resize-none"
+                          />
+                          <button
+                            onClick={handlePasteImport}
+                            disabled={!pasteInput.trim()}
+                            className="mt-2 w-full rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
+                          >
+                            Add to Recipients
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            Upload a CSV with columns: phone, name
+                          </p>
+                          <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-200 dark:border-gray-600 p-4 text-xs text-gray-500 dark:text-gray-400 hover:border-brand hover:text-brand transition">
+                            <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Choose CSV file
+                            <input
+                              type="file"
+                              accept=".csv,text/csv"
+                              onChange={handleCsvUpload}
+                              className="hidden"
+                            />
+                          </label>
+                        </>
+                      )}
+
+                      {importCount !== null && (
+                        <div className="mt-2 rounded-lg bg-green-50 dark:bg-green-900/20 px-3 py-2">
+                          <p className="text-xs font-medium text-green-700 dark:text-green-400">
+                            Added {importCount} contact{importCount !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {/* Segment Shortcuts */}
               <div className="mt-3 flex flex-wrap gap-2">
@@ -563,6 +720,45 @@ export default function BroadcastsPage() {
                   </p>
                 </div>
               </div>
+
+              {/* Expandable Recipient List */}
+              {contacts.length > 0 && (
+                <div className="mt-3">
+                  <button
+                    onClick={() => setShowRecipients(!showRecipients)}
+                    className="flex items-center gap-1.5 text-xs font-medium text-brand hover:text-brand-600 transition"
+                  >
+                    <svg aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${showRecipients ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                    {showRecipients ? 'Hide recipients' : 'Show recipients'}
+                  </button>
+
+                  {showRecipients && (
+                    <div className="mt-2 max-h-[200px] overflow-y-auto rounded-lg border border-gray-100 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-700">
+                      {contacts.map((contact) => (
+                        <div key={contact.phone} className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                          <div className="min-w-0">
+                            <p className="text-sm text-gray-900 dark:text-gray-100 truncate">
+                              {[contact.first_name, contact.last_name].filter(Boolean).join(' ') || 'Unknown'}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">{contact.phone}</p>
+                          </div>
+                          <button
+                            onClick={() => removeContact(contact.phone)}
+                            className="ml-2 shrink-0 rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400 transition"
+                            title="Remove recipient"
+                          >
+                            <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Custom Filters (collapsible) */}
               <div className="mt-4">
