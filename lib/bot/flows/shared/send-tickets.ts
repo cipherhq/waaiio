@@ -173,25 +173,44 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       const caption = `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\nShow this at the entrance\n\n🔗 ${verifyUrl}`;
 
       try {
-        // Try compositing QR onto flyer
+        // Try compositing QR + buyer details onto flyer
         if (flyerBuffer) {
           const sharp = (await import('sharp')).default;
           const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 200, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
 
-          // Resize flyer to standard width, then composite QR in bottom-right with white padding
           const flyer = sharp(flyerBuffer).resize(800, null, { withoutEnlargement: true });
           const flyerMeta = await flyer.metadata();
           const flyerH = flyerMeta.height || 800;
-
-          // White background behind QR for visibility
-          const qrWithBg = await sharp(Buffer.from(
-            `<svg width="220" height="220"><rect width="220" height="220" rx="12" fill="white"/></svg>`
-          )).composite([{ input: qrPng, top: 10, left: 10 }]).png().toBuffer();
-
           const flyerW = flyerMeta.width || 800;
-          const qrSize = 220;
+
+          // SVG escape helper
+          const svgEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const truncate = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + '…' : s;
+
+          // Build ticket card with buyer details around QR
+          const cardW = 320;
+          const cardH = 340;
+          const nameLabel = svgEsc(truncate(guestName || 'Guest', 28));
+          const codeLabel = svgEsc(ticket.ticketCode);
+          const eventLabel = svgEsc(truncate(eventName, 32));
+          const dateLabel = svgEsc(`${eventDate}${eventTime ? ' · ' + eventTime : ''}`);
+
+          const cardSvg = `<svg width="${cardW}" height="${cardH}" xmlns="http://www.w3.org/2000/svg">
+            <rect width="${cardW}" height="${cardH}" rx="16" fill="white" opacity="0.95"/>
+            <rect x="1" y="1" width="${cardW - 2}" height="${cardH - 2}" rx="15" fill="none" stroke="#e5e7eb" stroke-width="1"/>
+            <text x="${cardW / 2}" y="30" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#111">${nameLabel}</text>
+            <text x="${cardW / 2}" y="50" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#6b7280">${eventLabel}</text>
+            <text x="${cardW / 2}" y="66" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#9ca3af">${dateLabel}</text>
+            <text x="${cardW / 2}" y="${cardH - 18}" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="#6C2BD9">${codeLabel}</text>
+            <text x="${cardW / 2}" y="${cardH - 4}" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#9ca3af">Ticket ${ticket.ticketNumber}/${ticket.totalTickets} · Scan to verify</text>
+          </svg>`;
+
+          const cardBuf = await sharp(Buffer.from(cardSvg))
+            .composite([{ input: qrPng, top: 76, left: Math.round((cardW - 200) / 2) }])
+            .png().toBuffer();
+
           const composited = await flyer
-            .composite([{ input: qrWithBg, top: Math.round((flyerH - qrSize) / 2), left: Math.round((flyerW - qrSize) / 2) }])
+            .composite([{ input: cardBuf, top: Math.round((flyerH - cardH) / 2), left: Math.round((flyerW - cardW) / 2) }])
             .jpeg({ quality: 90 })
             .toBuffer();
 
