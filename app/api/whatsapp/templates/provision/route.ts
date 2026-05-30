@@ -154,7 +154,7 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
       components: [
         {
           type: 'BODY',
-          text: 'Hello! Here is an update from *{{1}}*:\n\n{{2}}\n\nThank you for being a valued customer. Reply to this message if you have any questions.',
+          text: 'Hello! Here is an update from *{{1}}*:\n\n{{2}}\n\nReply to this message if you have any questions.',
           example: { body_text: [['Citadel of Grace', 'We have updated our opening hours. We are now open Monday to Saturday, 9am to 7pm. Thank you for your continued support!']] },
         },
         { type: 'FOOTER', text: 'Powered by Waaiio' },
@@ -167,7 +167,7 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
       components: [
         {
           type: 'BODY',
-          text: 'Hello! Here is a reminder from *{{1}}*:\n\n{{2}}\n\nWe look forward to seeing you. Reply to this message if you need assistance.',
+          text: 'Hello! Here is a reminder from *{{1}}*:\n\n{{2}}\n\nWe look forward to seeing you. Reply if you need any help.',
           example: { body_text: [['Citadel of Grace', 'Don\'t forget — our special Sunday service starts at 8am this week. See you there!']] },
         },
         { type: 'FOOTER', text: 'Powered by Waaiio' },
@@ -180,7 +180,7 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
       components: [
         {
           type: 'BODY',
-          text: 'Hello! Here is an upcoming event from *{{1}}*:\n\n{{2}}\n\nWe hope to see you there. Reply to this message for more details or to RSVP.',
+          text: 'Hello! Here is an upcoming event from *{{1}}*:\n\n{{2}}\n\nWe hope to see you there. Reply for more details or to RSVP.',
           example: { body_text: [['Citadel of Grace', 'Bible Study this Friday at 6pm in the Main Hall. All are welcome. Light refreshments will be served.']] },
         },
         { type: 'FOOTER', text: 'Powered by Waaiio' },
@@ -193,7 +193,7 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
       components: [
         {
           type: 'BODY',
-          text: 'Hi there! *{{1}}* has a special message for you:\n\n{{2}}\n\nDon\'t miss out — reply to this message to learn more or take action today!',
+          text: 'Hi there! *{{1}}* has a special message for you:\n\n{{2}}\n\nDon\'t miss out — reply to learn more or take action today!',
           example: { body_text: [['Fresh Cuts Barbershop', '20% off all haircuts this weekend! Walk-ins welcome. Book now on WhatsApp.']] },
         },
         { type: 'FOOTER', text: 'Powered by Waaiio' },

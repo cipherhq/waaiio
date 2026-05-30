@@ -1009,10 +1009,10 @@ export default function BroadcastsPage() {
                           {templateName === 'business_event' && <p className="text-sm text-gray-800 mb-2">Hello! Here is an upcoming event from <strong>{business.name}</strong>:</p>}
                           {templateName === 'business_promotion' && <p className="text-sm text-gray-800 mb-2">Hi there! <strong>{business.name}</strong> has a special message for you:</p>}
                           <p className="text-sm text-gray-800 whitespace-pre-line">{formatWhatsAppText(message)}</p>
-                          {templateName === 'business_update' && <p className="text-sm text-gray-500 mt-2">Thank you for being a valued customer. Reply to this message if you have any questions.</p>}
-                          {templateName === 'business_reminder' && <p className="text-sm text-gray-500 mt-2">We look forward to seeing you. Reply to this message if you need assistance.</p>}
-                          {templateName === 'business_event' && <p className="text-sm text-gray-500 mt-2">We hope to see you there. Reply to this message for more details or to RSVP.</p>}
-                          {templateName === 'business_promotion' && <p className="text-sm text-gray-500 mt-2">Don't miss out — reply to this message to learn more or take action today!</p>}
+                          {templateName === 'business_update' && <p className="text-sm text-gray-500 mt-2">Reply to this message if you have any questions.</p>}
+                          {templateName === 'business_reminder' && <p className="text-sm text-gray-500 mt-2">We look forward to seeing you. Reply if you need any help.</p>}
+                          {templateName === 'business_event' && <p className="text-sm text-gray-500 mt-2">We hope to see you there. Reply for more details or to RSVP.</p>}
+                          {templateName === 'business_promotion' && <p className="text-sm text-gray-500 mt-2">Don't miss out — reply to learn more or take action today!</p>}
                           <p className="mt-2 text-[10px] text-gray-400 italic">Powered by Waaiio</p>
                         </div>
                       </div>
