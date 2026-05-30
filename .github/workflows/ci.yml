@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    env:
+      # Dummy env vars so the build doesn't fail on missing secrets
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
+      NEXT_PUBLIC_APP_URL: https://www.waaiio.com
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_dummy
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: pk_test_dummy
+      NEXT_PUBLIC_POSTHOG_KEY: dummy
+      NEXT_PUBLIC_META_APP_ID: dummy
+      NEXT_PUBLIC_SENTRY_DSN: https://dummy@sentry.io/0
+      SENTRY_DSN: https://dummy@sentry.io/0
+      SENTRY_ORG: dummy
+      SENTRY_PROJECT: dummy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Build
+        run: npx next build

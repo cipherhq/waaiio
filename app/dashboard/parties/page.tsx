@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -372,7 +373,7 @@ export default function PartiesPage() {
               />
               {form.image_url ? (
                 <div className="relative inline-block">
-                  <img src={form.image_url} alt="Party flyer" className="h-32 w-48 rounded-lg border border-gray-200 object-cover" />
+                  <Image src={form.image_url} alt="Party flyer" width={192} height={128} className="h-32 w-48 rounded-lg border border-gray-200 object-cover" />
                   <button type="button" onClick={() => setForm(prev => ({ ...prev, image_url: null }))} className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow hover:bg-red-600">x</button>
                   <button type="button" onClick={() => fileInputRef.current?.click()} className="mt-2 block text-xs text-brand hover:underline">Change image</button>
                 </div>
@@ -642,7 +643,9 @@ export default function PartiesPage() {
                 className="cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm"
               >
                 {party.image_url ? (
-                  <img src={party.image_url} alt={party.name} className="h-32 w-full object-cover" />
+                  <div className="relative h-32 w-full">
+                    <Image src={party.image_url} alt={party.name} fill className="object-cover" sizes="(max-width: 768px) 100vw, 33vw" />
+                  </div>
                 ) : (
                   <div className="flex h-32 w-full items-center justify-center bg-gray-50 text-3xl text-gray-300">🎉</div>
                 )}

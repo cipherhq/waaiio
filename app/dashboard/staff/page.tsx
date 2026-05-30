@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -402,7 +403,7 @@ export default function StaffPage() {
             title={view === 'add' ? 'Save first, then upload photo' : 'Click to upload photo'}
           >
             {form.photo_url ? (
-              <img src={form.photo_url} alt={firstName || 'Staff member'} className="h-full w-full object-cover" />
+              <Image src={form.photo_url} alt={firstName || 'Staff member'} fill className="object-cover" sizes="80px" />
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-brand-100 text-brand text-xl font-bold">
                 {getInitials(firstName || 'S')}
@@ -779,11 +780,11 @@ export default function StaffPage() {
               >
                 <div className="flex items-start gap-3">
                   {/* Avatar */}
-                  <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full overflow-hidden ${
+                  <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full overflow-hidden ${
                     member.color ? `ring-2 ${ringClass}` : ''
                   }`}>
                     {member.photo_url ? (
-                      <img src={member.photo_url} alt={member.name} className="h-full w-full object-cover" />
+                      <Image src={member.photo_url} alt={member.name} fill className="object-cover" sizes="40px" />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-brand-100 text-brand text-sm font-bold">
                         {getInitials(member.name)}

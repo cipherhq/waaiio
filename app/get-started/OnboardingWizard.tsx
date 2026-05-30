@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { getPostHogClient } from '@/lib/posthog/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
@@ -1086,8 +1087,7 @@ function OnboardingWizard() {
       <div className="hidden w-[420px] flex-shrink-0 bg-gradient-to-br from-brand-900 via-brand to-brand-700 lg:flex lg:flex-col">
         <div className="flex flex-1 flex-col justify-between p-10">
           <Link href="/">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Waaiio" className="h-8 brightness-0 invert" />
+            <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto brightness-0 invert" />
           </Link>
 
           <div className="flex-1 flex flex-col justify-center">
@@ -1122,8 +1122,7 @@ function OnboardingWizard() {
         <header className="border-b border-gray-100 bg-white lg:hidden">
           <div className="flex items-center justify-between px-4 py-3">
             <Link href="/">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo.png" alt="Waaiio" className="h-7" />
+              <Image src="/logo.png" alt="Waaiio" width={105} height={28} className="h-7 w-auto" />
             </Link>
             <span className="text-xs text-gray-400">Step {stepIndex + 1} of {steps.length}</span>
           </div>

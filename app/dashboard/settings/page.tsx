@@ -72,6 +72,20 @@ export default function SettingsPage() {
   const [upgrading, setUpgrading] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
   const [verifying, setVerifying] = useState(false);
+
+  // Change Password state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  // Change Email state
+  const [newEmail, setNewEmail] = useState('');
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [emailSuccess, setEmailSuccess] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null } | null>(null);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
   // Post-upgrade capabilities modal state
@@ -3166,6 +3180,138 @@ export default function SettingsPage() {
                 </Link>
               </>
             )}
+          </div>
+
+          {/* Change Password */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Change Password</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Update your account password. You&apos;ll need to enter your current password for verification.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Current Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => { setCurrentPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+                  placeholder="Enter current password"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => { setNewPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+                  placeholder="Min 6 characters"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Confirm New Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); setPasswordError(''); setPasswordSuccess(''); }}
+                  placeholder="Re-enter new password"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                />
+              </div>
+            </div>
+
+            {passwordError && (
+              <p className="mt-3 text-sm text-red-600">{passwordError}</p>
+            )}
+            {passwordSuccess && (
+              <p className="mt-3 text-sm text-green-600">{passwordSuccess}</p>
+            )}
+
+            <button
+              onClick={async () => {
+                setPasswordError('');
+                setPasswordSuccess('');
+                if (!currentPassword) { setPasswordError('Please enter your current password.'); return; }
+                if (newPassword.length < 6) { setPasswordError('New password must be at least 6 characters.'); return; }
+                if (newPassword !== confirmPassword) { setPasswordError('Passwords do not match.'); return; }
+                setPasswordSaving(true);
+                try {
+                  const supabase = createClient();
+                  const { error } = await supabase.auth.updateUser({ password: newPassword });
+                  if (error) {
+                    setPasswordError(error.message || 'Failed to update password.');
+                  } else {
+                    setPasswordSuccess('Password updated successfully.');
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setConfirmPassword('');
+                  }
+                } catch {
+                  setPasswordError('Something went wrong. Please try again.');
+                } finally {
+                  setPasswordSaving(false);
+                }
+              }}
+              disabled={passwordSaving || !currentPassword || !newPassword || !confirmPassword}
+              className="mt-4 rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {passwordSaving ? 'Updating...' : 'Update Password'}
+            </button>
+          </div>
+
+          {/* Change Email */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Change Email</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Update the email address associated with your account. A confirmation link will be sent to your new email.
+            </p>
+
+            <div className="mt-4">
+              <label className="mb-1 block text-sm font-medium text-gray-700">New Email Address</label>
+              <input
+                type="email"
+                value={newEmail}
+                onChange={(e) => { setNewEmail(e.target.value); setEmailError(''); setEmailSuccess(''); }}
+                placeholder="Enter new email address"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+              />
+            </div>
+
+            {emailError && (
+              <p className="mt-3 text-sm text-red-600">{emailError}</p>
+            )}
+            {emailSuccess && (
+              <p className="mt-3 text-sm text-green-600">{emailSuccess}</p>
+            )}
+
+            <button
+              onClick={async () => {
+                setEmailError('');
+                setEmailSuccess('');
+                if (!newEmail || !newEmail.includes('@')) { setEmailError('Please enter a valid email address.'); return; }
+                setEmailSaving(true);
+                try {
+                  const supabase = createClient();
+                  const { error } = await supabase.auth.updateUser({ email: newEmail });
+                  if (error) {
+                    setEmailError(error.message || 'Failed to update email.');
+                  } else {
+                    setEmailSuccess('A confirmation link has been sent to your new email address. Please check your inbox and click the link to complete the change.');
+                    setNewEmail('');
+                  }
+                } catch {
+                  setEmailError('Something went wrong. Please try again.');
+                } finally {
+                  setEmailSaving(false);
+                }
+              }}
+              disabled={emailSaving || !newEmail}
+              className="mt-4 rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {emailSaving ? 'Sending...' : 'Update Email'}
+            </button>
           </div>
 
           {/* Delete Account Card */}

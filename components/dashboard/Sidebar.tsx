@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { useBusiness, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -444,8 +445,7 @@ export function Sidebar() {
     <>
       {/* Logo */}
       <div className="flex items-center gap-2 px-4 py-5">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="Waaiio" className="h-8" />
+        <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto" />
       </div>
 
       {/* Business name */}

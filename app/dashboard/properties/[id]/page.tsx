@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -358,8 +359,8 @@ export default function PropertyDetailPage() {
       <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-4">
           {property.photos && property.photos.length > 0 ? (
-            <div className="h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-gray-200">
-              <img src={property.photos[0]} alt={property.name} className="h-full w-full object-cover" />
+            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-gray-200">
+              <Image src={property.photos[0]} alt={property.name} fill className="object-cover" sizes="80px" />
             </div>
           ) : (
             <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-3xl">

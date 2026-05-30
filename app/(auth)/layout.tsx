@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import Image from 'next/image';
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -11,8 +12,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       <header className="border-b border-gray-100/50 bg-white/60 backdrop-blur-sm">
         <div className="mx-auto flex max-w-md items-center justify-between px-4 py-4">
           <Link href="/" className="transition-opacity hover:opacity-80">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo.png" alt="Waaiio" className="h-8" />
+            <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto" priority />
           </Link>
           <Link href="/get-started" className="text-xs font-medium text-brand hover:text-brand-600 transition">
             Create account &rarr;

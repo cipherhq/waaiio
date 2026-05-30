@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -509,7 +510,9 @@ export default function EventsPage() {
                 className="cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm"
               >
                 {event.image_url ? (
-                  <img src={event.image_url} alt={event.name} className="h-32 w-full object-cover" />
+                  <div className="relative h-32 w-full">
+                    <Image src={event.image_url} alt={event.name} fill className="object-cover" sizes="(max-width: 768px) 100vw, 33vw" />
+                  </div>
                 ) : (
                   <div className="flex h-32 w-full items-center justify-center bg-gray-50 text-3xl text-gray-300">🎪</div>
                 )}

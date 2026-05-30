@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -386,7 +387,7 @@ export default function PropertiesPage() {
               <div className="flex flex-wrap gap-3">
                 {photos.map((url, i) => (
                   <div key={i} className="group relative h-24 w-24 overflow-hidden rounded-lg border border-gray-200">
-                    <img src={url} alt={`${form.name || 'Property'} photo ${i + 1}`} className="h-full w-full object-cover" />
+                    <Image src={url} alt={`${form.name || 'Property'} photo ${i + 1}`} fill className="object-cover" sizes="96px" />
                     <button type="button" onClick={() => setPhotos(photos.filter((_, j) => j !== i))}
                       className="absolute right-1 top-1 hidden rounded-full bg-black/50 p-1 text-white group-hover:block">
                       <svg aria-hidden="true" className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -537,8 +538,8 @@ export default function PropertiesPage() {
                 p.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
               }`}>
               {p.photos && p.photos.length > 0 && (
-                <div className="h-32 w-full overflow-hidden cursor-pointer" onClick={() => router.push(`/dashboard/properties/${p.id}`)}>
-                  <img src={p.photos[0]} alt={p.name} className="h-full w-full object-cover" />
+                <div className="relative h-32 w-full overflow-hidden cursor-pointer" onClick={() => router.push(`/dashboard/properties/${p.id}`)}>
+                  <Image src={p.photos[0]} alt={p.name} fill className="object-cover" sizes="(max-width: 768px) 100vw, 33vw" />
                 </div>
               )}
               <div className="p-5">

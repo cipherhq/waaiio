@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { Tooltip } from '@/components/dashboard/Tooltip';
@@ -879,7 +880,7 @@ export default function ServicesPage() {
                 <div className="flex gap-2">
                   {(form.gallery_urls || []).map((url, i) => (
                     <div key={i} className="relative">
-                      <img src={url} alt={`Gallery ${i + 1}`} className="h-20 w-20 rounded-lg border border-gray-200 object-cover" />
+                      <Image src={url} alt={`Gallery ${i + 1}`} width={80} height={80} className="h-20 w-20 rounded-lg border border-gray-200 object-cover" />
                       <button type="button" onClick={() => setForm({ ...form, gallery_urls: form.gallery_urls.filter((_, j) => j !== i) })}
                         className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-xs text-white shadow">&times;</button>
                     </div>

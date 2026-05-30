@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Image from 'next/image';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 
 interface TicketData {
@@ -217,8 +218,9 @@ export default function TicketVerifyPage() {
         {/* Event flyer */}
         {ticket.image_url && (
           <div className="mb-4 overflow-hidden rounded-xl border border-gray-200 shadow-sm">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={ticket.image_url} alt={ticket.event_name} className="w-full object-cover" style={{ maxHeight: '200px' }} />
+            <div className="relative w-full" style={{ maxHeight: '200px', overflow: 'hidden' }}>
+              <Image src={ticket.image_url} alt={ticket.event_name} width={0} height={0} sizes="100vw" className="w-full h-auto object-cover" style={{ maxHeight: '200px' }} />
+            </div>
           </div>
         )}
 

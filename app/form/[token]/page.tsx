@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Image from 'next/image';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { createClient } from '@/lib/supabase/client';
@@ -184,7 +185,7 @@ export default function PublicFormPage() {
         {/* Header */}
         <div className="mb-6">
           {form.business_logo && (
-            <img src={form.business_logo} alt={form.business_name} className="mb-3 h-10 rounded" />
+            <Image src={form.business_logo} alt={form.business_name} width={120} height={40} className="mb-3 h-10 w-auto rounded" />
           )}
           <p className="text-xs font-medium text-gray-400">{form.business_name}</p>
           <h1 className="text-2xl font-bold text-gray-900">{form.title}</h1>

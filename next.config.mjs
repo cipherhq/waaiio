@@ -6,6 +6,15 @@ const nextConfig = {
     ignoreBuildErrors: false,
   },
   poweredBy: false,
+  images: {
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: '*.supabase.co',
+        pathname: '/storage/v1/object/public/**',
+      },
+    ],
+  },
   experimental: {
     outputFileTracingIncludes: {
       '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*'],

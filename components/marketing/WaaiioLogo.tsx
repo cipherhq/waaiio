@@ -3,11 +3,11 @@
  * Used in Navbar (dark/light variants) and Footer (light variant).
  */
 
-/* eslint-disable @next/next/no-img-element */
+import Image from 'next/image';
 
 export function WaaiioMark({ className = 'h-8' }: { className?: string }) {
   return (
-    <img src="/logo.png" alt="Waaiio" className={className} />
+    <Image src="/logo.png" alt="Waaiio" width={120} height={32} className={className} priority />
   );
 }
 

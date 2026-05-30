@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
@@ -883,7 +884,7 @@ export default function ProductsPage() {
             >
               {imagePreview ? (
                 <div className="relative h-48 w-full bg-gray-100">
-                  <img src={imagePreview} alt="Product" className="h-full w-full object-contain" />
+                  <Image src={imagePreview} alt="Product" fill className="object-contain" sizes="(max-width: 768px) 100vw, 50vw" />
                   <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition hover:bg-black/30">
                     <span className="rounded-lg bg-white/90 px-3 py-1.5 text-xs font-medium text-gray-700 opacity-0 transition hover:opacity-100">
                       Change Photo
@@ -1555,7 +1556,7 @@ export default function ProductsPage() {
                               title="Upload variant image"
                             >
                               {v.image_url ? (
-                                <img src={v.image_url} alt={v.label || 'Variant image'} className="h-full w-full object-cover" />
+                                <Image src={v.image_url} alt={v.label || 'Variant image'} fill className="object-cover" sizes="32px" />
                               ) : (
                                 <svg aria-hidden="true" className="mx-auto mt-1 h-5 w-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
@@ -2007,8 +2008,8 @@ export default function ProductsPage() {
             >
               {/* Image */}
               {product.image_url ? (
-                <div className="h-44 w-full bg-gray-50 p-2">
-                  <img src={product.image_url} alt={product.name} className="h-full w-full object-contain" />
+                <div className="relative h-44 w-full bg-gray-50 p-2">
+                  <Image src={product.image_url} alt={product.name} fill className="object-contain p-2" sizes="(max-width: 768px) 50vw, 25vw" />
                 </div>
               ) : (
                 <div className="flex h-20 w-full items-center justify-center bg-gray-50">
