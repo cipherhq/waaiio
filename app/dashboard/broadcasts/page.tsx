@@ -51,6 +51,8 @@ export default function BroadcastsPage() {
   const [usage, setUsage] = useState<BroadcastUsage | null>(null);
   const [useTemplate, setUseTemplate] = useState(false);
   const [templateName, setTemplateName] = useState('');
+  const [templates, setTemplates] = useState<Array<{ name: string; status: string; language: string; category: string }>>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendMode, setSendMode] = useState<'now' | 'schedule'>('now');
   const [scheduleDate, setScheduleDate] = useState('');
@@ -294,6 +296,27 @@ export default function BroadcastsPage() {
     }
 
     setSending(false);
+  }
+
+  async function loadTemplates() {
+    if (templates.length > 0) return; // already loaded
+    setTemplatesLoading(true);
+    try {
+      const res = await fetch(`/api/whatsapp/templates?business_id=${business.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        const list = (data.data || data || [])
+          .filter((t: { status: string }) => t.status === 'APPROVED')
+          .map((t: { name: string; status: string; language: string; category: string }) => ({
+            name: t.name,
+            status: t.status,
+            language: t.language,
+            category: t.category,
+          }));
+        setTemplates(list);
+      }
+    } catch { /* non-critical */ }
+    setTemplatesLoading(false);
   }
 
   async function handleSchedule() {
@@ -637,11 +660,15 @@ export default function BroadcastsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Template Message</h2>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Recommended for reliable delivery</p>
+                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Recommended for reliable delivery to all contacts</p>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setUseTemplate(!useTemplate)}
+                  onClick={() => {
+                    const next = !useTemplate;
+                    setUseTemplate(next);
+                    if (next) loadTemplates();
+                  }}
                   className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
                     useTemplate ? 'bg-brand' : 'bg-gray-200 dark:bg-gray-600'
                   }`}
@@ -655,17 +682,37 @@ export default function BroadcastsPage() {
               </div>
               {useTemplate && (
                 <div className="mt-3">
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Template Name</label>
-                  <input
-                    type="text"
-                    value={templateName}
-                    onChange={(e) => setTemplateName(e.target.value)}
-                    placeholder="e.g. business_broadcast"
-                    className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
-                  />
-                  <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                    Enter the approved WhatsApp template name from your Meta Business account
-                  </p>
+                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Select Template</label>
+                  {templatesLoading ? (
+                    <div className="mt-2 flex items-center gap-2 text-sm text-gray-400">
+                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                      Loading templates...
+                    </div>
+                  ) : templates.length > 0 ? (
+                    <>
+                      <select
+                        value={templateName}
+                        onChange={(e) => setTemplateName(e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
+                      >
+                        <option value="">Choose a template...</option>
+                        {templates.map(t => (
+                          <option key={t.name} value={t.name}>
+                            {t.name.replace(/_/g, ' ')} ({t.language} · {t.category.toLowerCase()})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                        Only approved templates from your WhatsApp Business account are shown
+                      </p>
+                    </>
+                  ) : (
+                    <div className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
+                      <p className="text-sm text-amber-700 dark:text-amber-400">
+                        No approved templates found. Templates are set up in your WhatsApp Business settings or contact us to provision them for you.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
