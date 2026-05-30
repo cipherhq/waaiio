@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
-import type { MessageSender } from '@/lib/channels/message-sender';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -14,12 +12,6 @@ const STATUS_MESSAGES: Record<string, string> = {
   delivered: 'Your order *{ref}* from *{biz}* has been delivered. Thank you for your purchase!',
   cancelled: 'Your order *{ref}* from *{biz}* has been cancelled. If you have questions, please reach out.',
 };
-
-let defaultGupshup: GupshupService;
-function getDefaultGupshup() {
-  if (!defaultGupshup) defaultGupshup = new GupshupService();
-  return defaultGupshup;
-}
 
 export const maxDuration = 60;
 
@@ -83,7 +75,11 @@ export async function POST(request: NextRequest) {
     if (messageTemplate) {
       const resolver = new ChannelResolver(supabase);
       const resolved = await resolver.resolveByBusinessId(businessId);
-      const sender: MessageSender = resolved?.sender || getDefaultGupshup();
+      if (!resolved?.sender) {
+        logger.warn('[ORDER-BULK-STATUS] No messaging channel configured for business', businessId);
+        return NextResponse.json({ success: true, updated: toUpdate.length, notified: 0 });
+      }
+      const sender = resolved.sender;
 
       const notifications = toUpdate
         .filter(o => o.delivery_phone)

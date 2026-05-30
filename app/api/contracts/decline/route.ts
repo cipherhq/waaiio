@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
@@ -124,21 +123,14 @@ export async function POST(request: NextRequest) {
           (await resolver.resolveByBusinessId(contract.business_id)) ||
           (await resolver.getSharedChannelForCountry(biz.country_code || 'NG'));
 
-        let sent = false;
         if (resolved) {
           try {
-            const result = await resolved.sender.sendText({ to: ownerPhone, text: ownerMsg });
-            sent = result.success !== false;
+            await resolved.sender.sendText({ to: ownerPhone, text: ownerMsg });
           } catch (chErr) {
             logger.warn('Owner decline notification failed:', chErr);
           }
-        }
-
-        if (!sent) {
-          const gupshup = new GupshupService();
-          if (gupshup.isConfigured) {
-            await gupshup.sendText({ to: ownerPhone, text: ownerMsg });
-          }
+        } else {
+          logger.warn(`[CONTRACT-DECLINE] No WhatsApp channel configured for business ${contract.business_id}. Notification NOT delivered.`);
         }
       } catch (msgErr) {
         logger.warn('Failed to send decline notification to owner:', msgErr);

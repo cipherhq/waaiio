@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';

@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { timingSafeEqual } from 'crypto';
 import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { BotService } from '@/lib/bot/bot.service';
@@ -15,14 +14,8 @@ import { transcribeAudio } from '@/lib/bot/transcription';
 export const maxDuration = 60;
 
 // Singleton instances (persisted across warm invocations)
-let defaultGupshup: GupshupService;
 let intelligence: BotIntelligenceService;
 let channelResolver: ChannelResolver;
-
-function getDefaultGupshup() {
-  if (!defaultGupshup) defaultGupshup = new GupshupService();
-  return defaultGupshup;
-}
 
 function getIntelligence() {
   if (!intelligence) intelligence = new BotIntelligenceService();
@@ -180,7 +173,11 @@ export async function POST(request: NextRequest) {
 
     // Resolve channel from destination phone — returns the correct MessageSender (Gupshup or MetaCloud)
     const resolved = destination ? await resolver.resolveByPhone(destination) : null;
-    const sender = resolved?.sender || getDefaultGupshup();
+    if (!resolved?.sender) {
+      log.warn('[WEBHOOK] No messaging channel found for destination phone:', destination);
+      return NextResponse.json({ status: 'ok', message: 'No channel configured' });
+    }
+    const sender = resolved.sender;
     const preResolvedBusinessId = resolved?.channel.channel_type === 'dedicated'
       ? resolved.channel.business_id || undefined
       : undefined;

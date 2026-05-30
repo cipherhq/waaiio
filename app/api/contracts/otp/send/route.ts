@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -95,23 +94,14 @@ export async function POST(request: NextRequest) {
         (await resolver.resolveByBusinessId(activeContract.business_id)) ||
         (await resolver.getSharedChannelForCountry('NG'));
 
-      let sent = false;
       if (resolved) {
         try {
-          const result = await resolved.sender.sendText({ to: phone, text: message });
-          sent = result.success !== false;
+          await resolved.sender.sendText({ to: phone, text: message });
         } catch (chErr) {
           logger.warn('OTP channel send failed:', chErr);
         }
-      }
-
-      if (!sent) {
-        const gupshup = new GupshupService();
-        if (gupshup.isConfigured) {
-          await gupshup.sendText({ to: phone, text: message });
-        } else {
-          logger.debug(`[mock] OTP sent to ${phone} (value redacted)`);
-        }
+      } else {
+        logger.warn(`[CONTRACT-OTP] No WhatsApp channel configured for business ${activeContract.business_id}. OTP NOT delivered to ${phone}.`);
       }
     }
 

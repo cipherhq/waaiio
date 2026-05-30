@@ -3,7 +3,6 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { generateSignedContractPdf } from '@/lib/pdf/contract-pdf-generator';
 import { appendSignatureToUploadedPdf } from '@/lib/pdf/append-signature';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -20,21 +19,14 @@ async function sendWhatsApp(
     (await resolver.resolveByBusinessId(businessId)) ||
     (await resolver.getSharedChannelForCountry(countryCode || 'NG'));
 
-  let sent = false;
   if (resolved) {
     try {
-      const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
-      sent = result.success !== false;
+      await resolved.sender.sendText({ to: cleanPhone, text: message });
     } catch (chErr) {
       logger.warn('Channel send failed:', chErr);
     }
-  }
-
-  if (!sent) {
-    const gupshup = new GupshupService();
-    if (gupshup.isConfigured) {
-      await gupshup.sendText({ to: cleanPhone, text: message });
-    }
+  } else {
+    logger.warn(`[CONTRACT-SUBMIT] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
   }
 }
 

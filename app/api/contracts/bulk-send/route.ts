@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { logger } from '@/lib/logger';
 
 const CONTRACT_TEMPLATE_NAME = process.env.WHATSAPP_CONTRACT_TEMPLATE || 'document_signature_request';
@@ -148,29 +147,7 @@ export async function POST(request: NextRequest) {
       }
 
       if (!sent) {
-        const gupshup = new GupshupService();
-        if (gupshup.isConfigured) {
-          // Try template first on Gupshup
-          try {
-            const result = await gupshup.sendTemplate({
-              to: phone,
-              templateId: CONTRACT_TEMPLATE_NAME,
-              templateParams: [biz.name, title, signUrl],
-            });
-            if (result.success && result.messageId) sent = true;
-          } catch {
-            // fall through to text
-          }
-          if (!sent) {
-            const result = await gupshup.sendText({ to: phone, text: message });
-            sent = result.success !== false;
-          }
-          if (!sent) {
-            logger.warn(`[CONTRACT-BULK] All attempts failed for ${phone}`);
-          }
-        } else {
-          logger.warn(`[CONTRACT-BULK] No WhatsApp channel configured. Message NOT delivered to ${phone}.`);
-        }
+        logger.warn(`[CONTRACT-BULK] No WhatsApp channel configured. Message NOT delivered to ${phone}.`);
       }
 
       results.push({ phone: recipient.phone, success: true, contract_id: contract.id, message_delivered: sent });

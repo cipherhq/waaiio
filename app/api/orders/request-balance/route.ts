@@ -1,17 +1,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
-import type { MessageSender } from '@/lib/channels/message-sender';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-
-let defaultGupshup: GupshupService;
-function getDefaultGupshup() {
-  if (!defaultGupshup) defaultGupshup = new GupshupService();
-  return defaultGupshup;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -83,22 +75,26 @@ export async function POST(request: NextRequest) {
     try {
       const resolver = new ChannelResolver(supabase);
       const resolved = await resolver.resolveByBusinessId(business_id);
-      const sender: MessageSender = resolved?.sender || getDefaultGupshup();
-      const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
+      if (!resolved?.sender) {
+        logger.warn('[REQUEST-BALANCE] No messaging channel configured for business', business_id);
+      } else {
+        const sender = resolved.sender;
+        const phone = customerPhone.startsWith('+') ? customerPhone.slice(1) : customerPhone;
 
-      await sender.sendText({
-        to: phone,
-        text: [
-          `\u2705 *Your Order is Ready!*`,
-          '',
-          `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
-          `\uD83D\uDD11 Ref: *${order.reference_code}*`,
-          `\uD83D\uDCB0 Balance Due: *${formatCurrency(order.balance_amount, cc)}*`,
-          '',
-          `\uD83D\uDCB3 Pay the balance to collect your order \uD83D\uDC47`,
-          paymentResult.url,
-        ].join('\n'),
-      });
+        await sender.sendText({
+          to: phone,
+          text: [
+            `\u2705 *Your Order is Ready!*`,
+            '',
+            `\uD83D\uDED2 ${biz?.name || 'Shop'}`,
+            `\uD83D\uDD11 Ref: *${order.reference_code}*`,
+            `\uD83D\uDCB0 Balance Due: *${formatCurrency(order.balance_amount, cc)}*`,
+            '',
+            `\uD83D\uDCB3 Pay the balance to collect your order \uD83D\uDC47`,
+            paymentResult.url,
+          ].join('\n'),
+        });
+      }
     } catch (err) {
       logger.error('[REQUEST-BALANCE] WhatsApp send error:', err);
     }

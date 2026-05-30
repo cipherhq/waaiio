@@ -1,18 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
-import type { MessageSender } from '@/lib/channels/message-sender';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
-
-let defaultGupshup: GupshupService;
-function getDefaultGupshup() {
-  if (!defaultGupshup) defaultGupshup = new GupshupService();
-  return defaultGupshup;
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -75,12 +67,15 @@ export async function POST(request: NextRequest) {
         try {
           const resolver = new ChannelResolver(supabase);
           const resolved = await resolver.resolveByBusinessId(quote.business_id);
-          const sender: MessageSender = resolved?.sender || getDefaultGupshup();
-          const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
-          await sender.sendText({
-            to: phone,
-            text: `❌ Price declined by ${quote.customer_name || quote.customer_phone || 'customer'}.\n\nEstimated: ${formatCurrency(quote.estimated_subtotal, cc)}\nYour price: ${formatCurrency(quote.quoted_amount, cc)}`,
-          });
+          if (resolved?.sender) {
+            const phone = ownerPhone.startsWith('+') ? ownerPhone.slice(1) : ownerPhone;
+            await resolved.sender.sendText({
+              to: phone,
+              text: `❌ Price declined by ${quote.customer_name || quote.customer_phone || 'customer'}.\n\nEstimated: ${formatCurrency(quote.estimated_subtotal, cc)}\nYour price: ${formatCurrency(quote.quoted_amount, cc)}`,
+            });
+          } else {
+            logger.warn('[QUOTE-ACCEPT] No messaging channel configured for business', quote.business_id);
+          }
         } catch {}
       }
 
@@ -236,7 +231,10 @@ export async function POST(request: NextRequest) {
         try {
           const resolver = new ChannelResolver(supabase);
           const resolved = await resolver.resolveByBusinessId(quote.business_id);
-          const sender: MessageSender = resolved?.sender || getDefaultGupshup();
+          if (!resolved?.sender) {
+            logger.warn('[QUOTE-ACCEPT] No messaging channel configured for business', quote.business_id);
+          } else {
+          const sender = resolved.sender;
           const phone = quote.customer_phone.startsWith('+')
             ? quote.customer_phone.slice(1)
             : quote.customer_phone;
@@ -270,6 +268,7 @@ export async function POST(request: NextRequest) {
             to: phone,
             text: messageLines.join('\n'),
           });
+          }
         } catch (err) {
           logger.error('[QUOTE-ACCEPT] Payment link send error:', err);
         }
@@ -287,12 +286,15 @@ export async function POST(request: NextRequest) {
       try {
         const resolver = new ChannelResolver(supabase);
         const resolved = await resolver.resolveByBusinessId(quote.business_id);
-        const sender: MessageSender = resolved?.sender || getDefaultGupshup();
-        const phone = (ownerBiz.phone as string).startsWith('+') ? (ownerBiz.phone as string).slice(1) : ownerBiz.phone as string;
-        await sender.sendText({
-          to: phone,
-          text: `✅ Price accepted by ${quote.customer_name || 'customer'}!\n\n🔑 Order: *${order.reference_code}*\n💰 Amount: *${formatCurrency(total, cc)}*`,
-        });
+        if (resolved?.sender) {
+          const phone = (ownerBiz.phone as string).startsWith('+') ? (ownerBiz.phone as string).slice(1) : ownerBiz.phone as string;
+          await resolved.sender.sendText({
+            to: phone,
+            text: `✅ Price accepted by ${quote.customer_name || 'customer'}!\n\n🔑 Order: *${order.reference_code}*\n💰 Amount: *${formatCurrency(total, cc)}*`,
+          });
+        } else {
+          logger.warn('[QUOTE-ACCEPT] No messaging channel configured for owner notification', quote.business_id);
+        }
       } catch {}
     }
 

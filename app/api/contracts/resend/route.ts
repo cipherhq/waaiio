@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { logger } from '@/lib/logger';
 
 function generateToken(): string {
@@ -60,40 +59,7 @@ async function sendWhatsAppMessage(
       }
     }
   } else {
-    logger.warn(`[CONTRACT-RESEND] No WhatsApp channel found for business ${businessId} (country: ${countryCode})`);
-  }
-
-  if (!sent) {
-    const gupshup = new GupshupService();
-    if (gupshup.isConfigured) {
-      if (templateParams) {
-        try {
-          const result = await gupshup.sendTemplate({
-            to: cleanPhone,
-            templateId: CONTRACT_TEMPLATE_NAME,
-            templateParams: [templateParams.signerName || 'there', templateParams.businessName, templateParams.title],
-          });
-          if (result.success && result.messageId) {
-            messageId = result.messageId;
-            sent = true;
-          }
-        } catch {
-          // fall through to text
-        }
-      }
-      if (!sent) {
-        const result = await gupshup.sendText({ to: cleanPhone, text: message });
-        if (result.success && result.messageId) {
-          messageId = result.messageId;
-          sent = true;
-        }
-      }
-      if (!sent) {
-        logger.warn(`[CONTRACT-RESEND] All Gupshup attempts failed for ${cleanPhone}`);
-      }
-    } else {
-      logger.warn(`[CONTRACT-RESEND] No WhatsApp channel configured for business ${businessId}. Message NOT delivered to ${cleanPhone}.`);
-    }
+    logger.warn(`[CONTRACT-RESEND] No WhatsApp channel found for business ${businessId} (country: ${countryCode}). Message NOT delivered to ${cleanPhone}.`);
   }
 
   return { messageId, delivered: sent };
