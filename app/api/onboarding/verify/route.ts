@@ -20,6 +20,10 @@ export async function POST(request: NextRequest) {
     let amountSmallest = 0; // amount in smallest currency unit (kobo/cents)
     let gateway: string = 'none';
     let currency: string = 'NGN';
+    let stripeSubscriptionId: string | undefined;
+    let stripeCustomerId: string | undefined;
+    let stripePeriodStart: string | undefined;
+    let stripePeriodEnd: string | undefined;
 
     // ── Stripe verification (checkout session IDs start with cs_) ──
     if (reference && reference.startsWith('cs_')) {
@@ -61,6 +65,32 @@ export async function POST(request: NextRequest) {
       amountSmallest = session.amount_total || 0;
       gateway = 'stripe';
       currency = (session.currency || 'usd').toUpperCase();
+
+      // Extract Stripe subscription and customer IDs (subscription mode)
+      stripeSubscriptionId = session.subscription as string | undefined;
+      stripeCustomerId = session.customer as string | undefined;
+
+      // Fetch subscription period from Stripe
+      if (stripeSubscriptionId) {
+        try {
+          const subResponse = await fetch(
+            `https://api.stripe.com/v1/subscriptions/${encodeURIComponent(stripeSubscriptionId)}`,
+            {
+              headers: { Authorization: `Bearer ${stripeKey}` },
+              signal: AbortSignal.timeout(15000),
+            },
+          );
+          const subData = await subResponse.json();
+          if (subData.current_period_start) {
+            stripePeriodStart = new Date(subData.current_period_start * 1000).toISOString();
+          }
+          if (subData.current_period_end) {
+            stripePeriodEnd = new Date(subData.current_period_end * 1000).toISOString();
+          }
+        } catch {
+          // Non-fatal: fall back to default 30-day period
+        }
+      }
     }
     // ── Paystack verification ──
     else if (reference) {
@@ -136,18 +166,39 @@ export async function POST(request: NextRequest) {
     const action = previousTier === plan ? 'renewal' : 'upgrade';
 
     // Upsert: one subscription per business (prevent duplicates on re-onboarding)
-    const { data: subscription } = await service.from('subscriptions').upsert({
+    const upsertData: Record<string, unknown> = {
       business_id: businessId,
       plan,
       status: 'active',
       amount: amountSmallest ? Math.round(amountSmallest / 100) : (tier.price ?? 0),
       gateway: gateway !== 'none' ? gateway : null,
       currency,
-      paystack_subscription_code: null,
-      paystack_customer_code: null,
-      current_period_start: new Date().toISOString(),
-      current_period_end: periodEnd.toISOString(),
-    }, { onConflict: 'business_id' }).select('id').single();
+      current_period_start: stripePeriodStart || new Date().toISOString(),
+      current_period_end: stripePeriodEnd || periodEnd.toISOString(),
+    };
+
+    // Only clear the codes that don't apply to the current gateway
+    if (gateway === 'stripe') {
+      upsertData.paystack_subscription_code = null;
+      upsertData.paystack_customer_code = null;
+      upsertData.stripe_subscription_id = stripeSubscriptionId || null;
+      upsertData.stripe_customer_id = stripeCustomerId || null;
+      upsertData.billing_interval = 'month';
+    } else if (gateway === 'paystack') {
+      upsertData.stripe_subscription_id = null;
+      upsertData.stripe_customer_id = null;
+    } else {
+      // Free tier: clear both
+      upsertData.paystack_subscription_code = null;
+      upsertData.paystack_customer_code = null;
+      upsertData.stripe_subscription_id = null;
+      upsertData.stripe_customer_id = null;
+    }
+
+    const { data: subscription } = await service.from('subscriptions').upsert(
+      upsertData,
+      { onConflict: 'business_id' },
+    ).select('id').single();
 
     // Record subscription payment (only for paid plans)
     if (plan !== 'free' && gateway !== 'none') {

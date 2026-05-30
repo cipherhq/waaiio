@@ -3,5 +3,6 @@
   "rules": {
     "@typescript-eslint/no-explicit-any": "off",
     "react/no-unescaped-entities": "off"
-  }
+  },
+  "ignorePatterns": ["admin/", "supabase/functions/"]
 }

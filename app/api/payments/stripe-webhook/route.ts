@@ -5,6 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { logger } from '@/lib/logger';
 import { createAlert } from '@/lib/alerts/create-alert';
+import { sendEmail } from '@/lib/email/client';
 import type { SubscriptionTier } from '@/lib/constants';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
@@ -133,6 +134,19 @@ export async function POST(request: NextRequest) {
               status: 'active',
             })
             .eq('id', metadata.business_id);
+
+          // For subscription mode: store Stripe subscription + customer IDs
+          const sessionSubscriptionId = data.subscription as string;
+          const sessionCustomerId = data.customer as string;
+          if (sessionSubscriptionId) {
+            await supabase
+              .from('subscriptions')
+              .update({
+                stripe_subscription_id: sessionSubscriptionId,
+                stripe_customer_id: sessionCustomerId || null,
+              })
+              .eq('business_id', metadata.business_id);
+          }
         }
 
         // Handle customer recurring subscription activation
@@ -187,6 +201,187 @@ export async function POST(request: NextRequest) {
             message: `A Stripe checkout session expired before payment was completed.`,
             metadata: { paymentId: expiredPayment.id, amount: expiredPayment.amount, gateway: 'stripe' },
           });
+        }
+      }
+    }
+
+    // ── Platform subscription recurring billing events ──
+
+    // Check if a Stripe subscription ID belongs to a platform subscription
+    async function findPlatformSubscription(stripeSubId: string) {
+      const { data } = await supabase
+        .from('subscriptions')
+        .select('id, business_id, plan, status, amount, currency')
+        .eq('stripe_subscription_id', stripeSubId)
+        .maybeSingle();
+      return data;
+    }
+
+    // Platform subscription: invoice.paid (renewal)
+    if (event === 'invoice.paid') {
+      const subscriptionId = data.subscription as string;
+      if (subscriptionId) {
+        const platformSub = await findPlatformSubscription(subscriptionId);
+        if (platformSub) {
+          const periodStart = data.period_start
+            ? new Date((data.period_start as number) * 1000).toISOString()
+            : new Date().toISOString();
+          const periodEnd = data.period_end
+            ? new Date((data.period_end as number) * 1000).toISOString()
+            : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString(); })();
+
+          await supabase
+            .from('subscriptions')
+            .update({
+              status: 'active',
+              current_period_start: periodStart,
+              current_period_end: periodEnd,
+            })
+            .eq('id', platformSub.id);
+
+          await supabase.from('subscription_payments').insert({
+            business_id: platformSub.business_id,
+            subscription_id: platformSub.id,
+            amount: (data.amount_paid as number) || 0,
+            currency: ((data.currency as string)?.toUpperCase()) || 'USD',
+            gateway: 'stripe',
+            gateway_reference: (data.payment_intent as string) || (data.id as string),
+            plan: platformSub.plan,
+            action: 'renewal',
+            status: 'success',
+          });
+
+          logger.info(`[STRIPE WEBHOOK] Platform subscription renewed: ${subscriptionId} for business ${platformSub.business_id}`);
+        }
+      }
+    }
+
+    // Platform subscription: invoice.payment_failed
+    if (event === 'invoice.payment_failed') {
+      const subscriptionId = data.subscription as string;
+      if (subscriptionId) {
+        const platformSub = await findPlatformSubscription(subscriptionId);
+        if (platformSub) {
+          await supabase
+            .from('subscriptions')
+            .update({ status: 'past_due' })
+            .eq('id', platformSub.id);
+
+          // Send warning email to business owner
+          const { data: business } = await supabase
+            .from('businesses')
+            .select('owner_id, name')
+            .eq('id', platformSub.business_id)
+            .single();
+
+          if (business?.owner_id) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('id', business.owner_id)
+              .single();
+
+            if (profile?.email) {
+              await sendEmail({
+                to: profile.email,
+                subject: 'Waaiio Subscription Payment Failed',
+                html: `<p>Hi,</p><p>We were unable to process the payment for your <strong>${platformSub.plan}</strong> plan for <strong>${business.name}</strong>.</p><p>Please update your payment method to avoid service interruption.</p><p>— The Waaiio Team</p>`,
+              });
+            }
+          }
+
+          await createAlert(supabase, {
+            businessId: platformSub.business_id,
+            type: 'subscription_payment_failed',
+            severity: 'critical',
+            title: 'Subscription Payment Failed',
+            message: `Your ${platformSub.plan} plan payment failed. Please update your payment method to avoid downgrade.`,
+            metadata: { subscriptionId: platformSub.id, gateway: 'stripe' },
+          });
+
+          logger.warn(`[STRIPE WEBHOOK] Platform subscription payment failed: ${subscriptionId} for business ${platformSub.business_id}`);
+        }
+      }
+    }
+
+    // Platform subscription: cancelled
+    if (event === 'customer.subscription.deleted') {
+      const stripeSubId = data.id as string;
+      if (stripeSubId) {
+        const platformSub = await findPlatformSubscription(stripeSubId);
+        if (platformSub) {
+          await supabase
+            .from('subscriptions')
+            .update({
+              status: 'cancelled',
+              cancelled_at: new Date().toISOString(),
+            })
+            .eq('id', platformSub.id);
+
+          await supabase
+            .from('businesses')
+            .update({ subscription_tier: 'free' })
+            .eq('id', platformSub.business_id);
+
+          // Send expiry email to business owner
+          const { data: business } = await supabase
+            .from('businesses')
+            .select('owner_id, name')
+            .eq('id', platformSub.business_id)
+            .single();
+
+          if (business?.owner_id) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('email')
+              .eq('id', business.owner_id)
+              .single();
+
+            if (profile?.email) {
+              await sendEmail({
+                to: profile.email,
+                subject: 'Waaiio Subscription Cancelled',
+                html: `<p>Hi,</p><p>Your <strong>${platformSub.plan}</strong> plan for <strong>${business.name}</strong> has been cancelled.</p><p>Your account has been downgraded to the free tier. You can resubscribe at any time from your dashboard.</p><p>— The Waaiio Team</p>`,
+              });
+            }
+          }
+
+          await createAlert(supabase, {
+            businessId: platformSub.business_id,
+            type: 'subscription_cancelled',
+            severity: 'warning',
+            title: 'Subscription Cancelled',
+            message: `Your ${platformSub.plan} plan has been cancelled. You have been downgraded to the free tier.`,
+            metadata: { subscriptionId: platformSub.id, gateway: 'stripe' },
+          });
+
+          logger.info(`[STRIPE WEBHOOK] Platform subscription cancelled: ${stripeSubId} for business ${platformSub.business_id}`);
+        }
+      }
+    }
+
+    // Platform subscription: updated (status change)
+    if (event === 'customer.subscription.updated') {
+      const stripeSubId = data.id as string;
+      const stripeStatus = data.status as string;
+      if (stripeSubId && stripeStatus) {
+        const platformSub = await findPlatformSubscription(stripeSubId);
+        if (platformSub) {
+          const statusMap: Record<string, string> = {
+            active: 'active',
+            past_due: 'past_due',
+            canceled: 'cancelled',
+            unpaid: 'past_due',
+          };
+          const mappedStatus = statusMap[stripeStatus];
+          if (mappedStatus && mappedStatus !== platformSub.status) {
+            await supabase
+              .from('subscriptions')
+              .update({ status: mappedStatus })
+              .eq('id', platformSub.id);
+
+            logger.info(`[STRIPE WEBHOOK] Platform subscription status updated: ${stripeSubId} → ${mappedStatus}`);
+          }
         }
       }
     }

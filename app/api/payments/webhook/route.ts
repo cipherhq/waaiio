@@ -69,6 +69,64 @@ export async function POST(request: NextRequest) {
     const metadata = data.metadata as Record<string, string> | undefined;
     const isWhatsAppSub = metadata?.type === 'whatsapp_subscription';
 
+    // ── Platform subscription renewal via charge.success ──
+    // Paystack recurring charges include plan_object or plan in the data.
+    // Look up the subscription by paystack_subscription_code and update period dates.
+    if (event === 'charge.success') {
+      const planObject = data.plan_object as Record<string, unknown> | undefined;
+      const subscriptionRef = data.subscription as Record<string, unknown> | undefined;
+      const paystackSubCode = (subscriptionRef?.subscription_code as string)
+        || (data.subscription_code as string)
+        || undefined;
+
+      // Only process if this charge is tied to a Paystack subscription (has plan or subscription ref)
+      if (paystackSubCode || planObject) {
+        const { data: platformSub } = await supabase
+          .from('subscriptions')
+          .select('id, business_id, plan, paystack_subscription_code')
+          .eq('paystack_subscription_code', paystackSubCode || '')
+          .single();
+
+        // If we found a matching platform subscription, this is a renewal charge
+        if (platformSub) {
+          const now = new Date();
+          const periodEnd = new Date();
+          periodEnd.setDate(periodEnd.getDate() + 30);
+
+          // Update subscription period and ensure active status
+          await supabase
+            .from('subscriptions')
+            .update({
+              status: 'active',
+              current_period_start: now.toISOString(),
+              current_period_end: periodEnd.toISOString(),
+              updated_at: now.toISOString(),
+            })
+            .eq('id', platformSub.id);
+
+          // Ensure business stays active
+          await supabase
+            .from('businesses')
+            .update({ status: 'active' })
+            .eq('id', platformSub.business_id);
+
+          // Record renewal payment
+          const chargeAmountKobo = data.amount as number;
+          await supabase.from('subscription_payments').insert({
+            business_id: platformSub.business_id,
+            subscription_id: platformSub.id,
+            amount: chargeAmountKobo,
+            currency: (data.currency as string) || 'NGN',
+            gateway: 'paystack',
+            gateway_reference: reference,
+            plan: platformSub.plan,
+            action: 'renewal',
+            status: 'success',
+          });
+        }
+      }
+    }
+
     if (event === 'subscription.create' && isWhatsAppSub && metadata?.business_id) {
       const subCode = (data as Record<string, unknown>).subscription_code as string | undefined;
       const custCode = ((data as Record<string, unknown>).customer as Record<string, string> | undefined)?.customer_code;
@@ -107,7 +165,7 @@ export async function POST(request: NextRequest) {
 
       await supabase
         .from('businesses')
-        .update({ status: 'suspended' })
+        .update({ status: 'suspended', subscription_tier: 'free' })
         .eq('id', metadata.business_id);
     }
 
