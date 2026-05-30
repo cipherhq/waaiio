@@ -173,7 +173,6 @@ export default function SignPage() {
           const ctx = offscreen.getContext('2d');
           if (!ctx) continue;
 
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const renderTask = page.render({ canvasContext: ctx, viewport } as any);
           await renderTask.promise;
 

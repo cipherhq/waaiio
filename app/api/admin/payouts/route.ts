@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function requireAdmin(supabase: any) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;

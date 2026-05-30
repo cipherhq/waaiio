@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window {
     FB: any;

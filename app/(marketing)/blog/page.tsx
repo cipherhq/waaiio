@@ -44,7 +44,7 @@ export default function BlogPage() {
           {BLOG_POSTS.length === 0 && (
             <div className="py-16 text-center">
               <p className="text-lg font-semibold text-gray-900">Coming soon</p>
-              <p className="mt-2 text-sm text-gray-500">We're working on helpful guides for your business. Check back soon!</p>
+              <p className="mt-2 text-sm text-gray-500">We&apos;re working on helpful guides for your business. Check back soon!</p>
             </div>
           )}
         </div>

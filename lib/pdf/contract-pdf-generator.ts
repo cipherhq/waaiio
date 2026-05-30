@@ -94,7 +94,6 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   // ── Business logo (if provided) ──
   if (data.logoBuffer) {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (doc as any).image(data.logoBuffer, 50, 35, { width: 40, height: 40 });
     } catch {
       // Skip logo if embedding fails
@@ -179,7 +178,6 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   try {
     const base64 = data.signatureData.replace(/^data:image\/\w+;base64,/, '');
     const sigBuffer = Buffer.from(base64, 'base64');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (doc as any).image(sigBuffer, 50, y, { width: 200, height: 80 });
     y += 90;
   } catch {

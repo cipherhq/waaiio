@@ -24,7 +24,6 @@ import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/li
 import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import type { User } from '@supabase/supabase-js';
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 declare global {
   interface Window {
     FB: any;

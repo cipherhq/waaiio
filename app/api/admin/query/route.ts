@@ -127,7 +127,6 @@ export async function POST(request: NextRequest) {
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query: any = count === 'exact'
       ? supabase.from(table).select(safeSelect, { count: 'exact', head: true })
       : supabase.from(table).select(safeSelect);
