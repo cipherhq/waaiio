@@ -38,7 +38,13 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'profile' | 'hours' | 'booking' | 'gateway' | 'recurring' | 'queue' | 'shipping' | 'delivery_zones' | 'ordering' | 'auto_reply' | 'notifications' | 'account' | 'privacy'>('profile');
+  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'account'>('business');
+  const [openSections, setOpenSections] = useState<string[]>(['profile']);
+  const toggleSection = (section: string) => {
+    setOpenSections((prev) =>
+      prev.includes(section) ? prev.filter((s) => s !== section) : [...prev, section]
+    );
+  };
 
   // Privacy & Data tab state
   const [exporting, setExporting] = useState(false);
@@ -229,12 +235,14 @@ export default function SettingsPage() {
     // Check for Connect callback success
     const params = new URLSearchParams(window.location.search);
     if (params.get('connected')) {
-      setActiveTab('gateway');
+      setActiveTab('payments');
+      setOpenSections(prev => prev.includes('gateway') ? prev : [...prev, 'gateway']);
       // Reload credentials after redirect
       setTimeout(() => loadByoCredentials(), 500);
     }
     if (params.get('tab') === 'gateway') {
-      setActiveTab('gateway');
+      setActiveTab('payments');
+      setOpenSections(prev => prev.includes('gateway') ? prev : [...prev, 'gateway']);
     }
   }, [business.id]);
 
@@ -326,6 +334,7 @@ export default function SettingsPage() {
     const reference = searchParams.get('reference') || searchParams.get('trxref');
     const targetPlan = (searchParams.get('plan') || 'growth') as SubscriptionTier;
     setActiveTab('account');
+    setOpenSections(prev => prev.includes('plan') ? prev : [...prev, 'plan']);
     setVerifying(true);
 
     fetch('/api/onboarding/verify', {
@@ -741,117 +750,35 @@ export default function SettingsPage() {
       <div className="relative mt-4">
         <div className="flex gap-1 overflow-x-auto scrollbar-hide rounded-lg bg-gray-100 p-1">
           <button
-            onClick={() => setActiveTab('profile')}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'profile' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            onClick={() => setActiveTab('business')}
+            className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'business' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            Profile
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            Business
           </button>
           <button
-            onClick={() => setActiveTab('hours')}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'hours' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            onClick={() => setActiveTab('payments')}
+            className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'payments' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            Operating Hours
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+            Payments
           </button>
           <button
-            onClick={() => setActiveTab('booking')}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'booking' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            onClick={() => setActiveTab('features')}
+            className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'features' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            WhatsApp & Booking
-          </button>
-          {(capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding')) && (
-            <button
-              onClick={() => setActiveTab('gateway')}
-              className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                activeTab === 'gateway' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Payment Gateway
-            </button>
-          )}
-          {(capabilities.includes('payment') || capabilities.includes('crowdfunding')) && (
-            <button
-              onClick={() => setActiveTab('recurring')}
-              className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                activeTab === 'recurring' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Recurring
-            </button>
-          )}
-          {capabilities.includes('queue') && (
-            <button
-              onClick={() => setActiveTab('queue')}
-              className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                activeTab === 'queue' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Queue
-            </button>
-          )}
-          {capabilities.includes('ordering') && (
-            <button
-              onClick={() => setActiveTab('shipping')}
-              className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                activeTab === 'shipping' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Shipping
-            </button>
-          )}
-          {capabilities.includes('ordering') && (
-            <button
-              onClick={() => setActiveTab('delivery_zones')}
-              className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                activeTab === 'delivery_zones' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Delivery Zones
-            </button>
-          )}
-          {capabilities.includes('ordering') && (
-            <button
-              onClick={() => setActiveTab('ordering')}
-              className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-                activeTab === 'ordering' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Ordering
-            </button>
-          )}
-          <button
-            onClick={() => setActiveTab('auto_reply')}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'auto_reply' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Auto Reply
-          </button>
-          <button
-            onClick={() => setActiveTab('notifications')}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'notifications' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Notifications
-          </button>
-          <button
-            onClick={() => setActiveTab('account')}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'account' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Account
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+            Features
           </button>
           <button
             onClick={() => {
-              setActiveTab('privacy');
-              // Load consent preferences on tab switch
+              setActiveTab('account');
               if (!consentLoaded) {
                 fetch('/api/account/consent')
                   .then(r => r.json())
@@ -866,17 +793,27 @@ export default function SettingsPage() {
                   .catch(() => setConsentLoaded(true));
               }
             }}
-            className={`shrink-0 rounded-md px-4 py-2.5 text-sm font-medium transition ${
-              activeTab === 'privacy' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'account' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            Privacy &amp; Data
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+            Account
           </button>
         </div>
-        <div className="pointer-events-none absolute right-0 top-0 h-full w-8 bg-gradient-to-l from-gray-100 to-transparent rounded-r-lg" />
       </div>
 
-      {activeTab === 'profile' ? (
+
+      {/* ═══ BUSINESS TAB ═══ */}
+      {activeTab === 'business' && (
+        <div className="mt-6 max-w-3xl space-y-4">
+          <div>
+            <button onClick={() => toggleSection('profile')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">Profile</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('profile') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('profile') && (
+              <div className="mt-4">
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
           {/* Business Profile */}
           <div className="lg:col-span-2 space-y-6">
@@ -1148,8 +1085,17 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
-      ) : activeTab === 'hours' ? (
-        /* Operating Hours Tab */
+              </div>
+            )}
+          </div>
+          <div>
+            <button onClick={() => toggleSection('hours')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">Operating Hours</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('hours') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('hours') && (
+              <div className="mt-4">
+        {/* Operating Hours Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Weekly Schedule</h2>
@@ -1206,8 +1152,17 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      ) : activeTab === 'booking' ? (
-        /* Bot & Booking Settings Tab */
+              </div>
+            )}
+          </div>
+          <div>
+            <button onClick={() => toggleSection('booking')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">WhatsApp & Booking</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('booking') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('booking') && (
+              <div className="mt-4">
+        {/* Bot & Booking Settings Tab */}
         <div className="mt-6 max-w-xl space-y-4">
           {(capabilities.includes('scheduling') || business.flow_type === 'scheduling') && (
           <div className="rounded-xl border border-gray-100 bg-white p-6">
@@ -1559,8 +1514,24 @@ export default function SettingsPage() {
             {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Booking Settings'}
           </button>
         </div>
-      ) : activeTab === 'gateway' ? (
-        /* Payment Gateway Tab */
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ PAYMENTS TAB ═══ */}
+      {activeTab === 'payments' && (
+        <div className="mt-6 max-w-3xl space-y-4">
+          {capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding') && (
+            <div>
+              <button onClick={() => toggleSection('gateway')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+                <h3 className="text-sm font-semibold text-gray-900">Payment Gateway</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('gateway') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('gateway') && (
+                <div className="mt-4">
+        {/* Payment Gateway Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Payment Gateway</h2>
@@ -1962,8 +1933,19 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      ) : activeTab === 'recurring' ? (
-        /* Recurring Payments Tab */
+                </div>
+              )}
+            </div>
+          )}
+          {capabilities.includes('payment') || capabilities.includes('crowdfunding') && (
+            <div>
+              <button onClick={() => toggleSection('recurring')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+                <h3 className="text-sm font-semibold text-gray-900">Recurring Payments</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('recurring') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('recurring') && (
+                <div className="mt-4">
+        {/* Recurring Payments Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Recurring Payments</h2>
@@ -2036,102 +2018,19 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
-      ) : activeTab === 'queue' ? (
-        /* Queue Settings Tab */
-        <div className="mt-6 max-w-xl">
-          <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Queue Settings</h2>
-            <p className="mt-1 text-xs text-gray-500">
-              Configure how your queue behaves, including wait-time estimates and notifications.
-            </p>
-
-            <div className="mt-5 space-y-5">
-              {/* Average service time */}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Average service time (minutes)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={120}
-                  value={queueAvgMinutes || ''}
-                  onFocus={e => e.target.select()}
-                  onChange={(e) => setQueueAvgMinutes(Math.max(1, Math.min(120, Number(e.target.value))))}
-                  className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-                />
-                <p className="mt-1 text-xs text-gray-400">Used to estimate wait times for customers. Default is 10 minutes.</p>
-              </div>
-
-              {/* Notify staff on check-in */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">Notify staff on check-in</p>
-                  <p className="text-xs text-gray-400">
-                    {queueNotifyStaff
-                      ? 'Audio chime and browser notification when a customer checks in.'
-                      : 'Notifications are disabled — check-ins happen silently.'}
-                  </p>
                 </div>
-                <button
-                  onClick={() => setQueueNotifyStaff(!queueNotifyStaff)}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${queueNotifyStaff ? 'bg-brand' : 'bg-gray-200'}`}
-                >
-                  <div
-                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
-                    style={{ left: queueNotifyStaff ? '22px' : '2px' }}
-                  />
-                </button>
-              </div>
-
-              {/* Queue paused */}
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">Pause queue</p>
-                  <p className="text-xs text-gray-400">
-                    {queuePaused
-                      ? 'Queue is paused — customers cannot check in via WhatsApp.'
-                      : 'Queue is active — customers can check in normally.'}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setQueuePaused(!queuePaused)}
-                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${queuePaused ? 'bg-yellow-500' : 'bg-gray-200'}`}
-                >
-                  <div
-                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
-                    style={{ left: queuePaused ? '22px' : '2px' }}
-                  />
-                </button>
-              </div>
+              )}
             </div>
-
-            <button
-              onClick={async () => {
-                setSaving(true);
-                const supabase = createClient();
-                await supabase
-                  .from('businesses')
-                  .update({
-                    metadata: {
-                      ...meta,
-                      queue_avg_service_minutes: queueAvgMinutes,
-                      queue_notify_staff: queueNotifyStaff,
-                      queue_paused: queuePaused,
-                    },
-                  })
-                  .eq('id', business.id);
-                setSaving(false);
-                setSaved(true);
-                setTimeout(() => setSaved(false), 2000);
-              }}
-              disabled={saving}
-              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Queue Settings'}
-            </button>
-          </div>
-        </div>
-      ) : activeTab === 'shipping' ? (
-        /* Shipping Settings Tab */
+          )}
+          {capabilities.includes('ordering') && (
+            <div>
+              <button onClick={() => toggleSection('shipping')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+                <h3 className="text-sm font-semibold text-gray-900">Shipping</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('shipping') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('shipping') && (
+                <div className="mt-4">
+        {/* Shipping Settings Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Shipping Settings</h2>
@@ -2246,8 +2145,19 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      ) : activeTab === 'delivery_zones' ? (
-        /* Delivery Zones Tab */
+                </div>
+              )}
+            </div>
+          )}
+          {capabilities.includes('ordering') && (
+            <div>
+              <button onClick={() => toggleSection('delivery_zones')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+                <h3 className="text-sm font-semibold text-gray-900">Delivery Zones</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('delivery_zones') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('delivery_zones') && (
+                <div className="mt-4">
+        {/* Delivery Zones Tab */}
         <div className="mt-6 max-w-2xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Delivery Zones</h2>
@@ -2411,8 +2321,130 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      ) : activeTab === 'ordering' ? (
-        /* Ordering Tab */
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ FEATURES TAB ═══ */}
+      {activeTab === 'features' && (
+        <div className="mt-6 max-w-3xl space-y-4">
+          {capabilities.includes('queue') && (
+            <div>
+              <button onClick={() => toggleSection('queue')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+                <h3 className="text-sm font-semibold text-gray-900">Queue</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('queue') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('queue') && (
+                <div className="mt-4">
+        {/* Queue Settings Tab */}
+        <div className="mt-6 max-w-xl">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Queue Settings</h2>
+            <p className="mt-1 text-xs text-gray-500">
+              Configure how your queue behaves, including wait-time estimates and notifications.
+            </p>
+
+            <div className="mt-5 space-y-5">
+              {/* Average service time */}
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Average service time (minutes)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={queueAvgMinutes || ''}
+                  onFocus={e => e.target.select()}
+                  onChange={(e) => setQueueAvgMinutes(Math.max(1, Math.min(120, Number(e.target.value))))}
+                  className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-1 text-xs text-gray-400">Used to estimate wait times for customers. Default is 10 minutes.</p>
+              </div>
+
+              {/* Notify staff on check-in */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Notify staff on check-in</p>
+                  <p className="text-xs text-gray-400">
+                    {queueNotifyStaff
+                      ? 'Audio chime and browser notification when a customer checks in.'
+                      : 'Notifications are disabled — check-ins happen silently.'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setQueueNotifyStaff(!queueNotifyStaff)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${queueNotifyStaff ? 'bg-brand' : 'bg-gray-200'}`}
+                >
+                  <div
+                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                    style={{ left: queueNotifyStaff ? '22px' : '2px' }}
+                  />
+                </button>
+              </div>
+
+              {/* Queue paused */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Pause queue</p>
+                  <p className="text-xs text-gray-400">
+                    {queuePaused
+                      ? 'Queue is paused — customers cannot check in via WhatsApp.'
+                      : 'Queue is active — customers can check in normally.'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setQueuePaused(!queuePaused)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition ${queuePaused ? 'bg-yellow-500' : 'bg-gray-200'}`}
+                >
+                  <div
+                    className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition"
+                    style={{ left: queuePaused ? '22px' : '2px' }}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <button
+              onClick={async () => {
+                setSaving(true);
+                const supabase = createClient();
+                await supabase
+                  .from('businesses')
+                  .update({
+                    metadata: {
+                      ...meta,
+                      queue_avg_service_minutes: queueAvgMinutes,
+                      queue_notify_staff: queueNotifyStaff,
+                      queue_paused: queuePaused,
+                    },
+                  })
+                  .eq('id', business.id);
+                setSaving(false);
+                setSaved(true);
+                setTimeout(() => setSaved(false), 2000);
+              }}
+              disabled={saving}
+              className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Queue Settings'}
+            </button>
+          </div>
+        </div>
+                </div>
+              )}
+            </div>
+          )}
+          {capabilities.includes('ordering') && (
+            <div>
+              <button onClick={() => toggleSection('ordering')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+                <h3 className="text-sm font-semibold text-gray-900">Ordering</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('ordering') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('ordering') && (
+                <div className="mt-4">
+        {/* Ordering Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Ordering Settings</h2>
@@ -2679,8 +2711,18 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
-      ) : activeTab === 'auto_reply' ? (
-        /* Auto Reply & Business Hours Tab */
+                </div>
+              )}
+            </div>
+          )}
+          <div>
+            <button onClick={() => toggleSection('auto_reply')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">Auto Reply</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('auto_reply') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('auto_reply') && (
+              <div className="mt-4">
+        {/* Auto Reply & Business Hours Tab */}
         <div className="mt-6 max-w-2xl space-y-6">
           {arLoading ? (
             <div className="flex items-center justify-center py-12">
@@ -2834,8 +2876,17 @@ export default function SettingsPage() {
             </>
           )}
         </div>
-      ) : activeTab === 'notifications' ? (
-        /* Notification Preferences Tab */
+              </div>
+            )}
+          </div>
+          <div>
+            <button onClick={() => toggleSection('notifications')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('notifications') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('notifications') && (
+              <div className="mt-4">
+        {/* Notification Preferences Tab */}
         <div className="mt-6 max-w-xl space-y-6">
           <div className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
             <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">How do you want to be notified?</h3>
@@ -2946,8 +2997,23 @@ export default function SettingsPage() {
             </p>
           </div>
         </div>
-      ) : activeTab === 'account' ? (
-        /* Account Tab */
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ═══ ACCOUNT TAB ═══ */}
+      {activeTab === 'account' && (
+        <div className="mt-6 max-w-3xl space-y-4">
+          <div>
+            <button onClick={() => toggleSection('plan')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">Plan & Upgrade</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('plan') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('plan') && (
+              <div className="mt-4">
+        {/* Account Tab */}
         <div className="mt-6 max-w-xl space-y-6">
           {/* Subscription & Upgrade */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
@@ -3368,8 +3434,17 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      ) : activeTab === 'privacy' ? (
-        /* Privacy & Data Tab — GDPR/CCPA Compliance */
+              </div>
+            )}
+          </div>
+          <div>
+            <button onClick={() => toggleSection('privacy')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
+              <h3 className="text-sm font-semibold text-gray-900">Privacy & Data</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('privacy') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </button>
+            {openSections.includes('privacy') && (
+              <div className="mt-4">
+        {/* Privacy & Data Tab — GDPR/CCPA Compliance */}
         <div className="mt-6 max-w-xl space-y-6">
           {/* Download My Data */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
@@ -3582,7 +3657,12 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
-      ) : null}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
 
       {/* ── Privacy Delete Modal ── */}
       {showDeleteModal && (
