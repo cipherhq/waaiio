@@ -62,16 +62,35 @@ export async function GET(request: NextRequest) {
       let sentCount = 0;
       let failedCount = 0;
 
+      const TEMPLATE_PREFIXES: Record<string, string> = {
+        business_update: `*Update from ${business.name}*\n\n`,
+        business_reminder: `*Reminder from ${business.name}*\n\n`,
+        business_event: `*Upcoming at ${business.name}*\n\n`,
+        business_promotion: `*${business.name}*\n\n`,
+      };
+      const formattedText = (broadcast.template_name && TEMPLATE_PREFIXES[broadcast.template_name])
+        ? `${TEMPLATE_PREFIXES[broadcast.template_name]}${broadcast.message}`
+        : broadcast.message;
+
       for (const phone of broadcast.phones) {
         try {
+          let messageSent = false;
+
           if (broadcast.template_name && sender.sendTemplate) {
-            await sender.sendTemplate({
-              to: phone,
-              templateName: broadcast.template_name,
-              templateParams: [business.name, broadcast.message],
-            });
-          } else {
-            await sender.sendText({ to: phone, text: broadcast.message });
+            try {
+              await sender.sendTemplate({
+                to: phone,
+                templateName: broadcast.template_name,
+                templateParams: [business.name, broadcast.message],
+              });
+              messageSent = true;
+            } catch {
+              // Template not available — fall back to text
+            }
+          }
+
+          if (!messageSent) {
+            await sender.sendText({ to: phone, text: formattedText });
           }
 
           await supabase.from('notifications').insert({

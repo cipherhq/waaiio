@@ -120,19 +120,41 @@ export async function POST(request: NextRequest) {
     let sentCount = 0;
     const usedTemplate = !!(template_name && sender.sendTemplate);
 
+    // Build the formatted fallback text (used when template isn't available)
+    const TEMPLATE_PREFIXES: Record<string, string> = {
+      business_update: `*Update from ${business.name}*\n\n`,
+      business_reminder: `*Reminder from ${business.name}*\n\n`,
+      business_event: `*Upcoming at ${business.name}*\n\n`,
+      business_promotion: `*${business.name}*\n\n`,
+    };
+    const formattedText = (template_name && TEMPLATE_PREFIXES[template_name])
+      ? `${TEMPLATE_PREFIXES[template_name]}${message}`
+      : message;
+
     for (const phone of phones) {
       try {
+        let sent = false;
+
+        // Try template first (works outside 24h window)
         if (template_name && sender.sendTemplate) {
-          await sender.sendTemplate({
-            to: phone,
-            templateName: template_name,
-            templateParams: [business.name, message],
-          });
-        } else {
-          await sender.sendText({ to: phone, text: message });
+          try {
+            await sender.sendTemplate({
+              to: phone,
+              templateName: template_name,
+              templateParams: [business.name, message],
+            });
+            sent = true;
+          } catch (templateErr) {
+            // Template failed (not approved, not provisioned, etc.) — fall back to text
+            logger.warn(`[BROADCAST] Template "${template_name}" failed for ${phone}, falling back to text:`, (templateErr as Error).message);
+          }
         }
 
-        // Record notification
+        // Fallback: send as formatted text
+        if (!sent) {
+          await sender.sendText({ to: phone, text: formattedText });
+        }
+
         await service.from('notifications').insert({
           business_id,
           recipient_phone: phone,
