@@ -270,7 +270,7 @@ export default function BroadcastsPage() {
           business_id: business.id,
           message: message.trim(),
           phones: contacts.map(c => c.phone),
-          ...(useTemplate && templateName ? { template_name: templateName } : {}),
+          ...(templateName ? { template_name: templateName } : {}),
         }),
       });
 
@@ -655,84 +655,47 @@ export default function BroadcastsPage() {
               )}
             </div>
 
-            {/* Template Toggle */}
+            {/* Message Type */}
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Template Message</h2>
-                  <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Recommended for reliable delivery to all contacts</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !useTemplate;
-                    setUseTemplate(next);
-                    if (next) loadTemplates();
-                  }}
-                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-                    useTemplate ? 'bg-brand' : 'bg-gray-200 dark:bg-gray-600'
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                      useTemplate ? 'translate-x-5' : 'translate-x-0'
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Message Type</h2>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Choose what kind of message you're sending</p>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {([
+                  { id: 'update', icon: '📢', label: 'Update', desc: 'General news, changes, info', template: 'business_update' },
+                  { id: 'reminder', icon: '🔔', label: 'Reminder', desc: 'Upcoming events, deadlines', template: 'business_reminder' },
+                  { id: 'event', icon: '📅', label: 'Event', desc: 'Programs, services, activities', template: 'business_event' },
+                  { id: 'promo', icon: '🎁', label: 'Promotion', desc: 'Offers, deals, marketing', template: 'business_promotion' },
+                ] as const).map(type => (
+                  <button
+                    key={type.id}
+                    onClick={() => { setTemplateName(type.template); setUseTemplate(true); }}
+                    className={`rounded-xl border-2 p-3 text-left transition ${
+                      templateName === type.template
+                        ? 'border-brand bg-brand-50 dark:bg-brand-900/20'
+                        : 'border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600'
                     }`}
-                  />
-                </button>
+                  >
+                    <span className="text-lg">{type.icon}</span>
+                    <p className="mt-1 text-sm font-semibold text-gray-900 dark:text-gray-100">{type.label}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{type.desc}</p>
+                  </button>
+                ))}
               </div>
-              {useTemplate && (
-                <div className="mt-3">
-                  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Select Template</label>
-                  {templatesLoading ? (
-                    <div className="mt-2 flex items-center gap-2 text-sm text-gray-400">
-                      <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-                      Loading templates...
-                    </div>
-                  ) : templates.length > 0 ? (
-                    <>
-                      <select
-                        value={templateName}
-                        onChange={(e) => setTemplateName(e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
-                      >
-                        <option value="">Choose a template...</option>
-                        {templates.map(t => (
-                          <option key={t.name} value={t.name}>
-                            {t.name.replace(/_/g, ' ')} ({t.language} · {t.category.toLowerCase()})
-                          </option>
-                        ))}
-                      </select>
-                      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                        Only approved templates from your WhatsApp Business account are shown
-                      </p>
-                    </>
-                  ) : (
-                    <div className="mt-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 p-3">
-                      <p className="text-sm text-amber-700 dark:text-amber-400">
-                        No approved templates found. Templates are set up in your WhatsApp Business settings or contact us to provision them for you.
-                      </p>
-                    </div>
-                  )}
+              {templateName === 'business_promotion' && (
+                <div className="mt-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 px-3 py-2">
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    Marketing messages have a slightly higher per-message cost from WhatsApp. Use Update or Reminder for non-promotional content.
+                  </p>
+                </div>
+              )}
+              {!templateName && (
+                <div className="mt-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 px-3 py-2">
+                  <p className="text-xs text-blue-700 dark:text-blue-400">
+                    Pick a message type above to reach all contacts — even those who haven't messaged recently.
+                  </p>
                 </div>
               )}
             </div>
-
-            {/* Session message warning */}
-            {!useTemplate && (
-              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3">
-                <div className="flex gap-2">
-                  <svg aria-hidden="true" className="h-5 w-5 shrink-0 text-amber-500 dark:text-amber-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                  </svg>
-                  <div>
-                    <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Sending as session message</p>
-                    <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
-                      Only contacts who messaged in the last 24 hours will receive this. Enable template message above for broader delivery.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Message */}
             <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
@@ -747,21 +710,9 @@ export default function BroadcastsPage() {
               />
               <div className="mt-2 flex items-center justify-between">
                 <p className="text-xs text-gray-400 dark:text-gray-500">{message.length}/1000 characters</p>
-                <div className="flex gap-2">
-                  {/* Quick templates */}
-                  <button
-                    onClick={() => setMessage(`Hi there! ${business.name} has exciting news for you.\n\n`)}
-                    className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                  >
-                    Announcement
-                  </button>
-                  <button
-                    onClick={() => setMessage(`Special offer from ${business.name}!\n\n[Your offer here]\n\nMessage us to book!`)}
-                    className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50"
-                  >
-                    Promotion
-                  </button>
-                </div>
+                {!message && (
+                  <p className="text-xs text-gray-400">Just type your message — we handle the rest</p>
+                )}
               </div>
 
               {sendError && (
@@ -855,8 +806,25 @@ export default function BroadcastsPage() {
                 <div className="min-h-[200px] space-y-3 p-4" style={{ backgroundColor: '#ECE5DD' }}>
                   {message ? (
                     <div className="flex justify-start">
-                      <div className="max-w-[85%] whitespace-pre-line rounded-lg bg-white px-3 py-2 text-sm text-gray-800 shadow-sm">
-                        {formatWhatsAppText(message)}
+                      <div className="max-w-[85%] rounded-lg bg-white shadow-sm overflow-hidden">
+                        {/* Template header */}
+                        {templateName && templateName !== 'business_promotion' && (
+                          <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-100">
+                            <p className="text-xs font-semibold text-gray-700">
+                              {templateName === 'business_update' ? `Update from ${business.name}` :
+                               templateName === 'business_reminder' ? `Reminder from ${business.name}` :
+                               templateName === 'business_event' ? `Upcoming at ${business.name}` :
+                               business.name}
+                            </p>
+                          </div>
+                        )}
+                        <div className="px-3 py-2">
+                          {templateName === 'business_promotion' && (
+                            <p className="text-sm text-gray-800 font-semibold mb-1">{business.name}:</p>
+                          )}
+                          <p className="text-sm text-gray-800 whitespace-pre-line">{formatWhatsAppText(message)}</p>
+                          <p className="mt-2 text-[10px] text-gray-400 italic">Powered by Waaiio</p>
+                        </div>
                       </div>
                     </div>
                   ) : (

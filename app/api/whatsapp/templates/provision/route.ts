@@ -145,6 +145,61 @@ const REQUIRED_TEMPLATES: Record<string, TemplateDef[]> = {
       ],
     },
   ],
+
+  broadcast: [
+    {
+      name: 'business_update',
+      category: 'UTILITY',
+      language: 'en_US',
+      components: [
+        {
+          type: 'BODY',
+          text: '*Update from {{1}}*\n\n{{2}}',
+          example: { body_text: [['Citadel of Grace', 'We have updated our opening hours. We are now open Monday to Saturday, 9am to 7pm. Thank you for your continued support!']] },
+        },
+        { type: 'FOOTER', text: 'Powered by Waaiio' },
+      ],
+    },
+    {
+      name: 'business_reminder',
+      category: 'UTILITY',
+      language: 'en_US',
+      components: [
+        {
+          type: 'BODY',
+          text: '*Reminder from {{1}}*\n\n{{2}}',
+          example: { body_text: [['Citadel of Grace', 'Don\'t forget — our special Sunday service starts at 8am this week. See you there!']] },
+        },
+        { type: 'FOOTER', text: 'Powered by Waaiio' },
+      ],
+    },
+    {
+      name: 'business_event',
+      category: 'UTILITY',
+      language: 'en_US',
+      components: [
+        {
+          type: 'BODY',
+          text: '*Upcoming at {{1}}*\n\n{{2}}',
+          example: { body_text: [['Citadel of Grace', 'Bible Study this Friday at 6pm in the Main Hall. All are welcome. Light refreshments will be served.']] },
+        },
+        { type: 'FOOTER', text: 'Powered by Waaiio' },
+      ],
+    },
+    {
+      name: 'business_promotion',
+      category: 'MARKETING',
+      language: 'en_US',
+      components: [
+        {
+          type: 'BODY',
+          text: '*{{1}}*\n\n{{2}}',
+          example: { body_text: [['Fresh Cuts Barbershop', '20% off all haircuts this weekend! Walk-ins welcome. Book now on WhatsApp.']] },
+        },
+        { type: 'FOOTER', text: 'Powered by Waaiio' },
+      ],
+    },
+  ],
 };
 
 export async function POST(request: NextRequest) {
