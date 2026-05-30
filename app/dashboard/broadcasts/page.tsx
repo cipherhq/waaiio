@@ -1003,22 +1003,16 @@ export default function BroadcastsPage() {
                   {message ? (
                     <div className="flex justify-start">
                       <div className="max-w-[85%] rounded-lg bg-white shadow-sm overflow-hidden">
-                        {/* Template header */}
-                        {templateName && templateName !== 'business_promotion' && (
-                          <div className="bg-gray-50 px-3 py-1.5 border-b border-gray-100">
-                            <p className="text-xs font-semibold text-gray-700">
-                              {templateName === 'business_update' ? `Update from ${business.name}` :
-                               templateName === 'business_reminder' ? `Reminder from ${business.name}` :
-                               templateName === 'business_event' ? `Upcoming at ${business.name}` :
-                               business.name}
-                            </p>
-                          </div>
-                        )}
                         <div className="px-3 py-2">
-                          {templateName === 'business_promotion' && (
-                            <p className="text-sm text-gray-800 font-semibold mb-1">{business.name}:</p>
-                          )}
+                          {templateName === 'business_update' && <p className="text-sm text-gray-800 mb-2">Hello! Here is an update from <strong>{business.name}</strong>:</p>}
+                          {templateName === 'business_reminder' && <p className="text-sm text-gray-800 mb-2">Hello! Here is a reminder from <strong>{business.name}</strong>:</p>}
+                          {templateName === 'business_event' && <p className="text-sm text-gray-800 mb-2">Hello! Here is an upcoming event from <strong>{business.name}</strong>:</p>}
+                          {templateName === 'business_promotion' && <p className="text-sm text-gray-800 mb-2">Hi there! <strong>{business.name}</strong> has a special message for you:</p>}
                           <p className="text-sm text-gray-800 whitespace-pre-line">{formatWhatsAppText(message)}</p>
+                          {templateName === 'business_update' && <p className="text-sm text-gray-500 mt-2">Thank you for being a valued customer. Reply to this message if you have any questions.</p>}
+                          {templateName === 'business_reminder' && <p className="text-sm text-gray-500 mt-2">We look forward to seeing you. Reply to this message if you need assistance.</p>}
+                          {templateName === 'business_event' && <p className="text-sm text-gray-500 mt-2">We hope to see you there. Reply to this message for more details or to RSVP.</p>}
+                          {templateName === 'business_promotion' && <p className="text-sm text-gray-500 mt-2">Don't miss out — reply to this message to learn more or take action today!</p>}
                           <p className="mt-2 text-[10px] text-gray-400 italic">Powered by Waaiio</p>
                         </div>
                       </div>

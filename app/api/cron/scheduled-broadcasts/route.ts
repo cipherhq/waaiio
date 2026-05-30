@@ -69,15 +69,14 @@ export async function GET(request: NextRequest) {
       let sentCount = 0;
       let failedCount = 0;
 
-      const TEMPLATE_PREFIXES: Record<string, string> = {
-        business_update: `*Update from ${business.name}*\n\n`,
-        business_reminder: `*Reminder from ${business.name}*\n\n`,
-        business_event: `*Upcoming at ${business.name}*\n\n`,
-        business_promotion: `*${business.name}*\n\n`,
+      const TEMPLATE_WRAPPERS: Record<string, (biz: string, msg: string) => string> = {
+        business_update: (biz, msg) => `Hello! Here is an update from *${biz}*:\n\n${msg}\n\nThank you for being a valued customer. Reply to this message if you have any questions.`,
+        business_reminder: (biz, msg) => `Hello! Here is a reminder from *${biz}*:\n\n${msg}\n\nWe look forward to seeing you. Reply to this message if you need assistance.`,
+        business_event: (biz, msg) => `Hello! Here is an upcoming event from *${biz}*:\n\n${msg}\n\nWe hope to see you there. Reply to this message for more details or to RSVP.`,
+        business_promotion: (biz, msg) => `Hi there! *${biz}* has a special message for you:\n\n${msg}\n\nDon't miss out — reply to this message to learn more or take action today!`,
       };
-      const formattedText = (broadcast.template_name && TEMPLATE_PREFIXES[broadcast.template_name])
-        ? `${TEMPLATE_PREFIXES[broadcast.template_name]}${broadcast.message}`
-        : broadcast.message;
+      const wrapper = broadcast.template_name ? TEMPLATE_WRAPPERS[broadcast.template_name] : null;
+      const formattedText = wrapper ? wrapper(business.name, broadcast.message) : broadcast.message;
 
       for (const phone of broadcast.phones) {
         try {
