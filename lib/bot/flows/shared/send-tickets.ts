@@ -228,7 +228,62 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
           }
         }
 
-        // Fallback: QR code only (no flyer or compositing failed)
+        // Fallback: generate standalone ticket image (no flyer)
+        try {
+          const sharp = (await import('sharp')).default;
+          const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 260, margin: 1, color: { dark: '#1a1a1a', light: '#FFFFFF' } });
+
+          const svgEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const truncate = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + '…' : s;
+
+          const w = 600;
+          const h = 520;
+          const nameLabel = svgEsc(truncate(guestName || 'Guest', 35));
+          const eventLabel = svgEsc(truncate(eventName, 40));
+          const dateLabel = svgEsc(`${eventDate}${eventTime ? ' · ' + eventTime : ''}`);
+          const venueLabel = venue ? svgEsc(truncate(venue, 40)) : '';
+          const codeLabel = svgEsc(ticket.ticketCode);
+
+          const bgSvg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#1a1a2e"/>
+                <stop offset="50%" style="stop-color:#16213e"/>
+                <stop offset="100%" style="stop-color:#0f3460"/>
+              </linearGradient>
+            </defs>
+            <rect width="${w}" height="${h}" rx="20" fill="url(#bg)"/>
+            <text x="${w / 2}" y="42" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="bold" fill="white">${eventLabel}</text>
+            <text x="${w / 2}" y="68" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#a0a0c0">${dateLabel}</text>
+            ${venueLabel ? `<text x="${w / 2}" y="86" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#808090">${venueLabel}</text>` : ''}
+            <rect x="${(w - 290) / 2}" y="${venueLabel ? 100 : 90}" width="290" height="290" rx="14" fill="white"/>
+            <text x="${w / 2}" y="${h - 60}" text-anchor="middle" font-family="sans-serif" font-size="16" font-weight="bold" fill="white">${nameLabel}</text>
+            <text x="${w / 2}" y="${h - 38}" text-anchor="middle" font-family="monospace" font-size="16" font-weight="bold" fill="#6C2BD9">${codeLabel}</text>
+            <text x="${w / 2}" y="${h - 18}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#808090">Ticket ${ticket.ticketNumber}/${ticket.totalTickets} · Scan to verify</text>
+          </svg>`;
+
+          const qrTop = venueLabel ? 115 : 105;
+          const ticketImage = await sharp(Buffer.from(bgSvg))
+            .composite([{ input: qrPng, top: qrTop, left: Math.round((w - 260) / 2) }])
+            .jpeg({ quality: 90 })
+            .toBuffer();
+
+          const storagePath = `tickets/${businessId}/${ticket.ticketCode}.jpg`;
+          const { error: uploadErr } = await supabase.storage
+            .from('business-documents')
+            .upload(storagePath, ticketImage, { contentType: 'image/jpeg', upsert: true });
+
+          if (!uploadErr) {
+            const { data: urlData } = supabase.storage.from('business-documents').getPublicUrl(storagePath);
+            await sender.sendImage({ to: phone, imageUrl: urlData.publicUrl, caption });
+            logger.info('[TICKETS] Standalone ticket image sent for', ticket.ticketCode);
+            continue;
+          }
+        } catch (fallbackErr) {
+          logger.error('[TICKETS] Standalone ticket image failed:', fallbackErr);
+        }
+
+        // Last resort: plain QR code
         const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(verifyUrl)}`;
         await sender.sendImage({ to: phone, imageUrl: qrImageUrl, caption });
         logger.info('[TICKETS] QR-only sent for', ticket.ticketCode);
