@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 
@@ -57,7 +56,15 @@ export async function GET(request: NextRequest) {
       // Resolve sender
       const resolver = new ChannelResolver(supabase);
       const resolved = await resolver.resolveByBusinessId(broadcast.business_id);
-      const sender = resolved?.sender || new GupshupService();
+
+      if (!resolved) {
+        await supabase.from('business_broadcasts').update({
+          status: 'failed', error_message: 'No active WhatsApp channel for this business',
+        }).eq('id', broadcast.id);
+        continue;
+      }
+
+      const sender = resolved.sender;
 
       let sentCount = 0;
       let failedCount = 0;

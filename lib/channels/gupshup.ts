@@ -72,9 +72,18 @@ export class GupshupService {
     return !!this.apiKey && !!this.phoneNumber;
   }
 
+  private assertConfigured(method: string): void {
+    if (!this.isConfigured) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error(`WhatsApp channel not configured — cannot ${method}`);
+      }
+      logger.debug(`[DEV] Gupshup ${method} skipped (not configured)`);
+    }
+  }
+
   async sendTemplate(message: WhatsAppMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp template to ${message.to}: ${message.templateId}`);
+      this.assertConfigured('sendTemplate');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -114,7 +123,7 @@ export class GupshupService {
 
   async sendText(message: WhatsAppMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp text to ${message.to}: ${message.text}`);
+      this.assertConfigured('sendText');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -151,7 +160,7 @@ export class GupshupService {
 
   async sendList(message: WhatsAppListMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp list to ${message.to}: "${message.title}" (${message.items.length} items)`);
+      this.assertConfigured('sendList');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -218,7 +227,7 @@ export class GupshupService {
 
   async sendButtons(message: WhatsAppButtonMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp buttons to ${message.to}: "${message.body}"`);
+      this.assertConfigured('sendButtons');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -271,7 +280,7 @@ export class GupshupService {
     caption?: string;
   }): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp document to ${message.to}: ${message.documentUrl}`);
+      this.assertConfigured('sendDocument');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -316,7 +325,7 @@ export class GupshupService {
     audioUrl: string;
   }): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp audio to ${message.to}: ${message.audioUrl}`);
+      this.assertConfigured('sendAudio');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 
@@ -356,7 +365,7 @@ export class GupshupService {
 
   async sendImage(message: WhatsAppImageMessage): Promise<{ success: boolean; messageId?: string }> {
     if (!this.isConfigured) {
-      logger.debug(`[DEV] WhatsApp image to ${message.to}: ${message.imageUrl}`);
+      this.assertConfigured('sendImage');
       return { success: true, messageId: `mock_wa_${Date.now()}` };
     }
 

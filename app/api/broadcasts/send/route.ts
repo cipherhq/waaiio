@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { GupshupService } from '@/lib/channels/gupshup';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
@@ -115,7 +114,15 @@ export async function POST(request: NextRequest) {
     // Resolve the sender for this business
     const resolver = new ChannelResolver(service);
     const resolved = await resolver.resolveByBusinessId(business_id);
-    const sender = resolved?.sender || new GupshupService();
+
+    if (!resolved) {
+      return NextResponse.json(
+        { message: 'WhatsApp channel not set up for this business. Go to WhatsApp Setup to connect your number.' },
+        { status: 400 },
+      );
+    }
+
+    const sender = resolved.sender;
 
     let sentCount = 0;
     const usedTemplate = !!(template_name && sender.sendTemplate);
