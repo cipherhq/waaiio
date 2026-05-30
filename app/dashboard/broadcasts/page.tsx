@@ -47,11 +47,16 @@ export default function BroadcastsPage() {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
-  const [activeTab, setActiveTab] = useState<'compose' | 'history'>('compose');
+  const [activeTab, setActiveTab] = useState<'compose' | 'scheduled' | 'history'>('compose');
   const [usage, setUsage] = useState<BroadcastUsage | null>(null);
   const [useTemplate, setUseTemplate] = useState(false);
   const [templateName, setTemplateName] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  const [sendMode, setSendMode] = useState<'now' | 'schedule'>('now');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [scheduledBroadcasts, setScheduledBroadcasts] = useState<Array<{ id: string; message: string; recipient_count: number; status: string; scheduled_at: string; sent_at: string | null; sent_count: number; failed_count: number; created_at: string }>>([]);
+  const [cancelling, setCancelling] = useState<string | null>(null);
   const [filters, setFilters] = useState<AudienceFilters>({ preset: 'all', lastVisit: '', minSpend: '', tags: [] });
   const [showCustomFilters, setShowCustomFilters] = useState(false);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -139,6 +144,15 @@ export default function BroadcastsPage() {
         }
       }
       setHistory(Array.from(grouped.values()).slice(0, 20));
+
+      // Load scheduled broadcasts
+      try {
+        const schedRes = await fetch(`/api/broadcasts/schedule?business_id=${business.id}`);
+        if (schedRes.ok) {
+          const schedData = await schedRes.json();
+          setScheduledBroadcasts(schedData.broadcasts || []);
+        }
+      } catch { /* non-critical */ }
 
       setLoading(false);
     }
@@ -282,6 +296,64 @@ export default function BroadcastsPage() {
     setSending(false);
   }
 
+  async function handleSchedule() {
+    if (!message.trim() || contacts.length === 0 || !scheduleDate || !scheduleTime) return;
+    setSending(true);
+    setSendError(null);
+
+    try {
+      const scheduledAt = new Date(`${scheduleDate}T${scheduleTime}`).toISOString();
+      const res = await fetch('/api/broadcasts/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: business.id,
+          message: message.trim(),
+          phones: contacts.map(c => c.phone),
+          scheduled_at: scheduledAt,
+          audience_filter: filters,
+          ...(useTemplate && templateName ? { template_name: templateName } : {}),
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setSent(true);
+        setMessage('');
+        setScheduleDate('');
+        setScheduleTime('');
+        // Refresh scheduled list
+        const schedRes = await fetch(`/api/broadcasts/schedule?business_id=${business.id}`);
+        if (schedRes.ok) {
+          const schedData = await schedRes.json();
+          setScheduledBroadcasts(schedData.broadcasts || []);
+        }
+        setTimeout(() => setSent(false), 3000);
+      } else {
+        setSendError(data.message || 'Failed to schedule broadcast');
+      }
+    } catch {
+      setSendError('Network error. Please try again.');
+    }
+
+    setSending(false);
+  }
+
+  async function handleCancelScheduled(id: string) {
+    if (!confirm('Cancel this scheduled broadcast?')) return;
+    setCancelling(id);
+    try {
+      await fetch('/api/broadcasts/schedule', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, business_id: business.id }),
+      });
+      setScheduledBroadcasts(prev => prev.map(b => b.id === id ? { ...b, status: 'cancelled' } : b));
+    } catch { /* ignore */ }
+    setCancelling(null);
+  }
+
   if (loading) {
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
@@ -395,22 +467,17 @@ export default function BroadcastsPage() {
 
       {/* Tabs */}
       <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1 w-fit">
-        <button
-          onClick={() => setActiveTab('compose')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
-            activeTab === 'compose' ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-          }`}
-        >
-          Compose
-        </button>
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
-            activeTab === 'history' ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-          }`}
-        >
-          History
-        </button>
+        {(['compose', 'scheduled', 'history'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+              activeTab === tab ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+            }`}
+          >
+            {tab === 'compose' ? 'Compose' : tab === 'scheduled' ? `Scheduled${scheduledBroadcasts.filter(b => b.status === 'scheduled').length > 0 ? ` (${scheduledBroadcasts.filter(b => b.status === 'scheduled').length})` : ''}` : 'History'}
+          </button>
+        ))}
       </div>
 
       {activeTab === 'compose' ? (
@@ -656,24 +723,66 @@ export default function BroadcastsPage() {
                 </div>
               )}
 
+              {/* Send Now / Schedule toggle */}
+              <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-700 p-1">
+                <button
+                  onClick={() => setSendMode('now')}
+                  className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${sendMode === 'now' ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}
+                >
+                  Send Now
+                </button>
+                <button
+                  onClick={() => setSendMode('schedule')}
+                  className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${sendMode === 'schedule' ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500'}`}
+                >
+                  Schedule
+                </button>
+              </div>
+
+              {sendMode === 'schedule' && (
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Date</label>
+                    <input
+                      type="date"
+                      value={scheduleDate}
+                      onChange={e => setScheduleDate(e.target.value)}
+                      min={new Date().toISOString().slice(0, 10)}
+                      className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Time</label>
+                    <input
+                      type="time"
+                      value={scheduleTime}
+                      onChange={e => setScheduleTime(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
-                onClick={handleSend}
-                disabled={sending || !message.trim() || contacts.length === 0 || quotaExceeded}
-                className="mt-4 w-full rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
+                onClick={sendMode === 'now' ? handleSend : handleSchedule}
+                disabled={sending || !message.trim() || contacts.length === 0 || quotaExceeded || (sendMode === 'schedule' && (!scheduleDate || !scheduleTime))}
+                className="mt-3 w-full rounded-lg bg-brand px-6 py-3 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 transition"
               >
                 {quotaExceeded
                   ? 'Monthly limit reached'
                   : sending
-                  ? 'Sending...'
+                  ? (sendMode === 'now' ? 'Sending...' : 'Scheduling...')
                   : sent
-                  ? 'Sent!'
-                  : `Send to ${contacts.length} contacts`}
+                  ? (sendMode === 'now' ? 'Sent!' : 'Scheduled!')
+                  : sendMode === 'now'
+                  ? `Send to ${contacts.length} contacts`
+                  : `Schedule for ${scheduleDate && scheduleTime ? new Date(`${scheduleDate}T${scheduleTime}`).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '...'}`}
               </button>
 
               {sent && (
                 <div className="mt-3 rounded-lg bg-green-50 dark:bg-green-900/20 p-3 text-center">
                   <p className="text-sm font-medium text-green-700 dark:text-green-400">
-                    Broadcast sent successfully!
+                    {sendMode === 'now' ? 'Broadcast sent successfully!' : 'Broadcast scheduled successfully!'}
                   </p>
                 </div>
               )}
@@ -712,6 +821,63 @@ export default function BroadcastsPage() {
               </div>
             </div>
           </div>
+        </div>
+      ) : activeTab === 'scheduled' ? (
+        /* Scheduled Tab */
+        <div className="mt-6">
+          {scheduledBroadcasts.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 dark:border-gray-700 p-8 text-center">
+              <p className="text-sm text-gray-500 dark:text-gray-400">No scheduled broadcasts</p>
+              <p className="mt-1 text-xs text-gray-400">Use the Compose tab to schedule a broadcast for later</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {scheduledBroadcasts.map(b => {
+                const statusColors: Record<string, string> = {
+                  scheduled: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+                  sending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+                  sent: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+                  failed: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+                  cancelled: 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400',
+                };
+
+                return (
+                  <div key={b.id} className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+                    <div className="flex items-start justify-between">
+                      <div className="min-w-0 flex-1 pr-4">
+                        <p className="text-sm text-gray-900 dark:text-gray-100 line-clamp-2">{b.message}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                          <span className="flex items-center gap-1">
+                            <svg aria-hidden="true" className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            {new Date(b.scheduled_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </span>
+                          <span>{b.recipient_count} recipients</span>
+                          {b.sent_count > 0 && <span className="text-green-600">{b.sent_count} sent</span>}
+                          {b.failed_count > 0 && <span className="text-red-600">{b.failed_count} failed</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusColors[b.status] || 'bg-gray-100 text-gray-600'}`}>
+                          {b.status}
+                        </span>
+                        {b.status === 'scheduled' && (
+                          <button
+                            onClick={() => handleCancelScheduled(b.id)}
+                            disabled={cancelling === b.id}
+                            className="rounded-lg px-3 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                          >
+                            {cancelling === b.id ? '...' : 'Cancel'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : (
         /* History Tab */
