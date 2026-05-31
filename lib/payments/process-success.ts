@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
@@ -63,6 +64,7 @@ export async function processSuccessfulPayment(
       }
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
+      Sentry.captureException(err, { tags: { component: 'process-success', operation: 'waitlist-conversion' } });
     }
   }
 
@@ -95,6 +97,7 @@ export async function processSuccessfulPayment(
       });
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Order confirmation error:', err);
+      Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
     }
   }
 }
@@ -199,6 +202,13 @@ export async function recordPlatformFee(
   });
   if (feeErr) {
     console.error('[PLATFORM-FEE] Insert error (possible duplicate):', feeErr.message);
+    // Only report to Sentry if it's not a duplicate key violation
+    if (!feeErr.message?.includes('duplicate') && !feeErr.message?.includes('unique')) {
+      Sentry.captureException(new Error(`Platform fee insert error: ${feeErr.message}`), {
+        tags: { component: 'process-success', operation: 'platform-fee' },
+        extra: { businessId, bookingId: opts.bookingId, invoiceId: opts.invoiceId },
+      });
+    }
   }
 }
 

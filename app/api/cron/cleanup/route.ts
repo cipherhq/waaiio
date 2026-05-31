@@ -31,24 +31,16 @@ export async function GET(request: NextRequest) {
     .lt('created_at', staleDate.toISOString())
     .select('id');
 
-  // Decrement tickets_sold for stale ticketing bookings
+  // Atomically restore tickets_sold for stale ticketing bookings
   let ticketsRestored = 0;
   if (staleBookings && staleBookings.length > 0) {
     for (const booking of staleBookings) {
       if (booking.flow_type === 'ticketing' && booking.event_id && booking.quantity) {
-        const { data: ev } = await supabase
-          .from('events')
-          .select('tickets_sold')
-          .eq('id', booking.event_id)
-          .single();
-        if (ev) {
-          const newSold = Math.max(0, (ev.tickets_sold || 0) - booking.quantity);
-          await supabase
-            .from('events')
-            .update({ tickets_sold: newSold })
-            .eq('id', booking.event_id);
-          ticketsRestored += booking.quantity;
-        }
+        await supabase.rpc('restore_tickets_sold', {
+          p_event_id: booking.event_id,
+          qty: booking.quantity,
+        });
+        ticketsRestored += booking.quantity;
       }
     }
   }
@@ -72,31 +64,17 @@ export async function GET(request: NextRequest) {
       if (items) {
         for (const item of items) {
           if (item.variant_id) {
-            // Restore variant stock
-            const { data: variant } = await supabase
-              .from('product_variants')
-              .select('stock_quantity')
-              .eq('id', item.variant_id)
-              .single();
-            if (variant && variant.stock_quantity !== null) {
-              await supabase
-                .from('product_variants')
-                .update({ stock_quantity: variant.stock_quantity + item.quantity })
-                .eq('id', item.variant_id);
-            }
+            // Atomically restore variant stock
+            await supabase.rpc('restore_variant_stock', {
+              p_variant_id: item.variant_id,
+              qty: item.quantity,
+            });
           } else {
-            // Restore product stock
-            const { data: product } = await supabase
-              .from('products')
-              .select('stock_quantity')
-              .eq('id', item.product_id)
-              .single();
-            if (product && product.stock_quantity !== null) {
-              await supabase
-                .from('products')
-                .update({ stock_quantity: product.stock_quantity + item.quantity })
-                .eq('id', item.product_id);
-            }
+            // Atomically restore product stock
+            await supabase.rpc('restore_stock', {
+              p_product_id: item.product_id,
+              qty: item.quantity,
+            });
           }
         }
       }

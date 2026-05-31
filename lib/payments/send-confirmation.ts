@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { stripPlus } from '@/lib/utils/phone';
@@ -252,6 +253,7 @@ export async function sendProactiveConfirmation(
         });
       } catch (pcErr) {
         logger.error(`${logPrefix} Post-completion error:`, pcErr);
+        Sentry.captureException(pcErr, { tags: { component: 'send-confirmation', operation: 'post-completion' } });
       }
     }
 
@@ -334,6 +336,7 @@ export async function sendProactiveConfirmation(
       }
     } catch (ticketErr) {
       logger.error(`${logPrefix} Ticket send error:`, ticketErr);
+      Sentry.captureException(ticketErr, { tags: { component: 'send-confirmation', operation: 'ticket-send' } });
     }
 
     // ── 8b. Send email confirmation — always send if guest has email (WhatsApp + email) ──
@@ -378,5 +381,6 @@ export async function sendProactiveConfirmation(
     }
   } catch (err) {
     logger.error(`${logPrefix} Send confirmation error:`, err);
+    Sentry.captureException(err, { tags: { component: 'send-confirmation', operation: 'send-confirmation' } });
   }
 }

@@ -107,9 +107,15 @@ export async function checkRateLimitAsync(
   windowMs: number,
 ): Promise<RateLimitResult> {
   if (useRedis) {
-    const rl = getRedisLimiter(maxRequests, windowMs);
-    const { success, remaining, reset } = await rl.limit(key);
-    return { allowed: success, remaining, resetAt: reset };
+    try {
+      const rl = getRedisLimiter(maxRequests, windowMs);
+      const { success, remaining, reset } = await rl.limit(key);
+      return { allowed: success, remaining, resetAt: reset };
+    } catch (err) {
+      // Redis failure — fall back to in-memory so bot messages keep flowing
+      console.error('[RATE-LIMIT] Redis error, falling back to in-memory:', err);
+      return checkInMemory(key, maxRequests, windowMs);
+    }
   }
   return checkInMemory(key, maxRequests, windowMs);
 }
@@ -124,22 +130,28 @@ export async function rateLimitResponseAsync(
   windowMs: number,
 ): Promise<Response | null> {
   if (useRedis) {
-    const rl = getRedisLimiter(maxRequests, windowMs);
-    const { success, remaining, reset } = await rl.limit(key);
-    if (!success) {
-      return new Response(
-        JSON.stringify({ error: 'Too many requests. Please try again later.' }),
-        {
-          status: 429,
-          headers: {
-            'Content-Type': 'application/json',
-            'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
-            'X-RateLimit-Remaining': String(remaining),
+    try {
+      const rl = getRedisLimiter(maxRequests, windowMs);
+      const { success, remaining, reset } = await rl.limit(key);
+      if (!success) {
+        return new Response(
+          JSON.stringify({ error: 'Too many requests. Please try again later.' }),
+          {
+            status: 429,
+            headers: {
+              'Content-Type': 'application/json',
+              'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
+              'X-RateLimit-Remaining': String(remaining),
+            },
           },
-        },
-      );
+        );
+      }
+      return null;
+    } catch (err) {
+      // Redis failure — fall back to in-memory so requests keep flowing
+      console.error('[RATE-LIMIT] Redis error, falling back to in-memory:', err);
+      return rateLimitResponse(key, maxRequests, windowMs);
     }
-    return null;
   }
 
   // Fallback to in-memory

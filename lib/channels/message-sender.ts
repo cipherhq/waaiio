@@ -13,7 +13,11 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Pr
     try {
       return await fn();
     } catch (err) {
-      if (i === retries) throw err;
+      // Don't retry client errors (4xx) — they won't succeed on retry.
+      // Meta Cloud API errors include the HTTP status in the message (e.g. "Cloud API error: 400").
+      const errMsg = err instanceof Error ? err.message : String(err);
+      const is4xx = /\b4\d{2}\b/.test(errMsg);
+      if (is4xx || i === retries) throw err;
       await new Promise(r => setTimeout(r, delay * (i + 1)));
     }
   }
