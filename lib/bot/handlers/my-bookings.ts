@@ -407,6 +407,15 @@ export async function handleModifyBooking(
       sessionData.skip_service = true;
     }
 
+    // Clean up old inactive sessions for this phone+business to avoid
+    // UNIQUE constraint violation on idx_bot_sessions_phone_business
+    // (the index covers all rows, not just active ones)
+    await supabase.from('bot_sessions')
+      .delete()
+      .eq('whatsapp_number', from)
+      .eq('business_id', biz.id)
+      .eq('is_active', false);
+
     await supabase.from('bot_sessions').update({
       current_step: 'select_date',
       session_data: sessionData,

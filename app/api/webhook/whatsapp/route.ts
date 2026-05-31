@@ -81,11 +81,14 @@ export async function POST(request: NextRequest) {
     const source = (payload.source || (payload.sender as Record<string, unknown>)?.phone || body.source || '') as string;
     const destination = (payload.destination || body.destination || '') as string;
 
-    // Text extraction: Gupshup nests text inside payload.payload.text for text messages
-    // For button replies: payload.payload.postbackText or payload.payload.title
+    // Text extraction: Gupshup nests text inside payload.payload for all message types
+    // - Text messages: payload.payload.text
+    // - Button replies: payload.payload.postbackText or payload.payload.title
+    // - List replies: payload.payload.id or payload.payload.postbackText or payload.payload.title
+    //   (Gupshup list replies use "id" for the postback value, not "postbackText")
     let text = '';
     if (typeof innerPayload === 'object' && innerPayload) {
-      text = (innerPayload.text || innerPayload.postbackText || innerPayload.title || '') as string;
+      text = (innerPayload.text || innerPayload.postbackText || innerPayload.id || innerPayload.title || '') as string;
     }
     if (!text) {
       text = (payload.text || '') as string;
