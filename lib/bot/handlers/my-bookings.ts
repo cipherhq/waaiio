@@ -107,6 +107,11 @@ export async function handleMyBookings(
       buttonLabel: 'View All',
       items,
     });
+    await messageSender.sendButtons({
+      to: from,
+      body: 'Or go back:',
+      buttons: [{ id: 'back_to_account', title: 'My Account' }],
+    });
     return;
   }
 
