@@ -134,6 +134,12 @@ export async function POST(request: NextRequest) {
     // Apply filters
     for (const f of filters) {
       const { column, op, value } = f;
+
+      // Validate column name — alphanumeric + underscores only (prevents JSONB operator injection)
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(column)) {
+        continue; // Skip invalid column names silently
+      }
+
       switch (op) {
         case 'eq': query = query.eq(column, value); break;
         case 'neq': query = query.neq(column, value); break;
@@ -149,7 +155,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (order) {
-      query = query.order(order.column, { ascending: order.ascending ?? false });
+      // Validate order column name — alphanumeric + underscores only
+      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(order.column)) {
+        query = query.order(order.column, { ascending: order.ascending ?? false });
+      }
     }
 
     if (limit) {

@@ -46,6 +46,24 @@ export default async function DashboardLayout({
 
     // Impersonation is admin-only — must match token issuance and validation endpoints
     if (adminProfile && adminProfile.role === 'admin') {
+      // Verify impersonation token exists and is valid (used, not expired)
+      const { data: tokenRecord } = await supabase
+        .from('admin_impersonation_tokens')
+        .select('id, expires_at')
+        .eq('admin_id', impersonateAdminId)
+        .eq('business_id', impersonateBusinessId)
+        .not('used_at', 'is', null) // Must have been used (validated)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!tokenRecord || new Date(tokenRecord.expires_at) < new Date()) {
+        // Token expired or doesn't exist — clear cookies and proceed to normal flow
+        const cs = await cookies();
+        cs.delete('impersonate_business_id');
+        cs.delete('impersonate_admin_id');
+        // Fall through to normal business loading below
+      } else {
       // Load the impersonated business
       const { data: impBiz } = await supabase
         .from('businesses')
@@ -101,6 +119,7 @@ export default async function DashboardLayout({
           </DashboardProvider>
         );
       }
+      } // end else (valid token)
     }
   }
 

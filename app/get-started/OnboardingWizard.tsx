@@ -77,37 +77,37 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
     title: 'Join businesses across 5 countries',
     subtitle: 'Create your account in seconds to get started with WhatsApp automation.',
     bullets: ['No credit card required', '30-day free trial', 'Setup in under 5 minutes'],
-    visual: '&#x1F512;',
+    visual: '\u{1F512}',
   },
   category: {
     title: 'Tell us about your business',
     subtitle: 'Select your country and industry to get started.',
     bullets: ['Available in 5 countries', '40+ business categories', 'Industry-specific automation'],
-    visual: '&#x1F3ED;',
+    visual: '\u{1F3ED}',
   },
   features: {
     title: 'Pick your features',
     subtitle: 'Choose exactly what your WhatsApp bot should do. You can always change this later.',
     bullets: ['Only see what you need', 'Pre-selected based on your industry', 'Add or remove anytime from settings'],
-    visual: '&#x2699;',
+    visual: '\u{2699}',
   },
   plan: {
     title: 'Choose your plan',
     subtitle: 'Each plan unlocks more capabilities for your business.',
     bullets: ['Free 30-day trial', 'Pay-as-you-go transaction fees', 'Upgrade or downgrade anytime', 'Pro & Premium: connect your own WhatsApp number'],
-    visual: '&#x1F4B3;',
+    visual: '\u{1F4B3}',
   },
   details: {
     title: 'Business information',
     subtitle: 'Set up your business profile and WhatsApp connection.',
     bullets: ['Google address autocomplete', 'Localized payment gateways', 'Custom WhatsApp bot code'],
-    visual: '&#x1F4CD;',
+    visual: '\u{1F4CD}',
   },
   success: {
     title: 'You\'re live!',
     subtitle: 'Your WhatsApp automation is ready. Share your link and start accepting customers.',
     bullets: ['Share your WhatsApp link', 'Test the bot yourself', 'Manage everything from your dashboard'],
-    visual: '&#x1F680;',
+    visual: '\u{1F680}',
   },
 };
 
@@ -1091,7 +1091,7 @@ function OnboardingWizard() {
           </Link>
 
           <div className="flex-1 flex flex-col justify-center">
-            <div className="mb-6 text-6xl" dangerouslySetInnerHTML={{ __html: panel.visual }} />
+            <div className="mb-6 text-6xl">{panel.visual}</div>
             <h2 className="text-2xl font-bold text-white">{panel.title}</h2>
             <p className="mt-2 text-sm leading-relaxed text-brand-200">{panel.subtitle}</p>
             <ul className="mt-8 space-y-3">
