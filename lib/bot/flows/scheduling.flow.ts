@@ -343,6 +343,26 @@ export const schedulingFlow: FlowDefinition = {
           .order('sort_order');
 
         if (!services || services.length === 0) {
+          // Set default values so downstream steps don't crash on null service data
+          ctx.session.session_data.service_id = null;
+          ctx.session.session_data.service_name = 'General';
+          ctx.session.session_data.service_price = 0;
+          ctx.session.session_data.service_duration = 30;
+          ctx.session.session_data.service_deposit = null;
+          ctx.session.session_data.service_billing_type = 'one_time';
+          ctx.session.session_data.service_recurring_interval = null;
+          ctx.session.session_data._service_available_days = [];
+          ctx.session.session_data._service_available_from = null;
+          ctx.session.session_data._service_available_to = null;
+          ctx.session.session_data._service_max_capacity = 1;
+          ctx.session.session_data._service_buffer_minutes = 0;
+          ctx.session.session_data._service_metadata = null;
+          ctx.session.session_data._auto_approve = true;
+          ctx.session.session_data._service_requires_staff = false;
+          ctx.session.session_data._service_staff_ids = [];
+          ctx.session.session_data._service_allow_staff_selection = false;
+          ctx.session.session_data._service_is_class = false;
+          ctx.session.session_data._service_class_schedule = [];
           ctx.session.session_data.skip_service = true;
           return true;
         }

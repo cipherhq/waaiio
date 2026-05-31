@@ -2402,20 +2402,8 @@ export const orderingFlow: FlowDefinition = {
           }
           await ctx.supabase.from('order_items').insert(itemPayload);
 
-          // Decrement stock: use variant stock if applicable, otherwise product stock
-          if (item.variant_id) {
-            const { error: stockErr } = await ctx.supabase.rpc('decrement_variant_stock', {
-              p_variant_id: item.variant_id,
-              qty: item.quantity,
-            });
-            if (stockErr) console.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
-          } else {
-            const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
-              p_product_id: item.product_id,
-              qty: item.quantity,
-            });
-            if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
-          }
+          // Stock is decremented AFTER payment verification in await_order_payment.validate()
+          // For free orders, it's decremented below before confirmation.
         }
 
         d.order_id = order.id;
@@ -2552,6 +2540,23 @@ export const orderingFlow: FlowDefinition = {
               ],
             },
           ];
+        }
+
+        // Free order — decrement stock immediately (no payment needed)
+        for (const item of cart) {
+          if (item.variant_id) {
+            const { error: stockErr } = await ctx.supabase.rpc('decrement_variant_stock', {
+              p_variant_id: item.variant_id,
+              qty: item.quantity,
+            });
+            if (stockErr) console.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
+          } else {
+            const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
+              p_product_id: item.product_id,
+              qty: item.quantity,
+            });
+            if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
+          }
         }
 
         // Free order — confirm immediately
@@ -2727,6 +2732,24 @@ export const orderingFlow: FlowDefinition = {
             }
 
             const cart = (sd.cart as CartItem[]) || [];
+
+            // Decrement stock now that payment is verified
+            for (const item of cart) {
+              if (item.variant_id) {
+                const { error: stockErr } = await ctx.supabase.rpc('decrement_variant_stock', {
+                  p_variant_id: item.variant_id,
+                  qty: item.quantity,
+                });
+                if (stockErr) console.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
+              } else {
+                const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
+                  p_product_id: item.product_id,
+                  qty: item.quantity,
+                });
+                if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
+              }
+            }
+
             const totalAmount = (sd.total_amount as number) || 0;
             const zoneName = sd.delivery_zone_name as string | undefined;
             const zonePrice = (sd.delivery_zone_price as number) || 0;

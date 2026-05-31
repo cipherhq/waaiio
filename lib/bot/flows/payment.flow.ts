@@ -275,17 +275,7 @@ export const paymentFlow: FlowDefinition = {
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
 
-        // Record platform fee
-        if (ctx.business) {
-          const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
-          await recordPlatformFee(ctx.supabase, {
-            businessId: ctx.business.id,
-            bookingId: booking.id,
-            transactionAmount: amount,
-            tier: ctx.business.subscription_tier as SubscriptionTier,
-            isInTrial,
-          });
-        }
+        // Platform fee is recorded AFTER payment verification in await_payment.validate()
 
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const paymentResult = await initializePayment(ctx.supabase, {
@@ -455,6 +445,18 @@ export const paymentFlow: FlowDefinition = {
                     last_seen_at: now,
                   });
               }
+            }
+
+            // Record platform fee now that payment is verified
+            if (ctx.business) {
+              const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+              recordPlatformFee(ctx.supabase, {
+                businessId: ctx.business.id,
+                bookingId: d.booking_id as string,
+                transactionAmount: d.amount as number,
+                tier: ctx.business.subscription_tier as SubscriptionTier,
+                isInTrial,
+              }).catch(err => console.error('[PAYMENT] recordPlatformFee error:', err));
             }
 
             const labels = getCategoryLabels(ctx.business?.category || 'church');

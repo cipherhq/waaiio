@@ -22,8 +22,7 @@ const loyaltyMenuStep: FlowStepConfig = {
     const businessId = ctx.session.business_id || ctx.session.session_data.loyalty_business_id as string;
     if (!businessId) {
       ctx.session.session_data._loyalty_empty = true;
-      await ctx.sender.sendText({ to: ctx.from, text: "You don't have any loyalty points yet. Start using our services to earn rewards!" });
-      return [];
+      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! Send *Hi* to start over." }];
     }
 
     const { data: loyalty } = await ctx.supabase
@@ -35,8 +34,7 @@ const loyaltyMenuStep: FlowStepConfig = {
 
     if (!loyalty) {
       ctx.session.session_data._loyalty_empty = true;
-      await ctx.sender.sendText({ to: ctx.from, text: "You don't have any loyalty points yet. Start using our services to earn rewards!" });
-      return [];
+      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! Send *Hi* to start over." }];
     }
 
     // Store loyalty ID for later steps
@@ -84,7 +82,7 @@ const loyaltyMenuStep: FlowStepConfig = {
     const action = ctx.session.session_data._loyalty_action;
     if (action === 'history') return 'loyalty_history';
     if (action === 'redeem') return 'loyalty_redeem';
-    if (action === 'back') return 'my_account_menu';
+    if (action === 'back') return null; // End session cleanly when no loyalty data
     return null;
   },
 };

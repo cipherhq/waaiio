@@ -214,10 +214,37 @@ export const ticketingFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const qty = parseInt(input, 10);
-        const available = ctx.session.session_data.event_available as number;
 
         if (isNaN(qty) || qty < 1) {
           return { valid: false, errorMessage: 'Please enter a valid number.' };
+        }
+
+        // Re-query fresh availability to avoid stale session data
+        const eventId = ctx.session.session_data.event_id as string;
+        const ticketTypeId = ctx.session.session_data.ticket_type_id as string | undefined;
+        let available: number;
+
+        if (ticketTypeId) {
+          const { data: tt } = await ctx.supabase
+            .from('event_ticket_types')
+            .select('total_tickets, tickets_sold')
+            .eq('id', ticketTypeId)
+            .single();
+          available = tt ? tt.total_tickets - tt.tickets_sold : 0;
+        } else {
+          const { data: event } = await ctx.supabase
+            .from('events')
+            .select('total_tickets, tickets_sold')
+            .eq('id', eventId)
+            .single();
+          available = event ? event.total_tickets - event.tickets_sold : 0;
+        }
+
+        // Update session with fresh availability
+        ctx.session.session_data.event_available = available;
+
+        if (available <= 0) {
+          return { valid: false, errorMessage: 'Sorry, this event just sold out!' };
         }
         if (qty > available) {
           return { valid: false, errorMessage: `Only ${available} tickets available.` };
@@ -369,47 +396,8 @@ export const ticketingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
         }
 
-        // Update tickets_sold
-        const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
-          event_id: d.event_id as string,
-          qty,
-        });
-
-        if (rpcError) {
-          // Fallback: manual increment
-          const { data: ev, error: evError } = await ctx.supabase
-            .from('events')
-            .select('tickets_sold')
-            .eq('id', d.event_id as string)
-            .single();
-          if (evError) {
-            console.error('[TICKETING] Failed to fetch event for manual increment:', evError.message);
-          }
-          if (ev) {
-            await ctx.supabase
-              .from('events')
-              .update({ tickets_sold: ev.tickets_sold + qty })
-              .eq('id', d.event_id as string);
-          }
-        }
-
-        // Increment tickets_sold on the ticket type if one was selected
-        if (d.ticket_type_id) {
-          const { data: tt, error: ttError } = await ctx.supabase
-            .from('event_ticket_types')
-            .select('tickets_sold')
-            .eq('id', d.ticket_type_id as string)
-            .single();
-          if (ttError) {
-            console.error('[TICKETING] Failed to fetch ticket type for increment:', ttError.message);
-          }
-          if (tt) {
-            await ctx.supabase
-              .from('event_ticket_types')
-              .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
-              .eq('id', d.ticket_type_id as string);
-          }
-        }
+        // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
+        // For free events, it's incremented below before confirmation.
 
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
@@ -463,6 +451,38 @@ export const ticketingFlow: FlowDefinition = {
               text: `Something went wrong setting up your payment. Please type *Hi* to try again.`,
             },
           ];
+        }
+
+        // Free event — increment tickets_sold immediately (no payment needed)
+        const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
+          event_id: d.event_id as string,
+          qty,
+        });
+        if (rpcError) {
+          const { data: ev } = await ctx.supabase
+            .from('events')
+            .select('tickets_sold')
+            .eq('id', d.event_id as string)
+            .single();
+          if (ev) {
+            await ctx.supabase
+              .from('events')
+              .update({ tickets_sold: ev.tickets_sold + qty })
+              .eq('id', d.event_id as string);
+          }
+        }
+        if (d.ticket_type_id) {
+          const { data: tt } = await ctx.supabase
+            .from('event_ticket_types')
+            .select('tickets_sold')
+            .eq('id', d.ticket_type_id as string)
+            .single();
+          if (tt) {
+            await ctx.supabase
+              .from('event_ticket_types')
+              .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
+              .eq('id', d.ticket_type_id as string);
+          }
         }
 
         // Free event — send tickets before marking complete
@@ -639,6 +659,39 @@ export const ticketingFlow: FlowDefinition = {
               }
 
               return { valid: true, data: { _action: 'already_confirmed' } };
+            }
+
+            // Increment tickets_sold now that payment is verified
+            const qty = (d.ticket_quantity as number) || 1;
+            const { error: rpcError } = await ctx.supabase.rpc('increment_tickets_sold', {
+              event_id: d.event_id as string,
+              qty,
+            });
+            if (rpcError) {
+              const { data: ev } = await ctx.supabase
+                .from('events')
+                .select('tickets_sold')
+                .eq('id', d.event_id as string)
+                .single();
+              if (ev) {
+                await ctx.supabase
+                  .from('events')
+                  .update({ tickets_sold: ev.tickets_sold + qty })
+                  .eq('id', d.event_id as string);
+              }
+            }
+            if (d.ticket_type_id) {
+              const { data: tt } = await ctx.supabase
+                .from('event_ticket_types')
+                .select('tickets_sold')
+                .eq('id', d.ticket_type_id as string)
+                .single();
+              if (tt) {
+                await ctx.supabase
+                  .from('event_ticket_types')
+                  .update({ tickets_sold: (tt.tickets_sold || 0) + qty })
+                  .eq('id', d.ticket_type_id as string);
+              }
             }
 
             const dateLabel = new Date((d.event_date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), {

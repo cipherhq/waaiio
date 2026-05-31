@@ -98,7 +98,7 @@ const selectAppointmentStep: FlowStepConfig = {
     // Fuzzy match by name
     const { data: all } = await ctx.supabase
       .from('appointments')
-      .select('id, name, price, duration_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
+      .select('id, name, price, deposit_amount, duration_minutes, max_capacity, auto_approve, requires_staff, staff_ids, allow_staff_selection, available_days, available_from, available_to')
       .eq('business_id', ctx.business!.id)
       .eq('is_active', true);
 
@@ -112,6 +112,7 @@ const selectAppointmentStep: FlowStepConfig = {
             service_id: match.id,
             service_name: match.name,
             service_price: match.price,
+            service_deposit: match.deposit_amount || 0,
             service_duration: match.duration_minutes,
             _service_requires_staff: match.requires_staff,
             _service_staff_ids: match.staff_ids,

@@ -66,6 +66,11 @@ const queueStartStep: FlowStepConfig = {
           to: ctx.from,
           text: "We'll notify you when the queue reopens. Send *Hi* to do something else.",
         });
+      } else if (normalized === 'no_thanks') {
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: "No problem! You can check back later. Type *Hi* to start again.",
+        });
       }
       return { valid: true };
     }

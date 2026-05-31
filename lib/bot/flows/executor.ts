@@ -224,6 +224,30 @@ export class FlowExecutor {
       }
     }
 
+    // Check for media messages at text-only steps
+    // If mediaType is set (image, audio, video, sticker, document) and the input is empty
+    // or looks like a media URL, prompt user to reply with text instead
+    const isMediaMessage = mediaType && ['image', 'audio', 'video', 'sticker', 'voice', 'document'].includes(mediaType);
+    const isEmptyOrMediaOnly = !input.trim() || (isMediaMessage && !input.trim());
+    if (isMediaMessage && isEmptyOrMediaOnly) {
+      const mediaHint = await this.maybeTranslate(
+        'Please reply with text. Photos and voice notes aren\'t supported at this step.',
+        session,
+      );
+      const cancelHint = await this.maybeTranslate('Type *cancel* to exit or *start over* to restart.', session);
+      const errText = `${mediaHint}\n\n_${cancelHint}_`;
+      session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
+      await this.sendText(from, errText);
+      // Re-send interactive prompts so user gets fresh clickable options
+      const retryMessages = await step.prompt(ctx);
+      if (retryMessages.some(m => m.type === 'buttons' || m.type === 'list')) {
+        this.logPromptMessages(session, retryMessages);
+        await this.sendMessages(from, retryMessages);
+      }
+      await this.persistConversationLog(session.id, session.conversation_log);
+      return;
+    }
+
     // Validate input
     const result = await step.validate(input, ctx);
 

@@ -17,8 +17,7 @@ const invoiceListStep: FlowStepConfig = {
 
     if (!businessId) {
       ctx.session.session_data._invoice_empty = true;
-      await ctx.sender.sendText({ to: ctx.from, text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705' });
-      return [];
+      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705 Send *Hi* to start over.' }];
     }
 
     const { data: invoices } = await ctx.supabase
@@ -32,8 +31,7 @@ const invoiceListStep: FlowStepConfig = {
 
     if (!invoices || invoices.length === 0) {
       ctx.session.session_data._invoice_empty = true;
-      await ctx.sender.sendText({ to: ctx.from, text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705' });
-      return [];
+      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705 Send *Hi* to start over.' }];
     }
 
     // Store invoice list for selection
@@ -78,7 +76,7 @@ const invoiceListStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
-    if (ctx.session.session_data._invoice_empty) return 'my_account_menu';
+    if (ctx.session.session_data._invoice_empty) return null; // End session cleanly when no invoices
     return 'invoice_detail';
   },
 };
