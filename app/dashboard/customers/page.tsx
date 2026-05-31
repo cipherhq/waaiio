@@ -146,6 +146,11 @@ export default function CustomersPage() {
   const [waSending, setWaSending] = useState(false);
   const [waSent, setWaSent] = useState(false);
 
+  // Customer deletion
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const toggleSelect = (id: string) => setSelectedIds(prev => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
@@ -298,6 +303,34 @@ export default function CustomersPage() {
       ),
     );
     setSaving(false);
+  }
+
+  /* ---- Delete customer (GDPR erasure) ---- */
+
+  async function handleDeleteCustomer() {
+    if (!selected?.phone) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const res = await fetch('/api/customers/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, customer_phone: selected.phone }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setDeleteError(data.error || 'Failed to delete customer data');
+        setDeleting(false);
+        return;
+      }
+      // Remove from local state and close drawer
+      setCustomers((prev) => prev.filter((c) => c.id !== selected.id));
+      setSelectedId(null);
+      setShowDeleteConfirm(false);
+    } catch {
+      setDeleteError('Something went wrong. Please try again.');
+    }
+    setDeleting(false);
   }
 
   /* ---- CSV export ---- */
@@ -1186,6 +1219,45 @@ export default function CustomersPage() {
                       </a>
                     )
                   )}
+
+                  {/* Delete Customer Data (GDPR) */}
+                  <div className="mt-8 border-t border-gray-100 dark:border-gray-700 pt-6">
+                    {!showDeleteConfirm ? (
+                      <button
+                        onClick={() => { setShowDeleteConfirm(true); setDeleteError(''); }}
+                        className="w-full rounded-lg border border-red-200 px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/20"
+                      >
+                        Delete Customer Data
+                      </button>
+                    ) : (
+                      <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50/50 dark:bg-red-900/10 p-4">
+                        <p className="text-sm font-medium text-red-700 dark:text-red-400">
+                          Delete all data for {selected.name || 'this customer'}?
+                        </p>
+                        <p className="mt-1 text-xs text-red-600/80 dark:text-red-400/70">
+                          This removes their bookings, orders, and contact info from your records. Financial totals are preserved for accounting. This cannot be undone.
+                        </p>
+                        {deleteError && (
+                          <p className="mt-2 text-xs text-red-600">{deleteError}</p>
+                        )}
+                        <div className="mt-3 flex gap-2">
+                          <button
+                            onClick={handleDeleteCustomer}
+                            disabled={deleting}
+                            className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            {deleting ? 'Deleting...' : 'Confirm Delete'}
+                          </button>
+                          <button
+                            onClick={() => { setShowDeleteConfirm(false); setDeleteError(''); }}
+                            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>

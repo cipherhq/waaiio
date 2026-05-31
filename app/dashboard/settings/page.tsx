@@ -50,6 +50,7 @@ export default function SettingsPage() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState('');
   const [exportSuccess, setExportSuccess] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'json' | 'csv'>('json');
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [analyticsConsent, setAnalyticsConsent] = useState(false);
   const [aiConsent, setAiConsent] = useState(true);
@@ -94,6 +95,19 @@ export default function SettingsPage() {
   const [emailError, setEmailError] = useState('');
   const [waChannel, setWaChannel] = useState<{ wa_method: string; channel: { phone_number: string; display_name: string; connection_status: string } | null } | null>(null);
   const [waDisconnecting, setWaDisconnecting] = useState(false);
+
+  // MFA / Two-Factor Authentication state
+  const [mfaStatus, setMfaStatus] = useState<'loading' | 'disabled' | 'enabled'>('loading');
+  const [mfaFactorId, setMfaFactorId] = useState<string | null>(null);
+  const [mfaEnrolling, setMfaEnrolling] = useState(false);
+  const [mfaQrCode, setMfaQrCode] = useState<string | null>(null);
+  const [mfaSecret, setMfaSecret] = useState<string | null>(null);
+  const [mfaNewFactorId, setMfaNewFactorId] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaVerifying, setMfaVerifying] = useState(false);
+  const [mfaError, setMfaError] = useState('');
+  const [mfaSuccess, setMfaSuccess] = useState('');
+  const [mfaUnenrolling, setMfaUnenrolling] = useState(false);
   // Post-upgrade capabilities modal state
   const [showCapModal, setShowCapModal] = useState(false);
   const [upgradedTier, setUpgradedTier] = useState<SubscriptionTier | null>(null);
@@ -372,6 +386,125 @@ export default function SettingsPage() {
         window.history.replaceState({}, '', '/dashboard/settings');
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load MFA status on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.auth.mfa.listFactors();
+        if (error || !data) {
+          setMfaStatus('disabled');
+          return;
+        }
+        const verifiedTOTP = data.totp.find((f: { status: string }) => f.status === 'verified');
+        if (verifiedTOTP) {
+          setMfaStatus('enabled');
+          setMfaFactorId(verifiedTOTP.id);
+        } else {
+          setMfaStatus('disabled');
+        }
+      } catch {
+        setMfaStatus('disabled');
+      }
+    })();
+  }, []);
+
+  async function handleMfaEnroll() {
+    setMfaEnrolling(true);
+    setMfaError('');
+    setMfaSuccess('');
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+      if (error) {
+        setMfaError(error.message || 'Failed to start MFA enrollment.');
+        setMfaEnrolling(false);
+        return;
+      }
+      setMfaNewFactorId(data.id);
+      setMfaQrCode(data.totp.qr_code);
+      setMfaSecret(data.totp.secret);
+    } catch {
+      setMfaError('Something went wrong. Please try again.');
+    } finally {
+      setMfaEnrolling(false);
+    }
+  }
+
+  async function handleMfaVerify() {
+    if (!mfaNewFactorId || mfaCode.length !== 6) return;
+    setMfaVerifying(true);
+    setMfaError('');
+    try {
+      const supabase = createClient();
+      const { data: challengeData, error: challengeError } = await supabase.auth.mfa.challenge({
+        factorId: mfaNewFactorId,
+      });
+      if (challengeError) {
+        setMfaError(challengeError.message || 'Failed to create MFA challenge.');
+        setMfaVerifying(false);
+        return;
+      }
+      const { error: verifyError } = await supabase.auth.mfa.verify({
+        factorId: mfaNewFactorId,
+        challengeId: challengeData.id,
+        code: mfaCode,
+      });
+      if (verifyError) {
+        setMfaError(verifyError.message || 'Invalid code. Please try again.');
+        setMfaVerifying(false);
+        return;
+      }
+      setMfaStatus('enabled');
+      setMfaFactorId(mfaNewFactorId);
+      setMfaQrCode(null);
+      setMfaSecret(null);
+      setMfaNewFactorId(null);
+      setMfaCode('');
+      setMfaSuccess('Two-factor authentication enabled successfully.');
+      // Audit log
+      fetch('/api/account/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mfa_enabled' }),
+      }).catch(() => {});
+    } catch {
+      setMfaError('Something went wrong. Please try again.');
+    } finally {
+      setMfaVerifying(false);
+    }
+  }
+
+  async function handleMfaUnenroll() {
+    if (!mfaFactorId) return;
+    if (!confirm('Are you sure you want to disable two-factor authentication? This will make your account less secure.')) return;
+    setMfaUnenrolling(true);
+    setMfaError('');
+    setMfaSuccess('');
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.mfa.unenroll({ factorId: mfaFactorId });
+      if (error) {
+        setMfaError(error.message || 'Failed to disable MFA.');
+        setMfaUnenrolling(false);
+        return;
+      }
+      setMfaStatus('disabled');
+      setMfaFactorId(null);
+      setMfaSuccess('Two-factor authentication has been disabled.');
+      // Audit log
+      fetch('/api/account/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mfa_disabled' }),
+      }).catch(() => {});
+    } catch {
+      setMfaError('Something went wrong. Please try again.');
+    } finally {
+      setMfaUnenrolling(false);
+    }
+  }
 
   async function handleUpgrade(plan: SubscriptionTier) {
     setUpgrading(true);
@@ -3392,6 +3525,135 @@ export default function SettingsPage() {
             </button>
           </div>
 
+          {/* Two-Factor Authentication */}
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-sm font-semibold text-gray-900">Two-Factor Authentication</h2>
+            <p className="mt-2 text-sm text-gray-600">
+              Add an extra layer of security to your account using an authenticator app like Google Authenticator, Authy, or 1Password.
+            </p>
+
+            {mfaStatus === 'loading' && (
+              <div className="mt-4 flex items-center gap-2">
+                <svg aria-hidden="true" className="h-4 w-4 animate-spin text-gray-400" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <span className="text-sm text-gray-400">Checking MFA status...</span>
+              </div>
+            )}
+
+            {mfaStatus === 'enabled' && !mfaQrCode && (
+              <div className="mt-4">
+                <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2">
+                  <svg aria-hidden="true" className="h-4 w-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <span className="text-sm font-medium text-green-700">Two-factor authentication is enabled</span>
+                </div>
+                <button
+                  onClick={handleMfaUnenroll}
+                  disabled={mfaUnenrolling}
+                  className="mt-3 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {mfaUnenrolling ? 'Disabling...' : 'Disable Two-Factor'}
+                </button>
+              </div>
+            )}
+
+            {mfaStatus === 'disabled' && !mfaQrCode && (
+              <div className="mt-4">
+                <div className="flex items-center gap-2 rounded-lg bg-yellow-50 px-3 py-2">
+                  <svg aria-hidden="true" className="h-4 w-4 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.27 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                  <span className="text-sm text-yellow-700">Two-factor authentication is not enabled</span>
+                </div>
+                <button
+                  onClick={handleMfaEnroll}
+                  disabled={mfaEnrolling}
+                  className="mt-3 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {mfaEnrolling ? 'Setting up...' : 'Enable Two-Factor'}
+                </button>
+              </div>
+            )}
+
+            {/* QR Code enrollment step */}
+            {mfaQrCode && (
+              <div className="mt-4 space-y-4">
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                  <p className="text-sm font-medium text-gray-900">Step 1: Scan QR code</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Open your authenticator app and scan this QR code.
+                  </p>
+                  <div className="mt-3 flex justify-center">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={mfaQrCode} alt="MFA QR Code" className="h-48 w-48 rounded-lg" />
+                  </div>
+                  {mfaSecret && (
+                    <div className="mt-3">
+                      <p className="text-xs text-gray-500">
+                        Or enter this code manually:
+                      </p>
+                      <code className="mt-1 block rounded bg-gray-100 px-3 py-2 text-xs font-mono text-gray-800 break-all select-all">
+                        {mfaSecret}
+                      </code>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-sm font-medium text-gray-900">Step 2: Enter verification code</p>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Enter the 6-digit code from your authenticator app to complete setup.
+                  </p>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={mfaCode}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '').slice(0, 6);
+                      setMfaCode(val);
+                      setMfaError('');
+                    }}
+                    placeholder="000000"
+                    className="mt-2 w-full max-w-[200px] rounded-lg border border-gray-200 px-3 py-2 text-center text-lg font-mono tracking-widest outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleMfaVerify}
+                    disabled={mfaVerifying || mfaCode.length !== 6}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {mfaVerifying ? 'Verifying...' : 'Verify & Enable'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMfaQrCode(null);
+                      setMfaSecret(null);
+                      setMfaNewFactorId(null);
+                      setMfaCode('');
+                      setMfaError('');
+                    }}
+                    className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {mfaError && (
+              <p className="mt-3 text-sm text-red-600">{mfaError}</p>
+            )}
+            {mfaSuccess && (
+              <p className="mt-3 text-sm text-green-600">{mfaSuccess}</p>
+            )}
+          </div>
+
           {/* Delete Account Card */}
           <div className="rounded-xl border-2 border-red-200 bg-white p-6">
             <h2 className="text-sm font-semibold text-red-600">Danger Zone</h2>
@@ -3462,10 +3724,32 @@ export default function SettingsPage() {
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Download My Data</h2>
             <p className="mt-2 text-sm text-gray-600">
-              Export all your data in JSON format. This includes your profile, businesses,
+              Export all your data. This includes your profile, businesses,
               bookings, orders, payments, customers, and more.
             </p>
             <p className="mt-1 text-xs text-gray-400">Limited to one export per 24 hours.</p>
+
+            {/* Format selector */}
+            <div className="mt-4 flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-700">Format:</label>
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setExportFormat('json')}
+                  className={`px-3 py-1.5 text-xs font-medium transition ${exportFormat === 'json' ? 'bg-brand text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                >
+                  JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExportFormat('csv')}
+                  className={`px-3 py-1.5 text-xs font-medium border-l border-gray-200 transition ${exportFormat === 'csv' ? 'bg-brand text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                >
+                  CSV
+                </button>
+              </div>
+            </div>
+
             {exportError && (
               <p className="mt-2 text-sm text-red-600">{exportError}</p>
             )}
@@ -3478,7 +3762,7 @@ export default function SettingsPage() {
                 setExportError('');
                 setExportSuccess(false);
                 try {
-                  const res = await fetch('/api/account/export', { method: 'POST' });
+                  const res = await fetch(`/api/account/export?format=${exportFormat}`, { method: 'POST' });
                   if (!res.ok) {
                     const data = await res.json();
                     setExportError(data.error || 'Failed to export data');
@@ -3489,7 +3773,8 @@ export default function SettingsPage() {
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement('a');
                   a.href = url;
-                  a.download = `waaiio-data-export-${new Date().toISOString().split('T')[0]}.json`;
+                  const ext = exportFormat === 'csv' ? 'csv' : 'json';
+                  a.download = `waaiio-data-export-${new Date().toISOString().split('T')[0]}.${ext}`;
                   document.body.appendChild(a);
                   a.click();
                   document.body.removeChild(a);

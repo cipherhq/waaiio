@@ -7,16 +7,32 @@
  */
 
 import { MetaCloudService } from './meta-cloud';
+import { isCircuitOpen, recordSuccess, recordFailure, CircuitBreakerOpenError } from '@/lib/circuit-breaker';
+
+const CIRCUIT_KEY = 'meta-cloud';
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 1000): Promise<T> {
+  // Check circuit breaker before attempting any call
+  if (isCircuitOpen(CIRCUIT_KEY)) {
+    throw new CircuitBreakerOpenError(CIRCUIT_KEY);
+  }
+
   for (let i = 0; i <= retries; i++) {
     try {
-      return await fn();
+      const result = await fn();
+      recordSuccess(CIRCUIT_KEY);
+      return result;
     } catch (err) {
       // Don't retry client errors (4xx) — they won't succeed on retry.
       // Meta Cloud API errors include the HTTP status in the message (e.g. "Cloud API error: 400").
       const errMsg = err instanceof Error ? err.message : String(err);
       const is4xx = /\b4\d{2}\b/.test(errMsg);
+
+      // Only record failure for server errors (5xx) or network errors, not client errors
+      if (!is4xx) {
+        recordFailure(CIRCUIT_KEY);
+      }
+
       if (is4xx || i === retries) throw err;
       await new Promise(r => setTimeout(r, delay * (i + 1)));
     }
