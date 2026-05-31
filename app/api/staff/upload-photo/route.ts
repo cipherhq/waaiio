@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
+  const limit = rateLimitResponse(getRateLimitKey(request, 'upload-staff'), 15, 60_000);
+  if (limit) return limit;
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -44,7 +48,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Image must be under 5MB' }, { status: 400 });
   }
 
-  const ext = file.name.split('.').pop() || 'jpg';
+  // Sanitize filename: strip path separators, limit to safe chars, truncate
+  const safeName = file.name
+    .replace(/[\/\\\.\.]+/g, '_')
+    .replace(/[^a-zA-Z0-9.\-_]/g, '_')
+    .slice(0, 100) || 'file';
+  const ext = safeName.split('.').pop() || 'jpg';
   const path = `staff-photos/${businessId}/${Date.now()}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 

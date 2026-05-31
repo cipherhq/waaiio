@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
+  const limit = rateLimitResponse(getRateLimitKey(request, 'upload-verification'), 10, 60_000);
+  if (limit) return limit;
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -32,8 +36,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Business not found or unauthorized' }, { status: 403 });
   }
 
+  // Sanitize filename: strip path separators, limit to safe chars, truncate
+  const safeName = file.name
+    .replace(/[\/\\\.\.]+/g, '_')
+    .replace(/[^a-zA-Z0-9.\-_]/g, '_')
+    .slice(0, 100) || 'file';
+
   // Validate file type
-  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const ext = safeName.split('.').pop()?.toLowerCase() || '';
   const allowedExts = ['pdf', 'jpg', 'jpeg', 'png', 'webp'];
   if (!allowedExts.includes(ext)) {
     return NextResponse.json({ error: 'Invalid file type. Allowed: PDF, JPG, PNG, WebP' }, { status: 400 });
@@ -75,7 +85,7 @@ export async function POST(request: NextRequest) {
       business_id: businessId,
       type: docType,
       file_url: urlData.publicUrl,
-      file_name: file.name,
+      file_name: safeName,
       status: 'pending',
     })
     .select('id')

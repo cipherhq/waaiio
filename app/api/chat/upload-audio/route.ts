@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
+  const limit = rateLimitResponse(getRateLimitKey(request, 'upload-audio'), 20, 60_000);
+  if (limit) return limit;
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
@@ -42,8 +46,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Audio must be under 16MB' }, { status: 400 });
   }
 
+  // Sanitize filename: strip path separators, limit to safe chars, truncate
+  const safeName = file.name
+    .replace(/[\/\\\.\.]+/g, '_')
+    .replace(/[^a-zA-Z0-9.\-_]/g, '_')
+    .slice(0, 100) || 'file';
   const ext = file.type.includes('webm') ? 'webm' : file.type.includes('ogg') ? 'ogg' : file.type.includes('mp4') ? 'mp4' : 'mp3';
-  const path = `chat-audio/${businessId}/${Date.now()}.${ext}`;
+  const path = `chat-audio/${businessId}/${Date.now()}-${safeName}.${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadError } = await supabase.storage

@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
+  const limit = rateLimitResponse(getRateLimitKey(request, 'upload-contracts'), 10, 60_000);
+  if (limit) return limit;
+
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) {
