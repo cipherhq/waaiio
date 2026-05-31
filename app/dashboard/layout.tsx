@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/dashboard/Sidebar';
 import { ImpersonationBanner } from '@/components/dashboard/ImpersonationBanner';
 import { AlertBanner } from '@/components/dashboard/AlertBanner';
 import { FloatingHelp } from '@/components/dashboard/FloatingHelp';
+import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
@@ -90,6 +91,7 @@ export default async function DashboardLayout({
               <ImpersonationBanner businessName={impersonatedBusinessName} />
               <AlertBanner />
               <Sidebar />
+              <IdleTimeout />
               <main className="md:pl-64">
                 <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
                   {children}
@@ -154,6 +156,7 @@ export default async function DashboardLayout({
               <a href="#main-content" className="skip-link">Skip to content</a>
         <AlertBanner />
         <Sidebar />
+        <IdleTimeout />
         <main className="md:pl-64">
           <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}

@@ -16,6 +16,7 @@ import {
   type CapabilityId,
   TIER_LABELS,
 } from '@/lib/capabilities/types';
+import { ReAuthModal } from '@/components/dashboard/ReAuthModal';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 const DAY_LABELS: Record<string, string> = {
@@ -121,6 +122,7 @@ export default function SettingsPage() {
   const [deleteConfirmName, setDeleteConfirmName] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [reAuthAction, setReAuthAction] = useState<'delete' | 'email' | 'downgrade' | null>(null);
   const [recurringEnabled, setRecurringEnabled] = useState(business.recurring_enabled ?? false);
   const [selectedGateway, setSelectedGateway] = useState<string>(business.payment_gateway || 'auto');
 
@@ -3250,52 +3252,9 @@ export default function SettingsPage() {
                       </p>
                     ) : (
                       <button
-                        onClick={async () => {
+                        onClick={() => {
                           if (!confirm('Are you sure you want to downgrade to the Free plan? You will lose paid-tier benefits and capabilities that require Pro or Premium plans.')) return;
-                          setDowngrading(true);
-                          const supabase = createClient();
-                          // Update subscription tier on business
-                          await supabase
-                            .from('businesses')
-                            .update({ subscription_tier: 'free' })
-                            .eq('id', business.id);
-                          // Cancel the active subscription
-                          await supabase
-                            .from('subscriptions')
-                            .update({
-                              status: 'cancelled',
-                              cancelled_at: new Date().toISOString(),
-                              cancellation_reason: 'User-initiated downgrade to Free plan',
-                            })
-                            .eq('business_id', business.id)
-                            .eq('status', 'active');
-                          // Record downgrade in subscription_payments
-                          await supabase
-                            .from('subscription_payments')
-                            .insert({
-                              business_id: business.id,
-                              amount: 0,
-                              currency: 'NGN',
-                              gateway: 'none',
-                              plan: 'free',
-                              action: 'downgrade',
-                              status: 'success',
-                            });
-                          // Remove capabilities that require a higher tier
-                          const freeCaps: CapabilityId[] = (Object.entries(CAPABILITY_TIER_REQUIREMENTS) as [CapabilityId, string][])
-                            .filter(([, tier]) => tier === 'free')
-                            .map(([cap]) => cap);
-                          const currentCaps = capabilities || [];
-                          const capsToRemove = currentCaps.filter((c: string) => !freeCaps.includes(c as CapabilityId));
-                          if (capsToRemove.length > 0) {
-                            await supabase
-                              .from('business_capabilities')
-                              .delete()
-                              .eq('business_id', business.id)
-                              .in('capability', capsToRemove);
-                          }
-                          setDowngrading(false);
-                          setDowngraded(true);
+                          setReAuthAction('downgrade');
                         }}
                         disabled={downgrading}
                         className="mt-3 rounded-lg border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
@@ -3492,31 +3451,11 @@ export default function SettingsPage() {
             )}
 
             <button
-              onClick={async () => {
+              onClick={() => {
                 setEmailError('');
                 setEmailSuccess('');
                 if (!newEmail || !newEmail.includes('@')) { setEmailError('Please enter a valid email address.'); return; }
-                setEmailSaving(true);
-                try {
-                  const supabase = createClient();
-                  const { error } = await supabase.auth.updateUser({ email: newEmail });
-                  if (error) {
-                    setEmailError(error.message || 'Failed to update email.');
-                  } else {
-                    setEmailSuccess('A confirmation link has been sent to your new email address. Please check your inbox and click the link to complete the change.');
-                    // Audit log
-                    fetch('/api/account/audit', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: 'email_changed', details: { new_email: newEmail } }),
-                    }).catch(() => {});
-                    setNewEmail('');
-                  }
-                } catch {
-                  setEmailError('Something went wrong. Please try again.');
-                } finally {
-                  setEmailSaving(false);
-                }
+                setReAuthAction('email');
               }}
               disabled={emailSaving || !newEmail}
               className="mt-4 rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -3682,24 +3621,9 @@ export default function SettingsPage() {
             )}
 
             <button
-              onClick={async () => {
-                setDeleting(true);
-                setDeleteError('');
-                try {
-                  const res = await fetch('/api/account', { method: 'DELETE' });
-                  if (!res.ok) {
-                    const data = await res.json();
-                    setDeleteError(data.error || 'Failed to delete account');
-                    setDeleting(false);
-                    return;
-                  }
-                  const supabase = createClient();
-                  await supabase.auth.signOut();
-                  router.push('/');
-                } catch {
-                  setDeleteError('Something went wrong. Please try again.');
-                  setDeleting(false);
-                }
+              onClick={() => {
+                if (deleteConfirmName !== business.name) return;
+                setReAuthAction('delete');
               }}
               disabled={deleteConfirmName !== business.name || deleting}
               className="mt-4 rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -4196,6 +4120,107 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Re-authentication Modal for sensitive actions */}
+      <ReAuthModal
+        open={reAuthAction !== null}
+        title={
+          reAuthAction === 'delete' ? 'Confirm Account Deletion' :
+          reAuthAction === 'email' ? 'Confirm Email Change' :
+          reAuthAction === 'downgrade' ? 'Confirm Plan Downgrade' :
+          undefined
+        }
+        description={
+          reAuthAction === 'delete' ? 'Enter your password to permanently delete your account.' :
+          reAuthAction === 'email' ? 'Enter your password to change your email address.' :
+          reAuthAction === 'downgrade' ? 'Enter your password to downgrade your plan.' :
+          undefined
+        }
+        onClose={() => setReAuthAction(null)}
+        onConfirm={async () => {
+          if (reAuthAction === 'email') {
+            setEmailSaving(true);
+            try {
+              const supabase = createClient();
+              const { error } = await supabase.auth.updateUser({ email: newEmail });
+              if (error) {
+                setEmailError(error.message || 'Failed to update email.');
+              } else {
+                setEmailSuccess('A confirmation link has been sent to your new email address. Please check your inbox and click the link to complete the change.');
+                fetch('/api/account/audit', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'email_changed', details: { new_email: newEmail } }),
+                }).catch(() => {});
+                setNewEmail('');
+              }
+            } catch {
+              setEmailError('Something went wrong. Please try again.');
+            } finally {
+              setEmailSaving(false);
+            }
+          } else if (reAuthAction === 'downgrade') {
+            setDowngrading(true);
+            const supabase = createClient();
+            await supabase
+              .from('businesses')
+              .update({ subscription_tier: 'free' })
+              .eq('id', business.id);
+            await supabase
+              .from('subscriptions')
+              .update({
+                status: 'cancelled',
+                cancelled_at: new Date().toISOString(),
+                cancellation_reason: 'User-initiated downgrade to Free plan',
+              })
+              .eq('business_id', business.id)
+              .eq('status', 'active');
+            await supabase
+              .from('subscription_payments')
+              .insert({
+                business_id: business.id,
+                amount: 0,
+                currency: 'NGN',
+                gateway: 'none',
+                plan: 'free',
+                action: 'downgrade',
+                status: 'success',
+              });
+            const freeCaps: CapabilityId[] = (Object.entries(CAPABILITY_TIER_REQUIREMENTS) as [CapabilityId, string][])
+              .filter(([, tier]) => tier === 'free')
+              .map(([cap]) => cap);
+            const currentCaps = capabilities || [];
+            const capsToRemove = currentCaps.filter((c: string) => !freeCaps.includes(c as CapabilityId));
+            if (capsToRemove.length > 0) {
+              await supabase
+                .from('business_capabilities')
+                .delete()
+                .eq('business_id', business.id)
+                .in('capability', capsToRemove);
+            }
+            setDowngrading(false);
+            setDowngraded(true);
+          } else if (reAuthAction === 'delete') {
+            setDeleting(true);
+            setDeleteError('');
+            try {
+              const res = await fetch('/api/account', { method: 'DELETE' });
+              if (!res.ok) {
+                const data = await res.json();
+                setDeleteError(data.error || 'Failed to delete account');
+                setDeleting(false);
+                return;
+              }
+              const supabase = createClient();
+              await supabase.auth.signOut();
+              router.push('/');
+            } catch {
+              setDeleteError('Something went wrong. Please try again.');
+              setDeleting(false);
+            }
+          }
+        }}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { requireAdminSession, type AdminSession } from '@/lib/adminAuth';
 import { supabase } from '@/lib/supabase';
 import { loadCountries } from '@/lib/countries';
 import { AdminSidebar } from './AdminSidebar';
+import { IdleTimeout } from './IdleTimeout';
 
 const AdminSessionContext = createContext<AdminSession | null>(null);
 
@@ -71,6 +72,7 @@ export function AdminLayout() {
     <AdminSessionContext.Provider value={session}>
       <div className="flex h-screen bg-gray-50 overflow-hidden">
         <AdminSidebar />
+        <IdleTimeout />
         <div className="flex-1 overflow-y-auto p-6 lg:p-8">
           <Outlet />
         </div>
