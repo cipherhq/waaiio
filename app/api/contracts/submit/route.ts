@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     // Try contracts table first (single signer)
     const { data: contract, error } = await supabase
       .from('contracts')
-      .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, require_otp, otp_verified, signing_mode, cc_recipients')
+      .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, signer_email, require_otp, otp_verified, signing_mode, cc_recipients')
       .eq('token', token)
       .single();
 
@@ -59,8 +59,8 @@ export async function POST(request: NextRequest) {
     let isMultiSigner = false;
     let signerRow: {
       id: string; contract_id: string; signer_name: string | null;
-      signer_phone: string; status: string; token_expires_at: string;
-      signing_order: number; otp_verified: boolean;
+      signer_phone: string; signer_email: string | null; status: string;
+      token_expires_at: string; signing_order: number; otp_verified: boolean;
     } | null = null;
     let parentContract: typeof contract = null;
 
@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       // Look up in contract_signers
       const { data: signer } = await supabase
         .from('contract_signers')
-        .select('id, contract_id, signer_name, signer_phone, status, token_expires_at, signing_order, otp_verified')
+        .select('id, contract_id, signer_name, signer_phone, signer_email, status, token_expires_at, signing_order, otp_verified')
         .eq('token', token)
         .single();
 
@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
       // Get parent contract
       const { data: parent } = await supabase
         .from('contracts')
-        .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, require_otp, otp_verified, signing_mode, cc_recipients')
+        .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, signer_email, require_otp, otp_verified, signing_mode, cc_recipients')
         .eq('id', signer.contract_id)
         .single();
 
@@ -97,6 +97,8 @@ export async function POST(request: NextRequest) {
     const signerExpiresAt = isMultiSigner ? signerRow!.token_expires_at : activeContract.token_expires_at;
     const signerName = isMultiSigner ? (signerRow!.signer_name || 'Signer') : (activeContract.signer_name || 'Signer');
     const signerPhone = isMultiSigner ? signerRow!.signer_phone : activeContract.signer_phone;
+    const signerEmail = isMultiSigner ? signerRow!.signer_email : activeContract.signer_email;
+    const signerToken = token;
 
     // Validate expiration
     if (new Date(signerExpiresAt) < new Date()) {
@@ -183,15 +185,15 @@ export async function POST(request: NextRequest) {
       // Check if all signers have signed
       const { data: allSigners } = await supabase
         .from('contract_signers')
-        .select('id, status, signing_order, signer_phone, signer_name, token')
+        .select('id, status, signing_order, signer_phone, signer_email, signer_name, token')
         .eq('contract_id', activeContract.id)
         .order('signing_order');
 
       const allSigned = (allSigners || []).every(s => s.id === signerRow!.id || s.status === 'signed');
+      let pdfPath: string | null = null;
 
       if (allSigned) {
         // All signed — generate final PDF and mark parent as signed
-        let pdfPath: string | null = null;
 
         if (activeContract.template_url) {
           try {
@@ -297,12 +299,16 @@ export async function POST(request: NextRequest) {
       if (signerPhone) {
         try {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
           const confirmMsg = [
             `\u2705 *Document Signed Successfully*`,
             '',
             `You have signed "${activeContract.title}" from ${businessName}.`,
             '',
-            `\ud83d\udd12 Your signature has been recorded.`,
+            `\ud83d\udce5 Download your signed copy:`,
+            permanentUrl,
+            '',
+            `This link is yours to keep \u2014 access your document anytime.`,
           ].join('\n');
           await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', signerPhone, confirmMsg);
         } catch (msgErr) {
@@ -310,7 +316,26 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      return NextResponse.json({ success: true, contract_id: activeContract.id, has_pdf: false });
+      // Email signed copy to signer (multi-signer)
+      if (signerEmail && allSigned) {
+        try {
+          const { sendEmail } = await import('@/lib/email/client');
+          const { businessFrom } = await import('@/lib/email/templates');
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
+
+          await sendEmail({
+            to: signerEmail,
+            from: businessFrom(businessName),
+            subject: `Your signed copy \u2014 ${activeContract.title}`,
+            html: `<p>Hi ${signerName},</p><p>Your signed copy of "${activeContract.title}" from ${businessName} is ready.</p><p><a href="${permanentUrl}">Download Signed Document</a></p><p>This link does not expire \u2014 access your document anytime.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          });
+        } catch (emailErr) {
+          logger.warn('Failed to email signed copy:', emailErr);
+        }
+      }
+
+      return NextResponse.json({ success: true, contract_id: activeContract.id, has_pdf: !!pdfPath });
     }
 
     // ── Single signer flow (original logic) ──
@@ -393,26 +418,41 @@ export async function POST(request: NextRequest) {
     if (signerPhone) {
       try {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
-
-        // Link to PDF download if available, otherwise to the signed view page
-        const downloadUrl = pdfPath
-          ? `${appUrl}/api/contracts/pdf/${activeContract.id}`
-          : `${appUrl}/sign/${activeContract.token}`;
+        const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
 
         const confirmMsg = [
           `\u2705 *Document Signed Successfully*`,
           '',
           `You have signed "${activeContract.title}" from ${businessName}.`,
           '',
-          pdfPath
-            ? `Your signed copy is ready:`
-            : `View your signed document:`,
-          downloadUrl,
+          `\ud83d\udce5 Download your signed copy:`,
+          permanentUrl,
+          '',
+          `This link is yours to keep \u2014 access your document anytime.`,
         ].join('\n');
 
         await sendWhatsApp(supabase, activeContract.business_id, biz?.country_code || 'NG', signerPhone, confirmMsg);
       } catch (msgErr) {
         logger.warn('Failed to send signing confirmation:', msgErr);
+      }
+    }
+
+    // Email signed copy to signer
+    if (signerEmail && pdfPath) {
+      try {
+        const { sendEmail } = await import('@/lib/email/client');
+        const { businessFrom } = await import('@/lib/email/templates');
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
+
+        await sendEmail({
+          to: signerEmail,
+          from: businessFrom(businessName),
+          subject: `Your signed copy \u2014 ${activeContract.title}`,
+          html: `<p>Hi ${signerName},</p><p>Your signed copy of "${activeContract.title}" from ${businessName} is ready.</p><p><a href="${permanentUrl}">Download Signed Document</a></p><p>This link does not expire \u2014 access your document anytime.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+        });
+      } catch (emailErr) {
+        logger.warn('Failed to email signed copy:', emailErr);
       }
     }
 

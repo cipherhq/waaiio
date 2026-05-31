@@ -20,7 +20,7 @@ export async function GET(
   // Try contracts table first
   const { data: contract, error } = await supabase
     .from('contracts')
-    .select('id, title, signer_name, status, token_expires_at, template_url, business_id, document_content, signed_at, signed_url, require_otp, otp_verified')
+    .select('id, title, signer_name, signer_email, status, token_expires_at, template_url, business_id, document_content, signed_at, signed_url, require_otp, otp_verified')
     .eq('token', token)
     .single();
 
@@ -28,7 +28,7 @@ export async function GET(
   if (error || !contract) {
     const { data: signer } = await supabase
       .from('contract_signers')
-      .select('id, contract_id, signer_name, status, token_expires_at, signature_data, signed_at, otp_code, otp_expires_at, otp_verified, otp_attempts')
+      .select('id, contract_id, signer_name, signer_email, status, token_expires_at, signature_data, signed_at, otp_code, otp_expires_at, otp_verified, otp_attempts')
       .eq('token', token)
       .single();
 
@@ -59,6 +59,7 @@ export async function GET(
         id: parentContract.id,
         title: parentContract.title,
         signer_name: signer.signer_name,
+        signer_email: signer.signer_email || null,
         business_name: business?.name || 'Business',
         status: 'signed',
         signed_at: signer.signed_at,
@@ -85,6 +86,7 @@ export async function GET(
       id: parentContract.id,
       title: parentContract.title,
       signer_name: signer.signer_name,
+      signer_email: signer.signer_email || null,
       business_name: business?.name || 'Business',
       status: signer.status,
       expires_at: signer.token_expires_at,
@@ -110,6 +112,7 @@ export async function GET(
       id: contract.id,
       title: contract.title,
       signer_name: contract.signer_name,
+      signer_email: contract.signer_email || null,
       business_name: business?.name || 'Business',
       status: 'signed',
       signed_at: contract.signed_at,
@@ -136,6 +139,7 @@ export async function GET(
     id: contract.id,
     title: contract.title,
     signer_name: contract.signer_name,
+    signer_email: contract.signer_email || null,
     business_name: business?.name || 'Business',
     status: contract.status,
     expires_at: contract.token_expires_at,

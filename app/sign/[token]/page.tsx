@@ -8,6 +8,7 @@ interface ContractInfo {
   id: string;
   title: string;
   signer_name: string | null;
+  signer_email?: string | null;
   business_name: string;
   status: string;
   expires_at: string;
@@ -524,6 +525,12 @@ export default function SignPage() {
               Download Signed Copy
             </a>
           )}
+
+          <p className="mt-2 text-xs text-gray-500">
+            {contract?.signer_email
+              ? 'A copy has been sent to your email. You can also access this document anytime at your permanent link.'
+              : 'You can access this document anytime via the link sent to your WhatsApp.'}
+          </p>
 
           <ReturnToWhatsApp />
           <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
