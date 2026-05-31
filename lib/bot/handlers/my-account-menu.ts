@@ -11,8 +11,12 @@ export async function routeToMyAccountMenu(
   session: BotSession,
   from: string,
 ): Promise<void> {
+  // Update session_data and current_step in memory BEFORE passing to executor
+  session.session_data = { ...session.session_data, active_capability: 'my_account' };
+  session.current_step = 'my_account_menu';
+
   await supabase.from('bot_sessions')
-    .update({ current_step: 'my_account_menu', session_data: { ...session.session_data, active_capability: 'my_account' } })
+    .update({ current_step: 'my_account_menu', session_data: session.session_data })
     .eq('id', session.id);
 
   // Load business for flow context

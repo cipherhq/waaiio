@@ -83,7 +83,7 @@ async function buildReceipt(
   customerName: string,
   customerPhone: string,
 ): Promise<Buffer | null> {
-  const [{ data: recentBooking }, { data: recentCharge }, { data: recentPayment }] = await Promise.all([
+  const [{ data: recentBooking }, { data: recentCharge }, { data: recentPayment }, { data: recentOrder }] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
@@ -96,6 +96,10 @@ async function buildReceipt(
       .select('id, gateway_reference, amount, status, created_at, booking_id, businesses:business_id(name, country_code, subscription_tier)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('orders')
+      .select('id, reference_code, status, total_amount, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
+      .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+      .order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   type Candidate = { source: string; date: Date; data: any };
@@ -103,6 +107,7 @@ async function buildReceipt(
   if (recentBooking) candidates.push({ source: 'booking', date: new Date(recentBooking.created_at), data: recentBooking });
   if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at), data: recentCharge });
   if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at), data: recentPayment });
+  if (recentOrder) candidates.push({ source: 'order', date: new Date(recentOrder.created_at), data: recentOrder });
 
   if (candidates.length === 0) return null;
 
@@ -113,7 +118,7 @@ async function buildReceipt(
   const svc = d.services as { name: string } | null;
   const cc = (biz?.country_code || 'NG') as CountryCode;
 
-  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : 'Payment');
+  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : 'Payment');
   if (best.source === 'payment' && d.booking_id) {
     const { data: linked } = await supabase.from('bookings').select('services(name)').eq('id', d.booking_id).single();
     if (linked) {
@@ -144,7 +149,7 @@ async function buildHistory(
   customerName: string,
   customerPhone: string,
 ): Promise<Buffer | null> {
-  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }] = await Promise.all([
+  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }, { data: orders }] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
@@ -161,6 +166,10 @@ async function buildHistory(
       .select('invoice_number, total_amount, status, paid_at, created_at, businesses:business_id(name, country_code)')
       .eq('customer_phone', customerPhone).eq('status', 'paid')
       .order('paid_at', { ascending: false }).limit(50),
+    supabase.from('orders')
+      .select('reference_code, total_amount, status, created_at, businesses:business_id(name, country_code)')
+      .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+      .order('created_at', { ascending: false }).limit(50),
   ]);
 
   const rows: HistoryRow[] = [];
@@ -173,6 +182,11 @@ async function buildHistory(
     if (biz?.country_code) countryCode = biz.country_code as CountryCode;
     bookingIds.add((b as any).id);
     rows.push({ date: b.date || b.created_at, serviceName: svc?.name || 'Service', businessName: biz?.name || 'Business', referenceCode: b.reference_code || '-', amount: b.total_amount || 0, status: b.status });
+  }
+  if (orders) for (const o of orders) {
+    const biz = o.businesses as unknown as { name: string; country_code?: string } | null;
+    if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+    rows.push({ date: o.created_at, serviceName: 'Order', businessName: biz?.name || 'Business', referenceCode: o.reference_code || '-', amount: o.total_amount || 0, status: o.status });
   }
   if (charges) for (const c of charges) {
     const biz = c.businesses as unknown as { name: string; country_code?: string } | null;
@@ -208,7 +222,7 @@ async function buildAnnual(
   const startDate = `${year}-01-01`;
   const endDate = `${year}-12-31`;
 
-  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }] = await Promise.all([
+  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }, { data: orders }] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed'])
@@ -229,6 +243,11 @@ async function buildAnnual(
       .eq('customer_phone', customerPhone).eq('status', 'paid')
       .gte('paid_at', `${startDate}T00:00:00`).lte('paid_at', `${endDate}T23:59:59`)
       .order('paid_at', { ascending: true }).limit(200),
+    supabase.from('orders')
+      .select('reference_code, total_amount, status, created_at, businesses:business_id(name, country_code)')
+      .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+      .gte('created_at', `${startDate}T00:00:00`).lte('created_at', `${endDate}T23:59:59`)
+      .order('created_at', { ascending: true }).limit(200),
   ]);
 
   const rows: HistoryRow[] = [];
@@ -243,6 +262,12 @@ async function buildAnnual(
     if (biz?.name && !businessName) businessName = biz.name;
     annualBookingIds.add((b as any).id);
     rows.push({ date: b.date || b.created_at, serviceName: svc?.name || 'Service', businessName: biz?.name || 'Business', referenceCode: b.reference_code || '-', amount: b.total_amount || 0, status: b.status });
+  }
+  if (orders) for (const o of orders) {
+    const biz = o.businesses as unknown as { name: string; country_code?: string } | null;
+    if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+    if (biz?.name && !businessName) businessName = biz.name;
+    rows.push({ date: o.created_at, serviceName: 'Order', businessName: biz?.name || 'Business', referenceCode: o.reference_code || '-', amount: o.total_amount || 0, status: o.status });
   }
   if (charges) for (const c of charges) {
     const biz = c.businesses as unknown as { name: string; country_code?: string } | null;

@@ -458,7 +458,7 @@ export class BotService {
             .eq('is_active', false);
           const { data: newSession } = await this.supabase.from('bot_sessions').insert({
             whatsapp_number: from, user_id: profile.id, business_id: null,
-            current_step: 'my_orders', session_data: { selected_order_id: order.id }, is_active: true,
+            current_step: 'order_detail', session_data: { selected_order_id: order.id }, is_active: true,
             expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           }).select().single();
           if (newSession) {

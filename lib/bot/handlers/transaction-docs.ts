@@ -44,16 +44,30 @@ export async function handleTransactionDocument(
       if (type === 'receipt') {
         const phoneP = from.startsWith('+') ? from : `+${from}`;
         const phoneN = from.startsWith('+') ? from.slice(1) : from;
-        const { data: latestBooking } = await supabase
-          .from('bookings')
-          .select('reference_code')
-          .eq('user_id', userId)
-          .in('status', ['completed', 'confirmed'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const [{ data: latestBooking }, { data: latestOrder }] = await Promise.all([
+          supabase.from('bookings')
+            .select('reference_code, created_at')
+            .eq('user_id', userId)
+            .in('status', ['completed', 'confirmed'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase.from('orders')
+            .select('reference_code, created_at')
+            .eq('user_id', userId)
+            .in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+        ]);
 
-        const refCode = latestBooking?.reference_code;
+        // Pick whichever is more recent
+        let refCode = latestBooking?.reference_code;
+        if (latestOrder?.reference_code) {
+          if (!refCode || new Date(latestOrder.created_at) > new Date(latestBooking!.created_at)) {
+            refCode = latestOrder.reference_code;
+          }
+        }
         if (refCode) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
           try {
@@ -89,8 +103,8 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
   const phoneP = phone.startsWith('+') ? phone : `+${phone}`;
   const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
 
-  // Fetch recent transactions from multiple sources
-  const [{ data: bookings }, { data: payments }, { data: invoices }, { data: donations }] = await Promise.all([
+  // Fetch recent transactions from multiple sources (including orders)
+  const [{ data: bookings }, { data: payments }, { data: invoices }, { data: donations }, { data: orders }] = await Promise.all([
     supabase.from('bookings')
       .select('reference_code, date, total_amount, status, created_at, services(name), businesses(name, country_code)')
       .eq('user_id', userId)
@@ -110,6 +124,11 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
       .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .eq('status', 'success')
       .order('created_at', { ascending: false }).limit(3),
+    supabase.from('orders')
+      .select('reference_code, total_amount, status, created_at, businesses:business_id(name, country_code)')
+      .eq('user_id', userId)
+      .in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+      .order('created_at', { ascending: false }).limit(5),
   ]);
 
   const lines: string[] = [];
@@ -130,6 +149,22 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
       `💰 Amount: ${formatCurrency(b.total_amount || 0, cc)}`,
       `🔖 Ref: *${b.reference_code}*`,
       `✅ Status: ${b.status}`,
+    );
+  } else if (orders && orders.length > 0) {
+    const o = orders[0];
+    const biz = o.businesses as unknown as { name: string; country_code?: string } | null;
+    const cc = biz?.country_code as CountryCode || 'NG';
+    const dateStr = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    lines.push(
+      '🧾 *Order Receipt*',
+      '',
+      `🏢 Business: *${biz?.name || 'Business'}*`,
+      `📋 Order: ${o.reference_code}`,
+      `📅 Date: ${dateStr}`,
+      `💰 Amount: ${formatCurrency(o.total_amount || 0, cc)}`,
+      `🔖 Ref: *${o.reference_code}*`,
+      `✅ Status: ${o.status}`,
     );
   } else if (payments && payments.length > 0) {
     const p = payments[0];

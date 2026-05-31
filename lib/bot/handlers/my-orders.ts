@@ -138,6 +138,7 @@ export async function handleMyOrders(
   if (input.startsWith('order_')) {
     const orderId = input.replace('order_', '');
     session.session_data.selected_order_id = orderId;
+    session.current_step = 'order_detail';
     await supabase.from('bot_sessions').update({
       current_step: 'order_detail',
       session_data: session.session_data,
@@ -264,6 +265,8 @@ export async function handleOrderDetailAction(
   }
 
   if (response === 'back_orders') {
+    // Update both DB and in-memory session before calling handleMyOrders
+    session.current_step = 'my_orders';
     await supabase.from('bot_sessions').update({ current_step: 'my_orders' }).eq('id', session.id);
     await handleMyOrders(supabase, messageSender, sendText, routeToMyAccountMenu, session, from, '');
     return;
