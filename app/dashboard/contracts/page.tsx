@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
-import { CONTRACT_TEMPLATES, fillTemplatePlaceholders } from '@/lib/contract-templates';
+import { CONTRACT_TEMPLATES, COMMON_QUESTIONS, fillTemplatePlaceholders, generateContractFromAnswers } from '@/lib/contract-templates';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { COUNTRIES, type CountryCode } from '@/lib/constants';
 
@@ -103,6 +103,11 @@ export default function ContractsPage() {
   // CC recipients
   const [ccRecipients, setCcRecipients] = useState<{ phone: string }[]>([]);
 
+  // Template questionnaire state
+  const [showQuestionnaire, setShowQuestionnaire] = useState(false);
+  const [questionnaireAnswers, setQuestionnaireAnswers] = useState<Record<string, string>>({});
+  const [questionnaireGenerated, setQuestionnaireGenerated] = useState(false);
+
   // Custom templates
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
   const [savingTemplate, setSavingTemplate] = useState(false);
@@ -155,10 +160,16 @@ export default function ContractsPage() {
     setAdditionalSigners([]);
     setSigningMode('parallel');
     setCcRecipients([]);
+    setShowQuestionnaire(false);
+    setQuestionnaireAnswers({});
+    setQuestionnaireGenerated(false);
   }
 
   function handleTemplateChange(templateId: string) {
     setSelectedTemplate(templateId);
+    setShowQuestionnaire(false);
+    setQuestionnaireAnswers({});
+    setQuestionnaireGenerated(false);
     if (templateId) {
       // Check custom templates first
       const custom = customTemplates.find(t => t.id === templateId);
@@ -172,7 +183,38 @@ export default function ContractsPage() {
       if (tmpl) {
         setTitle(tmpl.name);
         setDocumentContent(tmpl.content);
+        // If template has questions, show questionnaire
+        if (tmpl.questions && tmpl.questions.length > 0) {
+          // Pre-fill defaults
+          const defaults: Record<string, string> = {
+            business_name: business.name || '',
+            effective_date: new Date().toISOString().split('T')[0],
+          };
+          if (templateId === 'terms-and-conditions' && business.category) {
+            defaults.business_type = business.category;
+          }
+          setQuestionnaireAnswers(defaults);
+          setShowQuestionnaire(true);
+        }
       }
+    }
+  }
+
+  function handleQuestionnaireAnswer(questionId: string, value: string) {
+    setQuestionnaireAnswers(prev => ({ ...prev, [questionId]: value }));
+  }
+
+  function handleGenerateFromQuestionnaire() {
+    const tmpl = CONTRACT_TEMPLATES.find(t => t.id === selectedTemplate);
+    if (!tmpl) return;
+    const generated = generateContractFromAnswers(selectedTemplate, questionnaireAnswers);
+    setDocumentContent(generated);
+    setQuestionnaireGenerated(true);
+    setShowQuestionnaire(false);
+    setShowPreview(true);
+    // Update signer name from questionnaire if filled
+    if (questionnaireAnswers.signer_name) {
+      setSignerName(questionnaireAnswers.signer_name);
     }
   }
 
@@ -797,6 +839,13 @@ export default function ContractsPage() {
               <div className={`h-1 flex-1 rounded ${step >= 2 ? 'bg-brand' : 'bg-gray-200'}`} />
             </div>
 
+            {/* Legal disclaimer */}
+            <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <p className="text-xs leading-relaxed text-blue-700">
+                Waaiio provides document signing tools — we are not a law firm. Ensure your documents comply with applicable laws before sending. We recommend having important contracts reviewed by a legal professional. Waaiio does not guarantee the legal enforceability of any document.
+              </p>
+            </div>
+
             <form onSubmit={handleSendForSignature} className="mt-4">
               {step === 1 && (
                 <div className="space-y-4">
@@ -871,7 +920,171 @@ export default function ContractsPage() {
                         )}
                       </div>
 
-                      {documentContent && (
+                      {/* Interactive Questionnaire */}
+                      {showQuestionnaire && (() => {
+                        const tmpl = CONTRACT_TEMPLATES.find(t => t.id === selectedTemplate);
+                        if (!tmpl?.questions) return null;
+                        const allQuestions = [...COMMON_QUESTIONS, ...tmpl.questions];
+                        // Group questions
+                        const groups: Record<string, typeof allQuestions> = {};
+                        allQuestions.forEach(q => {
+                          const g = q.group || 'General';
+                          if (!groups[g]) groups[g] = [];
+                          groups[g].push(q);
+                        });
+                        return (
+                          <div className="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                            <p className="text-sm font-medium text-gray-700">Fill in the details to customize your contract</p>
+                            {Object.entries(groups).map(([groupName, questions]) => (
+                              <div key={groupName}>
+                                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">{groupName}</p>
+                                <div className="space-y-3">
+                                  {questions.map(q => (
+                                    <div key={q.id}>
+                                      <label className="mb-1 block text-sm font-medium text-gray-700">
+                                        {q.label}
+                                        {q.required && <span className="ml-0.5 text-red-400">*</span>}
+                                      </label>
+                                      {q.type === 'text' && (
+                                        <input
+                                          type="text"
+                                          value={questionnaireAnswers[q.id] || ''}
+                                          onChange={e => handleQuestionnaireAnswer(q.id, e.target.value)}
+                                          placeholder={q.placeholder}
+                                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                                        />
+                                      )}
+                                      {q.type === 'textarea' && (
+                                        <textarea
+                                          value={questionnaireAnswers[q.id] || ''}
+                                          onChange={e => handleQuestionnaireAnswer(q.id, e.target.value)}
+                                          placeholder={q.placeholder}
+                                          rows={3}
+                                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                                        />
+                                      )}
+                                      {q.type === 'number' && (
+                                        <input
+                                          type="number"
+                                          value={questionnaireAnswers[q.id] || ''}
+                                          onChange={e => handleQuestionnaireAnswer(q.id, e.target.value)}
+                                          placeholder={q.placeholder}
+                                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                                        />
+                                      )}
+                                      {q.type === 'date' && (
+                                        <input
+                                          type="date"
+                                          value={questionnaireAnswers[q.id] || ''}
+                                          onChange={e => handleQuestionnaireAnswer(q.id, e.target.value)}
+                                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                                        />
+                                      )}
+                                      {q.type === 'select' && q.options && (
+                                        <select
+                                          value={questionnaireAnswers[q.id] || ''}
+                                          onChange={e => handleQuestionnaireAnswer(q.id, e.target.value)}
+                                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                                        >
+                                          <option value="">Select...</option>
+                                          {q.options.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                          ))}
+                                        </select>
+                                      )}
+                                      {q.type === 'checkbox' && (
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                          <input
+                                            type="checkbox"
+                                            checked={questionnaireAnswers[q.id] === 'true'}
+                                            onChange={e => handleQuestionnaireAnswer(q.id, e.target.checked ? 'true' : 'false')}
+                                            className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                                          />
+                                          <span className="text-sm text-gray-600">{q.label}</span>
+                                        </label>
+                                      )}
+                                      {q.type === 'radio' && q.options && (
+                                        <div className="flex gap-4">
+                                          {q.options.map(opt => (
+                                            <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer">
+                                              <input
+                                                type="radio"
+                                                name={q.id}
+                                                value={opt.value}
+                                                checked={questionnaireAnswers[q.id] === opt.value}
+                                                onChange={e => handleQuestionnaireAnswer(q.id, e.target.value)}
+                                                className="h-4 w-4 border-gray-300 text-brand focus:ring-brand"
+                                              />
+                                              <span className="text-sm text-gray-600">{opt.label}</span>
+                                            </label>
+                                          ))}
+                                        </div>
+                                      )}
+                                      {q.type === 'checkbox-group' && q.options && (
+                                        <div className="flex flex-wrap gap-3">
+                                          {q.options.map(opt => {
+                                            const current = questionnaireAnswers[q.id] || '';
+                                            const selected = current.split(', ').filter(Boolean);
+                                            const isChecked = selected.includes(opt.value);
+                                            return (
+                                              <label key={opt.value} className="flex items-center gap-1.5 cursor-pointer">
+                                                <input
+                                                  type="checkbox"
+                                                  checked={isChecked}
+                                                  onChange={() => {
+                                                    const next = isChecked
+                                                      ? selected.filter(v => v !== opt.value)
+                                                      : [...selected, opt.value];
+                                                    handleQuestionnaireAnswer(q.id, next.join(', '));
+                                                  }}
+                                                  className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                                                />
+                                                <span className="text-sm text-gray-600">{opt.label}</span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="flex gap-3 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => { setShowQuestionnaire(false); }}
+                                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                              >
+                                Skip
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleGenerateFromQuestionnaire}
+                                className="flex-1 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-white transition hover:opacity-90"
+                              >
+                                Generate Contract
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Show generated badge */}
+                      {questionnaireGenerated && !showQuestionnaire && (
+                        <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+                          <p className="text-xs font-medium text-green-700">Contract generated from your answers</p>
+                          <button
+                            type="button"
+                            onClick={() => { setShowQuestionnaire(true); setQuestionnaireGenerated(false); setShowPreview(false); }}
+                            className="text-xs font-medium text-brand hover:underline"
+                          >
+                            Edit Answers
+                          </button>
+                        </div>
+                      )}
+
+                      {documentContent && !showQuestionnaire && (
                         showPreview ? (
                           <div>
                             <div className="mb-1 flex items-center justify-between">
@@ -886,10 +1099,13 @@ export default function ContractsPage() {
                             </div>
                             <div className="max-h-64 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-4">
                               <pre className="whitespace-pre-wrap font-sans text-sm text-gray-700">
-                                {fillTemplatePlaceholders(documentContent, {
-                                  business_name: business.name,
-                                  signer_name: signerName || '{{signer_name}}',
-                                })}
+                                {questionnaireGenerated
+                                  ? documentContent
+                                  : fillTemplatePlaceholders(documentContent, {
+                                      business_name: business.name,
+                                      signer_name: signerName || '{{signer_name}}',
+                                    })
+                                }
                               </pre>
                             </div>
                           </div>

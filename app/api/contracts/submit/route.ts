@@ -42,6 +42,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'token and signature_data are required' }, { status: 400 });
     }
 
+    if (signature_data.length > 500_000) {
+      return NextResponse.json({ error: 'Signature data too large' }, { status: 400 });
+    }
+
     const supabase = createServiceClient();
 
     // Try contracts table first (single signer)

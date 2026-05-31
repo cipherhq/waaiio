@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'contract-pdf'), 30, 60_000);
+  if (rateLimit) return rateLimit;
+
   try {
     const { id } = await params;
     const { searchParams } = new URL(request.url);

@@ -671,6 +671,17 @@ export default function SignPage() {
             </label>
           )}
 
+          {/* Legal disclaimer */}
+          <div className="mb-6 rounded-lg bg-gray-100 p-4">
+            <p className="text-xs leading-relaxed text-gray-500">
+              Waaiio provides e-signature technology as a service. Waaiio is not a law firm and does not provide legal advice. This platform facilitates electronic document signing in accordance with applicable e-signature laws (ESIGN Act, UETA, eIDAS). By using this service, you acknowledge that you have reviewed the document and are signing voluntarily. For legal questions about this document, consult a qualified attorney.
+            </p>
+            <p className="mt-2 text-xs leading-relaxed text-gray-500">
+              Your signature, IP address, and device information are recorded for verification purposes. See our{' '}
+              <a href="/privacy" className="font-medium text-blue-600 hover:underline">Privacy Policy</a>.
+            </p>
+          </div>
+
           {/* Signature area */}
           <p className="mb-3 text-center text-sm text-gray-500">
             Draw your signature below using your finger or mouse

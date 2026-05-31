@@ -1,9 +1,31 @@
+export interface TemplateQuestion {
+  id: string;
+  label: string;
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'checkbox' | 'radio' | 'checkbox-group';
+  placeholder?: string;
+  required?: boolean;
+  options?: { label: string; value: string }[];
+  defaultValue?: string;
+  group?: string;
+  /** Only show this question when condition is met */
+  showWhen?: { questionId: string; value: string };
+}
+
 export interface ContractTemplate {
   id: string;
   name: string;
   category: string;
   content: string;
+  questions?: TemplateQuestion[];
 }
+
+/** Questions common to all built-in templates */
+export const COMMON_QUESTIONS: TemplateQuestion[] = [
+  { id: 'business_name', label: 'Business Name', type: 'text', placeholder: 'Your business name', required: true, group: 'Parties' },
+  { id: 'signer_name', label: 'Signer Name', type: 'text', placeholder: 'Name of the person signing', group: 'Parties' },
+  { id: 'effective_date', label: 'Effective Date', type: 'date', required: true, group: 'Parties' },
+  { id: 'governing_jurisdiction', label: 'Governing Jurisdiction/State', type: 'text', placeholder: 'e.g. State of Maryland', group: 'Parties' },
+];
 
 export const CONTRACT_TEMPLATES: ContractTemplate[] = [
   {
@@ -45,6 +67,28 @@ This Agreement shall be governed by and construed in accordance with the laws of
 This Agreement constitutes the entire agreement between the parties and supersedes all prior negotiations, representations, or agreements relating to this subject matter.
 
 By signing below, both parties acknowledge that they have read, understood, and agree to the terms and conditions set forth in this Agreement.`,
+    questions: [
+      { id: 'service_description', label: 'Description of Services', type: 'textarea', placeholder: 'Describe the services to be provided...', required: true, group: 'Service Details' },
+      { id: 'payment_amount', label: 'Payment Amount', type: 'number', placeholder: 'e.g. 5000', required: true, group: 'Payment' },
+      { id: 'payment_terms', label: 'Payment Terms', type: 'select', required: true, group: 'Payment', options: [
+        { label: 'Due on completion', value: 'Due on completion' },
+        { label: 'Net 15', value: 'Net 15 days' },
+        { label: 'Net 30', value: 'Net 30 days' },
+        { label: '50% upfront, 50% on completion', value: '50% upfront, 50% on completion' },
+      ]},
+      { id: 'contract_duration', label: 'Contract Duration', type: 'select', required: true, group: 'Terms', options: [
+        { label: 'One-time', value: 'a one-time engagement' },
+        { label: '3 months', value: '3 months' },
+        { label: '6 months', value: '6 months' },
+        { label: '1 year', value: '1 year' },
+        { label: 'Ongoing', value: 'an ongoing basis until terminated' },
+      ]},
+      { id: 'cancellation_notice', label: 'Cancellation Notice Period', type: 'select', group: 'Terms', options: [
+        { label: '7 days', value: '7 days' },
+        { label: '14 days', value: '14 days' },
+        { label: '30 days', value: '30 days' },
+      ]},
+    ],
   },
   {
     id: 'nda',
@@ -90,6 +134,16 @@ The Receiving Party acknowledges that any breach of this Agreement may cause irr
 This Agreement shall be governed by and construed in accordance with the laws of the jurisdiction in which the Disclosing Party operates.
 
 By signing below, the Receiving Party acknowledges receipt of this Agreement and agrees to be bound by its terms.`,
+    questions: [
+      { id: 'disclosure_purpose', label: 'Purpose of Disclosure', type: 'textarea', placeholder: 'e.g. Business partnership discussions', required: true, group: 'NDA Details' },
+      { id: 'confidentiality_duration', label: 'Duration of Confidentiality', type: 'select', required: true, group: 'NDA Details', options: [
+        { label: '1 year', value: '1 year' },
+        { label: '2 years', value: '2 years' },
+        { label: '5 years', value: '5 years' },
+        { label: 'Indefinite', value: 'indefinitely' },
+      ]},
+      { id: 'is_mutual', label: 'Mutual NDA — Both parties agree to keep each other\'s information confidential', type: 'checkbox', group: 'NDA Details' },
+    ],
   },
   {
     id: 'rental-agreement',
@@ -133,6 +187,23 @@ Either party may terminate this Agreement with the notice period as agreed upon 
 This Agreement shall be governed by the laws of the jurisdiction in which the Property is located.
 
 By signing below, both parties agree to the terms and conditions set forth in this Rental Agreement.`,
+    questions: [
+      { id: 'property_address', label: 'Property Address', type: 'textarea', placeholder: 'Full address of the property', required: true, group: 'Property Details' },
+      { id: 'monthly_rent', label: 'Monthly Rent', type: 'number', placeholder: 'e.g. 1500', required: true, group: 'Financial' },
+      { id: 'security_deposit', label: 'Security Deposit', type: 'number', placeholder: 'e.g. 3000', required: true, group: 'Financial' },
+      { id: 'lease_start_date', label: 'Lease Start Date', type: 'date', required: true, group: 'Lease Terms' },
+      { id: 'lease_duration', label: 'Lease Duration', type: 'select', required: true, group: 'Lease Terms', options: [
+        { label: '6 months', value: '6 months' },
+        { label: '1 year', value: '1 year' },
+        { label: '2 years', value: '2 years' },
+      ]},
+      { id: 'utilities_included', label: 'Utilities Included', type: 'checkbox-group', group: 'Lease Terms', options: [
+        { label: 'Water', value: 'Water' },
+        { label: 'Electricity', value: 'Electricity' },
+        { label: 'Internet', value: 'Internet' },
+        { label: 'Gas', value: 'Gas' },
+      ]},
+    ],
   },
   {
     id: 'freelance-agreement',
@@ -176,6 +247,26 @@ The Consultant's total liability under this Agreement shall not exceed the total
 This Agreement shall be governed by the laws of the jurisdiction in which the Client operates.
 
 By signing below, both parties agree to the terms and conditions set forth in this Agreement.`,
+    questions: [
+      { id: 'scope_of_work', label: 'Scope of Work', type: 'textarea', placeholder: 'Describe the work to be performed...', required: true, group: 'Project Details' },
+      { id: 'rate_type', label: 'Rate Type', type: 'radio', required: true, group: 'Compensation', options: [
+        { label: 'Hourly Rate', value: 'hourly' },
+        { label: 'Fixed Price', value: 'fixed' },
+      ]},
+      { id: 'rate_amount', label: 'Rate/Price Amount', type: 'number', placeholder: 'e.g. 75', required: true, group: 'Compensation' },
+      { id: 'project_deadline', label: 'Project Deadline', type: 'date', group: 'Project Details' },
+      { id: 'payment_schedule', label: 'Payment Schedule', type: 'select', required: true, group: 'Compensation', options: [
+        { label: 'Weekly', value: 'Weekly' },
+        { label: 'Bi-weekly', value: 'Bi-weekly' },
+        { label: 'Monthly', value: 'Monthly' },
+        { label: 'On completion', value: 'On completion' },
+      ]},
+      { id: 'ip_ownership', label: 'Intellectual Property Ownership', type: 'select', required: true, group: 'Legal', options: [
+        { label: 'Belongs to client', value: 'the Client' },
+        { label: 'Belongs to freelancer', value: 'the Consultant' },
+        { label: 'Shared ownership', value: 'both parties jointly' },
+      ]},
+    ],
   },
   {
     id: 'terms-and-conditions',
@@ -226,23 +317,256 @@ The Company reserves the right to update these Terms at any time. Material chang
 These Terms shall be governed by the laws of the jurisdiction in which the Company operates.
 
 By signing below, you confirm your acceptance of these Terms and Conditions.`,
+    questions: [
+      { id: 'business_type', label: 'Type of Business', type: 'text', placeholder: 'e.g. Hair salon, Consulting firm', group: 'Business Details' },
+      { id: 'refund_policy', label: 'Refund Policy', type: 'select', required: true, group: 'Policies', options: [
+        { label: 'No refunds', value: 'All payments are non-refundable' },
+        { label: 'Full refund within 7 days', value: 'Full refunds are available within 7 days of purchase' },
+        { label: 'Full refund within 30 days', value: 'Full refunds are available within 30 days of purchase' },
+        { label: 'Pro-rated refund', value: 'Pro-rated refunds are available based on services not yet rendered' },
+      ]},
+      { id: 'liability_cap', label: 'Liability Cap', type: 'select', required: true, group: 'Policies', options: [
+        { label: 'Amount paid for service', value: 'the total amount paid for the service' },
+        { label: 'Monthly fee', value: 'the monthly service fee' },
+        { label: 'Custom amount', value: 'a custom amount as agreed in writing' },
+      ]},
+    ],
   },
 ];
 
 export function fillTemplatePlaceholders(
   content: string,
-  values: { business_name?: string; signer_name?: string; date?: string },
+  values: { business_name?: string; signer_name?: string; date?: string; [key: string]: string | undefined },
 ): string {
   let result = content;
-  if (values.business_name) {
-    result = result.replace(/\{\{business_name\}\}/g, values.business_name);
+  // Replace all known placeholders from the values object
+  for (const [key, val] of Object.entries(values)) {
+    if (val) {
+      result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), val);
+    }
   }
-  if (values.signer_name) {
-    result = result.replace(/\{\{signer_name\}\}/g, values.signer_name);
-  }
+  // Default date if not replaced
   result = result.replace(
     /\{\{date\}\}/g,
     values.date || new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
   );
   return result;
+}
+
+/**
+ * Generate enriched contract content from a template + user answers.
+ * Injects answer-based detail sections into the template content and replaces placeholders.
+ */
+export function generateContractFromAnswers(
+  templateId: string,
+  answers: Record<string, string>,
+): string {
+  const template = CONTRACT_TEMPLATES.find(t => t.id === templateId);
+  if (!template) return '';
+
+  let content = template.content;
+
+  // Template-specific enrichments
+  if (templateId === 'service-agreement') {
+    // Enhance section 1 (Scope)
+    if (answers.service_description) {
+      content = content.replace(
+        'The Service Provider agrees to provide the following services to the Client as described and agreed upon by both parties. The specific deliverables, timelines, and requirements shall be as mutually agreed in writing.',
+        `The Service Provider agrees to provide the following services to the Client:\n\n${answers.service_description}\n\nAdditional deliverables, timelines, and requirements shall be as mutually agreed in writing.`,
+      );
+    }
+    // Enhance section 2 (Compensation)
+    if (answers.payment_amount || answers.payment_terms) {
+      const amount = answers.payment_amount ? `$${Number(answers.payment_amount).toLocaleString()}` : 'the agreed-upon fee';
+      const terms = answers.payment_terms || 'as agreed between the parties';
+      content = content.replace(
+        'The Client agrees to pay the Service Provider the agreed-upon fee for services rendered. Payment terms, amounts, and schedules shall be as agreed between the parties prior to commencement of services.',
+        `The Client agrees to pay the Service Provider a total fee of ${amount} for services rendered. Payment terms: ${terms}.`,
+      );
+    }
+    // Enhance section 3 (Term)
+    if (answers.contract_duration || answers.cancellation_notice) {
+      const duration = answers.contract_duration || 'until the services are completed';
+      const notice = answers.cancellation_notice || '14 days';
+      content = content.replace(
+        'This Agreement shall commence on the date first written above and shall continue until the services are completed or until terminated by either party with 14 days written notice. Either party may terminate this Agreement immediately in the event of a material breach by the other party.',
+        `This Agreement shall commence on the date first written above and shall continue for ${duration}, or until terminated by either party with ${notice} written notice. Either party may terminate this Agreement immediately in the event of a material breach by the other party.`,
+      );
+    }
+    // Governing law
+    if (answers.governing_jurisdiction) {
+      content = content.replace(
+        'This Agreement shall be governed by and construed in accordance with the laws of the jurisdiction in which the Service Provider operates.',
+        `This Agreement shall be governed by and construed in accordance with the laws of the ${answers.governing_jurisdiction}.`,
+      );
+    }
+  }
+
+  if (templateId === 'nda') {
+    // Purpose
+    if (answers.disclosure_purpose) {
+      content = content.replace(
+        'for the purpose of evaluating or engaging in a business relationship',
+        `for the purpose of ${answers.disclosure_purpose}`,
+      );
+    }
+    // Duration
+    if (answers.confidentiality_duration) {
+      content = content.replace(
+        'for a period of two (2) years from the date of execution',
+        `for a period of ${answers.confidentiality_duration === 'indefinitely' ? 'an indefinite duration' : answers.confidentiality_duration} from the date of execution`,
+      );
+    }
+    // Mutual
+    if (answers.is_mutual === 'true') {
+      content = content.replace(
+        'NON-DISCLOSURE AGREEMENT',
+        'MUTUAL NON-DISCLOSURE AGREEMENT',
+      );
+      content = content.replace(
+        'Disclosing Party: {{business_name}}\nReceiving Party: {{signer_name}}',
+        'Party A: {{business_name}}\nParty B: {{signer_name}}\n\nBoth parties shall be considered as both Disclosing Party and Receiving Party under this Agreement.',
+      );
+    }
+    if (answers.governing_jurisdiction) {
+      content = content.replace(
+        'the laws of the jurisdiction in which the Disclosing Party operates.',
+        `the laws of the ${answers.governing_jurisdiction}.`,
+      );
+    }
+  }
+
+  if (templateId === 'rental-agreement') {
+    // Property address
+    if (answers.property_address) {
+      content = content.replace(
+        'the property located at the address specified and agreed upon by both parties (the "Property"), for residential/commercial use as agreed.',
+        `the property located at:\n${answers.property_address}\n(the "Property").`,
+      );
+    }
+    // Lease term
+    if (answers.lease_start_date || answers.lease_duration) {
+      const startDate = answers.lease_start_date
+        ? new Date(answers.lease_start_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+        : 'the agreed start date';
+      const duration = answers.lease_duration || 'the agreed duration';
+      content = content.replace(
+        'The lease shall commence on the agreed start date and continue for the agreed duration, unless terminated earlier in accordance with the terms of this Agreement.',
+        `The lease shall commence on ${startDate} and continue for a period of ${duration}, unless terminated earlier in accordance with the terms of this Agreement.`,
+      );
+    }
+    // Rent
+    if (answers.monthly_rent) {
+      content = content.replace(
+        'The Tenant agrees to pay rent in the amount and on the schedule agreed upon by both parties.',
+        `The Tenant agrees to pay rent in the amount of $${Number(answers.monthly_rent).toLocaleString()} per month.`,
+      );
+    }
+    // Security deposit
+    if (answers.security_deposit) {
+      content = content.replace(
+        'The Tenant shall pay a security deposit as agreed.',
+        `The Tenant shall pay a security deposit of $${Number(answers.security_deposit).toLocaleString()}.`,
+      );
+    }
+    // Utilities
+    if (answers.utilities_included) {
+      const utilities = answers.utilities_included;
+      if (utilities) {
+        content = content.replace(
+          'Unless otherwise agreed in writing, the Tenant shall be responsible for all utility charges associated with the Property.',
+          `The following utilities are included in the rent: ${utilities}. The Tenant shall be responsible for all other utility charges associated with the Property.`,
+        );
+      }
+    }
+    if (answers.governing_jurisdiction) {
+      content = content.replace(
+        'the laws of the jurisdiction in which the Property is located.',
+        `the laws of the ${answers.governing_jurisdiction}.`,
+      );
+    }
+  }
+
+  if (templateId === 'freelance-agreement') {
+    // Scope of work
+    if (answers.scope_of_work) {
+      content = content.replace(
+        'The Consultant shall perform services as described in the project brief or scope of work agreed upon by both parties. Any changes to the scope must be agreed upon in writing.',
+        `The Consultant shall perform the following services:\n\n${answers.scope_of_work}\n\nAny changes to the scope must be agreed upon in writing.`,
+      );
+    }
+    // Compensation
+    if (answers.rate_type && answers.rate_amount) {
+      const rateDesc = answers.rate_type === 'hourly'
+        ? `an hourly rate of $${Number(answers.rate_amount).toLocaleString()}`
+        : `a fixed project fee of $${Number(answers.rate_amount).toLocaleString()}`;
+      const schedule = answers.payment_schedule ? ` Payment shall be made ${answers.payment_schedule.toLowerCase()}.` : '';
+      content = content.replace(
+        'The Client agrees to pay the Consultant at the rate or project fee agreed upon. Payment shall be made according to the agreed schedule. The Consultant shall submit invoices as required.',
+        `The Client agrees to pay the Consultant at ${rateDesc}.${schedule} The Consultant shall submit invoices as required.`,
+      );
+    }
+    // IP
+    if (answers.ip_ownership) {
+      content = content.replace(
+        'all work product, deliverables, and intellectual property created by the Consultant in the course of performing services under this Agreement shall become the property of the Client upon full payment.',
+        `all work product, deliverables, and intellectual property created by the Consultant in the course of performing services under this Agreement shall become the property of ${answers.ip_ownership} upon full payment.`,
+      );
+    }
+    // Deadline
+    if (answers.project_deadline) {
+      const deadline = new Date(answers.project_deadline).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      content = content.replace(
+        'The Client engages the Consultant to perform the services described and agreed upon by both parties.',
+        `The Client engages the Consultant to perform the services described and agreed upon by both parties. All deliverables shall be completed by ${deadline}.`,
+      );
+    }
+    if (answers.governing_jurisdiction) {
+      content = content.replace(
+        'the laws of the jurisdiction in which the Client operates.',
+        `the laws of the ${answers.governing_jurisdiction}.`,
+      );
+    }
+  }
+
+  if (templateId === 'terms-and-conditions') {
+    // Business type
+    if (answers.business_type) {
+      content = content.replace(
+        'The Company provides the services as described and made available to the undersigned party.',
+        `The Company, operating as a ${answers.business_type}, provides the services as described and made available to the undersigned party.`,
+      );
+    }
+    // Refund policy
+    if (answers.refund_policy) {
+      content = content.replace(
+        'All amounts are non-refundable unless otherwise stated in writing.',
+        `Refund policy: ${answers.refund_policy}.`,
+      );
+    }
+    // Liability cap
+    if (answers.liability_cap) {
+      content = content.replace(
+        'the Company shall not be liable for any indirect, incidental, special, or consequential damages arising from or related to these Terms or the services provided.',
+        `the Company\'s total liability shall not exceed ${answers.liability_cap}. The Company shall not be liable for any indirect, incidental, special, or consequential damages arising from or related to these Terms or the services provided.`,
+      );
+    }
+    if (answers.governing_jurisdiction) {
+      content = content.replace(
+        'the laws of the jurisdiction in which the Company operates.',
+        `the laws of the ${answers.governing_jurisdiction}.`,
+      );
+    }
+  }
+
+  // Replace standard placeholders
+  content = fillTemplatePlaceholders(content, {
+    business_name: answers.business_name,
+    signer_name: answers.signer_name,
+    date: answers.effective_date
+      ? new Date(answers.effective_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+      : undefined,
+  });
+
+  return content;
 }

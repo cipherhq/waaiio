@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -48,8 +49,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'File too large. Maximum 10MB' }, { status: 400 });
   }
 
+  // Check file count limit per business (max 100)
+  const { data: existingFiles } = await supabase.storage
+    .from('contracts')
+    .list(businessId + '/uploads');
+
+  if (existingFiles && existingFiles.length >= 100) {
+    return NextResponse.json({ error: 'Upload limit reached' }, { status: 400 });
+  }
+
+  // Sanitize filename: strip path separators, limit to safe chars, truncate
+  const sanitizedName = file.name
+    .replace(/[/\\]/g, '')       // strip path separators
+    .replace(/\.\./g, '')        // strip directory traversal
+    .replace(/[^a-zA-Z0-9.\-_]/g, '_') // only alphanumeric, dashes, dots, underscores
+    .slice(0, 100);              // truncate to 100 chars
+
   // Upload to Supabase Storage
-  const path = `${businessId}/uploads/${Date.now()}-${file.name}`;
+  const path = `${businessId}/uploads/${Date.now()}-${sanitizedName}`;
   const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadError } = await supabase.storage
@@ -60,8 +77,9 @@ export async function POST(request: NextRequest) {
     });
 
   if (uploadError) {
-    return NextResponse.json({ error: 'Upload failed: ' + uploadError.message }, { status: 500 });
+    logger.error('Contract upload failed:', uploadError);
+    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 
-  return NextResponse.json({ file_url: path, file_name: file.name });
+  return NextResponse.json({ file_url: path, file_name: sanitizedName });
 }
