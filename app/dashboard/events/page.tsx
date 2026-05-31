@@ -190,8 +190,20 @@ export default function EventsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this event?')) return;
     const supabase = createClient();
+
+    // Check if any tickets have been sold
+    const { count } = await supabase
+      .from('event_tickets')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', id);
+
+    if (count && count > 0) {
+      alert(`This event has ${count} ticket${count === 1 ? '' : 's'} sold and cannot be deleted. You can cancel it instead.`);
+      return;
+    }
+
+    if (!confirm('Delete this event? This cannot be undone.')) return;
     await supabase.from('events').delete().eq('id', id);
     if (view !== 'list') setView('list');
     loadEvents();
