@@ -6,6 +6,13 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
+function generateSigRef(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return `SIG-${code}`;
+}
+
 async function sendWhatsApp(
   supabase: ReturnType<typeof createServiceClient>,
   businessId: string,
@@ -51,7 +58,7 @@ export async function POST(request: NextRequest) {
     // Try contracts table first (single signer)
     const { data: contract, error } = await supabase
       .from('contracts')
-      .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, signer_email, require_otp, otp_verified, signing_mode, cc_recipients')
+      .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, signer_email, require_otp, otp_verified, signing_mode, cc_recipients, reference_code')
       .eq('token', token)
       .single();
 
@@ -79,7 +86,7 @@ export async function POST(request: NextRequest) {
       // Get parent contract
       const { data: parent } = await supabase
         .from('contracts')
-        .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, signer_email, require_otp, otp_verified, signing_mode, cc_recipients')
+        .select('id, status, token, token_expires_at, business_id, title, template_url, document_content, signer_name, signer_phone, signer_email, require_otp, otp_verified, signing_mode, cc_recipients, reference_code')
         .eq('id', signer.contract_id)
         .single();
 
@@ -171,6 +178,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (isMultiSigner) {
+      // Generate signature reference for this signer
+      const signatureReference = generateSigRef();
+
       // Update the signer row
       await supabase
         .from('contract_signers')
@@ -178,7 +188,8 @@ export async function POST(request: NextRequest) {
           status: 'signed',
           signature_data,
           signed_at: new Date().toISOString(),
-          audit_trail: auditTrail,
+          audit_trail: { ...auditTrail, signature_reference: signatureReference },
+          signature_reference: signatureReference,
         })
         .eq('id', signerRow!.id);
 
@@ -214,6 +225,9 @@ export async function POST(request: NextRequest) {
                 signedAt: auditTrail.signed_at,
                 auditTrail,
                 contractId: activeContract.id,
+                referenceCode: activeContract.reference_code || undefined,
+                signatureReference: signatureReference,
+                verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
               });
 
               pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -238,6 +252,9 @@ export async function POST(request: NextRequest) {
               signedAt: auditTrail.signed_at,
               auditTrail,
               contractId: activeContract.id,
+              referenceCode: activeContract.reference_code || undefined,
+              signatureReference: signatureReference,
+              verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
             });
 
             pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -304,6 +321,8 @@ export async function POST(request: NextRequest) {
             `\u2705 *Document Signed Successfully*`,
             '',
             `You have signed "${activeContract.title}" from ${businessName}.`,
+            ...(activeContract.reference_code ? [`Document ID: ${activeContract.reference_code}`] : []),
+            `Signature Ref: ${signatureReference}`,
             '',
             `\ud83d\udce5 Download your signed copy:`,
             permanentUrl,
@@ -335,10 +354,17 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      return NextResponse.json({ success: true, contract_id: activeContract.id, has_pdf: !!pdfPath });
+      return NextResponse.json({
+        success: true,
+        contract_id: activeContract.id,
+        has_pdf: !!pdfPath,
+        reference_code: activeContract.reference_code || null,
+        signature_reference: signatureReference,
+      });
     }
 
     // ── Single signer flow (original logic) ──
+    const signatureReference = generateSigRef();
     let pdfPath: string | null = null;
 
     if (activeContract.template_url) {
@@ -361,6 +387,9 @@ export async function POST(request: NextRequest) {
             auditTrail,
             contractId: activeContract.id,
             logoBuffer,
+            referenceCode: activeContract.reference_code || undefined,
+            signatureReference,
+            verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
           });
 
           pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -385,6 +414,9 @@ export async function POST(request: NextRequest) {
           signedAt: auditTrail.signed_at,
           auditTrail,
           contractId: activeContract.id,
+          referenceCode: activeContract.reference_code || undefined,
+          signatureReference,
+          verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
         });
 
         pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -405,7 +437,7 @@ export async function POST(request: NextRequest) {
         signature_data,
         signed_url: pdfPath || signaturePath,
         signed_at: new Date().toISOString(),
-        audit_trail: auditTrail,
+        audit_trail: { ...auditTrail, signature_reference: signatureReference },
       })
       .eq('id', activeContract.id);
 
@@ -424,6 +456,8 @@ export async function POST(request: NextRequest) {
           `\u2705 *Document Signed Successfully*`,
           '',
           `You have signed "${activeContract.title}" from ${businessName}.`,
+          ...(activeContract.reference_code ? [`Document ID: ${activeContract.reference_code}`] : []),
+          `Signature Ref: ${signatureReference}`,
           '',
           `\ud83d\udce5 Download your signed copy:`,
           permanentUrl,
@@ -481,7 +515,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, contract_id: activeContract.id, has_pdf: !!pdfPath });
+    return NextResponse.json({
+      success: true,
+      contract_id: activeContract.id,
+      has_pdf: !!pdfPath,
+      reference_code: activeContract.reference_code || null,
+      signature_reference: signatureReference,
+    });
   } catch (err) {
     logger.error('Contract submit error:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -19,6 +19,7 @@ interface ContractInfo {
   require_otp?: boolean;
   otp_verified?: boolean;
   logo_url?: string | null;
+  reference_code?: string | null;
 }
 
 type PageState = 'loading' | 'otp_required' | 'otp_verifying' | 'ready' | 'signing' | 'submitting' | 'success' | 'already_signed' | 'declined' | 'error';
@@ -35,6 +36,7 @@ export default function SignPage() {
   const [hasDrawn, setHasDrawn] = useState(false);
   const [agreed, setAgreed] = useState(false);
   const [hasPdf, setHasPdf] = useState(false);
+  const [signatureReference, setSignatureReference] = useState<string | null>(null);
 
   // Decline state
   const [showDeclineModal, setShowDeclineModal] = useState(false);
@@ -353,6 +355,7 @@ export default function SignPage() {
 
       const data = await res.json();
       setHasPdf(data.has_pdf === true);
+      if (data.signature_reference) setSignatureReference(data.signature_reference);
       setState('success');
     } catch {
       setErrorMsg('Failed to submit. Please try again.');
@@ -516,6 +519,22 @@ export default function SignPage() {
           <p className="mt-2 text-gray-600">
             Your signature for &quot;{contract?.title}&quot; has been recorded successfully.
           </p>
+
+          {/* Document ID and Signature Reference */}
+          {(contract?.reference_code || signatureReference) && (
+            <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3 text-left">
+              {contract?.reference_code && (
+                <p className="text-xs text-gray-500">
+                  Document ID: <span className="font-mono font-medium text-gray-700">{contract.reference_code}</span>
+                </p>
+              )}
+              {signatureReference && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Signature Ref: <span className="font-mono font-medium text-gray-700">{signatureReference}</span>
+                </p>
+              )}
+            </div>
+          )}
 
           {hasPdf && contract && (
             <a

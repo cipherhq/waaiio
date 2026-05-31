@@ -42,7 +42,7 @@ export default async function ContractAccessPage({ params, searchParams }: PageP
   // Fetch contract
   const { data: contract, error } = await supabase
     .from('contracts')
-    .select('id, title, status, business_id, token, signed_at, signed_url, audit_trail, signer_name, signer_email')
+    .select('id, title, status, business_id, token, signed_at, signed_url, audit_trail, signer_name, signer_email, reference_code')
     .eq('id', id)
     .single();
 
@@ -53,16 +53,19 @@ export default async function ContractAccessPage({ params, searchParams }: PageP
   // Verify token: check single-signer token or multi-signer token
   let authorized = false;
   let viewerName = contract.signer_name || 'Signer';
-  let auditData = contract.audit_trail as { ip?: string; signed_at?: string; device_type?: string } | null;
+  let auditData = contract.audit_trail as { ip?: string; signed_at?: string; device_type?: string; signature_reference?: string } | null;
+  let viewerSigRef: string | null = null;
 
   if (contract.token === token) {
     authorized = true;
+    // For single-signer, signature_reference is stored in audit_trail
+    viewerSigRef = auditData?.signature_reference || null;
   }
 
   if (!authorized) {
     const { data: signer } = await supabase
       .from('contract_signers')
-      .select('id, signer_name, signed_at, audit_trail, status')
+      .select('id, signer_name, signed_at, audit_trail, status, signature_reference')
       .eq('contract_id', contract.id)
       .eq('token', token)
       .maybeSingle();
@@ -71,6 +74,7 @@ export default async function ContractAccessPage({ params, searchParams }: PageP
       authorized = true;
       viewerName = signer.signer_name || 'Signer';
       auditData = signer.audit_trail as typeof auditData;
+      viewerSigRef = signer.signature_reference || null;
     }
   }
 
@@ -142,6 +146,13 @@ export default async function ContractAccessPage({ params, searchParams }: PageP
             )}
           </div>
 
+          {/* Document Reference */}
+          {contract.reference_code && (
+            <p className="mt-2 text-xs text-gray-500">
+              Document ID: <span className="font-mono font-medium text-gray-700">{contract.reference_code}</span>
+            </p>
+          )}
+
           {/* Details */}
           <dl className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between">
@@ -152,6 +163,12 @@ export default async function ContractAccessPage({ params, searchParams }: PageP
               <dt className="text-gray-500">Signer</dt>
               <dd className="font-medium text-gray-900">{viewerName}</dd>
             </div>
+            {viewerSigRef && (
+              <div className="flex justify-between">
+                <dt className="text-gray-500">Signature Ref</dt>
+                <dd className="font-mono font-medium text-gray-900">{viewerSigRef}</dd>
+              </div>
+            )}
             {formattedDate && (
               <div className="flex justify-between">
                 <dt className="text-gray-500">Signed</dt>

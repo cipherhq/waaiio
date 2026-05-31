@@ -12,6 +12,13 @@ function generateToken(): string {
   ).join('');
 }
 
+function generateDocRef(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return `WA-DOC-${code}`;
+}
+
 const CONTRACT_TEMPLATE_NAME = process.env.WHATSAPP_CONTRACT_TEMPLATE || 'document_signature_request';
 
 async function sendWhatsAppMessage(
@@ -148,6 +155,8 @@ export async function POST(request: NextRequest) {
     // Generate primary token for single-signer backward compat
     const primaryToken = generateToken();
 
+    const referenceCode = generateDocRef();
+
     const { data: contract, error } = await service
       .from('contracts')
       .insert({
@@ -164,6 +173,7 @@ export async function POST(request: NextRequest) {
         require_otp: !!require_otp,
         signing_mode: mode,
         cc_recipients: cc_recipients || [],
+        reference_code: referenceCode,
       })
       .select('id')
       .single();

@@ -1,4 +1,5 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import QRCode from 'qrcode';
 
 interface AppendSignatureData {
   originalFileBuffer: Buffer;
@@ -16,6 +17,9 @@ interface AppendSignatureData {
   };
   contractId: string;
   logoBuffer?: Buffer;
+  referenceCode?: string;
+  signatureReference?: string;
+  verifyUrl?: string;
 }
 
 function formatDate(iso: string): string {
@@ -125,6 +129,14 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   });
   y -= 20;
 
+  // Document ID
+  if (data.referenceCode) {
+    sigPage.drawText(`Document ID: ${data.referenceCode}`, {
+      x: 50, y, size: 8, font, color: lightGray,
+    });
+    y -= 12;
+  }
+
   sigPage.drawText(`Date: ${formatDate(data.signedAt)}  |  Ref: ${data.contractId}`, {
     x: 50, y, size: 9, font, color: lightGray,
   });
@@ -163,7 +175,15 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   sigPage.drawText(`Date & Time: ${formatDate(data.signedAt)}`, {
     x: 50, y, size: 10, font, color: gray,
   });
-  y -= 35;
+  y -= 16;
+
+  if (data.signatureReference) {
+    sigPage.drawText(`Signature Ref: ${data.signatureReference}`, {
+      x: 50, y, size: 8, font, color: lightGray,
+    });
+    y -= 14;
+  }
+  y -= 5;
 
   // ── Embed signature image ──
   sigPage.drawText('Signature:', {
@@ -243,6 +263,24 @@ export async function appendSignatureToUploadedPdf(data: AppendSignatureData): P
   sigPage.drawText('waaiio.com  |  Legally binding electronic signature', {
     x: 180, y, size: 7, font, color: rgb(0.75, 0.75, 0.75),
   });
+  y -= 25;
+
+  // ── Verification QR Code ──
+  if (data.verifyUrl) {
+    try {
+      const qrBuffer = await QRCode.toBuffer(data.verifyUrl, { width: 100, margin: 1 });
+      const qrImage = await pdfDoc.embedPng(qrBuffer);
+      const qrY = Math.max(y - 110, 40);
+      sigPage.drawImage(qrImage, {
+        x: 50, y: qrY, width: 100, height: 100,
+      });
+      sigPage.drawText('Scan to verify this document', {
+        x: 160, y: qrY + 45, size: 7, font, color: lightGray,
+      });
+    } catch {
+      // Skip QR code if generation fails
+    }
+  }
 
   const pdfBytes = await pdfDoc.save();
   return Buffer.from(pdfBytes);

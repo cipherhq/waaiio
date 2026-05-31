@@ -41,6 +41,7 @@ interface Contract {
   require_otp: boolean;
   signing_mode: string;
   wa_delivery_status: string | null;
+  reference_code: string | null;
   contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null; wa_delivery_status: string | null; token: string }[];
 }
 
@@ -117,7 +118,7 @@ export default function ContractsPage() {
   const loadContracts = useCallback(async () => {
     const { data } = await supabase
       .from('contracts')
-      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
+      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, reference_code, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
 
@@ -560,7 +561,9 @@ export default function ContractsPage() {
                 >
                   <td className="whitespace-nowrap px-4 py-3">
                     <p className="text-sm font-medium text-gray-900">{c.title}</p>
-                    {c.template_url ? (
+                    {c.reference_code ? (
+                      <p className="font-mono text-xs text-gray-400">{c.reference_code}</p>
+                    ) : c.template_url ? (
                       <p className="text-xs text-gray-400">Uploaded document</p>
                     ) : c.document_content ? (
                       <p className="text-xs text-gray-400">Has document content</p>
@@ -675,6 +678,9 @@ export default function ContractsPage() {
             <div className="mb-4 flex items-start justify-between">
               <div>
                 <h2 className="text-lg font-bold text-gray-900">{selectedContract.title}</h2>
+                {selectedContract.reference_code && (
+                  <p className="font-mono text-xs text-gray-400">{selectedContract.reference_code}</p>
+                )}
                 <p className="mt-1 text-sm text-gray-500">
                   {selectedContract.signer_name || 'No name'} &middot; {selectedContract.signer_phone}
                 </p>

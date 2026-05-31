@@ -20,7 +20,7 @@ export async function GET(
   // Try contracts table first
   const { data: contract, error } = await supabase
     .from('contracts')
-    .select('id, title, signer_name, signer_email, status, token_expires_at, template_url, business_id, document_content, signed_at, signed_url, require_otp, otp_verified')
+    .select('id, title, signer_name, signer_email, status, token_expires_at, template_url, business_id, document_content, signed_at, signed_url, require_otp, otp_verified, reference_code')
     .eq('token', token)
     .single();
 
@@ -39,7 +39,7 @@ export async function GET(
     // Get parent contract
     const { data: parentContract } = await supabase
       .from('contracts')
-      .select('id, title, template_url, business_id, document_content, require_otp')
+      .select('id, title, template_url, business_id, document_content, require_otp, reference_code')
       .eq('id', signer.contract_id)
       .single();
 
@@ -65,6 +65,7 @@ export async function GET(
         signed_at: signer.signed_at,
         has_pdf: false, // individual signer doesn't have separate PDF
         is_multi_signer: true,
+        reference_code: parentContract.reference_code || null,
       });
     }
 
@@ -96,6 +97,7 @@ export async function GET(
       otp_verified: signer.otp_verified || false,
       is_multi_signer: true,
       logo_url: business?.logo_url || null,
+      reference_code: parentContract.reference_code || null,
     });
   }
 
@@ -117,6 +119,7 @@ export async function GET(
       status: 'signed',
       signed_at: contract.signed_at,
       has_pdf: !!contract.signed_url?.endsWith('.pdf'),
+      reference_code: contract.reference_code || null,
     });
   }
 
@@ -148,5 +151,6 @@ export async function GET(
     require_otp: contract.require_otp || false,
     otp_verified: contract.otp_verified || false,
     logo_url: business?.logo_url || null,
+    reference_code: contract.reference_code || null,
   });
 }

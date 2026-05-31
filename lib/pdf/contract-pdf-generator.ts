@@ -1,4 +1,5 @@
 import PDFDocument from 'pdfkit';
+import QRCode from 'qrcode';
 
 interface ContractPdfData {
   businessName: string;
@@ -15,6 +16,9 @@ interface ContractPdfData {
   };
   contractId: string;
   logoBuffer?: Buffer;
+  referenceCode?: string;
+  signatureReference?: string;
+  verifyUrl?: string;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -108,14 +112,22 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
   doc.fontSize(18).font('Helvetica-Bold').fillColor('#000000')
     .text(data.title, 50, 70, { width: contentWidth - 120 });
 
+  // Document ID in small gray text
+  if (data.referenceCode) {
+    doc.fontSize(8).font('Helvetica').fillColor('#999999')
+      .text(`Document ID: ${data.referenceCode}`, 50, 92, { width: contentWidth });
+  }
+
+  const dateLineY = data.referenceCode ? 104 : 95;
   doc.fontSize(9).font('Helvetica').fillColor('#888888')
-    .text(`Date: ${formatDate(data.signedAt)}  |  Ref: ${data.contractId}`, 50, 95, { width: contentWidth });
+    .text(`Date: ${formatDate(data.signedAt)}  |  Ref: ${data.contractId}`, 50, dateLineY, { width: contentWidth });
 
   // Divider
-  doc.moveTo(50, 115).lineTo(pageWidth - 50, 115).strokeColor('#cccccc').stroke();
+  const dividerY = dateLineY + 18;
+  doc.moveTo(50, dividerY).lineTo(pageWidth - 50, dividerY).strokeColor('#cccccc').stroke();
 
   // ── Document Body ──
-  let y = 130;
+  let y = dividerY + 15;
 
   if (data.documentContent) {
     doc.fontSize(10).font('Helvetica').fillColor('#000000');
@@ -172,7 +184,14 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
 
   doc.fontSize(9).font('Helvetica').fillColor('#666666')
     .text(`Date & Time: ${formatDate(data.signedAt)}`, 50, y);
-  y += 20;
+  y += 14;
+
+  if (data.signatureReference) {
+    doc.fontSize(8).font('Helvetica').fillColor('#999999')
+      .text(`Signature Ref: ${data.signatureReference}`, 50, y);
+    y += 14;
+  }
+  y += 6;
 
   // Embed signature image
   try {
@@ -200,7 +219,28 @@ export async function generateSignedContractPdf(data: ContractPdfData): Promise<
     y = 50;
   }
 
-  drawWaaiioFooter(doc, pageWidth, y, data);
+  const footerEndY = drawWaaiioFooter(doc, pageWidth, y, data);
+
+  // ── Verification QR Code ──
+  if (data.verifyUrl) {
+    try {
+      const qrBuffer = await QRCode.toBuffer(data.verifyUrl, { width: 100, margin: 1 });
+      const qrY = footerEndY + 20;
+      if (qrY + 120 > doc.page.height - 20) {
+        doc.addPage();
+        drawWaaiioBranding(doc, pageWidth);
+        (doc as any).image(qrBuffer, 50, 50, { width: 100, height: 100 });
+        doc.fontSize(7).font('Helvetica').fillColor('#999999')
+          .text('Scan to verify this document', 160, 85, { width: 200 });
+      } else {
+        (doc as any).image(qrBuffer, 50, qrY, { width: 100, height: 100 });
+        doc.fontSize(7).font('Helvetica').fillColor('#999999')
+          .text('Scan to verify this document', 160, qrY + 35, { width: 200 });
+      }
+    } catch {
+      // Skip QR code if generation fails
+    }
+  }
 
   doc.end();
   return bufferPromise;
