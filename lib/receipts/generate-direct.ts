@@ -83,13 +83,13 @@ async function buildReceipt(
   customerName: string,
   customerPhone: string,
 ): Promise<Buffer | null> {
-  const [{ data: recentBooking }, { data: recentCharge }, { data: recentPayment }, { data: recentOrder }] = await Promise.all([
+  const [bookingRes, chargeRes, paymentRes, orderRes] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('subscription_charges')
-      .select('id, reference_code, amount, status, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
+      .select('id, reference_code, amount, status, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).eq('status', 'success')
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('payments')
@@ -101,6 +101,17 @@ async function buildReceipt(
       .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
+
+  const recentBooking = bookingRes.data;
+  const recentCharge = chargeRes.data;
+  const recentPayment = paymentRes.data;
+  const recentOrder = orderRes.data;
+
+  // Log errors for debugging (non-blocking)
+  if (bookingRes.error) logger.warn('[RECEIPTS] Booking query error:', bookingRes.error.message);
+  if (chargeRes.error) logger.warn('[RECEIPTS] Charge query error:', chargeRes.error.message);
+  if (paymentRes.error) logger.warn('[RECEIPTS] Payment query error:', paymentRes.error.message);
+  if (orderRes.error) logger.warn('[RECEIPTS] Order query error:', orderRes.error.message);
 
   type Candidate = { source: string; date: Date; data: any };
   const candidates: Candidate[] = [];
