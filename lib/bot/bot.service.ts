@@ -2219,7 +2219,7 @@ export class BotService {
 
     // Chat handoff: bot is paused, route messages to human agent
     if (session.business_id && step === 'chat_handoff') {
-      const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat|hi|hello|menu)$/i.test(text);
+      const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
       if (restartMatch) {
         await this.deactivateSession(session.id);
         // Also resolve the conversation so the dashboard shows it as resolved
