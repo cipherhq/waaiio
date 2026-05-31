@@ -30,12 +30,11 @@ describe('Loyalty Flow', () => {
   describe('loyalty_menu step', () => {
     const step = getStep(loyaltyFlow, 'loyalty_menu');
 
-    it('sends no-points message and returns empty when no loyalty record', async () => {
+    it('sends no-points message as prompt when no loyalty record', async () => {
       const messages = await step.prompt(ctx);
-      expect(messages).toHaveLength(0);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('text');
       expect(ctx.session.session_data._loyalty_empty).toBe(true);
-      // Message sent directly via sender
-      expect(ctx.sender.sendText).toHaveBeenCalled();
     });
 
     it('shows balance and buttons when loyalty record found', async () => {

@@ -26,8 +26,7 @@ export const recurringManageFlow: FlowDefinition = {
 
         if (!subs || subs.length === 0) {
           ctx.session.session_data._recurring_empty = true;
-          await ctx.sender.sendText({ to: ctx.from, text: 'You have no active recurring payments. Send *Hi* to start a new payment.' });
-          return [];
+          return [{ type: 'text', text: 'You have no active recurring payments. Send *Hi* to start a new payment.' }];
         }
 
         // Load service names
@@ -69,7 +68,7 @@ export const recurringManageFlow: FlowDefinition = {
         return { valid: true, data: { _selected_sub_id: selected.id, _selected_sub_label: selected.label } };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._recurring_empty) return 'my_account_menu';
+        if (ctx.session.session_data._recurring_empty) return null; // End session cleanly when no recurring payments
         return 'select_action';
       },
     },

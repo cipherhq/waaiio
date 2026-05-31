@@ -35,9 +35,9 @@ describe('Invoice Flow', () => {
       (ctx.supabase.from as any).mockReturnValueOnce(mockChain);
 
       const messages = await step.prompt(ctx);
-      expect(messages).toHaveLength(0);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].type).toBe('text');
       expect(ctx.session.session_data._invoice_empty).toBe(true);
-      expect(ctx.sender.sendText).toHaveBeenCalled();
     });
 
     it('shows invoice list with correct formatting', async () => {
