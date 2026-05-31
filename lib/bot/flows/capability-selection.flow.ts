@@ -411,7 +411,7 @@ const myAccountMenuStep: FlowStepConfig = {
     return [{
       type: 'list' as const,
       title: 'My Account',
-      body: 'Manage your bookings, orders, and more:',
+      body: 'Manage your bookings, orders, and more:\n\nWant to make a new booking or order? Type *Hi* to get started.',
       buttonLabel: 'My Account',
       items,
     }];
