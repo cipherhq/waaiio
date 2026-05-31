@@ -172,7 +172,7 @@ export async function handleOrderDetail(
 ): Promise<void> {
   const { data: order } = await supabase
     .from('orders')
-    .select('id, reference_code, status, total_amount, created_at, shipping_cost, delivery_address, tracking_number, carrier, updated_at, businesses (name, country_code)')
+    .select('id, reference_code, status, total_amount, created_at, shipping_cost, delivery_address, tracking_number, shipping_carrier, updated_at, businesses (name, country_code)')
     .eq('id', orderId)
     .single();
 
@@ -208,10 +208,10 @@ export async function handleOrderDetail(
   }
 
   // Show tracking info if available
-  if (order.tracking_number || order.carrier) {
+  if (order.tracking_number || order.shipping_carrier) {
     lines.push('');
     lines.push('🚚 *Tracking Info*');
-    if (order.carrier) lines.push(`Carrier: ${order.carrier}`);
+    if (order.shipping_carrier) lines.push(`Carrier: ${order.shipping_carrier}`);
     if (order.tracking_number) lines.push(`Tracking #: ${order.tracking_number}`);
   }
 
