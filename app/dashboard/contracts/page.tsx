@@ -41,7 +41,7 @@ interface Contract {
   require_otp: boolean;
   signing_mode: string;
   wa_delivery_status: string | null;
-  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null; wa_delivery_status: string | null }[];
+  contract_signers?: { id: string; signer_name: string | null; signer_phone: string; status: string; signed_at: string | null; wa_delivery_status: string | null; token: string }[];
 }
 
 interface CustomTemplate {
@@ -117,7 +117,7 @@ export default function ContractsPage() {
   const loadContracts = useCallback(async () => {
     const { data } = await supabase
       .from('contracts')
-      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status)')
+      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
       .eq('business_id', business.id)
       .order('created_at', { ascending: false });
 
@@ -477,6 +477,17 @@ export default function ContractsPage() {
     }
   }
 
+  /** Find the signer record matching the business owner's phone that still needs signing */
+  function getOwnerPendingSigner(c: Contract) {
+    if (!c.contract_signers || c.contract_signers.length === 0) return null;
+    if (c.signing_mode === 'single') return null;
+    const ownerPhone = business.phone?.replace(/\D/g, '');
+    if (!ownerPhone) return null;
+    return c.contract_signers.find(
+      s => s.signer_phone.replace(/\D/g, '') === ownerPhone && s.status === 'pending'
+    ) || null;
+  }
+
   // Check if Step 1 can proceed to Step 2
   const canProceed = title && (docTab !== 'upload' || uploadedFileUrl);
 
@@ -574,7 +585,14 @@ export default function ContractsPage() {
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    {getStatusBadge(c.status)}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {getStatusBadge(c.status)}
+                      {getOwnerPendingSigner(c) && (
+                        <span className="inline-flex items-center rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand">
+                          Awaiting your signature
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-sm text-gray-500">
                     {c.signed_at
@@ -583,6 +601,20 @@ export default function ContractsPage() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-2">
+                      {(() => {
+                        const ownerSigner = getOwnerPendingSigner(c);
+                        if (ownerSigner) return (
+                          <a
+                            href={`/sign/${ownerSigner.token}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                          >
+                            Sign Now
+                          </a>
+                        );
+                        return null;
+                      })()}
                       {(c.status === 'expired' || c.status === 'pending') && (
                         <>
                           <button
@@ -729,6 +761,30 @@ export default function ContractsPage() {
                 </button>
               </div>
             )}
+
+            {/* Owner needs to sign banner */}
+            {(() => {
+              const ownerSigner = getOwnerPendingSigner(selectedContract);
+              if (!ownerSigner) return null;
+              return (
+                <div className="mb-4 rounded-lg border border-brand/30 bg-brand/5 p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">You need to sign this contract</p>
+                      <p className="mt-0.5 text-xs text-gray-500">Your signature is required to complete this document.</p>
+                    </div>
+                    <a
+                      href={`/sign/${ownerSigner.token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:opacity-90"
+                    >
+                      Sign Now
+                    </a>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Multi-signer list */}
             {selectedContract.contract_signers && selectedContract.contract_signers.length > 0 && (
