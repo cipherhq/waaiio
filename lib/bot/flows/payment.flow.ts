@@ -219,7 +219,7 @@ export const paymentFlow: FlowDefinition = {
           await ctx.supabase.from('bot_sessions')
             .update({ session_data: d })
             .eq('id', ctx.session.id);
-          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined, ctx.business?.slug);
         }
 
         // Ensure user exists
@@ -316,7 +316,7 @@ export const paymentFlow: FlowDefinition = {
             },
             {
               type: 'buttons',
-              body: "\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
+              body: "⏱️ After paying, wait 5-10 seconds then tap below:",
               buttons: [
                 { id: 'i_paid', title: "I've Paid" },
                 { id: 'go_back', title: 'Cancel' },
@@ -350,7 +350,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete your payment using the link above.\n\n\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
+          body: "Complete your payment using the link above.\n\n⏱️ After paying, wait 5-10 seconds then tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },

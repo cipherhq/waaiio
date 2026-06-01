@@ -17,7 +17,7 @@ function getOrderingLabels(_category: string): { noun: string; emoji: string; br
 
 /** WhatsApp list row titles max 24 chars, descriptions max 72 chars */
 function truncTitle(s: string, max = 24): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + '\u2026';
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
 interface OptionGroup {
@@ -314,7 +314,7 @@ export const orderingFlow: FlowDefinition = {
 
         const cart = (d.cart as CartItem[]) || [];
         const cartInfo = cart.length > 0
-          ? `\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`
+          ? `\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}`
           : '';
 
         return [{
@@ -815,7 +815,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         const minQty = (d.current_min_order_qty as number) || 1;
-        let promptText = `*${productName}*${variantInfo} \u2014 ${formatCurrency(d.current_product_price as number, cc)}`;
+        let promptText = `*${productName}*${variantInfo} — ${formatCurrency(d.current_product_price as number, cc)}`;
         if (available !== null && available <= 5) {
           promptText += `\n\n_Only ${available} available_`;
         }
@@ -1097,7 +1097,7 @@ export const orderingFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const total = calculateCartTotal(cart);
         const variantInfo = cartItem.variant_label ? ` (${cartItem.variant_label})` : '';
-        const addedText = `✅ *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 *${formatCurrency(total, cc)}*`;
+        const addedText = `✅ *${cartItem.name}*${variantInfo} x${cartItem.quantity} added!\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} — *${formatCurrency(total, cc)}*`;
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
@@ -1214,7 +1214,7 @@ export const orderingFlow: FlowDefinition = {
         if (browseByCategory) {
           return [{
             type: 'buttons' as const,
-            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 *${formatCurrency(total, cc)}*\n\nAdd more items or checkout:`,
+            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — *${formatCurrency(total, cc)}*\n\nAdd more items or checkout:`,
             buttons: [
               { id: 'browse_more', title: 'Browse Menu' },
               { id: 'checkout', title: 'Checkout' },
@@ -1265,7 +1265,7 @@ export const orderingFlow: FlowDefinition = {
           return [{
             type: 'list' as const,
             title: 'Your Cart',
-            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
+            body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
             buttonLabel: 'View Options',
             items: [checkoutItem, ...products.slice(0, 9).map(p => ({
               title: truncTitle(p.name),
@@ -1288,7 +1288,7 @@ export const orderingFlow: FlowDefinition = {
         return [{
           type: 'list',
           title: 'Your Cart',
-          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart \u2014 ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
+          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
           buttonLabel: 'View Options',
           items: listItems.slice(0, 10),
         }];
@@ -1548,7 +1548,7 @@ export const orderingFlow: FlowDefinition = {
           buttonLabel: 'Choose Zone',
           items: zones.map(z => {
             let desc = z.is_pickup ? 'Pickup' : z.price > 0 ? formatCurrency(z.price, cc) : 'FREE';
-            if (z.estimated_time) desc += ` \u2022 ${z.estimated_time}`;
+            if (z.estimated_time) desc += ` • ${z.estimated_time}`;
             if (z.is_negotiable) desc += ' (Negotiable)';
             return { title: z.name.slice(0, 24), description: desc, postbackText: z.id };
           }),
@@ -1821,7 +1821,7 @@ export const orderingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!referral) {
-          return { valid: false, errorMessage: 'Hmm, that code didn\u2019t work. Double-check it and try again, or type *skip* to continue without one.' };
+          return { valid: false, errorMessage: 'Hmm, that code didn\'t work. Double-check it and try again, or type *skip* to continue without one.' };
         }
 
         return {
@@ -1866,7 +1866,7 @@ export const orderingFlow: FlowDefinition = {
           const label = item.variant_label ? `${item.name} (${item.variant_label})` : item.name;
           const itemTotal = item.price * item.quantity;
           subtotal += itemTotal;
-          lines.push(`\u2022 ${label} x${item.quantity} \u2014 ${formatCurrency(itemTotal, cc)}`);
+          lines.push(`• ${label} x${item.quantity} — ${formatCurrency(itemTotal, cc)}`);
           if (item.addons && item.addons.length > 0) {
             for (const a of item.addons) {
               const addonCost = a.price * (a.quantity || 1);
@@ -2000,7 +2000,7 @@ export const orderingFlow: FlowDefinition = {
           if (measurements && Object.keys(measurements).length > 0) {
             summary.push('📏 Measurements:');
             for (const [field, value] of Object.entries(measurements)) {
-              summary.push(`  \u2022 ${field}: ${value}`);
+              summary.push(`  • ${field}: ${value}`);
             }
           }
           if (d.custom_design_notes) summary.push(`✍️ Notes: ${d.custom_design_notes}`);
@@ -2072,7 +2072,7 @@ export const orderingFlow: FlowDefinition = {
           const label = item.variant_label ? `${item.name} (${item.variant_label})` : item.name;
           items.push({
             title: truncTitle(`❌ ${label}`),
-            description: `Remove \u2014 x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`,
+            description: `Remove — x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`,
             postbackText: `remove:${i}`,
           });
         }
@@ -2087,7 +2087,7 @@ export const orderingFlow: FlowDefinition = {
         return [{
           type: 'list',
           title: 'Edit Order',
-          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
+          body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}\n\nRemove items or change your details:`,
           buttonLabel: 'Edit Options',
           items: items.slice(0, 10),
         }];
@@ -2130,7 +2130,7 @@ export const orderingFlow: FlowDefinition = {
             const cart = (d.cart as CartItem[]) || [];
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `❌ *${d._removed_name}* removed.\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} \u2014 ${formatCurrency(calculateCartTotal(cart), cc)}`,
+              text: `❌ *${d._removed_name}* removed.\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}`,
             });
             delete d._removed_name;
           }
@@ -2336,7 +2336,7 @@ export const orderingFlow: FlowDefinition = {
           await ctx.supabase.from('bot_sessions')
             .update({ session_data: d })
             .eq('id', ctx.session.id);
-          return getTermsPrompt(ctx.business?.name || 'Shop', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+          return getTermsPrompt(ctx.business?.name || 'Shop', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined, ctx.business?.slug);
         }
 
         // Ensure user exists

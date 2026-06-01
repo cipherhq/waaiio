@@ -281,9 +281,17 @@ export function bookingConfirmationEmail(details: {
   formattedAmount?: string;
   quantityLabel: string;
   confirmationEmoji: string;
+  googleCalendarUrl?: string;
 }) {
-  const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji } = details;
+  const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji, googleCalendarUrl } = details;
   const amountDisplay = formattedAmount || (amount > 0 ? amount.toLocaleString() : '');
+  const calendarBtn = googleCalendarUrl
+    ? `<table cellpadding="0" cellspacing="0" style="margin:16px 0"><tr>
+        <td style="background:#4285f4;border-radius:8px;padding:10px 20px">
+          <a href="${googleCalendarUrl}" style="color:#ffffff;text-decoration:none;font-size:13px;font-weight:600">📅 Add to Calendar</a>
+        </td>
+      </tr></table>`
+    : '';
   return {
     subject: `Confirmed at ${businessName} ${confirmationEmoji}`,
     from: businessFrom(businessName),
@@ -297,6 +305,7 @@ export function bookingConfirmationEmail(details: {
         kv(esc(quantityLabel), String(quantity)) +
         (amount > 0 ? kv('Amount', esc(amountDisplay)) : '')
       )}
+      ${calendarBtn}
       ${p("We'll send you a reminder beforehand. See you soon!")}
     `, { businessName, logoUrl: businessLogoUrl }),
   };

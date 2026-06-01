@@ -57,8 +57,12 @@ const selectAppointmentStep: FlowStepConfig = {
       items: appointments.map(a => {
         const priceLabel = a.price > 0 ? formatCurrency(a.price, cc) : 'Free';
         const durationLabel = a.duration_minutes ? `${a.duration_minutes}min` : '';
-        const desc = [priceLabel, durationLabel].filter(Boolean).join(' · ');
-        return { title: a.name, description: desc, postbackText: a.id };
+        // If name fits in 24 chars, use as-is. Otherwise shorten title and put full name in description.
+        const name = a.name || 'Appointment';
+        if (name.length <= 24) {
+          return { title: name, description: [priceLabel, durationLabel].filter(Boolean).join(' · '), postbackText: a.id };
+        }
+        return { title: name.slice(0, 23) + '…', description: [name, priceLabel, durationLabel].filter(Boolean).join(' · ').slice(0, 72), postbackText: a.id };
       }),
     }];
   },

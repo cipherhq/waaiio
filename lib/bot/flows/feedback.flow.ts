@@ -109,7 +109,7 @@ const feedbackThanksStep: FlowStepConfig = {
       });
     }
 
-    const stars = '\u2B50'.repeat(rating);
+    const stars = '⭐'.repeat(rating);
     const thanks = rating >= 4
       ? `Thank you for the ${stars} rating! We appreciate your feedback.`
       : `Thank you for your feedback ${stars}. We'll work to improve your experience.`;

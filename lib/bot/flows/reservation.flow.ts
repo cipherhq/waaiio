@@ -7,6 +7,7 @@ import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { getReservationConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
+import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import type { SubscriptionTier } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
@@ -666,7 +667,7 @@ export const reservationFlow: FlowDefinition = {
           await ctx.supabase.from('bot_sessions')
             .update({ session_data: d })
             .eq('id', ctx.session.id);
-          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined, ctx.business?.slug);
         }
 
         const insertPayload: Record<string, unknown> = {
@@ -828,6 +829,16 @@ export const reservationFlow: FlowDefinition = {
           }).catch(err => console.error('[RESERVATION] Post-completion error:', err));
         }
 
+        const resCalLinks = getCalendarLinksText({
+          businessName: ctx.business?.name || 'Business',
+          businessAddress: undefined,
+          serviceName: (d.service_name as string) || 'Reservation',
+          referenceCode: reservation.reference_code,
+          date: d.check_in as string,
+          time: '14:00', // Default check-in time
+          durationMinutes: 120,
+        });
+
         return [{
           type: 'text',
           text: [
@@ -840,13 +851,14 @@ export const reservationFlow: FlowDefinition = {
             `🔑 Ref: *${reservation.reference_code}*`,
             '',
             'See you soon!',
+            resCalLinks ? resCalLinks : null,
             '',
             '💡 *What you can do:*',
             '• Type *my bookings* to view your reservations',
             '• Type *reschedule* to change dates',
             '• Type *cancel* to cancel this reservation',
             '• Type *receipt* to get your receipt',
-          ].join('\n'),
+          ].filter(Boolean).join('\n'),
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
@@ -916,6 +928,15 @@ export const reservationFlow: FlowDefinition = {
               const dedupCheckOutLabel = new Date((d.check_out as string) + 'T00:00').toLocaleDateString(getLocale(cc), {
                 weekday: 'short', day: 'numeric', month: 'short',
               });
+              const dedupResCalLinks = getCalendarLinksText({
+                businessName: ctx.business?.name || 'Business',
+                businessAddress: undefined,
+                serviceName: (d.service_name as string) || 'Reservation',
+                referenceCode: d.reference_code as string,
+                date: d.check_in as string,
+                time: '14:00',
+                durationMinutes: 120,
+              });
               await ctx.sender.sendText({
                 to: ctx.from,
                 text: [
@@ -930,12 +951,13 @@ export const reservationFlow: FlowDefinition = {
                   `🔑 Ref: *${d.reference_code as string}*`,
                   '',
                   'See you soon!',
+                  dedupResCalLinks ? dedupResCalLinks : null,
                   '',
                   '💡 *What you can do:*',
                   '• Type *my bookings* to view your reservation',
                   '• Type *receipt* to get your receipt',
                   '• Type *Hi* to make another booking',
-                ].join('\n'),
+                ].filter(Boolean).join('\n'),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
@@ -958,6 +980,16 @@ export const reservationFlow: FlowDefinition = {
               weekday: 'short', day: 'numeric', month: 'short',
             });
 
+            const resPayCalLinks = getCalendarLinksText({
+              businessName: ctx.business?.name || 'Business',
+              businessAddress: undefined,
+              serviceName: (d.service_name as string) || 'Reservation',
+              referenceCode: d.reference_code as string,
+              date: d.check_in as string,
+              time: '14:00',
+              durationMinutes: 120,
+            });
+
             await ctx.sender.sendText({
               to: ctx.from,
               text: [
@@ -971,7 +1003,8 @@ export const reservationFlow: FlowDefinition = {
                 `🔑 Ref: *${d.reference_code as string}*`,
                 '',
                 'See you soon!',
-              ].join('\n'),
+                resPayCalLinks ? resPayCalLinks : null,
+              ].filter(Boolean).join('\n'),
             });
 
             if (ctx.business) {

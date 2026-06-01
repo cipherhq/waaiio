@@ -14,6 +14,7 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import type { SubscriptionTier } from '@/lib/constants';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
+import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
@@ -229,8 +230,8 @@ export const schedulingFlow: FlowDefinition = {
               const timeDisplay = time ? formatTime(time, true) : '';
               const spots = spotsMap.get(s.id);
               desc = `${days} ${timeDisplay}`;
-              if (spots !== undefined) desc += ` \u2022 ${spots} spot${spots !== 1 ? 's' : ''} left`;
-              if (s.price > 0) desc = `${formatCurrency(s.price, cc)} \u2022 ${desc}`;
+              if (spots !== undefined) desc += ` • ${spots} spot${spots !== 1 ? 's' : ''} left`;
+              if (s.price > 0) desc = `${formatCurrency(s.price, cc)} • ${desc}`;
             } else if (s.price > 0) {
               const priceStr = formatCurrency(s.price, cc);
               if (s.billing_type === 'recurring' && s.recurring_interval) {
@@ -242,11 +243,11 @@ export const schedulingFlow: FlowDefinition = {
               const meta = (s as Record<string, unknown>).metadata as Record<string, unknown> | null;
               const turnaround = meta?.turnaround_days as number | undefined;
               if (turnaround) {
-                desc += ` \u2022 ${turnaround} day${turnaround > 1 ? 's' : ''}`;
+                desc += ` • ${turnaround} day${turnaround > 1 ? 's' : ''}`;
               } else if (s.duration_minutes) {
                 desc += s.duration_minutes >= 60
-                  ? ` \u2022 ${Math.floor(s.duration_minutes / 60)}hr${s.duration_minutes % 60 ? ` ${s.duration_minutes % 60}min` : ''}`
-                  : ` \u2022 ${s.duration_minutes}min`;
+                  ? ` • ${Math.floor(s.duration_minutes / 60)}hr${s.duration_minutes % 60 ? ` ${s.duration_minutes % 60}min` : ''}`
+                  : ` • ${s.duration_minutes}min`;
               }
             } else {
               const meta = (s as Record<string, unknown>).metadata as Record<string, unknown> | null;
@@ -259,7 +260,9 @@ export const schedulingFlow: FlowDefinition = {
                   : `${s.duration_minutes}min`;
               }
             }
-            return { title: s.name.slice(0, 24), description: desc, postbackText: s.id };
+            const sTitle = s.name.length <= 24 ? s.name : s.name.slice(0, 23) + '…';
+            const sDesc = s.name.length > 24 ? [s.name, desc].filter(Boolean).join(' · ').slice(0, 72) : desc;
+            return { title: sTitle, description: sDesc, postbackText: s.id };
           }),
         }];
       },
@@ -1727,7 +1730,7 @@ export const schedulingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!referral) {
-          return { valid: false, errorMessage: 'Hmm, that code didn\u2019t work. Double-check it and try again, or type *skip* to continue without one.' };
+          return { valid: false, errorMessage: 'Hmm, that code didn\'t work. Double-check it and try again, or type *skip* to continue without one.' };
         }
 
         return {
@@ -1905,7 +1908,7 @@ export const schedulingFlow: FlowDefinition = {
           await ctx.supabase.from('bot_sessions')
             .update({ session_data: d })
             .eq('id', ctx.session.id);
-          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined);
+          return getTermsPrompt(ctx.business?.name || 'Business', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined, ctx.business?.slug);
         }
 
         const insertPayload: Record<string, unknown> = {
@@ -2191,7 +2194,7 @@ export const schedulingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: "\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
+                body: "⏱️ After paying, wait 5-10 seconds then tap below:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'go_back', title: 'Cancel' },
@@ -2356,7 +2359,20 @@ export const schedulingFlow: FlowDefinition = {
           }).catch(() => {});
         }
 
-        return [{ type: 'text', text: message + helpText }];
+        // Add calendar links for date+time bookings (not drop-off services)
+        const svcMeta = d._service_metadata as Record<string, unknown> | undefined;
+        const isDropoff = svcMeta?.is_dropoff === true;
+        const calendarLinks = (!isDropoff && d.date && d.time) ? getCalendarLinksText({
+          businessName: ctx.business?.name || 'Business',
+          businessAddress: undefined,
+          serviceName: (d.service_name as string) || undefined,
+          referenceCode: booking.reference_code,
+          date: d.date as string,
+          time: d.time as string,
+          durationMinutes: (d.service_duration as number) || 60,
+        }) : '';
+
+        return [{ type: 'text', text: message + calendarLinks + helpText }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         if (input === 'accept_terms') {
@@ -2617,7 +2633,7 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Your confirmation will arrive automatically after payment.\n\n\u23f1\ufe0f After paying, wait 5-10 seconds then tap below:",
+          body: "Your confirmation will arrive automatically after payment.\n\n⏱️ After paying, wait 5-10 seconds then tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },
@@ -2662,6 +2678,15 @@ export const schedulingFlow: FlowDefinition = {
               const labels2 = getCategoryLabels(ctx.business?.category || 'restaurant');
               const dateLabel2 = new Date((d.date as string) + 'T00:00').toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { weekday: 'long', day: 'numeric', month: 'long' });
               const paidCC2 = (ctx.business?.country_code || 'NG') as CountryCode;
+              const calLinks2 = (d.date && d.time) ? getCalendarLinksText({
+                businessName: ctx.business?.name || 'Business',
+                businessAddress: undefined,
+                serviceName: (d.service_name as string) || undefined,
+                referenceCode: d.reference_code as string,
+                date: d.date as string,
+                time: d.time as string,
+                durationMinutes: (d.service_duration as number) || 60,
+              }) : '';
               const confirmLines2 = [
                 `✅ *Payment Confirmed!*`,
                 '',
@@ -2673,6 +2698,7 @@ export const schedulingFlow: FlowDefinition = {
                 `🔑 Ref: *${d.reference_code as string}*`,
                 '',
                 'See you there!',
+                calLinks2 ? calLinks2 : null,
                 '',
                 '💡 *What you can do:*',
                 '• Type *my bookings* to view your appointments',
@@ -2711,6 +2737,15 @@ export const schedulingFlow: FlowDefinition = {
 
             const paidAmount = (d.deposit_amount as number) || 0;
             const paidCC = (ctx.business?.country_code || 'NG') as CountryCode;
+            const calLinksPayment = (d.date && d.time) ? getCalendarLinksText({
+              businessName: ctx.business?.name || 'Business',
+              businessAddress: undefined,
+              serviceName: (d.service_name as string) || undefined,
+              referenceCode: d.reference_code as string,
+              date: d.date as string,
+              time: d.time as string,
+              durationMinutes: (d.service_duration as number) || 60,
+            }) : '';
             const confirmLines = [
               `✅ *Payment Confirmed!*`,
               '',
@@ -2722,6 +2757,7 @@ export const schedulingFlow: FlowDefinition = {
               `🔑 Ref: *${d.reference_code as string}*`,
               '',
               'See you there!',
+              calLinksPayment ? calLinksPayment : null,
             ].filter(Boolean);
 
             const payTips = '\n\n💡 *What you can do:*\n• Type *my bookings* to view your appointments\n• Type *reschedule* to change the date/time\n• Type *cancel* to cancel\n• Type *receipt* to get your payment receipt';

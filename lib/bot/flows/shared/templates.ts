@@ -37,7 +37,7 @@ export function getConfirmationMessage(opts: {
     lines.push(`💰 Amount: ${formatCurrency(opts.amount, cc)}`);
   }
 
-  lines.push('', 'Thank you!');
+  lines.push('', 'Thank you! 🙏');
   return lines.join('\n');
 }
 
@@ -118,7 +118,7 @@ export function getOrderConfirmationMessage(opts: {
     lines.push('', `📍 Delivery to: ${opts.deliveryAddress}`);
   }
 
-  lines.push('', 'Thank you for your order!');
+  lines.push('', 'Thank you for your order! 🙏');
   return lines.join('\n');
 }
 

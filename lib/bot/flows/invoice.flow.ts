@@ -17,7 +17,7 @@ const invoiceListStep: FlowStepConfig = {
 
     if (!businessId) {
       ctx.session.session_data._invoice_empty = true;
-      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705 Send *Hi* to start over.' }];
+      return [{ type: 'text', text: 'You\'re all caught up — no outstanding invoices! ✅ Send *Hi* to start over.' }];
     }
 
     const { data: invoices } = await ctx.supabase
@@ -31,7 +31,7 @@ const invoiceListStep: FlowStepConfig = {
 
     if (!invoices || invoices.length === 0) {
       ctx.session.session_data._invoice_empty = true;
-      return [{ type: 'text', text: 'You\u2019re all caught up \u2014 no outstanding invoices! \u2705 Send *Hi* to start over.' }];
+      return [{ type: 'text', text: 'You\'re all caught up — no outstanding invoices! ✅ Send *Hi* to start over.' }];
     }
 
     // Store invoice list for selection
@@ -45,12 +45,12 @@ const invoiceListStep: FlowStepConfig = {
 
     const lines = invoices.map((inv, i) => {
       const num = i + 1;
-      const emoji = num <= 9 ? `${num}️\u20E3` : `${num}.`;
+      const emoji = num <= 9 ? `${num}️⃣` : `${num}.`;
       const dueDateStr = inv.due_date
         ? new Date(inv.due_date).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' })
         : 'No due date';
       const statusTag = inv.status === 'overdue' ? ' ⚠️ OVERDUE' : '';
-      return `${emoji} ${inv.invoice_number} \u2022 ${formatCurrency(inv.total_amount, cc)} \u2022 Due ${dueDateStr}${statusTag}`;
+      return `${emoji} ${inv.invoice_number} • ${formatCurrency(inv.total_amount, cc)} • Due ${dueDateStr}${statusTag}`;
     });
 
     return [{
@@ -116,7 +116,7 @@ const invoiceDetailStep: FlowStepConfig = {
     const statusTag = invoice.status === 'overdue' ? ' ⚠️ OVERDUE' : '';
 
     const itemLines = (items || []).map(item =>
-      `  \u2022 ${item.description} x${item.quantity} \u2014 ${formatCurrency(item.total, cc)}`
+      `  • ${item.description} x${item.quantity} — ${formatCurrency(item.total, cc)}`
     );
 
     const summary = [
@@ -193,7 +193,7 @@ const invoicePayStep: FlowStepConfig = {
     }
 
     if (!userId) {
-      return [{ type: 'text', text: 'We couldn\u2019t match your number to an account. Send *Hi* to set one up, then try again.' }];
+      return [{ type: 'text', text: 'We couldn\'t match your number to an account. Send *Hi* to set one up, then try again.' }];
     }
 
     try {
@@ -210,7 +210,7 @@ const invoicePayStep: FlowStepConfig = {
       });
 
       if (!result) {
-        return [{ type: 'buttons', body: 'We couldn\u2019t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+        return [{ type: 'buttons', body: 'We couldn\'t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
       }
 
       // Update invoice status to viewed
@@ -264,7 +264,7 @@ const invoicePayStep: FlowStepConfig = {
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);
-      return [{ type: 'buttons', body: 'We couldn\u2019t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+      return [{ type: 'buttons', body: 'We couldn\'t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
     }
   },
 

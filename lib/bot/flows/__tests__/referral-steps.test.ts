@@ -123,7 +123,7 @@ describe('Referral Steps (scheduling)', () => {
 
       const result = await step.validate('BADCODE', ctx);
       expect(result.valid).toBe(false);
-      expect(result.errorMessage).toContain('didn\u2019t work');
+      expect(result.errorMessage).toContain('didn\'t work');
     });
 
     it('routes to collect_email', async () => {

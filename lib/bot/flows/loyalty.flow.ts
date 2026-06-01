@@ -108,7 +108,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
 
     if (!transactions || transactions.length === 0) {
       return [
-        { type: 'text', text: 'No points activity yet. You\u2019ll see your points history here as you earn and redeem!' },
+        { type: 'text', text: 'No points activity yet. You\'ll see your points history here as you earn and redeem!' },
         {
           type: 'buttons',
           body: 'Anything else?',
@@ -122,7 +122,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
       const dateStr = new Date(t.created_at).toLocaleDateString(getLocale((ctx.business?.country_code || 'NG') as CountryCode), { month: 'short', day: 'numeric' });
       const reason = (t.reason as string) || 'Activity';
       const reasonLabel = reason.charAt(0).toUpperCase() + reason.slice(1);
-      return `${sign}${t.points_change} \u2022 ${reasonLabel} (${dateStr})`;
+      return `${sign}${t.points_change} • ${reasonLabel} (${dateStr})`;
     });
 
     return [

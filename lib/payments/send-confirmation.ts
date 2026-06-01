@@ -4,6 +4,7 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
+import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 
 interface PaymentForConfirmation {
   id: string;
@@ -51,12 +52,16 @@ export async function sendProactiveConfirmation(
   let serviceName = 'Payment';
   let referenceCode = '';
   let countryCode: CountryCode = 'US';
+  let bookingDate: string | undefined;
+  let bookingTime: string | undefined;
+  let bookingAddress: string | undefined;
+  let bookingDuration: number | undefined;
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('guest_phone, reference_code, business_id, businesses(name, country_code), services(name)')
+      .select('guest_phone, reference_code, business_id, date, time, flow_type, businesses(name, country_code, address), services(name, duration)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -64,11 +69,18 @@ export async function sendProactiveConfirmation(
       customerPhone = booking.guest_phone;
       businessId = booking.business_id;
       referenceCode = booking.reference_code || '';
-      const biz = booking.businesses as unknown as { name: string; country_code?: string } | null;
-      const svc = booking.services as unknown as { name: string } | null;
+      const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string } | null;
+      const svc = booking.services as unknown as { name: string; duration?: number } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
+      // Store booking date/time for calendar links (only for scheduling/appointment bookings)
+      if (booking.date && booking.time && booking.flow_type !== 'ordering') {
+        bookingDate = booking.date;
+        bookingTime = booking.time;
+        bookingAddress = biz?.address || undefined;
+        bookingDuration = svc?.duration || undefined;
+      }
     }
   }
 
@@ -184,11 +196,27 @@ export async function sendProactiveConfirmation(
     `💰 Amount: ${formatCurrency(payment.amount, countryCode)}`,
     referenceCode ? `🔑 Ref: *${referenceCode}*` : '',
     '',
-    'Thank you for your payment!',
+    'Thank you for your payment! 🙏',
     '',
     'Type *receipt* to get your receipt',
     'Type *my bookings* to view your bookings',
   ].filter(Boolean);
+
+  // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
+  if (bookingDate && bookingTime && referenceCode) {
+    const calLinks = getCalendarLinksText({
+      businessName,
+      businessAddress: bookingAddress,
+      serviceName,
+      referenceCode,
+      date: bookingDate,
+      time: bookingTime,
+      durationMinutes: bookingDuration || 60,
+    });
+    if (calLinks) {
+      lines.push(calLinks);
+    }
+  }
 
   // Show "save card" tip only for Paystack + first payment or new card (not on every confirmation)
   let showSaveCardTip = false;
@@ -374,6 +402,23 @@ export async function sendProactiveConfirmation(
         if (guestEmail) {
           const { sendEmail } = await import('@/lib/email/client');
           const { bookingConfirmationEmail } = await import('@/lib/email/templates');
+          // Generate Google Calendar URL for the email button
+          let googleCalUrl: string | undefined;
+          if (emailBooking?.date && emailBooking?.time) {
+            const { generateGoogleCalendarUrl, buildCalendarEvent } = await import('@/lib/calendar/generate-links');
+            const calEvent = buildCalendarEvent({
+              businessName,
+              businessAddress: bookingAddress,
+              serviceName,
+              referenceCode,
+              date: emailBooking.date,
+              time: emailBooking.time,
+              durationMinutes: bookingDuration || 60,
+            });
+            if (calEvent) {
+              googleCalUrl = generateGoogleCalendarUrl(calEvent);
+            }
+          }
           const emailContent = bookingConfirmationEmail({
             firstName: emailBooking?.guest_name?.split(' ')[0] || 'there',
             businessName,
@@ -385,6 +430,7 @@ export async function sendProactiveConfirmation(
             formattedAmount: formatCurrency(payment.amount, countryCode),
             quantityLabel: 'Guest(s)',
             confirmationEmoji: '✅',
+            googleCalendarUrl: googleCalUrl,
           });
           await sendEmail({ to: guestEmail, ...emailContent });
           logger.info(`${logPrefix} Email confirmation sent to ${guestEmail}`);

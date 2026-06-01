@@ -252,13 +252,13 @@ export async function handleViewTicket(
   const statusLabel = ticket.status === 'used' ? 'Used' : ticket.status === 'cancelled' ? 'Cancelled' : 'Valid';
 
   await sendText(from, [
-    `*Event Ticket*`,
+    `🎫 *Event Ticket*`,
     '',
-    `*${evt?.name || 'Event'}*`,
-    `${dateLabel}${evt?.time ? ` at ${evt.time}` : ''}`,
-    evt?.venue ? `${evt.venue}` : '',
-    `Ticket: *${ticket.ticket_code}*`,
-    `${ticket.guest_name || 'Guest'}`,
+    `🎪 *${evt?.name || 'Event'}*`,
+    `📅 ${dateLabel}${evt?.time ? ` at ${evt.time}` : ''}`,
+    evt?.venue ? `📍 ${evt.venue}` : '',
+    `🎟️ Ticket: *${ticket.ticket_code}*`,
+    `👤 ${ticket.guest_name || 'Guest'}`,
     `Status: ${statusLabel}`,
   ].filter(Boolean).join('\n'));
 
@@ -306,15 +306,15 @@ export async function handleViewReservation(
   const currencySymbol = biz?.country_code === 'US' ? '$' : biz?.country_code === 'GB' ? '£' : '₦';
 
   await sendText(from, [
-    `*Reservation Details*`,
+    `🏨 *Reservation Details*`,
     '',
-    `*${biz?.name || 'Property'}*`,
-    `Check-in: ${checkIn}`,
-    `Check-out: ${checkOut}`,
-    reservation.guests ? `${reservation.guests} guest(s)` : '',
-    reservation.total_amount ? `${currencySymbol}${Number(reservation.total_amount).toLocaleString()}` : '',
-    `${reservation.guest_name || 'Guest'}`,
-    `Ref: *${reservation.reference_code}*`,
+    `🏠 *${biz?.name || 'Property'}*`,
+    `📅 Check-in: ${checkIn}`,
+    `📅 Check-out: ${checkOut}`,
+    reservation.guests ? `👥 ${reservation.guests} guest(s)` : '',
+    reservation.total_amount ? `💰 ${currencySymbol}${Number(reservation.total_amount).toLocaleString()}` : '',
+    `👤 ${reservation.guest_name || 'Guest'}`,
+    `🔑 Ref: *${reservation.reference_code}*`,
     `Status: ${statusLabel}`,
   ].filter(Boolean).join('\n'));
 
@@ -443,7 +443,7 @@ export async function handleModifyBooking(
       }).catch(() => {});
     }
 
-    await sendText(from, '✓ Cancelled.\n\nSend *Hi* to start fresh or *my bookings* to manage others.');
+    await sendText(from, '❌ Booking cancelled.\n\nSend *Hi* to start fresh or *my bookings* to manage others.');
     await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
