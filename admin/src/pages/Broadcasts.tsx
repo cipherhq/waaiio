@@ -124,6 +124,49 @@ export default function Broadcasts() {
 
       if (error) throw error;
 
+      // Actually deliver the broadcast for email channel
+      if (channel === 'email') {
+        try {
+          const { data: sessionData } = await supabase.auth.getSession();
+          const accessToken = sessionData?.session?.access_token;
+          const apiUrl = import.meta.env.VITE_API_URL || '';
+
+          let recipientEmails: string[] = [];
+
+          if (audience === 'specific') {
+            recipientEmails = specificRecipients.split(',').map(s => s.trim()).filter(Boolean);
+          } else if (audience === 'all_users') {
+            const { data: profiles } = await adminDb.from('profiles').select('email').not('email', 'is', null);
+            recipientEmails = (profiles || []).map(p => p.email).filter(Boolean);
+          } else if (audience === 'all_businesses') {
+            const { data: businesses } = await adminDb.from('businesses').select('owner_id');
+            const ownerIds = [...new Set((businesses || []).map(b => b.owner_id).filter(Boolean))];
+            if (ownerIds.length > 0) {
+              const { data: profiles } = await adminDb.from('profiles').select('email').in('id', ownerIds).not('email', 'is', null);
+              recipientEmails = (profiles || []).map(p => p.email).filter(Boolean);
+            }
+          }
+
+          if (recipientEmails.length > 0 && accessToken) {
+            await fetch(`${apiUrl}/api/email/send`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                to: recipientEmails,
+                subject,
+                html: message,
+              }),
+            });
+          }
+        } catch (emailError) {
+          console.error('Failed to deliver email broadcast:', emailError);
+          // The broadcast record was saved — don't block the UI for delivery failure
+        }
+      }
+
       await logAudit({
         action: 'send_broadcast',
         entity_type: 'admin_broadcast',

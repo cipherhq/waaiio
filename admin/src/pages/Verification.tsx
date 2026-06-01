@@ -176,7 +176,7 @@ export default function Verification() {
         .single();
       if (owner?.email) {
         const limitStr = formatPayoutLimit(cc, level);
-        fetch('/api/email/send', {
+        fetch(`${import.meta.env.VITE_API_URL}/api/email/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -240,7 +240,7 @@ export default function Verification() {
         .eq('id', selected.businesses.owner_id)
         .single();
       if (owner?.email) {
-        fetch('/api/email/send', {
+        fetch(`${import.meta.env.VITE_API_URL}/api/email/send`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

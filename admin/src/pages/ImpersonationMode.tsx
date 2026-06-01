@@ -206,7 +206,7 @@ export default function ImpersonationMode() {
         return;
       }
 
-      if (data.url && (data.url.startsWith('https://waaiio.com') || data.url.startsWith(window.location.origin))) {
+      if (data.url && (data.url.startsWith('https://waaiio.com') || data.url.startsWith('https://www.waaiio.com') || data.url.startsWith(window.location.origin))) {
         window.open(data.url, '_blank');
       } else {
         alert('Invalid redirect URL');
@@ -600,7 +600,7 @@ export default function ImpersonationMode() {
                           <StatusBadge status={b.status} />
                         </td>
                         <td className="px-4 py-3 text-right text-gray-900">
-                          {b.total_amount != null ? formatMoney(b.total_amount) : '--'}
+                          {b.total_amount != null ? formatMoney(b.total_amount, selected?.country_code) : '--'}
                         </td>
                         <td className="px-4 py-3 text-gray-500">{fmtDate(b.created_at)}</td>
                       </tr>
@@ -689,6 +689,17 @@ function EditableRow({
   );
 }
 
-function formatMoney(amount: number): string {
-  return new Intl.NumberFormat('en-NG', { style: 'currency', currency: 'NGN', minimumFractionDigits: 0 }).format(amount);
+const COUNTRY_CURRENCY_MAP: Record<string, { code: string; locale: string }> = {
+  NG: { code: 'NGN', locale: 'en-NG' },
+  US: { code: 'USD', locale: 'en-US' },
+  GB: { code: 'GBP', locale: 'en-GB' },
+  CA: { code: 'CAD', locale: 'en-CA' },
+  GH: { code: 'GHS', locale: 'en-GH' },
+  KE: { code: 'KES', locale: 'en-KE' },
+  ZA: { code: 'ZAR', locale: 'en-ZA' },
+};
+
+function formatMoney(amount: number, countryCode?: string | null): string {
+  const cc = COUNTRY_CURRENCY_MAP[countryCode || 'NG'] || COUNTRY_CURRENCY_MAP.NG;
+  return new Intl.NumberFormat(cc.locale, { style: 'currency', currency: cc.code, minimumFractionDigits: 0 }).format(amount);
 }

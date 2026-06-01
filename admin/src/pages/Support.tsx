@@ -38,6 +38,8 @@ interface TicketMessage {
 
 interface AdminProfile {
   id: string;
+  first_name: string | null;
+  last_name: string | null;
   full_name: string;
 }
 
@@ -118,12 +120,12 @@ export default function Support() {
       const { data: profiles } = userIds.length
         ? await adminDb
             .from('profiles')
-            .select('id, full_name')
+            .select('id, first_name, last_name')
             .in('id', userIds)
         : { data: [] };
 
       const nameMap = new Map(
-        (profiles || []).map((p) => [p.id, p.full_name || 'Unknown']),
+        (profiles || []).map((p) => [p.id, `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unknown']),
       );
 
       const enriched: SupportTicket[] = rows.map((t) => ({
@@ -145,10 +147,15 @@ export default function Support() {
     try {
       const { data } = await adminDb
         .from('profiles')
-        .select('id, full_name')
-        .eq('role', 'admin');
+        .select('id, first_name, last_name')
+        .in('role', ['admin', 'support']);
 
-      setAdmins((data || []).map((p) => ({ id: p.id, full_name: p.full_name || 'Admin' })));
+      setAdmins((data || []).map((p) => ({
+        id: p.id,
+        first_name: p.first_name,
+        last_name: p.last_name,
+        full_name: `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Admin',
+      })));
     } catch {
       // best-effort
     }
@@ -170,12 +177,12 @@ export default function Support() {
       const { data: profiles } = senderIds.length
         ? await adminDb
             .from('profiles')
-            .select('id, full_name')
+            .select('id, first_name, last_name')
             .in('id', senderIds)
         : { data: [] };
 
       const nameMap = new Map(
-        (profiles || []).map((p) => [p.id, p.full_name || 'Unknown']),
+        (profiles || []).map((p) => [p.id, `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unknown']),
       );
 
       setMessages(

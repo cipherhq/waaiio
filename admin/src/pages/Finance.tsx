@@ -55,20 +55,11 @@ interface Business {
 
 export default function Finance() {
   const session = useAdminSession();
-  const isFullAdmin = session?.role === 'admin';
+  const hasAccess = session && ['admin', 'finance'].includes(session.role);
   const [loading, setLoading] = useState(true);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [fees, setFees] = useState<PlatformFee[]>([]);
   const [payouts, setPayouts] = useState<BusinessPayout[]>([]);
-
-  if (!isFullAdmin) {
-    return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
-        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
-        <p className="mt-1 text-sm text-gray-500">Only full admins can view financial data.</p>
-      </div>
-    );
-  }
   const [refunds, setRefunds] = useState<Refund[]>([]);
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
@@ -299,6 +290,15 @@ export default function Finance() {
   }, [payments, businesses, bizCurrencyMap]);
 
   const maxCatRevenue = Math.max(...categoryRevenue.map(c => c.total), 1);
+
+  if (!hasAccess) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
+        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
+        <p className="mt-1 text-sm text-gray-500">Only admin and finance roles can view financial data.</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

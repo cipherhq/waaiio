@@ -32,7 +32,7 @@ export default function Login() {
         .eq('id', data.user.id)
         .maybeSingle();
 
-      if (!profile || !['admin', 'support'].includes(profile.role)) {
+      if (!profile || !['admin', 'support', 'finance', 'operations'].includes(profile.role)) {
         await supabase.auth.signOut();
         setError('This account does not have admin access.');
         setLoading(false);

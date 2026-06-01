@@ -39,7 +39,7 @@ export default function Dashboard() {
   const [featureAdoption, setFeatureAdoption] = useState<Array<{ capability: string; count: number }>>([]);
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
-  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number }>>([]);
+  const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number; revenueByCurrency: Record<string, number> }>>([]);
 
   useEffect(() => {
     async function loadStats() {
@@ -306,12 +306,13 @@ export default function Dashboard() {
         const allPaymentsRes = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'status', op: 'eq', value: 'success' }] });
 
         const bizCatMap = new Map((allBizRes.data || []).map(b => [b.id, b.category]));
-        const catStats = new Map<string, { count: number; bookings: number; revenue: number }>();
+        const bizCountryMap = new Map((allBizRes.data || []).map(b => [b.id, b.country_code || 'NG']));
+        const catStats = new Map<string, { count: number; bookings: number; revenueByCurrency: Record<string, number> }>();
 
         // Count businesses per category
         for (const b of allBizRes.data || []) {
           const cat = b.category || 'other';
-          const existing = catStats.get(cat) || { count: 0, bookings: 0, revenue: 0 };
+          const existing = catStats.get(cat) || { count: 0, bookings: 0, revenueByCurrency: {} };
           existing.count++;
           catStats.set(cat, existing);
         }
@@ -321,16 +322,26 @@ export default function Dashboard() {
           const existing = catStats.get(cat);
           if (existing) existing.bookings++;
         }
-        // Sum revenue per category
+        // Sum revenue per category per currency
         for (const p of allPaymentsRes.data || []) {
           const cat = bizCatMap.get(p.business_id) || 'other';
+          const cc = bizCountryMap.get(p.business_id) || 'NG';
+          const cur = countryToCur[cc] || 'NGN';
           const existing = catStats.get(cat);
-          if (existing) existing.revenue += Number(p.amount || 0);
+          if (existing) {
+            existing.revenueByCurrency[cur] = (existing.revenueByCurrency[cur] || 0) + Number(p.amount || 0);
+          }
         }
 
         setCategoryBreakdown(
           Array.from(catStats.entries())
-            .map(([category, data]) => ({ category, ...data }))
+            .map(([category, data]) => ({
+              category,
+              count: data.count,
+              bookings: data.bookings,
+              revenue: Object.values(data.revenueByCurrency).reduce((s, a) => s + a, 0),
+              revenueByCurrency: data.revenueByCurrency,
+            }))
             .sort((a, b) => b.count - a.count)
         );
 
@@ -661,7 +672,14 @@ export default function Dashboard() {
                       <td className="px-4 py-3 font-medium text-gray-900 capitalize">{cat.category.replace(/_/g, ' ')}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{cat.count}</td>
                       <td className="px-4 py-3 text-right text-gray-700">{cat.bookings}</td>
-                      <td className="px-4 py-3 text-right font-medium text-gray-900">{cat.revenue > 0 ? formatMoney(cat.revenue) : '—'}</td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900">
+                        {cat.revenue > 0
+                          ? Object.entries(cat.revenueByCurrency)
+                              .filter(([, a]) => a > 0)
+                              .map(([cur, amt]) => formatMoney(amt, cur))
+                              .join(' · ') || '—'
+                          : '—'}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="h-2 w-full rounded-full bg-gray-100 overflow-hidden">
                           <div className="h-2 rounded-full bg-brand" style={{ width: `${Math.max(2, (cat.bookings / maxBookings) * 100)}%` }} />

@@ -39,20 +39,11 @@ const statusStyles: Record<string, string> = {
 
 export default function Payouts() {
   const session = useAdminSession();
-  const isFullAdmin = session?.role === 'admin';
+  const hasAccess = session && ['admin', 'finance'].includes(session.role);
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-
-  if (!isFullAdmin) {
-    return (
-      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
-        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
-        <p className="mt-1 text-sm text-gray-500">Only full admins can manage payouts.</p>
-      </div>
-    );
-  }
   const [statusFilter, setStatusFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -297,6 +288,15 @@ export default function Payouts() {
     } finally {
       setGenerating(false);
     }
+  }
+
+  if (!hasAccess) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
+        <p className="text-lg font-semibold text-gray-900">Access Restricted</p>
+        <p className="mt-1 text-sm text-gray-500">Only admin and finance roles can manage payouts.</p>
+      </div>
+    );
   }
 
   if (loading) {
