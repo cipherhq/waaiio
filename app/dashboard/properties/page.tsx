@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
@@ -508,9 +509,15 @@ export default function PropertiesPage() {
           <h1 className="text-2xl font-bold text-gray-900">{propertyLabelPlural}</h1>
           <p className="mt-1 text-sm text-gray-500">Manage your {propertyLabelPlural.toLowerCase()} and pricing</p>
         </div>
-        <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">
-          + Add {propertyLabel}
-        </button>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/properties/checkin" className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+            Check-in
+          </Link>
+          <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">
+            + Add {propertyLabel}
+          </button>
+        </div>
       </div>
 
       <PageHelp

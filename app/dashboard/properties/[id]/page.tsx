@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
@@ -97,6 +97,76 @@ const reservationActions: Record<string, { label: string; next: string; color: s
     { label: 'Check Out', next: 'checked_out', color: 'text-gray-600 hover:bg-gray-50' },
   ],
 };
+
+function CheckInQRSection({ propertyId, propertyName }: { propertyId: string; propertyName: string }) {
+  const [showQR, setShowQR] = useState(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const qrUrl = `https://waaiio.com/checkin/property/${propertyId}`;
+
+  useEffect(() => {
+    if (!showQR || !canvasRef.current) return;
+    import('qrcode').then(QRCode => {
+      QRCode.toCanvas(canvasRef.current, qrUrl, { width: 256, margin: 2 }, () => {});
+    });
+  }, [showQR, qrUrl]);
+
+  function downloadQR() {
+    if (!canvasRef.current) return;
+    const link = document.createElement('a');
+    link.download = `checkin-qr-${propertyName.replace(/\s+/g, '-').toLowerCase()}.png`;
+    link.href = canvasRef.current.toDataURL('image/png');
+    link.click();
+  }
+
+  function printQR() {
+    if (!canvasRef.current) return;
+    const win = window.open('', '_blank');
+    if (!win) return;
+    win.document.write(`
+      <html><head><title>Check-in QR - ${propertyName}</title>
+      <style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;text-align:center}img{max-width:300px}h2{margin-top:24px}p{color:#666;font-size:14px;margin-top:8px}</style></head>
+      <body>
+        <img src="${canvasRef.current.toDataURL('image/png')}" />
+        <h2>${propertyName}</h2>
+        <p>Scan this QR code to check in</p>
+        <p style="font-size:12px;color:#999;margin-top:16px">${qrUrl}</p>
+      </body></html>
+    `);
+    win.document.close();
+    win.print();
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-gray-100 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-900">Check-in QR Code</h3>
+          <p className="text-xs text-gray-500 mt-0.5">Print and display this QR code at your property entrance</p>
+        </div>
+        <button
+          onClick={() => setShowQR(!showQR)}
+          className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+        >
+          {showQR ? 'Hide' : 'Show QR'}
+        </button>
+      </div>
+      {showQR && (
+        <div className="mt-4 flex flex-col items-center gap-3">
+          <canvas ref={canvasRef} className="rounded-lg border border-gray-200" />
+          <p className="text-xs text-gray-400 font-mono break-all text-center max-w-xs">{qrUrl}</p>
+          <div className="flex gap-2">
+            <button onClick={downloadQR} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
+              Download PNG
+            </button>
+            <button onClick={printQR} className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50">
+              Print QR
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function PropertyDetailPage() {
   const params = useParams();
@@ -391,6 +461,9 @@ export default function PropertyDetailPage() {
         title={`${propertyLabel} Bookings`}
         description={`All bookings for this ${propertyLabel.toLowerCase()}. See who's checking in, track occupancy, and manage reservations.`}
       />
+
+      {/* Check-in QR Code Section */}
+      <CheckInQRSection propertyId={propertyId} propertyName={property.name} />
 
       {/* Quick Stats */}
       <div className="mt-4 grid gap-3 sm:grid-cols-4">
