@@ -17,6 +17,7 @@ import {
   TIER_LABELS,
 } from '@/lib/capabilities/types';
 import { ReAuthModal } from '@/components/dashboard/ReAuthModal';
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 const DAY_LABELS: Record<string, string> = {
@@ -1086,10 +1087,10 @@ export default function SettingsPage() {
                       <span className="invisible group-hover:visible absolute left-5 -top-1 z-10 w-52 rounded-lg bg-gray-900 p-2 text-xs text-white shadow-lg">Your business location shown on the booking page</span>
                     </span>
                   </div>
-                  <input
-                    type="text"
+                  <PlacesAutocomplete
                     value={form.address}
-                    onChange={(e) => setForm({ ...form, address: e.target.value })}
+                    onChange={(value) => setForm({ ...form, address: value })}
+                    placeholder="Enter your business address"
                     className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                   />
                 </div>

@@ -9,6 +9,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
 interface Property {
   id: string;
@@ -375,9 +376,11 @@ export default function PropertiesPage() {
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Address / Location</label>
-              <input type="text" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })}
+              <PlacesAutocomplete
+                value={form.address}
+                onChange={(value) => setForm({ ...form, address: value })}
                 placeholder="e.g. 5 Marina Drive, Lekki"
-                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              />
             </div>
 
             {/* Photos */}

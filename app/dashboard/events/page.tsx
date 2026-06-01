@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
 interface EventItem {
   id: string;
@@ -284,7 +285,11 @@ export default function EventsPage() {
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Venue</label>
-              <input type="text" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} placeholder="e.g. Eko Hotel, Lagos" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <PlacesAutocomplete
+                value={form.venue}
+                onChange={(value) => setForm({ ...form, venue: value })}
+                placeholder="e.g. Eko Hotel, Lagos"
+              />
             </div>
 
             {/* Event Flyer / Image */}
