@@ -456,15 +456,29 @@ export default function EventsPage() {
           </div>
         </div>
 
-        <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
-          <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.date || !form.time} className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
-            {saving ? 'Saving...' : view === 'add' ? 'Create Event' : 'Save Changes'}
-          </button>
-          <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
-          {view === 'edit' && form.id && (
-            <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">Delete</button>
-          )}
-        </div>
+        {(() => {
+          const isEventPast = form.date && new Date(form.date + 'T23:59:59') < new Date();
+          return (
+            <>
+              {isEventPast && view === 'edit' && (
+                <div className="mt-4 rounded-lg bg-gray-50 border border-gray-200 px-4 py-3">
+                  <p className="text-sm text-gray-500">This event has already passed. You can view details but editing is limited.</p>
+                </div>
+              )}
+              <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
+                {!isEventPast && (
+                  <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.date || !form.time} className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
+                    {saving ? 'Saving...' : view === 'add' ? 'Create Event' : 'Save Changes'}
+                  </button>
+                )}
+                <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">{isEventPast ? 'Back' : 'Cancel'}</button>
+                {view === 'edit' && form.id && !isEventPast && (
+                  <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">Delete</button>
+                )}
+              </div>
+            </>
+          );
+        })()}
       </div>
     );
   }
@@ -507,8 +521,9 @@ export default function EventsPage() {
             const sold = event.tickets_sold || 0;
             const total = event.total_tickets || 0;
             const progress = total > 0 ? Math.min(100, Math.round((sold / total) * 100)) : 0;
+            const isPast = new Date(event.date + 'T23:59:59') < new Date();
             const statusColors: Record<string, string> = {
-              published: 'bg-green-100 text-green-700',
+              published: isPast ? 'bg-gray-100 text-gray-500' : 'bg-green-100 text-green-700',
               draft: 'bg-gray-100 text-gray-600',
               cancelled: 'bg-red-100 text-red-700',
               completed: 'bg-blue-100 text-blue-700',
@@ -519,7 +534,7 @@ export default function EventsPage() {
               <div
                 key={event.id}
                 onClick={() => openEdit(event)}
-                className="cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm"
+                className={`cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm ${isPast ? 'opacity-70' : ''}`}
               >
                 {event.image_url ? (
                   <div className="relative h-32 w-full">
@@ -531,11 +546,16 @@ export default function EventsPage() {
                 <div className="p-5">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-900">{event.name}</h3>
-                  {event.status !== 'published' && (
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[event.status] || 'bg-gray-100 text-gray-600'}`}>
-                      {event.status.replace('_', ' ')}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    {isPast && (
+                      <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-500">Past</span>
+                    )}
+                    {event.status !== 'published' && (
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[event.status] || 'bg-gray-100 text-gray-600'}`}>
+                        {event.status.replace('_', ' ')}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
                   {event.date} at {event.time || '--'} {event.venue ? `\u2022 ${event.venue}` : ''}
