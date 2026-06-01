@@ -5,6 +5,201 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-06-01
+
+### Final verification + admin fixes
+
+- `admin/src/pages/ChatHistory.tsx` — Fixed `phone_number` → `whatsapp_number` (column doesn't exist)
+- `components/dashboard/ReAuthModal.tsx` — Added `role="dialog"`, aria-modal, Escape key handler
+- Full verification pass: admin panel (all 11 fixes verified), dashboard (all pages verified, 39 sidebar links valid, zero import errors)
+
+---
+
+## 2026-05-31
+
+### Admin panel audit — 11 bugs fixed
+
+**Critical:**
+- `admin/src/pages/Finance.tsx` + `Payouts.tsx` — React hooks moved above early return (was crashing)
+- `admin/src/pages/Login.tsx` — finance + operations roles can now log in (were blocked)
+- `admin/src/pages/Verification.tsx` — Email fetch uses VITE_API_URL (was relative path to wrong domain)
+- `admin/src/pages/Support.tsx` — Changed `full_name` to `first_name`/`last_name` (column didn't exist)
+- `admin/src/pages/Subscriptions.tsx` — Free tier fee corrected to 2.5% (was 2.0%)
+
+**High:**
+- Finance + Payouts inline role guard allows finance role (was admin-only, conflicting with route guard)
+- Dashboard category revenue shows per-currency totals (was summing all as NGN)
+- Broadcasts email channel now actually delivers via main app API (was record-only)
+- ImpersonationMode uses business country_code for currency (was hardcoded NGN)
+
+**Medium:**
+- Support tickets assignable to support role (was admin-only)
+- ImpersonationMode URL validation accepts www.waaiio.com
+
+### Feature audit — 9 bugs fixed across ordering, scheduling, events
+
+**Critical:**
+- `lib/payments/process-success.ts` — Stock now decremented when webhook confirms order payment (was only on "I've Paid")
+- Stripe/Square/PayPal webhooks now pass `order_id` to processSuccessfulPayment
+- `book_slot_atomic` RPC — Buffer time enforced atomically (migration 176, optional p_buffer_minutes param)
+- `/api/events/cancel` — New route: cancels tickets, notifies holders via WhatsApp, creates refund alerts
+
+**Medium:**
+- `recordPlatformFee` now inserts `order_id` column
+- Payment-success page passes `order_id` + `reservation_id`
+- Promo `skipIf` fixed `productId` → `product_id`
+- Reschedule API validates slot capacity before UPDATE
+- Donation receipts added to `generate-direct.ts` (all 3 receipt types)
+
+### Property critical fixes
+
+- All 5 payment gateways now store `reservation_id` on payments (migration 175)
+- `processSuccessfulPayment` auto-confirms reservations on webhook
+- Public property page at `/property/[id]` with photos, amenities, availability calendar
+- Reservation cancellation: dashboard refund dialog + bot creates refund request notification
+
+### Contract enhancements
+
+- Document ID: `WA-DOC-XXXXXX` generated on creation, shown on PDF header
+- Signature Reference: `SIG-XXXXXX` per signer, shown next to signature on PDF
+- Verification QR code on signed PDF (links to permanent access page)
+- Permanent access page at `/contracts/[id]?token=xxx` (no expiration)
+- Email signed PDF copy to signer after signing
+- Multi-signer: PDF link in WhatsApp confirmation + `has_pdf` returns true
+- Counter-sign: dashboard shows "Awaiting your signature" badge + "Sign Now" button
+- Contract security: filename sanitization, signature size limit (500KB), rate limiting on 3 endpoints, file count cap (100/business)
+- Legal disclaimers: "Not a law firm" on signing page + creation page, ESIGN/UETA/eIDAS reference
+- Interactive contract builder: 5 templates with per-template questionnaires
+
+---
+
+## 2026-05-30
+
+### Bot fixes — 11 bugs
+
+- `bot.service.ts` — "hi"/"hello" during live chat no longer resets session (was in restart regex)
+- `payment.flow.ts` — Platform fee moved to AFTER payment verification (was recording phantom fees)
+- `ticketing.flow.ts` — tickets_sold incremented AFTER payment (was permanently reducing inventory)
+- `ordering.flow.ts` — Stock decremented AFTER payment (was showing false out-of-stock)
+- `appointment.flow.ts` — Added `deposit_amount` to fuzzy match (paid appointments treated as free)
+- `loyalty.flow.ts` + `invoice.flow.ts` — Return proper message + deactivate session (users were stuck)
+- `recurring-manage.flow.ts` — Same empty prompt fix (infinite loop)
+- `scheduling.flow.ts` — Zero services shows message instead of crashing
+- `ticketing.flow.ts` — Re-queries fresh availability at quantity selection
+- `queue-checkin.flow.ts` — "No Thanks" sends acknowledgment (was silent)
+- `executor.ts` — Media messages at text-only steps get "Please reply with text"
+
+### Bot navigation fixes
+
+- `my-orders.ts` — Fixed `carrier` → `shipping_carrier` (order selection always failed)
+- `my-account-menu.ts` — Fixed stale session object passed to executor (My Account/Back crashed)
+- `my-bookings.ts` — Added "My Account" button after bookings list
+- `capability-selection.flow.ts` — "Want to make a new booking? Type Hi" hint on My Account
+- `my-bookings.ts` — Reschedule flow fixed (unique constraint + Gupshup list reply ID)
+- Receipt generation — Fixed `subscription_charges` query (invalid services join)
+- Orders in receipts — `generate-direct.ts` now queries orders table
+
+### Gupshup removal — 18 files
+
+- Removed all `new GupshupService()` from API routes
+- All WhatsApp sends now use ChannelResolver
+- GupshupService throws in production when unconfigured (was silently returning success)
+- Broadcast/chat/order/contract routes all updated
+
+### Scheduled broadcasts
+
+- `business_broadcasts` table (migration 169) with scheduling
+- Cron every 5 minutes processes due broadcasts
+- Dashboard: Send Now / Schedule toggle with date/time picker
+- 4 message types: Update, Reminder, Event, Promotion
+- Meta templates provisioned (pending approval), text fallback
+- Template wording made generic (works for churches, barbers, restaurants)
+- Recipient list viewer + CSV/paste import
+
+### Subscription management
+
+- Recurring billing: Stripe `mode: 'subscription'`, Paystack plan codes (migration 172)
+- Subscription expiry cron (daily 8am): reminders at 7d/1d, auto-downgrade
+- Payment history table (migration 171) logging every upgrade/renewal/downgrade
+- Billing dashboard at `/dashboard/billing` with usage + payment history
+- Stripe checkout session verification in verify route
+- Downgrade now updates subscriptions table + records in payment history
+
+### Platform gap fixes (P0/P1/P2)
+
+- Pricing page: "2%" corrected to "2.5%"
+- Stripe subscribe: currency lowercase + correct USD fallback
+- RSVP page: new `/api/rsvp/[token]` route (was broken by RLS)
+- Root error.tsx: Sentry.captureException active
+- Login: phone OTP tab toggle wired up
+- Dashboard: pending business banner
+- Form: file upload renderer with Supabase storage
+- EventPurchaseForm: hardcoded hex → brand tokens
+
+### Compliance (Grade A-)
+
+- Data retention cron (weekly): 2yr conversations, 3yr bookings anonymized, 1yr notifications/impersonation
+- Encryption fail-closed in production
+- Session maxAge reduced to 7 days
+- Audit logging: account deletion, password/email changes, consent updates, refund approvals
+- Consent versioning with policy_version + consented_at
+- Separate data processing consent on signup
+- Upstash + OpenAI added to privacy policy + DPA sub-processor lists
+- Grace period deletion cancellation banner on dashboard
+
+### Security hardening
+
+- Circuit breaker for Meta API (5 failures → open, 30s recovery)
+- Payment reconciliation cron (every 4 hours)
+- Redis failure resilience (falls back to in-memory)
+- WhatsApp retry skips 4xx errors
+- Atomic stock operations (restore_stock RPCs, migration 173)
+- Sentry in payment flows
+- MFA/TOTP enrollment UI in settings
+- Idle timeout (2hr dashboard, 30min admin)
+- Re-auth for sensitive actions (email change, downgrade, delete)
+- Customer data deletion (GDPR erasure)
+- All 7 upload endpoints: rate limiting + filename sanitization
+- Admin query column name validation
+- Impersonation token DB verification
+- Removed dangerouslySetInnerHTML from OnboardingWizard
+
+### New features
+
+- Event check-in & audit page (`/dashboard/events/checkin`)
+- Property QR check-in system (`/dashboard/properties/checkin` + `/checkin/property/[id]`)
+- Public property page (`/property/[id]`)
+- Customer receipt page (`/receipts/[code]`)
+- Change password/email in dashboard settings
+- CSV data export option
+- Enhanced health endpoint (Redis ping, WhatsApp channel check)
+- CI/CD pipeline (GitHub Actions: lint → test → build)
+- ESLint config (next/core-web-vitals)
+- next/image migration (14 files)
+- Settings page: 13 tabs → 4 grouped tabs with collapsible sections
+- Past events read-only with visual indicators
+- Event deletion protection (can't delete with sold tickets)
+- Email branding: "BusinessName via Waaiio" sender
+- Ticket images: buyer details around QR, branded fallback for no-flyer events
+- Drop-off service description improved
+- Hero CTA buttons normalized
+
+### Migrations (169-176)
+
+- 169: business_broadcasts
+- 170: subscription_status 'expired'
+- 171: subscription_payments + subscriptions columns
+- 172: stripe_subscription_id, stripe_customer_id, billing_interval
+- 173: restore_stock, restore_variant_stock, restore_tickets_sold RPCs
+- 174: contract reference_code + signature_reference
+- 175: public property read RLS policy
+- 176: book_slot_atomic with buffer time support
+
+**Files changed:** 150+ files
+**Could break:** Stripe subscriptions are now recurring (not one-time). Buffer time RPC has new optional params. Event cancellation now notifies ticket holders. All upload endpoints now rate limited.
+
+---
+
 ## 2026-05-29
 
 ### Comprehensive Platform Audit — 62 issues across 6 domains
