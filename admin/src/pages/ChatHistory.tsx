@@ -30,7 +30,7 @@ interface ChatMessage {
 
 interface BotSession {
   id: string;
-  phone_number: string;
+  whatsapp_number: string;
   business_id: string | null;
   business_name?: string;
   flow_type: string | null;
@@ -93,7 +93,7 @@ export default function ChatHistory() {
     try {
       const { data: sessions } = await adminDb
         .from('bot_sessions')
-        .select('id, phone_number, business_id, flow_type, current_step, is_active, conversation_log, created_at, last_active_at')
+        .select('id, whatsapp_number, business_id, flow_type, current_step, is_active, conversation_log, created_at, last_active_at')
         .order('last_active_at', { ascending: false })
         .limit(500);
 
@@ -135,7 +135,7 @@ export default function ChatHistory() {
   const filteredBot = botSessions.filter(s => {
     if (!botSearch) return true;
     const q = botSearch.toLowerCase();
-    return (s.phone_number || '').includes(q) || (s.business_name || '').toLowerCase().includes(q) || (s.flow_type || '').includes(q);
+    return (s.whatsapp_number || '').includes(q) || (s.business_name || '').toLowerCase().includes(q) || (s.flow_type || '').includes(q);
   });
   const botTotalPages = Math.max(1, Math.ceil(filteredBot.length / perPage));
   const botItems = filteredBot.slice((botPage - 1) * perPage, botPage * perPage);
@@ -207,7 +207,7 @@ export default function ChatHistory() {
                 <tbody className="divide-y divide-gray-50">
                   {botItems.map(s => (
                     <tr key={s.id} onClick={() => setSelectedBot(s)} className="cursor-pointer transition hover:bg-gray-50">
-                      <td className="px-4 py-3 font-mono text-xs text-gray-700">{s.phone_number}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-700">{s.whatsapp_number}</td>
                       <td className="px-4 py-3 text-gray-700">{s.business_name}</td>
                       <td className="px-4 py-3"><span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{s.flow_type || '—'}</span></td>
                       <td className="px-4 py-3 text-xs text-gray-500">{s.current_step || '—'}</td>
@@ -320,7 +320,7 @@ export default function ChatHistory() {
         {selectedBot && (
           <div className="space-y-6">
             <div className="space-y-2 text-sm">
-              <DetailRow label="Phone" value={selectedBot.phone_number} />
+              <DetailRow label="Phone" value={selectedBot.whatsapp_number} />
               <DetailRow label="Business" value={selectedBot.business_name} />
               <DetailRow label="Flow" value={selectedBot.flow_type || '—'} />
               <DetailRow label="Current Step" value={selectedBot.current_step || '—'} />

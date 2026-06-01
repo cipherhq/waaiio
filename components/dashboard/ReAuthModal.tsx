@@ -54,9 +54,9 @@ export function ReAuthModal({ open, title, description, onConfirm, onClose }: Re
   };
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="reauth-modal-title" onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
       <div className="mx-4 w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl dark:bg-gray-800">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+        <h2 id="reauth-modal-title" className="text-lg font-semibold text-gray-900 dark:text-white">
           {title || 'Confirm Your Identity'}
         </h2>
         <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
