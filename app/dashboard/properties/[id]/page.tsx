@@ -242,6 +242,35 @@ export default function PropertyDetailPage() {
     if (newStatus === 'cancelled') {
       extra.cancelled_at = now;
       extra.cancelled_by = 'business';
+
+      // Check if deposit was paid — offer refund
+      const reservation = reservations.find(r => r.id === id);
+      if (reservation && reservation.deposit_status === 'paid' && reservation.payment_id) {
+        const depositAmount = reservation.deposit_amount || reservation.total_amount;
+        const shouldRefund = window.confirm(
+          `This reservation has a paid deposit of ${formatCurrency(depositAmount, country)}. Would you like to issue a refund?`
+        );
+        if (shouldRefund) {
+          try {
+            const res = await fetch('/api/payments/refund', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                paymentId: reservation.payment_id,
+                businessId: business.id,
+                amount: depositAmount,
+                reason: 'Reservation cancelled by business',
+              }),
+            });
+            const result = await res.json();
+            if (!res.ok) {
+              alert(`Refund failed: ${result.error || 'Unknown error'}`);
+            }
+          } catch {
+            alert('Failed to process refund. You can issue it manually from the Payments page.');
+          }
+        }
+      }
     }
     if (newStatus === 'checked_in') {
       // Date-gate: only allow if today >= check_in date
@@ -451,9 +480,19 @@ export default function PropertyDetailPage() {
             )}
           </div>
         </div>
-        <button onClick={() => router.push('/dashboard/properties')} className="shrink-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
-          Edit {propertyLabel}
-        </button>
+        <div className="flex shrink-0 gap-2">
+          <a
+            href={`/property/${propertyId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+          >
+            Share Listing
+          </a>
+          <button onClick={() => router.push('/dashboard/properties')} className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">
+            Edit {propertyLabel}
+          </button>
+        </div>
       </div>
 
       <PageHelp

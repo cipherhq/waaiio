@@ -25,7 +25,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
   // 1. Load payment record
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')
-    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, business_id, metadata')
+    .select('id, amount, currency, refund_amount, status, gateway, gateway_reference, booking_id, invoice_id, campaign_id, reservation_id, business_id, metadata')
     .eq('id', paymentId)
     .single();
 
@@ -154,7 +154,7 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
     })
     .eq('id', paymentId);
 
-  // 8. If fully refunded and has a booking, update deposit_status
+  // 8. If fully refunded and has a booking/reservation, update deposit_status
   if (isFullyRefunded && payment.booking_id) {
     await supabase
       .from('bookings')
@@ -162,9 +162,16 @@ export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRef
       .eq('id', payment.booking_id);
   }
 
+  if (isFullyRefunded && payment.reservation_id) {
+    await supabase
+      .from('reservations')
+      .update({ deposit_status: 'refunded' })
+      .eq('id', payment.reservation_id);
+  }
+
   // 9. Reverse platform fee on refund (full or partial)
-  const feeEntityCol = payment.booking_id ? 'booking_id' : payment.invoice_id ? 'invoice_id' : payment.campaign_id ? 'campaign_id' : null;
-  const feeEntityVal = payment.booking_id || payment.invoice_id || payment.campaign_id;
+  const feeEntityCol = payment.booking_id ? 'booking_id' : payment.invoice_id ? 'invoice_id' : payment.campaign_id ? 'campaign_id' : payment.reservation_id ? 'reservation_id' : null;
+  const feeEntityVal = payment.booking_id || payment.invoice_id || payment.campaign_id || payment.reservation_id;
   if (feeEntityCol && feeEntityVal) {
     if (isFullyRefunded) {
       // Full refund — mark fee as refunded entirely

@@ -156,6 +156,71 @@ export async function handleMyBookings(
     return;
   }
 
+  // Cancel reservation from detail view
+  if (input === 'cancel_reservation') {
+    const reservationId = session.session_data.selected_reservation_id as string;
+    if (reservationId) {
+      // Cancel the reservation
+      await supabase
+        .from('reservations')
+        .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'guest' })
+        .eq('id', reservationId)
+        .in('status', ['pending', 'confirmed']);
+
+      // Check if deposit was paid — if so, notify business owner for refund approval
+      const { data: cancelledRes } = await supabase
+        .from('reservations')
+        .select('deposit_status, business_id, reference_code, deposit_amount, total_amount')
+        .eq('id', reservationId)
+        .single();
+
+      if (cancelledRes?.deposit_status === 'paid') {
+        // Find the payment record and create a refund request notification for the business owner
+        const { data: relatedPayment } = await supabase
+          .from('payments')
+          .select('id')
+          .eq('reservation_id', reservationId)
+          .eq('status', 'success')
+          .maybeSingle();
+
+        if (relatedPayment && cancelledRes.business_id) {
+          // Create a notification so business owner can approve refund from dashboard
+          await supabase.from('notifications').insert({
+            business_id: cancelledRes.business_id,
+            type: 'refund_requested',
+            channel: 'system',
+            body: `Guest cancelled reservation ${cancelledRes.reference_code} (deposit paid). Review in Properties to issue refund.`,
+            metadata: {
+              reservation_id: reservationId,
+              payment_id: relatedPayment.id,
+              amount: cancelledRes.deposit_amount || cancelledRes.total_amount,
+            },
+          });
+        }
+
+        await sendText(from, [
+          '❌ *Reservation Cancelled*',
+          '',
+          'Your reservation has been cancelled.',
+          'Since you had already paid, the business has been notified to process your refund.',
+          '',
+          'Send *Hi* to start fresh.',
+        ].join('\n'));
+      } else {
+        await sendText(from, [
+          '❌ *Reservation Cancelled*',
+          '',
+          'Your reservation has been cancelled successfully.',
+          '',
+          'Send *Hi* to start fresh.',
+        ].join('\n'));
+      }
+
+      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      return;
+    }
+  }
+
   // Unrecognized input — re-show the bookings list
   await handleMyBookings(supabase, messageSender, sendText, flowExecutor, session, from, '');
 }
@@ -253,13 +318,27 @@ export async function handleViewReservation(
     `Status: ${statusLabel}`,
   ].filter(Boolean).join('\n'));
 
+  // Store selected reservation ID for follow-up actions
+  await supabase.from('bot_sessions')
+    .update({ session_data: { ..._session.session_data, selected_reservation_id: reservationId } })
+    .eq('id', _session.id);
+
+  // Show cancel option only for cancellable reservations
+  const canCancel = ['pending', 'confirmed'].includes(reservation.status);
+  const buttons: Array<{ id: string; title: string }> = canCancel
+    ? [
+        { id: 'cancel_reservation', title: 'Cancel Reservation' },
+        { id: 'back_bookings', title: 'Back to Bookings' },
+      ]
+    : [
+        { id: 'back_bookings', title: 'Back to Bookings' },
+        { id: 'back_to_account', title: 'My Account' },
+      ];
+
   await messageSender.sendButtons({
     to: from,
     body: 'What would you like to do?',
-    buttons: [
-      { id: 'back_bookings', title: 'Back to Bookings' },
-      { id: 'back_to_account', title: 'My Account' },
-    ],
+    buttons,
   });
 }
 

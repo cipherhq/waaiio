@@ -171,6 +171,7 @@ export async function initializePayment(
       bookingId: opts.bookingId,
       orderId: opts.orderId,
       invoiceId: opts.invoiceId,
+      reservationId: opts.reservationId,
       userId: opts.userId,
       amount: opts.amount,
       currency: currencyCode,

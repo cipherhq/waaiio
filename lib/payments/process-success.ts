@@ -11,6 +11,7 @@ interface PaymentRecord {
   booking_id: string | null;
   invoice_id: string | null;
   campaign_id: string | null;
+  reservation_id?: string | null;
   order_id?: string | null;
   metadata?: Record<string, unknown> | null;
 }
@@ -100,6 +101,29 @@ export async function processSuccessfulPayment(
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
     }
   }
+
+  // 5. Confirm reservation
+  if (payment.reservation_id) {
+    try {
+      await supabase
+        .from('reservations')
+        .update({
+          deposit_status: 'paid',
+          status: 'confirmed',
+          confirmed_at: new Date().toISOString(),
+        })
+        .eq('id', payment.reservation_id)
+        .in('status', ['pending']); // Only confirm if still pending (idempotent)
+
+      await recordPlatformFee(supabase, {
+        reservationId: payment.reservation_id,
+        paymentAmount: payment.amount,
+      });
+    } catch (err) {
+      logger.error('[PROCESS-SUCCESS] Reservation confirmation error:', err);
+      Sentry.captureException(err, { tags: { component: 'process-success', operation: 'reservation-confirmation' } });
+    }
+  }
 }
 
 /**
@@ -131,6 +155,7 @@ export async function recordPlatformFee(
     invoiceId?: string;
     campaignId?: string;
     orderId?: string;
+    reservationId?: string;
     businessId?: string;
     paymentAmount: number;
   },
@@ -172,6 +197,17 @@ export async function recordPlatformFee(
     transactionAmount = invoice.total_amount || opts.paymentAmount;
   }
 
+  if (opts.reservationId && !businessId) {
+    const { data: reservation } = await supabase
+      .from('reservations')
+      .select('business_id, total_amount')
+      .eq('id', opts.reservationId)
+      .single();
+    if (!reservation?.business_id) return;
+    businessId = reservation.business_id;
+    transactionAmount = reservation.total_amount || opts.paymentAmount;
+  }
+
   if (!businessId) return;
 
   const { data: business } = await supabase
@@ -194,6 +230,7 @@ export async function recordPlatformFee(
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
+    reservation_id: opts.reservationId || null,
     transaction_amount: transactionAmount,
     fee_percentage: feePercentage,
     fee_flat: feeFlat,

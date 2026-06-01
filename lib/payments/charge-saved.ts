@@ -48,6 +48,7 @@ export async function chargeSavedCard(
     businessId: string;
     bookingId?: string;
     invoiceId?: string;
+    reservationId?: string;
     orderId?: string;
     campaignId?: string;
     userId?: string;
@@ -75,6 +76,7 @@ async function chargePaystackAuthorization(
     businessId: string;
     bookingId?: string;
     invoiceId?: string;
+    reservationId?: string;
     orderId?: string;
     campaignId?: string;
     userId?: string;
@@ -94,6 +96,7 @@ async function chargePaystackAuthorization(
       booking_id: opts.bookingId || null,
       invoice_id: opts.invoiceId || null,
       campaign_id: opts.campaignId || null,
+      reservation_id: opts.reservationId || null,
       order_id: opts.orderId || null,
       user_id: opts.userId || null,
       amount: opts.amount,

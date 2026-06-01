@@ -5,6 +5,7 @@ export interface InitPaymentOpts {
   bookingId?: string;
   orderId?: string;
   invoiceId?: string;
+  reservationId?: string;
   userId: string;
   amount: number;
   currency: string;

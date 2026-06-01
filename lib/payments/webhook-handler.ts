@@ -18,7 +18,7 @@ export async function processPaystackChargeSuccess(
 ): Promise<void> {
   const { data: existingPayment } = await supabase
     .from('payments')
-    .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, metadata, gateway')
+    .select('id, status, amount, booking_id, invoice_id, campaign_id, reservation_id, order_id, metadata, gateway')
     .eq('gateway_reference', reference)
     .single();
 

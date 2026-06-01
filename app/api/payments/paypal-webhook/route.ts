@@ -212,10 +212,10 @@ export async function POST(request: NextRequest) {
         })
         .eq('id', payment.id);
 
-      // Fetch invoice_id and campaign_id (not on the initial select)
+      // Fetch invoice_id, campaign_id, reservation_id (not on the initial select)
       const { data: fullPayment } = await supabase
         .from('payments')
-        .select('invoice_id, campaign_id')
+        .select('invoice_id, campaign_id, reservation_id')
         .eq('id', payment.id)
         .single();
 
@@ -225,6 +225,7 @@ export async function POST(request: NextRequest) {
         booking_id: payment.booking_id,
         invoice_id: fullPayment?.invoice_id || null,
         campaign_id: fullPayment?.campaign_id || null,
+        reservation_id: fullPayment?.reservation_id || null,
       };
 
       // Confirm booking, record platform fees, process invoice/campaign

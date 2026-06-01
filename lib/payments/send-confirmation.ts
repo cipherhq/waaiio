@@ -11,6 +11,7 @@ interface PaymentForConfirmation {
   booking_id: string | null;
   invoice_id: string | null;
   campaign_id: string | null;
+  reservation_id?: string | null;
 }
 
 /**
@@ -67,6 +68,27 @@ export async function sendProactiveConfirmation(
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
+    }
+  }
+
+  // ── 1b. Try reservation ──
+  if (!customerPhone && payment.reservation_id) {
+    const { data: reservation } = await supabase
+      .from('reservations')
+      .select('guest_phone, reference_code, business_id, guest_name, check_in, check_out, businesses:business_id(name, country_code)')
+      .eq('id', payment.reservation_id)
+      .single();
+
+    if (reservation) {
+      customerPhone = reservation.guest_phone;
+      businessId = reservation.business_id;
+      referenceCode = reservation.reference_code || '';
+      const biz = reservation.businesses as unknown as { name: string; country_code?: string } | null;
+      if (biz?.name) businessName = biz.name;
+      if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+      const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+      const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+      serviceName = `Reservation ${checkIn} - ${checkOut}`;
     }
   }
 
