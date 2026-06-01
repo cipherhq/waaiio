@@ -163,6 +163,35 @@ export default function EventsPage() {
     if (!form.name.trim() || !form.date || !form.time) return;
     setSaving(true);
     const supabase = createClient();
+
+    // If status is being changed to 'cancelled' on an existing event, use the cancel API
+    if (view === 'edit' && form.status === 'cancelled') {
+      try {
+        const res = await fetch('/api/events/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ event_id: form.id }),
+        });
+        const result = await res.json();
+        if (!res.ok) {
+          alert(result.error || 'Failed to cancel event');
+          setSaving(false);
+          return;
+        }
+        if (result.cancelled_tickets > 0) {
+          alert(`Event cancelled. ${result.cancelled_tickets} ticket(s) invalidated, ${result.notified} holder(s) notified.${result.refunds_pending > 0 ? ` ${result.refunds_pending} refund(s) pending.` : ''}`);
+        }
+      } catch {
+        alert('Failed to cancel event. Please try again.');
+        setSaving(false);
+        return;
+      }
+      setSaving(false);
+      setView('list');
+      loadEvents();
+      return;
+    }
+
     const payload = {
       business_id: business.id,
       name: form.name.trim(),

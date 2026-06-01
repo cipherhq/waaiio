@@ -205,6 +205,8 @@ export async function POST(request: NextRequest) {
         p_total_amount: totalDeposit,
         p_staff_name: null,
         p_appointment_id: null,
+        p_buffer_minutes: service.buffer_minutes || 0,
+        p_duration: service.duration_minutes || 30,
       })
       .single() as {
         data: { booking_id: string; reference_code: string; slot_available: boolean } | null;

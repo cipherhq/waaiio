@@ -1382,8 +1382,8 @@ export const orderingFlow: FlowDefinition = {
         if (!promos || promos.length === 0) return true;
 
         // Get product IDs in the cart
-        const cart = (ctx.session.session_data.cart || []) as Array<{ productId?: string }>;
-        const cartProductIds = cart.map(item => item.productId).filter(Boolean);
+        const cart = (ctx.session.session_data.cart || []) as Array<{ product_id?: string }>;
+        const cartProductIds = cart.map(item => item.product_id).filter(Boolean);
 
         // Check if any promo applies: empty applicable_services = universal, otherwise must match cart items
         const hasApplicablePromo = promos.some(p => {

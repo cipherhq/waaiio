@@ -83,7 +83,12 @@ async function buildReceipt(
   customerName: string,
   customerPhone: string,
 ): Promise<Buffer | null> {
-  const [bookingRes, chargeRes, paymentRes, orderRes] = await Promise.all([
+  // Normalize phone for donation lookup (handle +xxx and xxx formats)
+  const phoneVariants = customerPhone.startsWith('+')
+    ? [customerPhone, customerPhone.slice(1)]
+    : [customerPhone, `+${customerPhone}`];
+
+  const [bookingRes, chargeRes, paymentRes, orderRes, donationRes] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
@@ -100,18 +105,25 @@ async function buildReceipt(
       .select('id, reference_code, status, total_amount, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('campaign_donations')
+      .select('id, reference_code, amount, status, created_at, campaigns:campaign_id(name, businesses:business_id(name, country_code, subscription_tier, logo_url))')
+      .in('donor_phone', phoneVariants)
+      .eq('status', 'success')
+      .order('created_at', { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   const recentBooking = bookingRes.data;
   const recentCharge = chargeRes.data;
   const recentPayment = paymentRes.data;
   const recentOrder = orderRes.data;
+  const recentDonation = donationRes.data;
 
   // Log errors for debugging (non-blocking)
   if (bookingRes.error) logger.warn('[RECEIPTS] Booking query error:', bookingRes.error.message);
   if (chargeRes.error) logger.warn('[RECEIPTS] Charge query error:', chargeRes.error.message);
   if (paymentRes.error) logger.warn('[RECEIPTS] Payment query error:', paymentRes.error.message);
   if (orderRes.error) logger.warn('[RECEIPTS] Order query error:', orderRes.error.message);
+  if (donationRes.error) logger.warn('[RECEIPTS] Donation query error:', donationRes.error.message);
 
   type Candidate = { source: string; date: Date; data: any };
   const candidates: Candidate[] = [];
@@ -119,17 +131,21 @@ async function buildReceipt(
   if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at), data: recentCharge });
   if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at), data: recentPayment });
   if (recentOrder) candidates.push({ source: 'order', date: new Date(recentOrder.created_at), data: recentOrder });
+  if (recentDonation) candidates.push({ source: 'donation', date: new Date(recentDonation.created_at), data: recentDonation });
 
   if (candidates.length === 0) return null;
 
   candidates.sort((a, b) => b.date.getTime() - a.date.getTime());
   const best = candidates[0];
   const d = best.data;
-  const biz = d.businesses as { name: string; country_code?: string; subscription_tier?: string; logo_url?: string } | null;
+  // For donations, business is nested under campaigns.businesses
+  const biz = best.source === 'donation'
+    ? (d.campaigns as any)?.businesses as { name: string; country_code?: string; subscription_tier?: string; logo_url?: string } | null
+    : d.businesses as { name: string; country_code?: string; subscription_tier?: string; logo_url?: string } | null;
   const svc = d.services as { name: string } | null;
   const cc = (biz?.country_code || 'NG') as CountryCode;
 
-  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : 'Payment');
+  let serviceName = svc?.name || (best.source === 'charge' ? 'Subscription' : best.source === 'order' ? 'Order' : best.source === 'donation' ? ((d.campaigns as any)?.name || 'Donation') : 'Payment');
   if (best.source === 'payment' && d.booking_id) {
     const { data: linked } = await supabase.from('bookings').select('services(name)').eq('id', d.booking_id).single();
     if (linked) {
@@ -160,7 +176,12 @@ async function buildHistory(
   customerName: string,
   customerPhone: string,
 ): Promise<Buffer | null> {
-  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }, { data: orders }] = await Promise.all([
+  // Normalize phone for donation lookup
+  const histPhoneVariants = customerPhone.startsWith('+')
+    ? [customerPhone, customerPhone.slice(1)]
+    : [customerPhone, `+${customerPhone}`];
+
+  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }, { data: orders }, { data: donations }] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
@@ -180,6 +201,11 @@ async function buildHistory(
     supabase.from('orders')
       .select('reference_code, total_amount, status, created_at, businesses:business_id(name, country_code)')
       .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+      .order('created_at', { ascending: false }).limit(50),
+    supabase.from('campaign_donations')
+      .select('reference_code, amount, status, created_at, campaigns:campaign_id(name, businesses:business_id(name, country_code))')
+      .in('donor_phone', histPhoneVariants)
+      .eq('status', 'success')
       .order('created_at', { ascending: false }).limit(50),
   ]);
 
@@ -216,6 +242,12 @@ async function buildHistory(
     if (biz?.country_code) countryCode = biz.country_code as CountryCode;
     rows.push({ date: inv.paid_at || inv.created_at, serviceName: 'Invoice', businessName: biz?.name || 'Business', referenceCode: inv.invoice_number || '-', amount: inv.total_amount || 0, status: inv.status });
   }
+  if (donations) for (const don of donations) {
+    const camp = don.campaigns as unknown as { name: string; businesses: { name: string; country_code?: string } | null } | null;
+    const biz = camp?.businesses;
+    if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+    rows.push({ date: don.created_at, serviceName: camp?.name || 'Donation', businessName: biz?.name || 'Business', referenceCode: don.reference_code || '-', amount: don.amount || 0, status: don.status });
+  }
 
   if (rows.length === 0) return null;
   rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -233,7 +265,12 @@ async function buildAnnual(
   const startDate = `${year}-01-01`;
   const endDate = `${year}-12-31`;
 
-  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }, { data: orders }] = await Promise.all([
+  // Normalize phone for donation lookup
+  const annualPhoneVariants = customerPhone.startsWith('+')
+    ? [customerPhone, customerPhone.slice(1)]
+    : [customerPhone, `+${customerPhone}`];
+
+  const [{ data: bookings }, { data: charges }, { data: payments }, { data: invoices }, { data: orders }, { data: donations }] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed'])
@@ -257,6 +294,12 @@ async function buildAnnual(
     supabase.from('orders')
       .select('reference_code, total_amount, status, created_at, businesses:business_id(name, country_code)')
       .eq('user_id', userId).in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+      .gte('created_at', `${startDate}T00:00:00`).lte('created_at', `${endDate}T23:59:59`)
+      .order('created_at', { ascending: true }).limit(200),
+    supabase.from('campaign_donations')
+      .select('reference_code, amount, status, created_at, campaigns:campaign_id(name, businesses:business_id(name, country_code))')
+      .in('donor_phone', annualPhoneVariants)
+      .eq('status', 'success')
       .gte('created_at', `${startDate}T00:00:00`).lte('created_at', `${endDate}T23:59:59`)
       .order('created_at', { ascending: true }).limit(200),
   ]);
@@ -299,6 +342,13 @@ async function buildAnnual(
     if (biz?.country_code) countryCode = biz.country_code as CountryCode;
     if (biz?.name && !businessName) businessName = biz.name;
     rows.push({ date: inv.paid_at || inv.created_at, serviceName: 'Invoice', businessName: biz?.name || 'Business', referenceCode: inv.invoice_number || '-', amount: inv.total_amount || 0, status: inv.status });
+  }
+  if (donations) for (const don of donations) {
+    const camp = don.campaigns as unknown as { name: string; businesses: { name: string; country_code?: string } | null } | null;
+    const biz = camp?.businesses;
+    if (biz?.country_code) countryCode = biz.country_code as CountryCode;
+    if (biz?.name && !businessName) businessName = biz.name;
+    rows.push({ date: don.created_at, serviceName: camp?.name || 'Donation', businessName: biz?.name || 'Business', referenceCode: don.reference_code || '-', amount: don.amount || 0, status: don.status });
   }
 
   if (rows.length === 0) return null;

@@ -1972,6 +1972,8 @@ export const schedulingFlow: FlowDefinition = {
               p_staff_name: (d.staff_name as string) || null,
               p_location_id: (d.location_id as string) || null,
               p_appointment_id: isAppointment ? ((d.service_id as string) || null) : null,
+              p_buffer_minutes: (d._service_buffer_minutes as number) || 0,
+              p_duration: (d.service_duration as number) || 30,
             })
             .single() as { data: { booking_id: string; reference_code: string; slot_available: boolean } | null; error: unknown };
 

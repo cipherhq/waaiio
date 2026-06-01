@@ -12,6 +12,7 @@ interface PaymentForConfirmation {
   invoice_id: string | null;
   campaign_id: string | null;
   reservation_id?: string | null;
+  order_id?: string | null;
 }
 
 /**

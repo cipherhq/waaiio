@@ -29,7 +29,7 @@ export default async function PaymentSuccessPage({
       // ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
       let payment = (await supabase
         .from('payments')
-        .select('id, status, amount, booking_id, invoice_id, campaign_id, business_id, businesses(phone, name, country_code)')
+        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code)')
         .eq('gateway_reference', params.ref)
         .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
 
@@ -43,7 +43,7 @@ export default async function PaymentSuccessPage({
         if (booking) {
           payment = (await supabase
             .from('payments')
-            .select('id, status, amount, booking_id, invoice_id, campaign_id, business_id, businesses(phone, name, country_code)')
+            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code)')
             .eq('booking_id', booking.id)
             .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
         }
@@ -157,6 +157,8 @@ export default async function PaymentSuccessPage({
               booking_id: payment.booking_id,
               invoice_id: payment.invoice_id,
               campaign_id: payment.campaign_id,
+              order_id: payment.order_id || null,
+              reservation_id: payment.reservation_id || null,
             });
           } catch (pipeErr) {
             logger.error('[PAYMENT-SUCCESS] Pipeline error:', pipeErr);

@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       // Find our payment record by square_order_id in metadata
       const { data: payments } = await supabase
         .from('payments')
-        .select('id, booking_id, reservation_id, amount, status, metadata')
+        .select('id, booking_id, reservation_id, order_id, amount, status, metadata')
         .eq('gateway', 'square')
         .neq('status', 'success');
 
@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
           invoice_id: null,
           campaign_id: null,
           reservation_id: matchedPayment.reservation_id || null,
+          order_id: matchedPayment.order_id || null,
         });
 
         // Proactive confirmation: send WhatsApp message + post-completion
@@ -127,6 +128,7 @@ export async function POST(request: NextRequest) {
             invoice_id: null,
             campaign_id: null,
             reservation_id: matchedPayment.reservation_id || null,
+            order_id: matchedPayment.order_id || null,
           }, '[SQUARE WEBHOOK]');
         } catch (confirmErr) {
           logger.error('[SQUARE WEBHOOK] Proactive confirmation error:', confirmErr);

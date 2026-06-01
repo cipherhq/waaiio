@@ -67,6 +67,29 @@ export async function POST(
       );
     }
 
+    // Check slot availability at the new date/time
+    const { count } = await service
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', booking.business_id)
+      .eq('service_id', booking.service_id)
+      .eq('date', newDate)
+      .eq('time', newTime)
+      .neq('id', id) // Exclude the booking being rescheduled
+      .in('status', ['pending', 'confirmed', 'in_progress']);
+
+    // Get service max capacity
+    const { data: svc } = await service
+      .from('services')
+      .select('max_capacity')
+      .eq('id', booking.service_id)
+      .single();
+
+    const maxCapacity = svc?.max_capacity || 1;
+    if (count !== null && count >= maxCapacity) {
+      return NextResponse.json({ error: 'This time slot is fully booked' }, { status: 409 });
+    }
+
     const originalDate = booking.date;
     const originalTime = booking.time;
     const now = new Date().toISOString();

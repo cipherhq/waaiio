@@ -161,12 +161,12 @@ export async function POST(request: NextRequest) {
       const referenceId = purchaseUnits?.[0]?.reference_id;
 
       // Find payment by PayPal order ID
-      let payment: { id: string; booking_id: string | null; amount: number; status: string } | null = null;
+      let payment: { id: string; booking_id: string | null; order_id: string | null; amount: number; status: string } | null = null;
 
       if (orderId) {
         const { data } = await supabase
           .from('payments')
-          .select('id, booking_id, amount, status')
+          .select('id, booking_id, order_id, amount, status')
           .eq('gateway_reference', orderId)
           .eq('gateway', 'paypal')
           .maybeSingle();
@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
       if (!payment && orderId) {
         const { data: payments } = await supabase
           .from('payments')
-          .select('id, booking_id, amount, status, metadata')
+          .select('id, booking_id, order_id, amount, status, metadata')
           .eq('gateway', 'paypal')
           .neq('status', 'success');
 
@@ -226,6 +226,7 @@ export async function POST(request: NextRequest) {
         invoice_id: fullPayment?.invoice_id || null,
         campaign_id: fullPayment?.campaign_id || null,
         reservation_id: fullPayment?.reservation_id || null,
+        order_id: payment.order_id || null,
       };
 
       // Confirm booking, record platform fees, process invoice/campaign

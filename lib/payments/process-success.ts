@@ -83,19 +83,41 @@ export async function processSuccessfulPayment(
   const orderId = payment.order_id || (payment.metadata?.order_id as string) || null;
   if (orderId) {
     try {
-      await supabase
+      // Only confirm if still pending (idempotent). Check if update actually matched.
+      const { data: confirmedOrder } = await supabase
         .from('orders')
         .update({
           status: 'confirmed',
           paid_at: new Date().toISOString(),
         })
         .eq('id', orderId)
-        .in('status', ['pending']); // Only confirm if still pending (idempotent)
+        .in('status', ['pending'])
+        .select('id')
+        .maybeSingle();
 
       await recordPlatformFee(supabase, {
         orderId,
         paymentAmount: payment.amount,
       });
+
+      // Decrement stock only if we actually confirmed the order (prevents double-decrement
+      // when bot "I've Paid" path already decremented stock before webhook fires)
+      if (confirmedOrder) {
+        const { data: orderItems } = await supabase
+          .from('order_items')
+          .select('product_id, variant_id, quantity')
+          .eq('order_id', orderId);
+
+        if (orderItems) {
+          for (const item of orderItems) {
+            if (item.variant_id) {
+              await supabase.rpc('decrement_variant_stock', { p_variant_id: item.variant_id, qty: item.quantity });
+            } else if (item.product_id) {
+              await supabase.rpc('decrement_stock', { p_product_id: item.product_id, qty: item.quantity });
+            }
+          }
+        }
+      }
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Order confirmation error:', err);
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'order-confirmation' } });
@@ -231,6 +253,7 @@ export async function recordPlatformFee(
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
     reservation_id: opts.reservationId || null,
+    order_id: opts.orderId || null,
     transaction_amount: transactionAmount,
     fee_percentage: feePercentage,
     fee_flat: feeFlat,
