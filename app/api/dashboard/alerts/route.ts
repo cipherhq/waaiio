@@ -26,8 +26,10 @@ export async function GET(request: NextRequest) {
 
     const { data: alerts, count } = await supabase
       .from('alerts')
-      .select('id, type, message, is_read, created_at', { count: 'exact' })
+      .select('id, type, severity, title, message, is_read, created_at', { count: 'exact' })
       .eq('business_id', business.id)
+      .eq('is_read', false)
+      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })
       .range(from, to);
 

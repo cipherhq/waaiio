@@ -21,7 +21,15 @@ export function AlertBanner() {
       .then(r => r.json())
       .then(data => {
         const unread = (data.alerts || []).filter((a: Alert) => !a.is_read);
-        setAlerts(unread.slice(0, 10));
+        // Deduplicate by message — keep only the latest per unique message
+        const seen = new Map<string, Alert>();
+        for (const a of unread) {
+          const key = a.message.replace(/\d+/g, '').trim(); // Normalize numbers for dedup
+          if (!seen.has(key) || new Date(a.created_at) > new Date(seen.get(key)!.created_at)) {
+            seen.set(key, a);
+          }
+        }
+        setAlerts(Array.from(seen.values()).slice(0, 5));
       })
       .catch(() => {});
   }, []);
