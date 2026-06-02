@@ -322,6 +322,7 @@ export default function ServicesPage() {
       quote_enabled: form.quote_enabled,
       is_class: form.is_class,
       class_schedule: form.is_class ? form.class_schedule : [],
+      max_capacity: (form as unknown as Record<string, unknown>).max_capacity as number || null,
       metadata: {
         ...(form.metadata || {}),
         collect_venue: (form.metadata || {}).collect_venue || false,
