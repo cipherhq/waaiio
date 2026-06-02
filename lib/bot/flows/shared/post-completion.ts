@@ -15,7 +15,7 @@ interface PostCompletionParams {
   customerName: string | null;
   serviceType?: string;
   referenceId?: string;
-  sender: MessageSender;
+  sender?: MessageSender;
   /** Amount paid (in smallest currency unit) for auto-receipt */
   amountPaid?: number;
   /** Service/product name for receipt */
@@ -126,7 +126,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         `Thank you for your payment, ${customerName || 'there'}! 🙏`,
       ].filter(Boolean).join('\n');
 
-      await sender.sendText({ to: phone, text: receiptLines });
+      if (sender) await sender.sendText({ to: phone, text: receiptLines });
 
       // Send PDF receipt as WhatsApp document attachment
       try {
@@ -155,7 +155,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           .from('customer-reports')
           .createSignedUrl(filePath, 3600);
 
-        if (signedUrlData?.signedUrl) {
+        if (signedUrlData?.signedUrl && sender) {
           await sender.sendDocument({
             to: phone,
             documentUrl: signedUrlData.signedUrl,
@@ -241,7 +241,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       } else {
         loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
       }
-      sender.sendText({ to: customerPhone, text: loyaltyMsg }).catch(() => {});
+      if (sender) sender.sendText({ to: customerPhone, text: loyaltyMsg }).catch(() => {});
     } catch (err) {
       logger.error('[POST-COMPLETION] Loyalty error:', err);
     }
@@ -281,7 +281,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
 
     // Evaluate rules
     const sendMsg = async (to: string, text: string) => {
-      await sender.sendText({ to, text });
+      if (sender) await sender.sendText({ to, text });
     };
     await evaluateRules(supabase, businessId, ruleEvent, automationContext, sendMsg);
   } catch (err) {

@@ -289,8 +289,8 @@ export async function sendProactiveConfirmation(
       logger.info(`${logPrefix} No WhatsApp channel resolved — will attempt email-only confirmation`);
     }
 
-    // ── 6. Post-completion (loyalty, feedback, referral) — requires WhatsApp sender ──
-    if (resolved && customerPhone) {
+    // ── 6. Post-completion (loyalty, feedback, referral, customer profile) ──
+    if (customerPhone) {
       try {
         const { handlePostCompletion } = await import('@/lib/bot/flows/shared/post-completion');
         const customerName = await getCustomerName(supabase, customerPhone);
@@ -298,7 +298,7 @@ export async function sendProactiveConfirmation(
           supabase, businessId, customerPhone, customerName,
           serviceType: payment.booking_id ? 'booking' : 'order',
           referenceId: payment.booking_id || undefined,
-          sender: resolved.sender,
+          sender: resolved?.sender,
           amountPaid: payment.amount,
           serviceName, referenceCode,
         });
