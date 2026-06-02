@@ -102,6 +102,12 @@ export default function CapabilitiesPage() {
     if (next.length === 0) return;
 
     setEnabled(next);
+
+    // Auto-save after toggle
+    setTimeout(() => {
+      const saveBtn = document.getElementById('cap-save-btn');
+      if (saveBtn) saveBtn.click();
+    }, 100);
   }
 
   async function handleSave() {
@@ -352,6 +358,7 @@ export default function CapabilitiesPage() {
                 Discard
               </button>
               <button
+                id="cap-save-btn"
                 onClick={handleSave}
                 disabled={saving}
                 className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
