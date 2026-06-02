@@ -124,16 +124,26 @@ export default async function DashboardLayout({
   }
 
   // Normal (non-impersonation) flow
-  // Use array query (not maybeSingle) to handle users with multiple businesses
-  const { data: businesses, error: bizError } = await supabase
+  // Fetch ALL user's businesses for the switcher
+  const { data: allUserBusinesses, error: bizError } = await supabase
     .from('businesses')
     .select('*')
     .eq('owner_id', user.id)
     .in('status', ['active', 'pending'])
-    .order('created_at', { ascending: false })
-    .limit(1);
+    .order('created_at', { ascending: false });
 
-  const business = businesses?.[0] || null;
+  // Check cookie for selected business
+  const selectedBusinessId = cookieStore.get('waaiio_business_id')?.value;
+
+  let business = null;
+  if (selectedBusinessId && allUserBusinesses?.length) {
+    // Use the cookie-selected business (already verified owner_id via query above)
+    business = allUserBusinesses.find(b => b.id === selectedBusinessId) || null;
+  }
+  // Fallback to most recent business
+  if (!business) {
+    business = allUserBusinesses?.[0] || null;
+  }
 
   if (!business) {
     console.error('Dashboard: no business found for user', user.id, bizError?.message);
@@ -169,8 +179,16 @@ export default async function DashboardLayout({
 
   const businessWithCaps = { ...business, capabilities, capabilityOverrides };
 
+  // Build lightweight list for business switcher
+  const allBusinessesList = (allUserBusinesses || []).map(b => ({
+    id: b.id,
+    name: b.name,
+    category: b.category,
+    logo_url: b.logo_url,
+  }));
+
   return (
-    <DashboardProvider business={businessWithCaps} userId={user.id}>
+    <DashboardProvider business={businessWithCaps} userId={user.id} allBusinesses={allBusinessesList}>
       <div data-dashboard className="min-h-screen bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
         <AlertBanner />

@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { useBusiness, useCapabilities } from './DashboardProvider';
+import { useDashboard, useCapabilities } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -362,10 +362,26 @@ const sectionLabels: Record<string, string> = {
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const business = useBusiness();
+  const { business, allBusinesses, switchingBusiness, switchBusiness } = useDashboard();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const switcherRef = useRef<HTMLDivElement>(null);
 
   const { capabilities } = useCapabilities();
+  const hasMultipleBusinesses = allBusinesses.length > 1;
+
+  // Close switcher on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (switcherRef.current && !switcherRef.current.contains(e.target as Node)) {
+        setSwitcherOpen(false);
+      }
+    }
+    if (switcherOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [switcherOpen]);
   const chatUnreadCount = useChatUnreadCount(business.id);
   const { labels: catLabels } = useCategoryConfig(business.category);
   const categoryLabel = catLabels?.entityName || 'business';
@@ -448,10 +464,102 @@ export function Sidebar() {
         <Image src="/logo.png" alt="Waaiio" width={120} height={32} className="h-8 w-auto" />
       </div>
 
-      {/* Business name */}
-      <div className="mx-4 mb-4 rounded-lg bg-brand-50 px-3 py-2">
-        <p className="text-xs font-medium text-brand-400 capitalize">{categoryLabel}</p>
-        <p className="truncate text-sm font-semibold text-brand">{business.name}</p>
+      {/* Business switcher */}
+      <div className="relative mx-4 mb-4" ref={switcherRef}>
+        <button
+          type="button"
+          onClick={() => hasMultipleBusinesses && setSwitcherOpen(!switcherOpen)}
+          className={`w-full rounded-lg bg-brand-50 dark:bg-brand-950/30 px-3 py-2 text-left transition ${
+            hasMultipleBusinesses ? 'cursor-pointer hover:bg-brand-100 dark:hover:bg-brand-950/50' : 'cursor-default'
+          }`}
+          aria-expanded={switcherOpen}
+          aria-haspopup={hasMultipleBusinesses ? 'listbox' : undefined}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium text-brand-400 capitalize">{categoryLabel}</p>
+              <p className="truncate text-sm font-semibold text-brand">{business.name}</p>
+            </div>
+            {hasMultipleBusinesses && (
+              <svg
+                className={`h-4 w-4 flex-shrink-0 text-brand-400 transition-transform ${switcherOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            )}
+          </div>
+        </button>
+
+        {/* Dropdown */}
+        {switcherOpen && hasMultipleBusinesses && (
+          <div
+            role="listbox"
+            aria-label="Switch business"
+            className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
+          >
+            {allBusinesses.map((biz) => {
+              const isSelected = biz.id === business.id;
+              return (
+                <button
+                  key={biz.id}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  disabled={switchingBusiness}
+                  onClick={() => {
+                    switchBusiness(biz.id);
+                    setSwitcherOpen(false);
+                    setMobileOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition ${
+                    isSelected
+                      ? 'bg-brand-50 dark:bg-brand-950/30 text-brand font-semibold'
+                      : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  } ${switchingBusiness ? 'opacity-50' : ''}`}
+                >
+                  {biz.logo_url ? (
+                    <Image
+                      src={biz.logo_url}
+                      alt=""
+                      width={24}
+                      height={24}
+                      className="h-6 w-6 rounded-full object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-brand-100 dark:bg-brand-900 text-xs font-bold text-brand">
+                      {biz.name.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium">{biz.name}</p>
+                    <p className="truncate text-xs text-gray-400 capitalize">{biz.category.replace(/_/g, ' ')}</p>
+                  </div>
+                  {isSelected && (
+                    <svg className="h-4 w-4 flex-shrink-0 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </button>
+              );
+            })}
+            {/* Add new business link */}
+            <Link
+              href="/get-started"
+              onClick={() => { setSwitcherOpen(false); setMobileOpen(false); }}
+              className="flex items-center gap-3 border-t border-gray-100 dark:border-gray-700 px-3 py-2.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition"
+            >
+              <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full border border-dashed border-gray-300 dark:border-gray-600 text-gray-400">
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+              </span>
+              <span>Add New Business</span>
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Nav links grouped by section */}

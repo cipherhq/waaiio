@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useCallback, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { loadCountries } from '@/lib/countries';
@@ -46,9 +46,19 @@ export interface Business {
   capabilityOverrides: CapabilityId[];
 }
 
+export interface BusinessSummary {
+  id: string;
+  name: string;
+  category: string;
+  logo_url: string | null;
+}
+
 interface DashboardContextType {
   business: Business;
   userId: string;
+  allBusinesses: BusinessSummary[];
+  switchingBusiness: boolean;
+  switchBusiness: (businessId: string) => Promise<void>;
 }
 
 const DashboardContext = createContext<DashboardContextType | null>(null);
@@ -56,18 +66,44 @@ const DashboardContext = createContext<DashboardContextType | null>(null);
 export function DashboardProvider({
   business,
   userId,
+  allBusinesses = [],
   children,
 }: {
   business: Business;
   userId: string;
+  allBusinesses?: BusinessSummary[];
   children: ReactNode;
 }) {
+  const router = useRouter();
+  const [switchingBusiness, setSwitchingBusiness] = useState(false);
+
   useEffect(() => {
     loadCountries();
   }, []);
 
+  const switchBusiness = useCallback(async (businessId: string) => {
+    if (businessId === business.id) return;
+    setSwitchingBusiness(true);
+    try {
+      const res = await fetch('/api/dashboard/switch-business', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ businessId }),
+      });
+      if (res.ok) {
+        // Navigate to dashboard root and refresh server data
+        router.push('/dashboard');
+        router.refresh();
+      }
+    } catch {
+      // Silently fail — user can retry
+    } finally {
+      setSwitchingBusiness(false);
+    }
+  }, [business.id, router]);
+
   return (
-    <DashboardContext.Provider value={{ business, userId }}>
+    <DashboardContext.Provider value={{ business, userId, allBusinesses, switchingBusiness, switchBusiness }}>
       {children}
     </DashboardContext.Provider>
   );
