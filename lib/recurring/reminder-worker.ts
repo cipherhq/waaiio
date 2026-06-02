@@ -65,7 +65,7 @@ export async function processRecurringReminders(
         if (service) serviceName = service.name;
       }
 
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
       const payLink = `${appUrl}/recurring/${biz?.slug || 'pay'}?amount=${sub.amount}&service=${sub.service_id || ''}`;
 
       const message = [

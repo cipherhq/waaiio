@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const code = searchParams.get('code');
   const state = searchParams.get('state'); // business_id
   const error = searchParams.get('error');
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   if (error) {
     return NextResponse.redirect(`${appUrl}/dashboard/integrations?error=google_denied`);

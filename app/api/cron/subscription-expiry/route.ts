@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
   const supabase = createServiceClient();
   const now = new Date();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const renewUrl = `${appUrl}/dashboard/settings`;
 
   let remindersSent = 0;

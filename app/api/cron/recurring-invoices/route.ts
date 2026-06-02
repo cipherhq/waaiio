@@ -104,7 +104,7 @@ export async function GET(request: NextRequest) {
         // Auto-send via WhatsApp if customer has phone
         if (template.customer_phone) {
           try {
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
             await fetch(`${appUrl}/api/invoices/send`, {
               method: 'POST',
               headers: {

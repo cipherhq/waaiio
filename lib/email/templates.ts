@@ -1,6 +1,6 @@
 // ─── App URL ──────────────────────────────────────────────────────
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
 // ─── HTML escape ──────────────────────────────────────────────────
 

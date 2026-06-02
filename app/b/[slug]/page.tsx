@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return { title: 'Business Not Found | Waaiio' };
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const desc = business.description || `Book services online with ${business.name} on Waaiio.`;
   return {
     title: `Book with ${business.name} | Waaiio`,
@@ -90,7 +90,7 @@ export default async function PublicBookingPage({ params }: PageProps) {
     name: business.name,
     ...(business.description ? { description: business.description } : {}),
     ...(business.address ? { address: { '@type': 'PostalAddress', streetAddress: business.address } } : {}),
-    url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/b/${slug}`,
+    url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/b/${slug}`,
   };
 
   return (

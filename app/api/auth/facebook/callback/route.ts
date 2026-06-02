@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
         about: `${business.name} — powered by Waaiio`,
         description: `Book appointments, make payments, and more — all on WhatsApp.`,
         address: business.address || undefined,
-        websites: [process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'],
+        websites: [process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'],
       });
       logger.debug('[FB-CALLBACK] Business profile set');
     } catch (err) {

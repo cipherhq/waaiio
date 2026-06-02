@@ -147,7 +147,7 @@ const baseOpts = {
 describe('notifyOwnerNewOrder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.NEXT_PUBLIC_APP_URL = 'https://waaiio.com';
+    process.env.NEXT_PUBLIC_APP_URL = 'https://www.waaiio.com';
   });
 
   it('sends email when email notifications are enabled', async () => {

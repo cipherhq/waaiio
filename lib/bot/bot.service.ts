@@ -1080,7 +1080,7 @@ export class BotService {
       if (pending.length > 0) {
         cLines.push('⏳ *Pending Signature:*');
         for (const c of pending) {
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           cLines.push(`• ${c.title} from ${c.bizName}`);
           cLines.push(`  Sign here: ${appUrl}/sign/${c.token}`);
         }
@@ -2325,7 +2325,7 @@ export class BotService {
               subject: `New chat message from ${displayName} — ${biz.name}`,
               html: `<p><strong>${displayName}</strong> sent you a message:</p>
                      <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
-                     <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
+                     <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
                      <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
             }).catch(() => {});
             session.session_data._last_chat_email_at = now;
@@ -2472,7 +2472,7 @@ export class BotService {
                 subject: `New chat message from ${displayName} — ${bizForEmail.name}`,
                 html: `<p><strong>${displayName}</strong> sent you a message:</p>
                        <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
-                       <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
+                       <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
                        <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
               }).catch(() => {});
               session.session_data._last_chat_email_at = nowMs;

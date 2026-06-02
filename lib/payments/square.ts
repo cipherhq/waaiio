@@ -64,12 +64,12 @@ export class SquareGateway implements PaymentGateway {
           status: 'pending',
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
+        return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       // Square uses smallest currency unit (cents for USD)
       const amountInCents = Math.round(opts.amount * 100);
-      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
       // Use merchant's own token + location if connected via OAuth, else platform's
       const useToken = opts.squareAccessToken || squareAccessToken;

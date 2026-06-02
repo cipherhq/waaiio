@@ -77,7 +77,7 @@ export async function generateMetadata(
     ? event.description.slice(0, 160)
     : `Get tickets for ${event.name} by ${business.name}`;
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   return {
     title: `${event.name} | ${business.name}`,
     description,

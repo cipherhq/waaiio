@@ -105,7 +105,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     logger.info('[TICKETS] Inserted', tickets.length, 'event_tickets');
   }
 
-  const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/tickets`;
+  const verifyBaseUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/tickets`;
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
 
@@ -148,7 +148,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
   // 4. Send ticket images via WhatsApp (flyer + QR composited)
   if (sender) {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
     // Fetch event flyer once (reuse for all tickets)
     let flyerBuffer: Buffer | null = null;

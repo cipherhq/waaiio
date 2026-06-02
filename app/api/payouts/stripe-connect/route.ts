@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create payout account. Please try again.' }, { status: 400 });
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
     // Create onboarding link
     const link = await stripeRequest('/account_links', {

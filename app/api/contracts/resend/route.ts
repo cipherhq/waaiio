@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'This contract has already been signed' }, { status: 400 });
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
     // Check if this is a multi-signer contract

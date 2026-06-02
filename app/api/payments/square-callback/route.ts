@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Redirect to payment success page (handles WhatsApp return link)
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     return NextResponse.redirect(`${appUrl}/payment-success?ref=${ref || ''}`);
   } catch {
     return NextResponse.redirect(new URL('/?payment=error', request.url));

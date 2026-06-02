@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
         // Generate unique access token for secure viewing
         const accessToken = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const secureLink = `${appUrl}/doc/${accessToken}`;
 
         // Save access token

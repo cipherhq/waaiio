@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
 // ISR: regenerate sitemap every hour (queries DB for dynamic pages)
 export const revalidate = 3600;

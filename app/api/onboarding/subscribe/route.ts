@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     const email = profile?.email || `${(profile?.phone || user.id).replace('+', '')}@whatsapp.waaiio.com`;
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com').trim();
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com').trim();
     const callbackUrl = callback
       ? `${appUrl}${callback}`
       : `${appUrl}/get-started?step=success&business_id=${business_id}`;
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
       'line_items[0][quantity]': '1',
       mode: 'subscription',
       success_url: callbackUrl,
-      cancel_url: `${(process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com').trim()}/get-started`,
+      cancel_url: `${(process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com').trim()}/get-started`,
       customer_email: email,
       'metadata[business_id]': business_id,
       'metadata[plan]': plan,

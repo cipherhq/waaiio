@@ -63,7 +63,7 @@ function generateFieldId(): string {
 
 export default function FormsPage() {
   const business = useBusiness();
-  const appUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com');
+  const appUrl = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com');
   const [forms, setForms] = useState<Form[]>([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<ViewMode>('list');

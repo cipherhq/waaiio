@@ -67,7 +67,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   const biz = property.businesses as unknown as { name: string; country_code?: string } | null;
   const cc = (biz?.country_code || 'NG') as CountryCode;
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const photos = (property.photos as string[]) || [];
   const desc = property.description || `Book ${property.name} - ${formatCurrency(property.price, cc)}/night. Up to ${property.max_guests} guests.`;
 

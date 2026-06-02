@@ -51,7 +51,7 @@ function createMockSupabase(overrides: Record<string, unknown> = {}) {
 describe('initializePayment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    process.env.NEXT_PUBLIC_APP_URL = 'https://waaiio.com';
+    process.env.NEXT_PUBLIC_APP_URL = 'https://www.waaiio.com';
   });
 
   it('initializes payment with correct parameters via Paystack', async () => {

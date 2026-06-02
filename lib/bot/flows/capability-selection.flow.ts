@@ -537,7 +537,7 @@ const myAccountMenuStep: FlowStepConfig = {
       if (!contracts || contracts.length === 0) {
         await ctx.sender.sendText({ to: ctx.from, text: "You don't have any contracts. Send *Hi* to get started!" });
       } else {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const pending = contracts.filter(c => c.status === 'pending');
         const signed = contracts.filter(c => c.status === 'signed');
         const lines = ['📋 *Your Contracts*', ''];

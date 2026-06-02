@@ -187,7 +187,7 @@ export const ticketingFlow: FlowDefinition = {
         // WhatsApp doesn't support WebP — convert via our API proxy
         let imgUrl = d.event_image_url as string;
         if (imgUrl.toLowerCase().endsWith('.webp')) {
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           imgUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(imgUrl)}`;
         }
         await ctx.sender.sendImage({

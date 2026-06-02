@@ -229,7 +229,7 @@ export async function initializePayment(
         await supabase.from('payments').update({ metadata: existingMeta }).eq('id', paymentRecord.id);
       }
 
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
       const shortRef = result.reference.slice(-8);
       result.url = `${appUrl}/api/pay?ref=${shortRef}`;
     }

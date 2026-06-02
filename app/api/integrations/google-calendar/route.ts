@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Google Calendar not configured' }, { status: 500 });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const redirectUri = `${appUrl}/api/integrations/google-calendar/callback`;
 
   const params = new URLSearchParams({

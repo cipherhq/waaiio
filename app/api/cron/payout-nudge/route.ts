@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   if (authError) return authError;
 
   const supabase = createServiceClient();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   try {
     // Find businesses with no active payout account

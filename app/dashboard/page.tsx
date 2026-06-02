@@ -559,7 +559,7 @@ export default function DashboardOverview() {
               <div className="mt-3 flex items-center gap-2">
                 <input
                   readOnly
-                  value={`${typeof window !== 'undefined' ? window.location.origin : 'https://waaiio.com'}/b/${business.slug}`}
+                  value={`${typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/b/${business.slug}`}
                   className="flex-1 truncate rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-xs text-gray-600 dark:text-gray-300"
                 />
                 <button

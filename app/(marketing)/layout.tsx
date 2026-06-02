@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
     description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp. 89+ business types across 16 industries, 5 countries, 30 capabilities.',
-    url: process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com',
+    url: process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com',
     siteName: 'Waaiio',
     type: 'website',
     locale: 'en_US',

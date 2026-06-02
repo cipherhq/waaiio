@@ -8,7 +8,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('account_id');
   const businessId = searchParams.get('business_id');
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
   if (!accountId || !businessId) {
     return NextResponse.redirect(`${appUrl}/dashboard/payouts?error=missing_params`);

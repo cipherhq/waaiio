@@ -136,7 +136,7 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(totalAmount, cc);
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/orders`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/orders`;
 
   // Send email (if enabled)
   if (notifyEmail && ownerEmail) {
@@ -217,7 +217,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(estimatedSubtotal, cc);
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/orders/quotes`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/orders/quotes`;
 
   if (notifyEmail && ownerEmail) {
     const itemLines = items.map(i => `${i.name} x${i.quantity}`).join(', ');
@@ -310,7 +310,7 @@ export async function notifyOwnerNewQuoteRequest(opts: NotifyQuoteOpts): Promise
       let styleUrl = customOrderData.style_photo_url;
       // WhatsApp doesn't support WebP — convert via proxy
       if (styleUrl.toLowerCase().endsWith('.webp')) {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         styleUrl = `${appUrl}/api/images/convert?url=${encodeURIComponent(styleUrl)}`;
       }
       sender.sendImage({
@@ -345,7 +345,7 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
 
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
   const cc = countryCode || 'NG';
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/reservations`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/reservations`;
 
   if (notifyEmail && ownerEmail) {
     const { subject, html } = newBookingOwnerEmail({
@@ -413,7 +413,7 @@ export async function notifyOwnerNewTicketSale(opts: NotifyTicketSaleOpts): Prom
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(totalAmount, cc);
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/tickets`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/tickets`;
   const ticketLabel = ticketTypeName ? `${quantity}x ${ticketTypeName}` : `${quantity} ticket${quantity > 1 ? 's' : ''}`;
 
   // Send email (if enabled)
@@ -478,7 +478,7 @@ export async function notifyOwnerNewDonation(opts: NotifyDonationOpts): Promise<
   const cc = countryCode || 'NG';
   const formattedAmount = formatCurrency(amount, cc);
   const displayName = donorName || 'Anonymous';
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/giving`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/giving`;
 
   // Send email (if enabled)
   if (notifyEmail && ownerEmail) {
@@ -537,7 +537,7 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
   const cc = countryCode || 'NG';
   const formattedAmount = formatCurrency(amount, cc);
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/payments`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/payments`;
 
   // Send email (if enabled)
   if (notifyEmail && ownerEmail) {
@@ -596,7 +596,7 @@ export async function notifyOwnerNewInvoicePayment(opts: NotifyInvoicePaymentOpt
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
   const cc = countryCode || 'NG';
   const formattedAmount = formatCurrency(amount, cc);
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/invoices`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/invoices`;
 
   // Send email (if enabled)
   if (notifyEmail && ownerEmail) {
@@ -650,7 +650,7 @@ export async function notifyOwnerNewQueueCheckin(opts: NotifyQueueCheckinOpts): 
   if (!ownerInfo) return;
 
   const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
-  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/dashboard/queue`;
+  const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/queue`;
 
   // Send email (if enabled)
   if (notifyEmail && ownerEmail) {

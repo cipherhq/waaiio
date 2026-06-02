@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to save credentials' }, { status: 500 });
     }
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const webhookUrl = `${appUrl}/api/payments/byo-webhook/${business_id}`;
 
     return NextResponse.json({
@@ -261,7 +261,7 @@ export async function GET(request: NextRequest) {
     .eq('business_id', businessId)
     .eq('is_active', true);
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const webhookUrl = `${appUrl}/api/payments/byo-webhook/${businessId}`;
 
   return NextResponse.json({

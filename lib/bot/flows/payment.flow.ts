@@ -761,7 +761,7 @@ export const paymentFlow: FlowDefinition = {
           subscriptionCode = checkout.sessionId;
 
           // For Stripe, send shortened checkout link
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           const shortRef = checkout.sessionId.slice(-12);
           const shortUrl = `${appUrl}/api/pay?ref=${shortRef}`;
 

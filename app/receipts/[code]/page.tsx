@@ -81,7 +81,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     return { title: 'Receipt Not Found | Waaiio' };
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   return {
     title: `Receipt from ${data.businessName} | Waaiio`,
     description: `Receipt ${data.referenceCode} — ${data.formattedAmount} for ${data.serviceName}`,

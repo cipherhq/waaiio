@@ -57,12 +57,12 @@ export class StripeGateway implements PaymentGateway {
           status: 'pending',
           metadata: { reference_code: opts.referenceCode, channel: 'whatsapp', order_id: opts.orderId || null },
         });
-        return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
+        return { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/pay?ref=${mockRef}`, reference: mockRef };
       }
 
       // Convert amount to cents (Stripe uses smallest currency unit)
       const amountInCents = Math.round(opts.amount * 100);
-      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+      const callbackUrl = opts.callbackUrl || process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
       const sessionParams: Record<string, string> = {
         'payment_method_types[0]': 'card',

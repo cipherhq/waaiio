@@ -227,7 +227,7 @@ export async function POST(request: NextRequest) {
                 contractId: activeContract.id,
                 referenceCode: activeContract.reference_code || undefined,
                 signatureReference: signatureReference,
-                verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+                verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
               });
 
               pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -254,7 +254,7 @@ export async function POST(request: NextRequest) {
               contractId: activeContract.id,
               referenceCode: activeContract.reference_code || undefined,
               signatureReference: signatureReference,
-              verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+              verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
             });
 
             pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -295,7 +295,7 @@ export async function POST(request: NextRequest) {
             .eq('id', nextSigner.id);
 
           // Send WhatsApp to next signer
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           const nextSignUrl = `${appUrl}/sign/${nextSigner.token}`;
           const nextMsg = [
             `\ud83d\udcdd *Document for Signature*`,
@@ -315,7 +315,7 @@ export async function POST(request: NextRequest) {
       // Send confirmation to this signer
       if (signerPhone) {
         try {
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
           const confirmMsg = [
             `\u2705 *Document Signed Successfully*`,
@@ -340,7 +340,7 @@ export async function POST(request: NextRequest) {
         try {
           const { sendEmail } = await import('@/lib/email/client');
           const { businessFrom } = await import('@/lib/email/templates');
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
 
           await sendEmail({
@@ -389,7 +389,7 @@ export async function POST(request: NextRequest) {
             logoBuffer,
             referenceCode: activeContract.reference_code || undefined,
             signatureReference,
-            verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+            verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
           });
 
           pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -416,7 +416,7 @@ export async function POST(request: NextRequest) {
           contractId: activeContract.id,
           referenceCode: activeContract.reference_code || undefined,
           signatureReference,
-          verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
+          verifyUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/contracts/${activeContract.id}?token=${signerToken}`,
         });
 
         pdfPath = `${activeContract.business_id}/${activeContract.id}/signed.pdf`;
@@ -449,7 +449,7 @@ export async function POST(request: NextRequest) {
     // Send WhatsApp confirmation to signer
     if (signerPhone) {
       try {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
 
         const confirmMsg = [
@@ -476,7 +476,7 @@ export async function POST(request: NextRequest) {
       try {
         const { sendEmail } = await import('@/lib/email/client');
         const { businessFrom } = await import('@/lib/email/templates');
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const permanentUrl = `${appUrl}/contracts/${activeContract.id}?token=${signerToken}`;
 
         await sendEmail({

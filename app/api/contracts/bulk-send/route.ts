@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     const service = createServiceClient();
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
 
     // Replace template placeholders

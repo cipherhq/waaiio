@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     }
 
     const state = `${business_id}:${randomUUID().slice(0, 8)}`;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const redirectUri = `${appUrl}/api/payouts/square-callback`;
 
     const params = new URLSearchParams({

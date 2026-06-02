@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const post = BLOG_POSTS.find((p) => p.slug === slug);
   if (!post) return { title: 'Post Not Found' };
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   return {
     title: `${post.title} — Waaiio Blog`,
     description: post.excerpt,

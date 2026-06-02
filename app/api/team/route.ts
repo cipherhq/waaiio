@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Send invite email
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const inviteUrl = `${appUrl}/invite/${inviteToken}`;
 
   try {

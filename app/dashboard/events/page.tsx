@@ -470,7 +470,7 @@ export default function EventsPage() {
               <div className="rounded-lg border border-brand/20 bg-brand-50/30 p-3">
                 <p className="text-xs font-medium text-brand">Share Event</p>
                 <p className="mt-1.5 break-all text-xs text-gray-600">
-                  {typeof window !== 'undefined' ? window.location.origin : 'https://waaiio.com'}/e/{events.find(e => e.id === form.id)?.slug}
+                  {typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/e/{events.find(e => e.id === form.id)?.slug}
                 </p>
                 <button
                   onClick={() => {

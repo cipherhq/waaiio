@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     .eq('id', businessId)
     .single();
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const results: Array<{ phone: string; status: string; error?: string }> = [];
 
   // Resolve WhatsApp channel for this business
@@ -312,7 +312,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({ success: true, sent: 0, message: 'No pending guests to remind' });
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const resolver = new ChannelResolver(service);
   const resolved = await resolver.resolveByBusinessId(businessId);
 

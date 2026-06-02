@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Send via WhatsApp
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const formUrl = `${appUrl}/form/${form.token}`;
     const toPhone = phone.startsWith('+') ? phone.slice(1) : phone;
 

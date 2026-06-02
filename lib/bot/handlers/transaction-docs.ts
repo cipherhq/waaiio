@@ -69,7 +69,7 @@ export async function handleTransactionDocument(
           }
         }
         if (refCode) {
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           try {
             await messageSender.sendImage({
               to: from,
@@ -216,7 +216,7 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
   if (lines.length === 0) return null;
 
   // Add receipt URL if we have a reference code
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://waaiio.com';
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   if (bookings && bookings.length > 0 && bookings[0].reference_code) {
     lines.push('', `🔗 View receipt: ${appUrl}/api/receipts/image?ref=${bookings[0].reference_code}`);
   }
