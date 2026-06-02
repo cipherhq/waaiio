@@ -476,7 +476,7 @@ export default function BroadcastsPage() {
             Upgrade to the Pro plan to send broadcast messages to up to 500 recipients per month, or go Premium for unlimited broadcasts.
           </p>
           <Link
-            href="/dashboard/payouts"
+            href="/dashboard/settings?tab=account"
             className="mt-6 inline-flex items-center gap-2 rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 transition"
           >
             Upgrade Plan
@@ -547,7 +547,7 @@ export default function BroadcastsPage() {
             <div className="mt-3 rounded-lg bg-red-50 dark:bg-red-900/20 px-3 py-2">
               <p className="text-xs font-medium text-red-700 dark:text-red-400">
                 Monthly limit reached.{' '}
-                <Link href="/dashboard/payouts" className="underline hover:text-red-800">
+                <Link href="/dashboard/settings?tab=account" className="underline hover:text-red-800">
                   Upgrade your plan
                 </Link>{' '}
                 for more broadcasts.
