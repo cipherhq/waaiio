@@ -847,16 +847,23 @@ export const schedulingFlow: FlowDefinition = {
           .filter(s => s.remaining > 0);
 
         if (availableSlots.length === 0) {
-          // Route back to date selection instead of killing the session
+          // Route back to date selection
+          ctx.session.session_data.date = null;
+          ctx.session.session_data._no_slots_date = dateStr;
+          ctx.session.current_step = 'select_date';
           await ctx.supabase
             .from('bot_sessions')
-            .update({ session_data: { ...ctx.session.session_data, date: null, _no_slots_date: dateStr }, current_step: 'select_date' })
+            .update({ session_data: ctx.session.session_data, current_step: 'select_date' })
             .eq('id', ctx.session.id);
-          await ctx.sender.sendText({
+          // Send fully booked message with buttons to pick new date or cancel
+          await ctx.sender.sendButtons({
             to: ctx.from,
-            text: `All time slots for ${dateLabel} are fully booked. Pick another date below.`,
+            body: `All time slots for ${dateLabel} are fully booked.`,
+            buttons: [
+              { id: 'pick_new_date', title: 'Pick Another Date' },
+              { id: 'cancel_terms', title: 'Cancel' },
+            ],
           });
-          // Return empty — the executor will re-prompt select_date
           return [];
         }
 
