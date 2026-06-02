@@ -608,8 +608,8 @@ function OnboardingWizard() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.message || 'Invalid OTP'); return; }
+      // Session is set via cookies by the verify route — refresh client to pick it up
       const supabase = createClient();
-      await supabase.auth.signInWithOtp({ phone });
       const { data: { user: u } } = await supabase.auth.getUser();
       setUser(u);
       setStep('category');
