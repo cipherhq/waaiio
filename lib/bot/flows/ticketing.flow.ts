@@ -354,7 +354,7 @@ export const ticketingFlow: FlowDefinition = {
           await ctx.supabase.from('bot_sessions')
             .update({ session_data: d })
             .eq('id', ctx.session.id);
-          return getTermsPrompt(ctx.business?.name || 'Events', (ctx.business?.metadata as Record<string, unknown>)?.terms_text as string | undefined, ctx.business?.slug);
+          { const meta = (ctx.business?.metadata || {}) as Record<string, unknown>; return getTermsPrompt(ctx.business?.name || 'Events', meta.terms_text as string | undefined, ctx.business?.slug, meta.terms_url as string | undefined); }
         }
 
         // Ensure user exists
