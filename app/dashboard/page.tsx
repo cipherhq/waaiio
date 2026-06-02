@@ -301,7 +301,7 @@ export default function DashboardOverview() {
     <div>
       {/* Scheduled deletion banner */}
       {deletionScheduled && (
-        <div className="mb-4 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-5 py-4">
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-5 py-4 relative z-10">
           <div className="flex items-center gap-3">
             <svg aria-hidden="true" className="h-6 w-6 text-red-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -325,7 +325,7 @@ export default function DashboardOverview() {
 
       {/* Incomplete setup banner */}
       {business.status === 'pending' && (
-        <div className="mb-4 flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 px-5 py-4">
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 px-5 py-4 relative z-10">
           <div className="flex items-center gap-3">
             <svg aria-hidden="true" className="h-6 w-6 text-orange-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -346,7 +346,7 @@ export default function DashboardOverview() {
 
       {/* Pending payout banner */}
       {showPayoutBanner && (
-        <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-5 py-4">
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 relative z-10">
           <div className="flex items-center gap-3">
             <span className="text-2xl">💰</span>
             <div>
@@ -360,8 +360,8 @@ export default function DashboardOverview() {
         </div>
       )}
 
-      {/* Header — always first, no banners above */}
-      <div className="flex items-start justify-between mb-6">
+      {/* Header */}
+      <div className="flex items-start justify-between mb-6 relative z-0">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
