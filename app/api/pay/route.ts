@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
     // Use stored checkout URL if available (works for all gateways)
     const storedUrl = meta.checkout_url as string;
     if (storedUrl) {
-      const ALLOWED_DOMAINS = ['paystack.com', 'checkout.paystack.com', 'stripe.com', 'checkout.stripe.com', 'js.stripe.com', 'checkout.flutterwave.com', 'squareup.com', 'sandbox.paypal.com', 'paypal.com', 'waaiio.com'];
+      const ALLOWED_DOMAINS = ['paystack.com', 'checkout.paystack.com', 'stripe.com', 'checkout.stripe.com', 'js.stripe.com', 'checkout.flutterwave.com', 'squareup.com', 'sandbox.paypal.com', 'paypal.com', 'waaiio.com', 'www.waaiio.com'];
       try {
         const urlObj = new URL(storedUrl);
         if (!ALLOWED_DOMAINS.some(d => urlObj.hostname === d || urlObj.hostname.endsWith('.' + d))) {
