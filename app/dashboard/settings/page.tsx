@@ -40,8 +40,16 @@ export default function SettingsPage() {
   const curr = formatCurrency(0, country).charAt(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'account'>('business');
-  const [openSections, setOpenSections] = useState<string[]>(['profile']);
+  const initialTab = (() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'business') return tab;
+    }
+    return 'business' as const;
+  })();
+  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'account'>(initialTab);
+  const [openSections, setOpenSections] = useState<string[]>([initialTab === 'account' ? 'plan' : 'profile']);
   const toggleSection = (section: string) => {
     setOpenSections((prev) =>
       prev.includes(section) ? prev.filter((s) => s !== section) : [...prev, section]
