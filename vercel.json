@@ -22,7 +22,7 @@
     },
     {
       "path": "/api/cron/reminders",
-      "schedule": "*/30 * * * *"
+      "schedule": "0 */1 * * *"
     },
     {
       "path": "/api/cron/subscription-expiry",
@@ -54,7 +54,7 @@
     },
     {
       "path": "/api/cron/scheduled-broadcasts",
-      "schedule": "*/5 * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/data-retention",
