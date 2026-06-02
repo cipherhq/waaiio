@@ -103,19 +103,16 @@ export default function CapabilitiesPage() {
 
     setEnabled(next);
 
-    // Auto-save after toggle
-    setTimeout(() => {
-      const saveBtn = document.getElementById('cap-save-btn');
-      if (saveBtn) saveBtn.click();
-    }, 100);
+    // Auto-save with the new state directly
+    saveCapabilities(next);
   }
 
-  async function handleSave() {
+  async function saveCapabilities(caps: CapabilityId[]) {
     setSaving(true);
     const supabase = createClient();
 
     // Detect newly enabled capabilities (for provisioning)
-    const newlyEnabled = enabled.filter(cap => !business.capabilities.includes(cap));
+    const newlyEnabled = caps.filter(cap => !business.capabilities.includes(cap));
 
     // Disable all
     await supabase
@@ -124,7 +121,7 @@ export default function CapabilitiesPage() {
       .eq('business_id', business.id);
 
     // Enable selected
-    for (const cap of enabled) {
+    for (const cap of caps) {
       await supabase
         .from('business_capabilities')
         .upsert(
@@ -359,7 +356,7 @@ export default function CapabilitiesPage() {
               </button>
               <button
                 id="cap-save-btn"
-                onClick={handleSave}
+                onClick={() => saveCapabilities(enabled)}
                 disabled={saving}
                 className="rounded-lg bg-brand px-6 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
               >
