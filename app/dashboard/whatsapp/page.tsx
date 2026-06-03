@@ -1,9 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useEffect, useState, useCallback } from 'react';
+import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
+import { CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
+
+const CAP_MAP = new Map(CAPABILITIES.map(c => [c.id, c]));
 
 interface QuickReply {
   trigger: string;
@@ -35,8 +38,53 @@ interface WhatsAppConfig {
 
 export default function WhatsAppPage() {
   const business = useBusiness();
+  const { capabilities } = useCapabilities();
   const [config, setConfig] = useState<WhatsAppConfig | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Bot Menu Order state
+  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(capabilities);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  useEffect(() => { setOrderedCaps(capabilities); }, [capabilities]);
+
+  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragIndex;
+    setDragIndex(null);
+    setDragOverIndex(null);
+    if (fromIndex === null || fromIndex === dropIndex) return;
+
+    const newOrder = [...orderedCaps];
+    const [moved] = newOrder.splice(fromIndex, 1);
+    newOrder.splice(dropIndex, 0, moved);
+    setOrderedCaps(newOrder);
+
+    setSavingOrder(true);
+    const supabase = createClient();
+    try {
+      await Promise.all(
+        newOrder.map((cap, i) =>
+          supabase.from('business_capabilities').update({ sort_order: i }).eq('business_id', business.id).eq('capability', cap),
+        ),
+      );
+    } catch { /* silent */ }
+    setSavingOrder(false);
+  }, [dragIndex, orderedCaps, business.id]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [buttonsError, setButtonsError] = useState<string | null>(null);
@@ -512,6 +560,48 @@ export default function WhatsAppPage() {
           </button>
         </div>
       </div>
+
+      {/* Bot Menu Order */}
+      {orderedCaps.length > 1 && (
+        <div className="mt-8">
+          <div className="rounded-xl border border-gray-100 bg-white p-6">
+            <h2 className="text-lg font-bold text-gray-900">Bot Menu Order</h2>
+            <p className="mt-0.5 text-sm text-gray-500">
+              Drag to reorder how features appear in your WhatsApp bot menu.
+              {savingOrder && <span className="ml-2 text-brand font-medium">Saving...</span>}
+            </p>
+            <div className="mt-4 space-y-1">
+              {orderedCaps.map((capId, index) => {
+                const cap = CAP_MAP.get(capId);
+                if (!cap) return null;
+                return (
+                  <div
+                    key={capId}
+                    draggable
+                    onDragStart={e => handleDragStart(e, index)}
+                    onDragOver={e => handleDragOver(e, index)}
+                    onDragLeave={() => setDragOverIndex(null)}
+                    onDrop={e => handleDrop(e, index)}
+                    onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
+                    className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-grab active:cursor-grabbing select-none transition-all ${
+                      dragIndex === index
+                        ? 'opacity-40 border-brand bg-brand-50/50'
+                        : dragOverIndex === index
+                          ? 'border-brand border-2 bg-brand-50/30'
+                          : 'border-gray-200 bg-gray-50 hover:border-gray-300'
+                    }`}
+                  >
+                    <span className="text-gray-400 text-lg font-bold">&#x2261;</span>
+                    <span className="text-xs font-bold text-gray-400 w-5 text-center">{index + 1}.</span>
+                    <span className="flex-1 text-sm font-medium text-gray-900">{cap.label}</span>
+                    <span className="text-lg">{cap.icon}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Message Templates Section */}
       <div className="mt-8">

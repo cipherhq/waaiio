@@ -310,62 +310,7 @@ export default function CapabilitiesPage() {
         </div>
       </div>
 
-      {/* Bot Menu Order — Drag to Reorder */}
-      {orderedCaps.length > 1 && (
-        <div className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              Bot Menu Order
-            </h2>
-            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-              Drag to reorder how features appear in your WhatsApp bot menu.
-              {savingOrder && <span className="ml-2 text-brand font-medium">Saving...</span>}
-            </p>
-          </div>
-          <div className="space-y-1">
-            {orderedCaps.map((capId, index) => {
-              const cap = CAP_MAP.get(capId);
-              if (!cap) return null;
-              const isDragging = dragIndex === index;
-              const isDragOver = dragOverIndex === index;
-
-              return (
-                <div
-                  key={capId}
-                  draggable
-                  onDragStart={e => handleDragStart(e, index)}
-                  onDragOver={e => handleDragOver(e, index)}
-                  onDragLeave={handleDragLeave}
-                  onDrop={e => handleDrop(e, index)}
-                  onDragEnd={handleDragEnd}
-                  className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-grab active:cursor-grabbing select-none transition-all ${
-                    isDragging
-                      ? 'opacity-40 border-brand bg-brand-50/50 dark:bg-brand-950/20'
-                      : isDragOver
-                        ? 'border-brand border-2 bg-brand-50/30 dark:bg-brand-950/10'
-                        : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-600'
-                  }`}
-                >
-                  {/* Drag handle */}
-                  <span className="text-gray-400 dark:text-gray-500 text-lg font-bold select-none">
-                    &#x2261;
-                  </span>
-                  {/* Position number */}
-                  <span className="text-xs font-bold text-gray-400 dark:text-gray-500 w-5 text-center">
-                    {index + 1}.
-                  </span>
-                  {/* Capability label */}
-                  <span className="flex-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {cap.label}
-                  </span>
-                  {/* Icon */}
-                  <span className="text-lg">{cap.icon}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {/* Bot Menu Order is on the WhatsApp Setup page */}
 
       {/* All Features — Toggle On/Off */}
       <div className="mt-6 space-y-8">
