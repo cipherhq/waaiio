@@ -241,8 +241,8 @@ export async function recordPlatformFee(
   if (!business) return;
   if (business.payout_mode === 'direct_split') return;
 
-  const isInTrial = new Date(business.trial_ends_at) > new Date();
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+  const isInTrial = tier === 'free' && new Date(business.trial_ends_at) > new Date();
 
   const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial);
 

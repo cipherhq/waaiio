@@ -220,6 +220,8 @@ export async function POST(request: NextRequest) {
       .update({
         status: 'active',
         subscription_tier: plan,
+        // End trial when upgrading to a paid plan — they're now a paying customer
+        ...(plan !== 'free' ? { trial_ends_at: new Date().toISOString() } : {}),
       })
       .eq('id', businessId);
 

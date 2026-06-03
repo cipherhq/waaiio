@@ -68,9 +68,11 @@ export default function CapabilitiesPage() {
 
   // Check if business is still in 30-day trial
   const isInTrial = useMemo(() => {
+    // Paid plans are never in trial — they have their tier's capabilities
+    if (tier !== 'free') return false;
     if (!business.trial_ends_at) return false;
     return new Date(business.trial_ends_at) > new Date();
-  }, [business.trial_ends_at]);
+  }, [business.trial_ends_at, tier]);
 
   // During trial, everything is toggleable regardless of tier
   const canToggle = (capId: CapabilityId) => {
