@@ -894,7 +894,7 @@ export default function SettingsPage() {
       <div className="relative mt-4">
         <div className="flex gap-1 overflow-x-auto scrollbar-hide rounded-lg bg-gray-100 p-1">
           <button
-            onClick={() => setActiveTab('business')}
+            onClick={() => { setActiveTab('business'); setOpenSections(['profile']); }}
             className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
               activeTab === 'business' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -903,7 +903,7 @@ export default function SettingsPage() {
             Business
           </button>
           <button
-            onClick={() => setActiveTab('payments')}
+            onClick={() => { setActiveTab('payments'); setOpenSections(['gateway']); }}
             className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
               activeTab === 'payments' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -912,7 +912,7 @@ export default function SettingsPage() {
             Payments
           </button>
           <button
-            onClick={() => setActiveTab('features')}
+            onClick={() => { setActiveTab('features'); setOpenSections(['queue']); }}
             className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
               activeTab === 'features' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
             }`}
@@ -923,6 +923,7 @@ export default function SettingsPage() {
           <button
             onClick={() => {
               setActiveTab('account');
+              setOpenSections(['plan']);
               if (!consentLoaded) {
                 fetch('/api/account/consent')
                   .then(r => r.json())
@@ -952,9 +953,9 @@ export default function SettingsPage() {
       {activeTab === 'business' && (
         <div className="mt-6 max-w-3xl space-y-4">
           <div>
-            <button onClick={() => toggleSection('profile')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">Profile</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('profile') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('profile')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Profile</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('profile') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('profile') && (
               <div className="mt-4">
@@ -962,7 +963,7 @@ export default function SettingsPage() {
           {/* Business Profile */}
           <div className="lg:col-span-2 space-y-6">
             <div className="rounded-xl border border-gray-100 bg-white p-6">
-              <h2 className="text-sm font-semibold text-gray-900">Business Profile</h2>
+              <h2 className="text-sm font-bold text-gray-900">Business Profile</h2>
 
               <div className="mt-4 space-y-4">
                 {/* Logo Upload */}
@@ -1134,7 +1135,7 @@ export default function SettingsPage() {
           <div className="space-y-6">
             {/* Subscription */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">
-              <h2 className="text-sm font-semibold text-gray-900">Subscription</h2>
+              <h2 className="text-sm font-bold text-gray-900">Subscription</h2>
               <div className="mt-3">
                 <span className="inline-flex rounded-full bg-brand-50 px-3 py-1 text-sm font-semibold text-brand">
                   {tier?.name || business.subscription_tier}
@@ -1152,7 +1153,7 @@ export default function SettingsPage() {
 
             {/* Business Info */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">
-              <h2 className="text-sm font-semibold text-gray-900">Business Info</h2>
+              <h2 className="text-sm font-bold text-gray-900">Business Info</h2>
               <div className="mt-3 space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">Category</span>
@@ -1233,16 +1234,16 @@ export default function SettingsPage() {
             )}
           </div>
           <div>
-            <button onClick={() => toggleSection('hours')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">Operating Hours</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('hours') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('hours')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Operating Hours</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('hours') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('hours') && (
               <div className="mt-4">
         {/* Operating Hours Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Weekly Schedule</h2>
+            <h2 className="text-sm font-bold text-gray-900">Weekly Schedule</h2>
             <p className="mt-1 text-xs text-gray-500">Set when your business is open. The WhatsApp bot uses these hours to let customers know your availability.</p>
 
             <div className="mt-5 space-y-3">
@@ -1300,9 +1301,9 @@ export default function SettingsPage() {
             )}
           </div>
           <div>
-            <button onClick={() => toggleSection('booking')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">WhatsApp & Booking</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('booking') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('booking')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">WhatsApp & Booking</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('booking') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('booking') && (
               <div className="mt-4">
@@ -1310,7 +1311,7 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-xl space-y-4">
           {(capabilities.includes('scheduling') || business.flow_type === 'scheduling') && (
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Scheduling Settings</h2>
+            <h2 className="text-sm font-bold text-gray-900">Scheduling Settings</h2>
             <p className="mt-1 text-xs text-gray-500">Control how customers book appointments through your WhatsApp bot.</p>
 
             <div className="mt-5 space-y-5">
@@ -1447,7 +1448,7 @@ export default function SettingsPage() {
           )}
 
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">General WhatsApp Settings</h2>
+            <h2 className="text-sm font-bold text-gray-900">General WhatsApp Settings</h2>
             <p className="mt-1 text-xs text-gray-500">Settings that apply across all bot flows (ordering, ticketing, payments, etc.).</p>
 
             <div className="mt-5 space-y-5">
@@ -1526,7 +1527,7 @@ export default function SettingsPage() {
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-gray-900">Special Requests</h2>
+                <h2 className="text-sm font-bold text-gray-900">Special Requests</h2>
                 <p className="mt-1 text-xs text-gray-500">Quick-reply options shown to customers before confirming their booking.</p>
               </div>
               <button
@@ -1564,7 +1565,7 @@ export default function SettingsPage() {
           {/* Pre-Booking Questions */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <div>
-              <h2 className="text-sm font-semibold text-gray-900">Pre-Booking Questions</h2>
+              <h2 className="text-sm font-bold text-gray-900">Pre-Booking Questions</h2>
               <p className="mt-1 text-xs text-gray-500">Custom questions asked before a booking is confirmed. Answers are saved with the booking.</p>
             </div>
             <div className="mt-4 space-y-2">
@@ -1669,16 +1670,16 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-3xl space-y-4">
           {capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding') && (
             <div>
-              <button onClick={() => toggleSection('gateway')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-                <h3 className="text-sm font-semibold text-gray-900">Payment Gateway</h3>
-                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('gateway') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <button onClick={() => toggleSection('gateway')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Payment Gateway</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('gateway') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSections.includes('gateway') && (
                 <div className="mt-4">
         {/* Payment Gateway Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Payment Gateway</h2>
+            <h2 className="text-sm font-bold text-gray-900">Payment Gateway</h2>
             <p className="mt-1 text-xs text-gray-500">
               Choose which payment gateway to use. &quot;Auto&quot; selects the best gateway for your country.
             </p>
@@ -1741,7 +1742,7 @@ export default function SettingsPage() {
 
           {/* BYO Gateway Section */}
           <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Use Your Own Gateway</h2>
+            <h2 className="text-sm font-bold text-gray-900">Use Your Own Gateway</h2>
             <p className="mt-1 text-xs text-gray-500">
               Connect your own payment account. Payments go directly to you, platform fee is auto-deducted.
             </p>
@@ -1766,7 +1767,7 @@ export default function SettingsPage() {
                       </svg>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-gray-900">Connect with Paystack</p>
+                      <p className="text-sm font-bold text-gray-900">Connect with Paystack</p>
                       <p className="text-xs text-gray-500">Enter your bank details. Payments split automatically.</p>
                     </div>
                     <svg aria-hidden="true" className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showPaystackForm ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1843,7 +1844,7 @@ export default function SettingsPage() {
                     </svg>
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-gray-900">
+                    <p className="text-sm font-bold text-gray-900">
                       {connectingGateway === 'stripe' ? 'Connecting...' : 'Connect with Stripe'}
                     </p>
                     <p className="text-xs text-gray-500">One-click setup. Complete onboarding on Stripe to receive payments.</p>
@@ -1865,7 +1866,7 @@ export default function SettingsPage() {
                       </svg>
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-gray-900">Flutterwave</p>
+                      <p className="text-sm font-bold text-gray-900">Flutterwave</p>
                       <p className="text-xs text-gray-500">Enter your API keys manually from your Flutterwave dashboard.</p>
                     </div>
                     <svg aria-hidden="true" className={`h-5 w-5 flex-shrink-0 text-gray-400 transition ${showFlutterwaveForm ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1962,7 +1963,7 @@ export default function SettingsPage() {
 
           {/* Capabilities link */}
           <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Capabilities</h2>
+            <h2 className="text-sm font-bold text-gray-900">Capabilities</h2>
             <p className="mt-1 text-xs text-gray-500">
               Manage which features your business supports (scheduling, payments, ordering, etc.)
             </p>
@@ -1979,7 +1980,7 @@ export default function SettingsPage() {
 
           {/* Checkout Settings */}
           <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Checkout Settings</h2>
+            <h2 className="text-sm font-bold text-gray-900">Checkout Settings</h2>
             <p className="mt-1 text-xs text-gray-500">Configure the customer checkout experience</p>
 
             {/* T&C Toggle */}
@@ -2083,16 +2084,16 @@ export default function SettingsPage() {
           )}
           {capabilities.includes('payment') || capabilities.includes('crowdfunding') && (
             <div>
-              <button onClick={() => toggleSection('recurring')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-                <h3 className="text-sm font-semibold text-gray-900">Recurring Payments</h3>
-                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('recurring') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <button onClick={() => toggleSection('recurring')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Recurring Payments</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('recurring') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSections.includes('recurring') && (
                 <div className="mt-4">
         {/* Recurring Payments Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Recurring Payments</h2>
+            <h2 className="text-sm font-bold text-gray-900">Recurring Payments</h2>
             <p className="mt-1 text-xs text-gray-500">
               Enable automatic recurring payments so customers can set up weekly or monthly charges (e.g. tithes, memberships, subscriptions).
             </p>
@@ -2148,7 +2149,7 @@ export default function SettingsPage() {
           {/* Link to recurring dashboard */}
           {recurringEnabled && (
             <div className="mt-4 rounded-xl border border-gray-100 bg-white p-6">
-              <h2 className="text-sm font-semibold text-gray-900">Manage Subscribers</h2>
+              <h2 className="text-sm font-bold text-gray-900">Manage Subscribers</h2>
               <p className="mt-1 text-xs text-gray-500">View and manage your recurring payment subscribers.</p>
               <Link
                 href="/dashboard/recurring"
@@ -2168,16 +2169,16 @@ export default function SettingsPage() {
           )}
           {capabilities.includes('ordering') && (
             <div>
-              <button onClick={() => toggleSection('shipping')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-                <h3 className="text-sm font-semibold text-gray-900">Shipping</h3>
-                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('shipping') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <button onClick={() => toggleSection('shipping')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Shipping</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('shipping') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSections.includes('shipping') && (
                 <div className="mt-4">
         {/* Shipping Settings Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Shipping Settings</h2>
+            <h2 className="text-sm font-bold text-gray-900">Shipping Settings</h2>
             <p className="mt-1 text-xs text-gray-500">
               Configure how shipping costs are calculated for delivery orders placed via WhatsApp.
             </p>
@@ -2295,16 +2296,16 @@ export default function SettingsPage() {
           )}
           {capabilities.includes('ordering') && (
             <div>
-              <button onClick={() => toggleSection('delivery_zones')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-                <h3 className="text-sm font-semibold text-gray-900">Delivery Zones</h3>
-                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('delivery_zones') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <button onClick={() => toggleSection('delivery_zones')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Delivery Zones</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('delivery_zones') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSections.includes('delivery_zones') && (
                 <div className="mt-4">
         {/* Delivery Zones Tab */}
         <div className="mt-6 max-w-2xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Delivery Zones</h2>
+            <h2 className="text-sm font-bold text-gray-900">Delivery Zones</h2>
             <p className="mt-1 text-xs text-gray-500">
               Define zones with specific delivery prices. When zones are configured, they replace flat shipping for WhatsApp orders.
             </p>
@@ -2477,16 +2478,16 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-3xl space-y-4">
           {capabilities.includes('queue') && (
             <div>
-              <button onClick={() => toggleSection('queue')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-                <h3 className="text-sm font-semibold text-gray-900">Queue</h3>
-                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('queue') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <button onClick={() => toggleSection('queue')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Queue</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('queue') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSections.includes('queue') && (
                 <div className="mt-4">
         {/* Queue Settings Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Queue Settings</h2>
+            <h2 className="text-sm font-bold text-gray-900">Queue Settings</h2>
             <p className="mt-1 text-xs text-gray-500">
               Configure how your queue behaves, including wait-time estimates and notifications.
             </p>
@@ -2582,16 +2583,16 @@ export default function SettingsPage() {
           )}
           {capabilities.includes('ordering') && (
             <div>
-              <button onClick={() => toggleSection('ordering')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-                <h3 className="text-sm font-semibold text-gray-900">Ordering</h3>
-                <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('ordering') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              <button onClick={() => toggleSection('ordering')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Ordering</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('ordering') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
               </button>
               {openSections.includes('ordering') && (
                 <div className="mt-4">
         {/* Ordering Tab */}
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Ordering Settings</h2>
+            <h2 className="text-sm font-bold text-gray-900">Ordering Settings</h2>
             <p className="mt-1 text-xs text-gray-500">
               Control how customers browse and order from your WhatsApp bot.
             </p>
@@ -2749,7 +2750,7 @@ export default function SettingsPage() {
 
           {/* Custom Orders */}
           <div className="mt-6 rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Custom Orders</h2>
+            <h2 className="text-sm font-bold text-gray-900">Custom Orders</h2>
             <p className="mt-1 text-xs text-gray-500">
               For tailors, furniture makers, bakers, and other made-to-order businesses. Customers send style photos, measurements, and notes.
             </p>
@@ -2860,9 +2861,9 @@ export default function SettingsPage() {
             </div>
           )}
           <div>
-            <button onClick={() => toggleSection('auto_reply')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">Auto Reply</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('auto_reply') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('auto_reply')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Auto Reply</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('auto_reply') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('auto_reply') && (
               <div className="mt-4">
@@ -2881,7 +2882,7 @@ export default function SettingsPage() {
               <div className="rounded-xl border border-gray-100 bg-white p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-sm font-semibold text-gray-900">Auto-reply outside business hours</h2>
+                    <h2 className="text-sm font-bold text-gray-900">Auto-reply outside business hours</h2>
                     <p className="mt-1 text-xs text-gray-500">
                       When enabled, customers who message outside your business hours will receive an away message automatically.
                     </p>
@@ -2911,7 +2912,7 @@ export default function SettingsPage() {
               {/* Business hours grid */}
               {arEnabled && (
                 <div className="rounded-xl border border-gray-100 bg-white p-6">
-                  <h2 className="text-sm font-semibold text-gray-900">Business Hours</h2>
+                  <h2 className="text-sm font-bold text-gray-900">Business Hours</h2>
                   <p className="mt-1 text-xs text-gray-500">Set the hours when your bot is active. Outside these hours, the away message will be sent.</p>
 
                   {/* Timezone */}
@@ -2979,7 +2980,7 @@ export default function SettingsPage() {
               <div className="rounded-xl border border-gray-100 bg-white p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-sm font-semibold text-gray-900">Instant reply during business hours</h2>
+                    <h2 className="text-sm font-bold text-gray-900">Instant reply during business hours</h2>
                     <p className="mt-1 text-xs text-gray-500">
                       Send an automatic acknowledgment when a customer first messages you.
                     </p>
@@ -3024,9 +3025,9 @@ export default function SettingsPage() {
             )}
           </div>
           <div>
-            <button onClick={() => toggleSection('notifications')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">Notifications</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('notifications') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('notifications')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Notifications</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('notifications') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('notifications') && (
               <div className="mt-4">
@@ -3151,9 +3152,9 @@ export default function SettingsPage() {
       {activeTab === 'account' && (
         <div className="mt-6 max-w-3xl space-y-4">
           <div>
-            <button onClick={() => toggleSection('plan')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">Plan & Upgrade</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('plan') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('plan')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Plan & Upgrade</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('plan') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('plan') && (
               <div className="mt-4">
@@ -3161,7 +3162,7 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-xl space-y-6">
           {/* Subscription & Upgrade */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Subscription</h2>
+            <h2 className="text-sm font-bold text-gray-900">Subscription</h2>
 
             {verifying && (
               <div className="mt-4 flex items-center gap-2 rounded-lg bg-blue-50 p-3">
@@ -3217,7 +3218,7 @@ export default function SettingsPage() {
                         const t = localTiers[p];
                         return (
                           <div key={p} className="rounded-lg border border-gray-200 p-4">
-                            <h3 className="text-sm font-semibold text-gray-900">{t.name}</h3>
+                            <h3 className="text-sm font-bold text-gray-900">{t.name}</h3>
                             <p className="mt-1 text-lg font-bold text-gray-900">
                               {formatCurrency(t.price, country)}
                               <span className="text-sm font-normal text-gray-500">/month</span>
@@ -3279,7 +3280,7 @@ export default function SettingsPage() {
 
           {/* WhatsApp Number */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">WhatsApp Number</h2>
+            <h2 className="text-sm font-bold text-gray-900">WhatsApp Number</h2>
 
             {!waChannel ? (
               <p className="mt-3 text-sm text-gray-400">Loading...</p>
@@ -3351,7 +3352,7 @@ export default function SettingsPage() {
 
           {/* Change Password */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Change Password</h2>
+            <h2 className="text-sm font-bold text-gray-900">Change Password</h2>
             <p className="mt-2 text-sm text-gray-600">
               Update your account password. You&apos;ll need to enter your current password for verification.
             </p>
@@ -3436,7 +3437,7 @@ export default function SettingsPage() {
 
           {/* Change Email */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Change Email</h2>
+            <h2 className="text-sm font-bold text-gray-900">Change Email</h2>
             <p className="mt-2 text-sm text-gray-600">
               Update the email address associated with your account. A confirmation link will be sent to your new email.
             </p>
@@ -3475,7 +3476,7 @@ export default function SettingsPage() {
 
           {/* Two-Factor Authentication */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Two-Factor Authentication</h2>
+            <h2 className="text-sm font-bold text-gray-900">Two-Factor Authentication</h2>
             <p className="mt-2 text-sm text-gray-600">
               Add an extra layer of security to your account using an authenticator app like Google Authenticator, Authy, or 1Password.
             </p>
@@ -3645,9 +3646,9 @@ export default function SettingsPage() {
             )}
           </div>
           <div>
-            <button onClick={() => toggleSection('privacy')} className="flex w-full items-center justify-between rounded-lg bg-gray-50 px-4 py-3 hover:bg-gray-100 transition">
-              <h3 className="text-sm font-semibold text-gray-900">Privacy & Data</h3>
-              <svg aria-hidden="true" className={`h-5 w-5 text-gray-400 transition-transform ${openSections.includes('privacy') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            <button onClick={() => toggleSection('privacy')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+              <h3 className="text-sm font-bold text-gray-900">Privacy & Data</h3>
+              <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('privacy') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
             </button>
             {openSections.includes('privacy') && (
               <div className="mt-4">
@@ -3655,7 +3656,7 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-xl space-y-6">
           {/* Download My Data */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Download My Data</h2>
+            <h2 className="text-sm font-bold text-gray-900">Download My Data</h2>
             <p className="mt-2 text-sm text-gray-600">
               Export all your data. This includes your profile, businesses,
               bookings, orders, payments, customers, and more.
@@ -3728,7 +3729,7 @@ export default function SettingsPage() {
 
           {/* Marketing & Consent Preferences */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Consent Preferences</h2>
+            <h2 className="text-sm font-bold text-gray-900">Consent Preferences</h2>
             <p className="mt-2 text-sm text-gray-600">
               Control how your data is used. Changes take effect immediately.
             </p>
@@ -3856,7 +3857,7 @@ export default function SettingsPage() {
 
           {/* Privacy Policy Link */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
-            <h2 className="text-sm font-semibold text-gray-900">Privacy Resources</h2>
+            <h2 className="text-sm font-bold text-gray-900">Privacy Resources</h2>
             <div className="mt-3 space-y-2">
               <Link href="/privacy" className="flex items-center gap-2 text-sm text-brand hover:underline" target="_blank">
                 <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
