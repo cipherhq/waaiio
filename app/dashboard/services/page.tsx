@@ -297,11 +297,11 @@ export default function ServicesPage() {
       business_id: business.id,
       name: form.name.trim(),
       description: form.description?.trim() || null,
-      price: form.price,
+      price: Math.round(form.price),
       price_is_variable: form.price_is_variable,
       duration_minutes: form.duration_minutes,
       buffer_minutes: form.buffer_minutes || 0,
-      deposit_amount: form.deposit_amount,
+      deposit_amount: Math.round(form.deposit_amount),
       is_active: form.status === 'active',
       sort_order: form.sort_order,
       status: form.status,
@@ -538,7 +538,7 @@ export default function ServicesPage() {
                     type="number"
                     min={0}
                     value={form.price || ''}
-                    onChange={(e) => setForm({ ...form, price: Number(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, price: Math.round(Number(e.target.value)) })}
                     placeholder="Enter price"
                     className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
@@ -550,8 +550,9 @@ export default function ServicesPage() {
                   <input
                     type="number"
                     min={0}
+                    step={1}
                     value={form.deposit_amount || ''}
-                    onChange={(e) => setForm({ ...form, deposit_amount: Number(e.target.value) })}
+                    onChange={(e) => setForm({ ...form, deposit_amount: Math.round(Number(e.target.value)) })}
                     placeholder="Enter deposit"
                     className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                   />
