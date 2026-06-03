@@ -984,11 +984,20 @@ export function generateTimeSlots(
   const [openH, openM] = openTime.split(':').map(Number);
   const [closeH, closeM] = closeTime.split(':').map(Number);
   let current = openH * 60 + openM;
-  const end = closeH * 60 + closeM;
+  let end = closeH * 60 + closeM;
+
+  // Handle midnight-crossing hours (e.g., 22:00-06:00 means close is next day)
+  // If equal, return empty (not 24hrs)
+  if (end === current) return slots;
+  if (end < current) {
+    end += 24 * 60; // treat close time as next day
+  }
 
   while (current < end) {
-    const h = Math.floor(current / 60);
-    const m = current % 60;
+    // Wrap hours past midnight back to 0-23 range
+    const wrapped = current % (24 * 60);
+    const h = Math.floor(wrapped / 60);
+    const m = wrapped % 60;
     slots.push(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
     current += intervalMinutes;
   }

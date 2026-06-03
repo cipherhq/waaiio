@@ -644,8 +644,12 @@ export const schedulingFlow: FlowDefinition = {
           const dateStr = d.toISOString().split('T')[0];
           const openTime = opHours[dayOfWeek]?.open || '08:00';
           const closeTime = opHours[dayOfWeek]?.close || '18:00';
+          // Handle midnight-crossing hours (e.g., 22:00-06:00)
+          let openMin = timeToMinutes(openTime);
+          let closeMin = timeToMinutes(closeTime);
+          if (closeMin <= openMin) closeMin += 24 * 60;
           const totalSlots = Math.max(1, Math.floor(
-            (timeToMinutes(closeTime) - timeToMinutes(openTime)) / slotInterval
+            (closeMin - openMin) / slotInterval
           ));
           const bookedCount = bookingsByDate.get(dateStr) || 0;
           const maxBookingsForDate = totalSlots * maxCapacity;
@@ -748,10 +752,19 @@ export const schedulingFlow: FlowDefinition = {
 
         const preMinutes = timeToMinutes(preTime);
         const openMinutes = timeToMinutes(openTime);
-        const closeMinutes = timeToMinutes(closeTime);
+        let closeMinutes = timeToMinutes(closeTime);
+
+        // Handle midnight-crossing hours (e.g., 22:00-06:00)
+        const crossesMidnight = closeMinutes <= openMinutes;
+        if (crossesMidnight) closeMinutes += 24 * 60;
+
+        // Normalize preMinutes for comparison when hours cross midnight
+        const adjustedPreMinutes = (crossesMidnight && preMinutes < openMinutes)
+          ? preMinutes + 24 * 60
+          : preMinutes;
 
         // If time is outside operating hours, clear it and show the picker
-        if (preMinutes < openMinutes || preMinutes >= closeMinutes) {
+        if (adjustedPreMinutes < openMinutes || adjustedPreMinutes >= closeMinutes) {
           delete ctx.session.session_data.time;
           return false;
         }
