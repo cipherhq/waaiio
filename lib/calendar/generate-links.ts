@@ -146,12 +146,6 @@ export function getCalendarLinksText(opts: {
   if (!event) return '';
 
   const googleUrl = generateGoogleCalendarUrl(event);
-  const icsUrl = `https://www.waaiio.com/api/calendar/${encodeURIComponent(opts.referenceCode)}`;
 
-  return [
-    '',
-    '📅 *Add to calendar:*',
-    `Google: ${googleUrl}`,
-    `Other: ${icsUrl}`,
-  ].join('\n');
+  return `\n\n📅 Add to Google Calendar:\n${googleUrl}`;
 }
