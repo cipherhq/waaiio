@@ -406,6 +406,34 @@ export default function WhatsAppPage() {
                         <option value="url">Send URL</option>
                       </select>
                     </div>
+                    {btn.action === 'start_flow' && (
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-gray-500">Feature to Start</label>
+                        <select
+                          value={btn.payload || ''}
+                          onChange={(e) => {
+                            const updated = [...welcomeButtons];
+                            updated[i] = { ...btn, payload: e.target.value };
+                            setWelcomeButtons(updated);
+                          }}
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                        >
+                          <option value="">Select a feature...</option>
+                          <option value="scheduling">Book a Service</option>
+                          <option value="appointment">Book Appointment</option>
+                          <option value="ordering">Order Products</option>
+                          <option value="ticketing">Buy Tickets</option>
+                          <option value="reservation">Make Reservation</option>
+                          <option value="table_reservation">Reserve Table</option>
+                          <option value="queue">Join Queue</option>
+                          <option value="giving">Give / Donate</option>
+                          <option value="invoice">My Invoices</option>
+                          <option value="loyalty">My Rewards</option>
+                          <option value="chat">Chat with Us</option>
+                          <option value="my_account">My Account</option>
+                        </select>
+                      </div>
+                    )}
                     {btn.action !== 'start_flow' && (
                       <div>
                         <label className="mb-1 block text-xs font-medium text-gray-500">
