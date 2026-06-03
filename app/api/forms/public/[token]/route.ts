@@ -29,16 +29,34 @@ export async function GET(
   // Get business name + logo
   const { data: biz } = await supabase
     .from('businesses')
-    .select('name, phone, logo_url')
+    .select('name, phone, logo_url, assigned_channel_id, whatsapp_channel_id')
     .eq('id', form.business_id)
     .single();
+
+  // Resolve WhatsApp channel phone (not business owner's personal phone)
+  let whatsappPhone: string | null = null;
+  const channelId = biz?.assigned_channel_id || biz?.whatsapp_channel_id;
+  if (channelId) {
+    const { data: ch } = await supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle();
+    if (ch?.phone_number) whatsappPhone = ch.phone_number;
+  }
+  if (!whatsappPhone) {
+    const { data: dedicated } = await supabase.from('whatsapp_channels').select('phone_number')
+      .eq('business_id', form.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
+    if (dedicated?.phone_number) whatsappPhone = dedicated.phone_number;
+  }
+  if (!whatsappPhone) {
+    const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
+      .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle();
+    if (shared?.phone_number) whatsappPhone = shared.phone_number;
+  }
 
   return NextResponse.json({
     title: form.title,
     description: form.description,
     fields: form.fields,
     business_name: biz?.name || '',
-    business_phone: biz?.phone || null,
+    business_phone: whatsappPhone || biz?.phone || null,
     business_logo: biz?.logo_url || null,
   });
 }

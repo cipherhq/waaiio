@@ -41,9 +41,27 @@ export async function GET(
     // Fetch business name + tier (no sensitive data)
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, phone, logo_url, subscription_tier')
+      .select('name, phone, logo_url, subscription_tier, assigned_channel_id, whatsapp_channel_id')
       .eq('id', invoice.business_id)
       .single();
+
+    // Resolve WhatsApp channel phone (not business owner's personal phone)
+    let whatsappPhone: string | null = null;
+    const channelId = biz?.assigned_channel_id || biz?.whatsapp_channel_id;
+    if (channelId) {
+      const { data: ch } = await supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle();
+      if (ch?.phone_number) whatsappPhone = ch.phone_number;
+    }
+    if (!whatsappPhone) {
+      const { data: dedicated } = await supabase.from('whatsapp_channels').select('phone_number')
+        .eq('business_id', invoice.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
+      if (dedicated?.phone_number) whatsappPhone = dedicated.phone_number;
+    }
+    if (!whatsappPhone) {
+      const { data: shared } = await supabase.from('whatsapp_channels').select('phone_number')
+        .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle();
+      if (shared?.phone_number) whatsappPhone = shared.phone_number;
+    }
 
     // Mark as viewed on first view
     if (invoice.status === 'sent') {
@@ -81,7 +99,7 @@ export async function GET(
       terms: invoice.terms,
       paid_at: invoice.paid_at,
       business_name: biz?.name || '',
-      business_phone: biz?.phone || null,
+      business_phone: whatsappPhone || biz?.phone || null,
       logo_url: biz?.logo_url || null,
       show_logo: (biz?.subscription_tier || 'free') !== 'free',
       whitelabel: PRICING_TIERS[(biz?.subscription_tier || 'free') as SubscriptionTier]?.whitelabel === true,

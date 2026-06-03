@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { createClient } from '@/lib/supabase/client';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
 
 // ── Poster templates based on business capabilities / use case ──
@@ -22,9 +23,41 @@ type TemplateId = (typeof TEMPLATES)[number]['id'];
 
 export default function QRCodePage() {
   const business = useBusiness();
-  const phone = business.phone?.replace(/[^0-9+]/g, '') || '';
-  const cleanPhone = phone.startsWith('+') ? phone.slice(1) : phone;
-  const waLink = `https://wa.me/${cleanPhone}?text=Hi`;
+  const [channelPhone, setChannelPhone] = useState('');
+  const [channelLoaded, setChannelLoaded] = useState(false);
+
+  // Load the actual WhatsApp channel phone number (not business.phone which is the owner's contact)
+  useEffect(() => {
+    async function loadChannelPhone() {
+      const supabase = createClient();
+      const channelId = business.assigned_channel_id || business.whatsapp_channel_id;
+
+      // Fire all 3 queries in parallel
+      const [assignedResult, dedicatedResult, sharedResult] = await Promise.all([
+        channelId
+          ? supabase.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase.from('whatsapp_channels').select('phone_number')
+          .eq('business_id', business.id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle(),
+        supabase.from('whatsapp_channels').select('phone_number')
+          .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle(),
+      ]);
+
+      // Priority: assigned > dedicated > shared > business.phone fallback
+      const resolved = assignedResult.data?.phone_number
+        || dedicatedResult.data?.phone_number
+        || sharedResult.data?.phone_number
+        || business.phone
+        || '';
+
+      setChannelPhone(resolved.replace(/[^0-9]/g, ''));
+      setChannelLoaded(true);
+    }
+    loadChannelPhone();
+  }, [business.id, business.assigned_channel_id, business.whatsapp_channel_id, business.phone]);
+
+  const phone = channelPhone;
+  const cleanPhone = phone;
 
   const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
   const defaultPrefill = isSharedNumber && business.bot_code ? business.bot_code : 'Hi';
@@ -208,10 +241,10 @@ export default function QRCodePage() {
         </p>
       </div>
 
-      {!phone && (
+      {channelLoaded && !phone && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          <strong>No phone number set.</strong> Please add a WhatsApp phone number in{' '}
-          <a href="/dashboard/settings" className="font-medium underline hover:no-underline">Settings</a>{' '}
+          <strong>No WhatsApp number found.</strong> Please connect a WhatsApp number in{' '}
+          <a href="/dashboard/whatsapp/connect" className="font-medium underline hover:no-underline">WhatsApp Setup</a>{' '}
           to generate a working QR code and link.
         </div>
       )}

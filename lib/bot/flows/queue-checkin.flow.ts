@@ -20,7 +20,7 @@ const queueStartStep: FlowStepConfig = {
     if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
 
     // Check if queue is paused
-    const { paused } = await getQueueConfig(ctx);
+    const { paused, avgMinutes } = await getQueueConfig(ctx);
     if (paused) {
       return [{
         type: 'buttons',
@@ -29,6 +29,53 @@ const queueStartStep: FlowStepConfig = {
           { id: 'notify_reopen', title: 'Notify Me' },
           { id: 'no_thanks', title: 'No Thanks' },
         ],
+      }];
+    }
+
+    // Check if user already has an active queue entry (waiting or serving)
+    const today = new Date().toISOString().split('T')[0];
+    const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+    const { data: existingEntry } = await ctx.supabase
+      .from('queue_entries')
+      .select('queue_number, status')
+      .eq('business_id', ctx.business.id)
+      .eq('customer_phone', phoneP)
+      .eq('queue_date', today)
+      .in('status', ['waiting', 'serving'])
+      .order('queue_number', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (existingEntry) {
+      // User is already in the queue — show their position instead of offering to join
+      if (existingEntry.status === 'serving') {
+        return [{
+          type: 'text',
+          text: "You're already in the queue and it's your turn! Please proceed to the counter.",
+        }];
+      }
+
+      // Count how many are ahead
+      const { count } = await ctx.supabase
+        .from('queue_entries')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', ctx.business.id)
+        .eq('queue_date', today)
+        .eq('status', 'waiting')
+        .lt('queue_number', existingEntry.queue_number);
+
+      const ahead = count || 0;
+      const estimatedWait = ahead * avgMinutes;
+      const waitText = estimatedWait > 0
+        ? `Estimated wait: ~${estimatedWait} minutes.`
+        : 'You should be served shortly!';
+
+      // Mark that we showed existing position (so validate/next can end the flow)
+      ctx.session.session_data._queue_already_joined = true;
+
+      return [{
+        type: 'text',
+        text: `You're already in the queue! You're *#${existingEntry.queue_number}*.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. ${waitText}\n\nWe'll message you when it's your turn!`,
       }];
     }
 
@@ -43,6 +90,11 @@ const queueStartStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext) {
+    // If user is already in the queue, accept any input and end flow
+    if (ctx.session.session_data._queue_already_joined) {
+      return { valid: true };
+    }
+
     // If paused, handle notification opt-in
     const { paused } = await getQueueConfig(ctx);
     if (paused) {
@@ -86,6 +138,9 @@ const queueStartStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
+    // If user is already in the queue, end flow
+    if (ctx.session.session_data._queue_already_joined) return null;
+
     // If paused, end flow
     const { paused } = await getQueueConfig(ctx);
     if (paused) return null;
@@ -191,13 +246,39 @@ const queueConfirmCheckinStep: FlowStepConfig = {
     const customerName = ctx.session.session_data.queue_customer_name as string;
     const queueNumber = ctx.session.session_data._queue_preview_number as number ?? 1;
     const estimatedWait = ctx.session.session_data._queue_preview_wait as number ?? 0;
+    const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+    const today = new Date().toISOString().split('T')[0];
+
+    // Defense in depth: check for existing active entry before INSERT
+    const { data: existingEntry } = await ctx.supabase
+      .from('queue_entries')
+      .select('queue_number, status')
+      .eq('business_id', ctx.business.id)
+      .eq('customer_phone', phoneP)
+      .eq('queue_date', today)
+      .in('status', ['waiting', 'serving'])
+      .limit(1)
+      .maybeSingle();
+
+    if (existingEntry) {
+      // User is already in the queue — show their position instead of erroring
+      const posText = existingEntry.status === 'serving'
+        ? "It's your turn! Please proceed to the counter."
+        : `You're already *#${existingEntry.queue_number}* in the queue.`;
+
+      await ctx.sender.sendText({
+        to: ctx.from,
+        text: `${posText}\n\nWe'll message you when it's your turn!`,
+      });
+      return { valid: true };
+    }
 
     // Insert queue entry now that user confirmed
     const { error } = await ctx.supabase
       .from('queue_entries')
       .insert({
         business_id: ctx.business.id,
-        customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+        customer_phone: phoneP,
         customer_name: customerName,
         queue_number: queueNumber,
         estimated_wait_minutes: estimatedWait,

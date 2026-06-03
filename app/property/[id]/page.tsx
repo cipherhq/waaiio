@@ -21,7 +21,7 @@ async function getProperty(id: string) {
       max_guests, bedrooms, bathrooms, amenities, photos, address,
       is_active, business_id,
       businesses:business_id (
-        id, name, slug, logo_url, country_code, phone, whatsapp_number
+        id, name, slug, logo_url, country_code, phone, whatsapp_number, assigned_channel_id, whatsapp_channel_id
       )
     `)
     .eq('id', id)
@@ -107,6 +107,8 @@ export default async function PublicPropertyPage({ params }: PageProps) {
     country_code?: string;
     phone?: string;
     whatsapp_number?: string;
+    assigned_channel_id?: string;
+    whatsapp_channel_id?: string;
   } | null;
 
   const cc = (biz?.country_code || 'NG') as CountryCode;
@@ -114,8 +116,23 @@ export default async function PublicPropertyPage({ params }: PageProps) {
   const amenities = (property.amenities as string[]) || [];
   const blockedRanges = await getBlockedDates(property.id, property.business_id);
 
-  // Build WhatsApp link
-  const whatsappNumber = biz?.whatsapp_number || biz?.phone || '';
+  // Resolve WhatsApp channel phone (not business owner's personal phone)
+  let whatsappNumber = '';
+  const supabaseForChannel = createServiceClient();
+  const channelId = biz?.assigned_channel_id || biz?.whatsapp_channel_id;
+  if (channelId) {
+    const { data: ch } = await supabaseForChannel.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle();
+    if (ch?.phone_number) whatsappNumber = ch.phone_number;
+  }
+  if (!whatsappNumber) {
+    const { data: dedicated } = await supabaseForChannel.from('whatsapp_channels').select('phone_number')
+      .eq('business_id', property.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
+    if (dedicated?.phone_number) whatsappNumber = dedicated.phone_number;
+  }
+  if (!whatsappNumber) {
+    whatsappNumber = biz?.whatsapp_number || biz?.phone || '';
+  }
+
   const whatsappLink = whatsappNumber
     ? `https://wa.me/${whatsappNumber.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`Hi, I'd like to book ${property.name}`)}`
     : null;

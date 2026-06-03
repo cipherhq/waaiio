@@ -112,6 +112,7 @@ export async function POST(request: NextRequest) {
       .eq('id', nextEntry.id);
 
     // Send WhatsApp notification
+    let notified = false;
     try {
       const resolver = new ChannelResolver(supabase);
       const resolved = await resolver.resolveByBusinessId(businessId);
@@ -122,17 +123,19 @@ export async function POST(request: NextRequest) {
           : nextEntry.customer_phone;
 
         // Fetch business name
-        const { data: biz } = await supabase.from('businesses').select('name').eq('id', businessId).single();
-        const bizName = biz?.name || 'the business';
+        const { data: bizInfo } = await supabase.from('businesses').select('name').eq('id', businessId).single();
+        const bizName = bizInfo?.name || 'the business';
         const name = nextEntry.customer_name || 'there';
         await resolved.sender.sendText({
           to: phone,
-          text: `Hi ${name}, it's your turn at *${bizName}*! Please proceed to the counter.`,
+          text: `🔔 Hi ${name}, it's your turn at *${bizName}*! Please proceed to the counter. 🙏`,
         });
+        notified = true;
+      } else {
+        logger.warn('[QUEUE] No WhatsApp channel resolved — customer not notified');
       }
     } catch (err) {
       logger.error('[QUEUE] WhatsApp notification error:', err);
-      // Don't fail the whole operation if notification fails
     }
 
     return NextResponse.json({
@@ -140,6 +143,7 @@ export async function POST(request: NextRequest) {
         id: nextEntry.id,
         queue_number: nextEntry.queue_number,
         customer_name: nextEntry.customer_name,
+        notified,
       },
     });
   } catch (error) {
