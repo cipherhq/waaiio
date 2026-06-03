@@ -53,7 +53,7 @@ const EMPTY_FORM: Omit<MembershipTier, 'id' | 'business_id' | 'created_at'> = {
 
 export default function MembershipPage() {
   const business = useBusiness();
-  const capReady = useRequireCapability('membership');
+  const capReady = useRequireCapability('membership', 'loyalty');
   const cc = (business.country_code || 'NG') as CountryCode;
 
   const [tiers, setTiers] = useState<MembershipTier[]>([]);
