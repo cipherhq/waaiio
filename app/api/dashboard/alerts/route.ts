@@ -20,16 +20,24 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get('page') || '1');
+    const showAll = searchParams.get('all') === 'true';
     const perPage = 20;
     const from = (page - 1) * perPage;
     const to = from + perPage - 1;
 
-    const { data: alerts, count } = await supabase
+    let query = supabase
       .from('alerts')
       .select('id, type, severity, title, message, is_read, created_at', { count: 'exact' })
-      .eq('business_id', business.id)
-      .eq('is_read', false)
-      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+      .eq('business_id', business.id);
+
+    // Default: unread + last 7 days (for bell/banner). all=true: everything (for alerts page).
+    if (!showAll) {
+      query = query
+        .eq('is_read', false)
+        .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString());
+    }
+
+    const { data: alerts, count } = await query
       .order('created_at', { ascending: false })
       .range(from, to);
 

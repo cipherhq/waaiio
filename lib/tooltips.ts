@@ -48,6 +48,7 @@ export const PAGE_TOOLTIPS: Record<string, string> = {
   'flow-editor': 'Customize your bot\'s conversation steps — change what it says, add conditions, and personalize the experience.',
   faq: 'Add frequently asked questions and answers. Your bot will automatically respond when customers ask matching questions.',
   integrations: 'Connect Waaiio to your existing tools via webhooks. Receive real-time events when bookings, payments, or orders happen.',
+  alerts: 'View and manage important notifications about your business — low stock, payment issues, and system updates.',
   settings: 'Business settings — name, address, operating hours, payment gateway, auto-reply, notifications, and account.',
   capabilities: 'Turn features on or off for your business. Each feature adds new options to your bot and dashboard.',
   help: 'Find answers to common questions about using Waaiio.',

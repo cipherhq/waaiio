@@ -6,6 +6,7 @@ import { Sidebar } from '@/components/dashboard/Sidebar';
 import { ImpersonationBanner } from '@/components/dashboard/ImpersonationBanner';
 import { AlertBanner } from '@/components/dashboard/AlertBanner';
 import { FloatingHelp } from '@/components/dashboard/FloatingHelp';
+import { NotificationBell } from '@/components/dashboard/NotificationBell';
 import { IdleTimeout } from '@/components/dashboard/IdleTimeout';
 import { CATEGORY_DEFAULT_CAPABILITIES } from '@/lib/capabilities/types';
 import type { CapabilityId } from '@/lib/capabilities/types';
@@ -113,6 +114,9 @@ export default async function DashboardLayout({
               <Sidebar />
               <IdleTimeout />
               <main className="md:pl-64">
+                <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
+                  <NotificationBell />
+                </div>
                 <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
                   {children}
                 </div>
@@ -199,6 +203,9 @@ export default async function DashboardLayout({
         <Sidebar />
         <IdleTimeout />
         <main className="md:pl-64">
+          <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
+            <NotificationBell />
+          </div>
           <div id="main-content" className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}
             <FloatingHelp />
