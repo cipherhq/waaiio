@@ -2,54 +2,10 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
+import { getCapabilityLabel } from '@/lib/capabilities/labels';
 
-/** Generic labels for capability selection buttons */
-export function getCapabilityLabel(cap: CapabilityId, category: string): string {
-  switch (cap) {
-    case 'scheduling':
-      return 'Our Services';
-    case 'appointment': {
-      const bookingLabels: Record<string, string> = {
-        restaurant: 'Book a Table',
-        event_services: 'Book a Service',
-        photographer: 'Book a Session',
-        gym: 'Book a Session',
-        tutor: 'Book a Session',
-        coworking: 'Book a Space',
-        car_wash: 'Book a Wash',
-      };
-      return bookingLabels[category] || 'Book Appointment';
-    }
-    case 'giving':
-      return 'Give';
-    case 'payment':
-      return 'Make Payment';
-    case 'ordering':
-      return 'Place an Order';
-    case 'ticketing':
-      return 'Buy Tickets';
-    case 'reservation':
-      return 'Book a Stay';
-    case 'table_reservation':
-      return 'Make a Reservation';
-    case 'crowdfunding':
-      return 'Support a Campaign';
-    case 'reminders':
-      return 'My Reminders';
-    case 'chat':
-      return 'Chat with Us';
-    case 'waitlist':
-      return 'Join Waitlist';
-    case 'queue':
-      return 'Join Queue';
-    case 'loyalty':
-      return 'My Rewards';
-    case 'invoice':
-      return 'My Invoices';
-    default:
-      return cap;
-  }
-}
+export { getCapabilityLabel };
 
 /** Map capability to the first step of its corresponding flow */
 function getFirstStepForCapability(cap: CapabilityId): string {
@@ -135,6 +91,10 @@ const selectCapabilityStep: FlowStepConfig = {
     }));
     userFacing = checks.filter(([, hasData]) => hasData).map(([cap]) => cap);
 
+    // Fetch custom labels for bot menu
+    const customLabels = await getCapabilityCustomLabels(ctx.supabase, businessId);
+    ctx.session.session_data._capability_custom_labels = customLabels;
+
     // Store filtered list for prompt to use
     ctx.session.session_data._filtered_capabilities = userFacing;
 
@@ -190,10 +150,11 @@ const selectCapabilityStep: FlowStepConfig = {
       }
     }
 
-    // Build capability items
+    // Build capability items (use custom labels if set)
+    const customLabels = (ctx.session.session_data._capability_custom_labels as Record<string, string>) || {};
     const capItems = userFacing.map(cap => ({
       id: `cap_${cap}`,
-      title: getCapabilityLabel(cap, category),
+      title: getCapabilityLabel(cap, category, customLabels[cap]),
       postbackText: `cap_${cap}`,
     }));
 
@@ -247,12 +208,13 @@ const selectCapabilityStep: FlowStepConfig = {
       // Label match: "buy tickets", "give", etc.
       if (!capId) {
         const lower = input.toLowerCase();
-        // Exact label match
-        capId = userFacing.find(c => getCapabilityLabel(c, category).toLowerCase() === lower) || null;
+        const valCustomLabels = (ctx.session.session_data._capability_custom_labels as Record<string, string>) || {};
+        // Exact label match (check custom label first, then default)
+        capId = userFacing.find(c => getCapabilityLabel(c, category, valCustomLabels[c]).toLowerCase() === lower) || null;
         // Partial match: input contains label or label contains input
         if (!capId) {
           capId = userFacing.find(c => {
-            const label = getCapabilityLabel(c, category).toLowerCase();
+            const label = getCapabilityLabel(c, category, valCustomLabels[c]).toLowerCase();
             return lower.includes(label) || label.includes(lower);
           }) || null;
         }

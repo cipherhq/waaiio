@@ -51,6 +51,24 @@ export async function getEnabledCapabilities(
   return ['scheduling'];
 }
 
+/** Get custom labels for enabled capabilities (only returns caps with non-null custom_label) */
+export async function getCapabilityCustomLabels(
+  supabase: SupabaseClient,
+  businessId: string,
+): Promise<Record<string, string>> {
+  const { data } = await supabase
+    .from('business_capabilities')
+    .select('capability, custom_label')
+    .eq('business_id', businessId)
+    .eq('is_enabled', true)
+    .not('custom_label', 'is', null);
+  const map: Record<string, string> = {};
+  for (const row of data || []) {
+    if (row.custom_label) map[row.capability] = row.custom_label;
+  }
+  return map;
+}
+
 /** Check if a business has a specific capability enabled */
 export async function hasCapability(
   supabase: SupabaseClient,

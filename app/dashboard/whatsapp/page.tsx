@@ -5,6 +5,7 @@ import { useBusiness, useCapabilities } from '@/components/dashboard/DashboardPr
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
+import { getCapabilityLabel } from '@/lib/capabilities/labels';
 
 const CAP_MAP = new Map(CAPABILITIES.map(c => [c.id, c]));
 
@@ -54,8 +55,58 @@ export default function WhatsAppPage() {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [savingOrder, setSavingOrder] = useState(false);
+  // Custom labels: capabilityId -> custom label text (empty string = use default)
+  const [customLabels, setCustomLabels] = useState<Record<string, string>>({});
+  const [savingLabel, setSavingLabel] = useState<string | null>(null);
 
   useEffect(() => { setOrderedCaps(capabilities); }, [capabilities]);
+
+  // Load custom labels from DB
+  useEffect(() => {
+    async function loadCustomLabels() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('business_capabilities')
+        .select('capability, custom_label')
+        .eq('business_id', business.id)
+        .eq('is_enabled', true);
+      if (data) {
+        const labels: Record<string, string> = {};
+        for (const row of data) {
+          if (row.custom_label) labels[row.capability] = row.custom_label;
+        }
+        setCustomLabels(labels);
+      }
+    }
+    loadCustomLabels();
+  }, [business.id]);
+
+  // Save a custom label on blur
+  const handleSaveCustomLabel = useCallback(async (capId: CapabilityId, value: string) => {
+    const defaultLabel = getCapabilityLabel(capId, business.category || 'other');
+    const trimmed = value.trim();
+    // If empty or same as default, clear custom label
+    const newCustomLabel = (!trimmed || trimmed === defaultLabel) ? null : trimmed;
+
+    setSavingLabel(capId);
+    const supabase = createClient();
+    await supabase
+      .from('business_capabilities')
+      .update({ custom_label: newCustomLabel })
+      .eq('business_id', business.id)
+      .eq('capability', capId);
+
+    setCustomLabels(prev => {
+      const next = { ...prev };
+      if (newCustomLabel) {
+        next[capId] = newCustomLabel;
+      } else {
+        delete next[capId];
+      }
+      return next;
+    });
+    setSavingLabel(null);
+  }, [business.id, business.category]);
 
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     setDragIndex(index);
@@ -574,13 +625,15 @@ export default function WhatsAppPage() {
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-lg font-bold text-gray-900">Bot Menu Order</h2>
             <p className="mt-0.5 text-sm text-gray-500">
-              Drag to reorder how features appear in your WhatsApp bot menu.
+              Drag to reorder and rename how features appear in your WhatsApp bot menu.
               {savingOrder && <span className="ml-2 text-brand font-medium">Saving...</span>}
             </p>
             <div className="mt-4 space-y-1">
               {orderedCaps.filter(c => BOT_MENU_CAPS.has(c)).map((capId, index) => {
                 const cap = CAP_MAP.get(capId);
                 if (!cap) return null;
+                const defaultLabel = getCapabilityLabel(capId, business.category || 'other');
+                const hasCustom = !!customLabels[capId];
                 return (
                   <div
                     key={capId}
@@ -600,8 +653,26 @@ export default function WhatsAppPage() {
                   >
                     <span className="text-gray-400 text-lg font-bold">&#x2261;</span>
                     <span className="text-xs font-bold text-gray-400 w-5 text-center">{index + 1}.</span>
-                    <span className="flex-1 text-sm font-medium text-gray-900">{cap.label}</span>
+                    <div className="flex-1 min-w-0">
+                      <input
+                        type="text"
+                        defaultValue={customLabels[capId] || defaultLabel}
+                        onBlur={(e) => handleSaveCustomLabel(capId, e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                        onClick={(e) => e.stopPropagation()}
+                        onDragStart={(e) => e.stopPropagation()}
+                        draggable={false}
+                        maxLength={24}
+                        className="w-full rounded border border-transparent bg-transparent px-2 py-0.5 text-sm font-medium text-gray-900 outline-none hover:border-gray-300 focus:border-brand focus:bg-white"
+                      />
+                      {hasCustom && (
+                        <p className="mt-0.5 pl-2 text-[10px] text-gray-400">Default: {defaultLabel}</p>
+                      )}
+                    </div>
                     <span className="text-lg">{cap.icon}</span>
+                    {savingLabel === capId && (
+                      <span className="text-xs text-brand">Saving...</span>
+                    )}
                   </div>
                 );
               })}
