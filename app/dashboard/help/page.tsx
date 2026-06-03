@@ -25,7 +25,7 @@ const HELP_ARTICLES: HelpArticle[] = [
 
   // Payments
   { category: 'Payments', question: 'How do I receive payments?', answer: 'Go to Payouts → Accept the terms → Choose "Connect with Stripe" (US/UK/CA) or add your bank details (Nigeria/Ghana). Once connected, customer payments are automatically split — you receive your share, Waaiio takes the platform fee.' },
-  { category: 'Payments', question: 'What are the fees?', answer: 'Starter: 2% per transaction. Pro: 1.5% + monthly subscription. Premium: 1.0% + monthly subscription. All plans include a 30-day free trial with zero fees. Check the Pricing page for details.', link: '/pricing' },
+  { category: 'Payments', question: 'What are the fees?', answer: 'Starter: 2.5% per transaction. Pro: 1.5% + monthly subscription. Premium: 1.5% + ₦75 per transaction + monthly subscription. All plans include a 30-day free trial with zero fees. Check the Pricing page for details.', link: '/pricing' },
   { category: 'Payments', question: 'When do I get paid?', answer: 'Depends on your payout mode. Direct split: payments arrive in your account within 1-3 business days. Platform managed: weekly payouts every Monday.' },
   { category: 'Payments', question: 'What payment methods do customers have?', answer: 'Nigeria/Ghana: Bank transfer, card via Paystack. US: Card, CashApp, Apple Pay, Google Pay via Square/Stripe. UK/Canada: Card via Stripe.' },
 

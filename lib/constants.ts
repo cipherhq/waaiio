@@ -216,7 +216,7 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 
 // ── Per-Country Pricing ──
 
-// Waaiio fee: 2.0% (free) / 1.5% (growth) / 1.0% (business) — no flat fee
+// Waaiio fee: 2.5% (free) / 1.5% (growth) / 1.5%+₦75 (business/premium)
 // Gateway fees are separate (Stripe: 2.9%+$0.30, Paystack: 1.5%+₦100)
 // Total cost to business = waaiio fee + gateway fee
 // Flat fees below are LEGACY and set to 0 in PRICING_TIERS — kept for COUNTRY_PRICING only
@@ -536,8 +536,8 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   business: {
     name: 'Premium',
     price: 50_000,
-    feePercentage: 1.0,
-    feeFlat: 0,
+    feePercentage: 1.5,
+    feeFlat: 75,
     maxBookings: Infinity,
     whitelabel: true,
     features: [
@@ -546,7 +546,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
-      '1% per transaction',
+      '1.5% + ₦75 per transaction',
     ],
   },
 };

@@ -83,7 +83,7 @@ const TIER_CATALOG = {
   business: {
     marketingName: 'Premium',
     internalName: 'business',
-    feePercentage: 1.0,
+    feePercentage: 1.5,
     maxBookings: Infinity,
     whitelabel: true,
     broadcastLimits: { maxBroadcasts: Infinity, maxRecipients: Infinity },

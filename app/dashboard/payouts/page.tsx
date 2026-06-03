@@ -434,7 +434,7 @@ export default function PayoutsPage() {
               <p><strong>Platform Managed (Weekly):</strong> Waaiio collects 100% of customer payments on your behalf. Payouts are processed weekly to your registered bank account. Refunds and chargebacks will be deducted from your balance before payout.</p>
 
               <p><strong>2. Platform Fees</strong></p>
-              <p>Platform fees apply based on your subscription tier. Free tier: 2% + flat fee. Growth tier: 1.5% + flat fee. Business tier: 1.0% + flat fee. Fees are automatically calculated and deducted from each transaction.</p>
+              <p>Platform fees apply based on your subscription tier. Starter: 2.5% per transaction. Pro: 1.5% per transaction. Premium: 1.5% + ₦75 per transaction. Fees are automatically calculated and deducted from each transaction.</p>
 
               <p><strong>3. Refund Policy</strong></p>
               <p>For Direct Split mode, you handle refunds directly. For Platform Managed mode, refunds are deducted from your pending balance.</p>
