@@ -8,6 +8,13 @@ import { CAPABILITIES, type CapabilityId } from '@/lib/capabilities/types';
 
 const CAP_MAP = new Map(CAPABILITIES.map(c => [c.id, c]));
 
+// Only these capabilities appear as options in the WhatsApp bot menu
+const BOT_MENU_CAPS: Set<CapabilityId> = new Set([
+  'scheduling', 'appointment', 'ordering', 'ticketing', 'reservation',
+  'table_reservation', 'queue', 'giving', 'crowdfunding', 'invoice',
+  'loyalty', 'chat', 'recurring', 'survey', 'poll',
+]);
+
 interface QuickReply {
   trigger: string;
   label: string;
@@ -562,7 +569,7 @@ export default function WhatsAppPage() {
       </div>
 
       {/* Bot Menu Order */}
-      {orderedCaps.length > 1 && (
+      {orderedCaps.filter(c => BOT_MENU_CAPS.has(c)).length > 1 && (
         <div className="mt-8">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-lg font-bold text-gray-900">Bot Menu Order</h2>
@@ -571,7 +578,7 @@ export default function WhatsAppPage() {
               {savingOrder && <span className="ml-2 text-brand font-medium">Saving...</span>}
             </p>
             <div className="mt-4 space-y-1">
-              {orderedCaps.map((capId, index) => {
+              {orderedCaps.filter(c => BOT_MENU_CAPS.has(c)).map((capId, index) => {
                 const cap = CAP_MAP.get(capId);
                 if (!cap) return null;
                 return (
