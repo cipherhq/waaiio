@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-03
 
+### External Booking API Integration
+
+- `supabase/migrations/180_api_keys_external_booking.sql` — New `api_keys` table (hashed keys, prefix, revoke), added `'api'` to `booking_channel` enum
+- `lib/api-keys.ts` — Generate (wai_ prefix + 32 random bytes), hash (SHA-256), validate API keys
+- `app/api/integrations/external-booking/route.ts` — Public REST endpoint: validates API key, creates booking, sends WhatsApp confirmation, triggers post-completion hooks (loyalty, feedback, customer profile)
+- `app/api/integrations/api-keys/route.ts` — GET (list) + POST (generate) API keys. Requires paid tier. Max 5 active keys.
+- `app/api/integrations/api-keys/[id]/route.ts` — DELETE (soft revoke) API key
+- `components/dashboard/settings/IntegrationsTab.tsx` — Full UI: generate keys, view masked, revoke, inline API docs with cURL example
+- `app/dashboard/settings/page.tsx` — Added Integrations tab (5th tab between Features and Account)
+- `middleware.ts` — CSRF exemption for `/api/integrations/external-booking`
+
 ### Financials page — include all revenue sources
 
 - `app/dashboard/financials/page.tsx` — Revenue was only counting `bookings` table. Now includes `orders` (confirmed/processing/ready/shipped/delivered) and `invoices` (paid). Total Revenue, monthly chart, and transaction list all reflect the full picture. Added order/invoice type filters and status options (delivered, paid). Fixes: 900k order not showing in 60k revenue.

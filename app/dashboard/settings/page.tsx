@@ -18,6 +18,7 @@ import {
 } from '@/lib/capabilities/types';
 import { ReAuthModal } from '@/components/dashboard/ReAuthModal';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
+import { IntegrationsTab } from '@/components/dashboard/settings/IntegrationsTab';
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 const DAY_LABELS: Record<string, string> = {
@@ -44,11 +45,11 @@ export default function SettingsPage() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get('tab');
-      if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'business') return tab;
+      if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'integrations' || tab === 'business') return tab;
     }
     return 'business' as const;
   })();
-  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'account'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'integrations' | 'account'>(initialTab);
   const [openSections, setOpenSections] = useState<string[]>([initialTab === 'account' ? 'plan' : 'profile']);
   const toggleSection = (section: string) => {
     setOpenSections((prev) =>
@@ -919,6 +920,15 @@ export default function SettingsPage() {
           >
             <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
             Features
+          </button>
+          <button
+            onClick={() => { setActiveTab('integrations'); setOpenSections([]); }}
+            className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'integrations' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+            Integrations
           </button>
           <button
             onClick={() => {
@@ -3145,6 +3155,13 @@ export default function SettingsPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ═══ INTEGRATIONS TAB ═══ */}
+      {activeTab === 'integrations' && (
+        <div className="mt-6 max-w-3xl">
+          <IntegrationsTab businessId={business.id} subscriptionTier={business.subscription_tier || 'free'} />
         </div>
       )}
 

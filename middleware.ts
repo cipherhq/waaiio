@@ -99,6 +99,7 @@ export async function middleware(request: NextRequest) {
     '/api/webhooks/flutterwave', '/api/webhooks/paystack-transfer', '/api/webhooks/stripe-transfer',
     '/api/payments/stripe-webhook', '/api/payments/square-webhook', '/api/payments/paypal-webhook',
     '/api/payments/byo-webhook', '/api/payments/webhook',
+    '/api/integrations/external-booking',
   ];
   const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {
