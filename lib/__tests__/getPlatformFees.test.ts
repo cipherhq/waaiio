@@ -13,9 +13,9 @@ const mockLoadSettings = loadPlatformSettings as ReturnType<typeof vi.fn>;
 function makePricingTiers(overrides?: Record<string, Partial<{ feePercentage: number; feeFlat: number }>>) {
   return {
     pricing_tiers: {
-      free: { feePercentage: 2.0, feeFlat: 0, maxBookings: 50, whitelabel: false, ...overrides?.free },
+      free: { feePercentage: 2.5, feeFlat: 0, maxBookings: 50, whitelabel: false, ...overrides?.free },
       growth: { feePercentage: 1.5, feeFlat: 0, maxBookings: 500, whitelabel: false, ...overrides?.growth },
-      business: { feePercentage: 1.0, feeFlat: 0, maxBookings: Infinity, whitelabel: true, ...overrides?.business },
+      business: { feePercentage: 1.5, feeFlat: 75, maxBookings: Infinity, whitelabel: true, ...overrides?.business },
     },
   };
 }
@@ -25,13 +25,13 @@ describe('getPlatformFees', () => {
     vi.clearAllMocks();
   });
 
-  it('calculates 2% fee for free tier on 10,000', async () => {
+  it('calculates 2.5% fee for free tier on 10,000', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
     const result = await getPlatformFees(10_000, 'free', false);
 
-    expect(result.feePercentage).toBe(2.0);
-    expect(result.feeTotal).toBe(200);
+    expect(result.feePercentage).toBe(2.5);
+    expect(result.feeTotal).toBe(250);
   });
 
   it('calculates 1.5% fee for growth tier on 10,000', async () => {
@@ -48,8 +48,8 @@ describe('getPlatformFees', () => {
 
     const result = await getPlatformFees(10_000, 'business', false);
 
-    expect(result.feePercentage).toBe(1.0);
-    expect(result.feeTotal).toBe(100);
+    expect(result.feePercentage).toBe(1.5);
+    expect(result.feeTotal).toBe(225); // 1.5% of 10000 = 150 + 75 flat = 225
   });
 
   it('returns 0% fee during trial period for all tiers', async () => {
@@ -74,12 +74,12 @@ describe('getPlatformFees', () => {
     expect(result.feeTotal).toBe(0);
   });
 
-  it('calculates correct fee on large amount (1,000,000 at 2%)', async () => {
+  it('calculates correct fee on large amount (1,000,000 at 2.5%)', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
     const result = await getPlatformFees(1_000_000, 'free', false);
 
-    expect(result.feeTotal).toBe(20_000);
+    expect(result.feeTotal).toBe(25_000);
   });
 
   it('waives flat fee on micro-transactions where flat > 10% of amount', async () => {
@@ -109,9 +109,9 @@ describe('getPlatformFees', () => {
   it('rounds percentage fee to nearest integer', async () => {
     mockLoadSettings.mockResolvedValue(makePricingTiers());
 
-    // 333 * 2% = 6.66 -> rounded to 7
+    // 333 * 2.5% = 8.325 -> rounded to 8
     const result = await getPlatformFees(333, 'free', false);
 
-    expect(result.feeTotal).toBe(7);
+    expect(result.feeTotal).toBe(8);
   });
 });

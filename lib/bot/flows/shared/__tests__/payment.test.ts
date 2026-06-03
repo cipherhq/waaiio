@@ -157,7 +157,7 @@ describe('initializePayment', () => {
     });
 
     expect(result).not.toBeNull();
-    expect(result!.url).toBe('https://waaiio.com/api/pay?ref=ABCDEFGH');
+    expect(result!.url).toBe('https://www.waaiio.com/api/pay?ref=ABCDEFGH');
   });
 
   it('links payment to campaign for donations', async () => {

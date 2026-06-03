@@ -444,9 +444,9 @@ export function trialExpiringEmail(businessName: string, daysLeft: number) {
       ${p(`The 7-day free trial for <strong>${esc(businessName)}</strong> ends in <strong>${daysLeft} day${daysLeft === 1 ? '' : 's'}</strong>.`)}
       ${p('After the trial, a small per-transaction fee will apply on the Free plan. Upgrade to Pro or Premium to reduce fees and unlock more features.')}
       ${table(
-        kv('Free Plan', '2% per transaction') +
+        kv('Free Plan', '2.5% per transaction') +
         kv('Pro Plan', '1.5% per transaction — lower fees, more features') +
-        kv('Premium Plan', '1% per transaction — lowest fees, all features')
+        kv('Premium Plan', '1.5% + ₦75 per transaction — all features')
       )}
       ${btn('Upgrade Now', `${appUrl}/dashboard/settings`)}
       ${p('Your bot will continue working on the Free plan — nothing breaks. You just start paying per-transaction fees.')}
@@ -460,7 +460,7 @@ export function trialEndedEmail(businessName: string) {
     html: wrap(`
       ${h('Free Trial Ended')}
       ${p(`The 7-day free trial for <strong>${esc(businessName)}</strong> has ended.`)}
-      ${p('Your bot is still active on the <strong>Free plan</strong>. A 2% fee now applies to each transaction.')}
+      ${p('Your bot is still active on the <strong>Free plan</strong>. A 2.5% fee now applies to each transaction.')}
       ${p('Upgrade to reduce your fees and unlock premium features like loyalty programs, broadcasts, e-signatures, and more.')}
       ${btn('Upgrade Plan', `${appUrl}/dashboard/settings`)}
     `),

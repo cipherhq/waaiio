@@ -514,7 +514,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Up to 50 bookings/month',
       'WhatsApp automation',
       'Dashboard & analytics',
-      '2% per transaction after trial',
+      '2.5% per transaction after trial',
     ],
   },
   growth: {
@@ -615,7 +615,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
   business: {
     marketingName: 'Premium',
     description: 'For established businesses that want full control and branding.',
-    feePercentage: 1.0,
+    feePercentage: 1.5,
     maxBookings: Infinity,
     whitelabel: true,
     capabilities: ['scheduling', 'payment', 'ordering', 'ticketing', 'feedback', 'chat', 'reservation', 'reminders', 'loyalty', 'referral', 'whatsapp_sign', 'queue', 'waitlist', 'reports', 'staff', 'crowdfunding'],
