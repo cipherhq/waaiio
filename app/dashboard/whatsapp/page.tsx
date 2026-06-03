@@ -9,12 +9,25 @@ import { getCapabilityLabel } from '@/lib/capabilities/labels';
 
 const CAP_MAP = new Map(CAPABILITIES.map(c => [c.id, c]));
 
-// Only these capabilities appear as options in the WhatsApp bot menu
-const BOT_MENU_CAPS: Set<CapabilityId> = new Set([
-  'scheduling', 'appointment', 'ordering', 'ticketing', 'reservation',
-  'table_reservation', 'queue', 'giving', 'crowdfunding', 'invoice',
-  'loyalty', 'chat', 'recurring', 'survey', 'poll',
+// Non-user-facing capabilities — these NEVER appear in the bot menu.
+// Must match the nonUserFacing set in capability-selection.flow.ts skipIf().
+const NON_USER_FACING: Set<CapabilityId> = new Set([
+  'reminders', 'feedback', 'loyalty', 'referral', 'reports', 'staff',
+  'whatsapp_sign', 'survey', 'poll', 'broadcast', 'recurring', 'auto_reply',
+  'membership', 'estimates', 'packages', 'class_booking', 'multi_location',
 ]);
+
+// Warning messages for capabilities that need backing data before appearing in the bot
+const DATA_REQUIREMENT_LABELS: Partial<Record<CapabilityId, string>> = {
+  scheduling: 'No services set up',
+  appointment: 'No appointments set up',
+  ordering: 'No products set up',
+  ticketing: 'No published events',
+  reservation: 'No properties set up',
+  table_reservation: 'No services set up',
+  giving: 'No giving categories set up',
+  crowdfunding: 'No active campaigns',
+};
 
 interface QuickReply {
   trigger: string;
@@ -58,6 +71,9 @@ export default function WhatsAppPage() {
   // Custom labels: capabilityId -> custom label text (empty string = use default)
   const [customLabels, setCustomLabels] = useState<Record<string, string>>({});
   const [savingLabel, setSavingLabel] = useState<string | null>(null);
+  // Backing-data map: which capabilities have actual data behind them
+  const [backingData, setBackingData] = useState<Record<string, boolean>>({});
+  const [backingDataLoaded, setBackingDataLoaded] = useState(false);
 
   useEffect(() => { setOrderedCaps(capabilities); }, [capabilities]);
 
@@ -79,6 +95,62 @@ export default function WhatsAppPage() {
       }
     }
     loadCustomLabels();
+  }, [business.id]);
+
+  // Load backing data counts — mirrors the checks in capability-selection.flow.ts skipIf()
+  useEffect(() => {
+    async function loadBackingData() {
+      const supabase = createClient();
+      const bid = business.id;
+      const [
+        { count: servicesCount },
+        { count: givingServicesCount },
+        { count: appointmentsCount },
+        { count: productsCount },
+        { count: eventsCount },
+        { count: propertiesCount },
+        { count: campaignsCount },
+      ] = await Promise.all([
+        // scheduling + table_reservation: non-giving services
+        supabase.from('services').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null),
+        // giving: services with service_type='giving'
+        supabase.from('services').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('is_active', true).eq('service_type', 'giving').is('deleted_at', null),
+        // appointment
+        supabase.from('appointments').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('is_active', true),
+        // ordering
+        supabase.from('products').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('is_active', true).is('deleted_at', null),
+        // ticketing: published events
+        supabase.from('events').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('status', 'published'),
+        // reservation
+        supabase.from('properties').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('is_active', true),
+        // crowdfunding: active campaigns
+        supabase.from('campaigns').select('id', { count: 'exact', head: true })
+          .eq('business_id', bid).eq('status', 'active'),
+      ]);
+
+      setBackingData({
+        scheduling: (servicesCount || 0) > 0,
+        table_reservation: (servicesCount || 0) > 0,
+        giving: (givingServicesCount || 0) > 0,
+        appointment: (appointmentsCount || 0) > 0,
+        ordering: (productsCount || 0) > 0,
+        ticketing: (eventsCount || 0) > 0,
+        reservation: (propertiesCount || 0) > 0,
+        crowdfunding: (campaignsCount || 0) > 0,
+        // These are always shown when enabled (no backing data needed)
+        chat: true,
+        queue: true,
+        payment: true,
+      });
+      setBackingDataLoaded(true);
+    }
+    loadBackingData();
   }, [business.id]);
 
   // Save a custom label on blur
@@ -620,7 +692,14 @@ export default function WhatsAppPage() {
       </div>
 
       {/* Bot Menu Order */}
-      {orderedCaps.filter(c => BOT_MENU_CAPS.has(c)).length > 1 && (
+      {(() => {
+        // Replicate the bot's user-facing filter from capability-selection.flow.ts
+        const nonUF = new Set(NON_USER_FACING);
+        // Bot hides payment + invoice when scheduling is enabled (scheduling subsumes them)
+        if (capabilities.includes('scheduling')) { nonUF.add('payment'); nonUF.add('invoice'); }
+        const botMenuCaps = orderedCaps.filter(c => !nonUF.has(c));
+        if (botMenuCaps.length <= 1) return null;
+        return (
         <div className="mt-8">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-lg font-bold text-gray-900">Bot Menu Order</h2>
@@ -629,11 +708,13 @@ export default function WhatsAppPage() {
               {savingOrder && <span className="ml-2 text-brand font-medium">Saving...</span>}
             </p>
             <div className="mt-4 space-y-1">
-              {orderedCaps.filter(c => BOT_MENU_CAPS.has(c)).map((capId, index) => {
+              {botMenuCaps.map((capId, index) => {
                 const cap = CAP_MAP.get(capId);
                 if (!cap) return null;
                 const defaultLabel = getCapabilityLabel(capId, business.category || 'other');
                 const hasCustom = !!customLabels[capId];
+                const hasData = backingData[capId] !== false; // true or undefined (not yet loaded) = no warning
+                const dataWarning = backingDataLoaded && !hasData ? DATA_REQUIREMENT_LABELS[capId] : null;
                 return (
                   <div
                     key={capId}
@@ -648,7 +729,9 @@ export default function WhatsAppPage() {
                         ? 'opacity-40 border-brand bg-brand-50/50'
                         : dragOverIndex === index
                           ? 'border-brand border-2 bg-brand-50/30'
-                          : 'border-gray-200 bg-gray-50 hover:border-gray-300'
+                          : dataWarning
+                            ? 'border-amber-200 bg-amber-50/50 hover:border-amber-300'
+                            : 'border-gray-200 bg-gray-50 hover:border-gray-300'
                     }`}
                   >
                     <span className="text-gray-400 text-lg font-bold">&#x2261;</span>
@@ -668,6 +751,11 @@ export default function WhatsAppPage() {
                       {hasCustom && (
                         <p className="mt-0.5 pl-2 text-[10px] text-gray-400">Default: {defaultLabel}</p>
                       )}
+                      {dataWarning && (
+                        <p className="mt-0.5 pl-2 text-[10px] font-medium text-amber-600">
+                          <span className="inline-block mr-0.5">&#x26A0;</span> {dataWarning} &mdash; hidden from bot until added
+                        </p>
+                      )}
                     </div>
                     <span className="text-lg">{cap.icon}</span>
                     {savingLabel === capId && (
@@ -676,10 +764,22 @@ export default function WhatsAppPage() {
                   </div>
                 );
               })}
+
+              {/* My Account — auto-added by the bot for returning customers */}
+              <div className="flex items-center gap-3 rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-4 py-3 select-none">
+                <span className="text-gray-300 text-lg font-bold">&#x2261;</span>
+                <span className="text-xs font-bold text-gray-300 w-5 text-center">&bull;</span>
+                <div className="flex-1 min-w-0">
+                  <p className="px-2 py-0.5 text-sm font-medium text-gray-500">My Account</p>
+                  <p className="mt-0.5 pl-2 text-[10px] text-gray-400">Auto-added for returning customers with past bookings or orders</p>
+                </div>
+                <span className="text-lg">&#x1F464;</span>
+              </div>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Message Templates Section */}
       <div className="mt-8">
