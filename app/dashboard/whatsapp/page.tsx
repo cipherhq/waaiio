@@ -519,17 +519,32 @@ export default function WhatsAppPage() {
           <h2 className="text-lg font-bold text-gray-900">Message Templates</h2>
           <p className="mt-0.5 text-sm text-gray-500">Customize the messages your bot sends at key moments</p>
 
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {['{business_name}', '{customer_name}', '{date}', '{time}', '{reference_code}', '{amount}', '{service_name}', '{quantity}', '{status}'].map(v => (
-              <button
-                key={v}
-                onClick={() => navigator.clipboard.writeText(v)}
-                className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200"
-                title="Click to copy"
-              >
-                {v}
-              </button>
-            ))}
+          <div className="mt-3 rounded-lg bg-blue-50 px-4 py-3">
+            <p className="text-xs font-medium text-blue-800 mb-2">💡 You can personalize messages using these smart tags — click to copy:</p>
+            <div className="flex flex-wrap gap-1.5">
+              {([
+                { tag: '{business_name}', label: 'Your Business Name' },
+                { tag: '{customer_name}', label: 'Customer Name' },
+                { tag: '{date}', label: 'Booking Date' },
+                { tag: '{time}', label: 'Booking Time' },
+                { tag: '{reference_code}', label: 'Reference #' },
+                { tag: '{amount}', label: 'Amount' },
+                { tag: '{service_name}', label: 'Service/Product' },
+                { tag: '{quantity}', label: 'Quantity' },
+                { tag: '{status}', label: 'Status' },
+              ]).map(v => (
+                <button
+                  key={v.tag}
+                  onClick={() => { navigator.clipboard.writeText(v.tag); }}
+                  className="group flex items-center gap-1 rounded-full bg-white border border-blue-200 px-2.5 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
+                  title={`Inserts the ${v.label.toLowerCase()} automatically`}
+                >
+                  <span>{v.label}</span>
+                  <svg aria-hidden="true" className="h-3 w-3 text-blue-400 opacity-0 group-hover:opacity-100 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] text-blue-600">Example: "Hi {'{customer_name}'}, your booking at {'{business_name}'} is confirmed for {'{date}'} at {'{time}'}."</p>
           </div>
 
           <div className="mt-4 space-y-2">
