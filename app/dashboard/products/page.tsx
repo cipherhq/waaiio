@@ -216,6 +216,8 @@ export default function ProductsPage() {
   // Form state (shared for add + edit)
   const [form, setForm] = useState<Omit<Product, 'id'> & { id?: string }>(EMPTY_PRODUCT);
   const [saving, setSaving] = useState(false);
+  const [promoCodes, setPromoCodes] = useState<Array<{ code: string; discount_type: string; discount_value: number; is_active: boolean }>>([]);
+  const [promoCodesLoaded, setPromoCodesLoaded] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
@@ -1648,8 +1650,42 @@ export default function ProductsPage() {
               label="Promo Codes Allowed"
               description="Promo/discount codes work on this product"
               checked={form.allow_promo}
-              onChange={(v) => setForm({ ...form, allow_promo: v })}
+              onChange={async (v) => {
+                setForm({ ...form, allow_promo: v });
+                if (v && !promoCodesLoaded) {
+                  const supabase = createClient();
+                  const { data } = await supabase
+                    .from('promo_codes')
+                    .select('code, discount_type, discount_value, is_active')
+                    .eq('business_id', business.id)
+                    .eq('is_active', true);
+                  setPromoCodes(data || []);
+                  setPromoCodesLoaded(true);
+                }
+              }}
             />
+            {form.allow_promo && (
+              <div className="ml-1 mt-1 mb-2">
+                {!promoCodesLoaded ? (
+                  <p className="text-xs text-gray-400">Loading promo codes...</p>
+                ) : promoCodes.length > 0 ? (
+                  <div className="rounded-lg bg-green-50 px-3 py-2">
+                    <p className="text-xs font-medium text-green-700 mb-1">Active promo codes:</p>
+                    {promoCodes.map(p => (
+                      <p key={p.code} className="text-xs text-green-600">
+                        <span className="font-mono font-semibold">{p.code}</span> — {p.discount_type === 'percentage' ? `${p.discount_value}% off` : `₦${p.discount_value} off`}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg bg-amber-50 px-3 py-2">
+                    <p className="text-xs text-amber-700">
+                      No promo codes set up yet. <a href="/dashboard/promo-codes" className="font-semibold underline">Create one →</a>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Track Inventory */}
             <ToggleRow
