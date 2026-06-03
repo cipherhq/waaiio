@@ -11,15 +11,19 @@ export async function getEnabledCapabilities(
   category?: string,
 ): Promise<CapabilityId[]> {
   // Fetch ALL rows (enabled + disabled) so we know what the business explicitly configured
+  // Order by sort_order ASC, capability ASC for consistent bot menu ordering
   const { data } = await supabase
     .from('business_capabilities')
-    .select('capability, is_enabled')
-    .eq('business_id', businessId);
+    .select('capability, is_enabled, sort_order')
+    .eq('business_id', businessId)
+    .order('sort_order', { ascending: true })
+    .order('capability', { ascending: true });
 
   if (data && data.length > 0) {
-    const enabled = new Set(
-      data.filter(row => row.is_enabled).map(row => row.capability as CapabilityId),
-    );
+    // Preserve sort_order: enabled caps come back in DB order (sort_order ASC, capability ASC)
+    const enabledOrdered = data
+      .filter(row => row.is_enabled)
+      .map(row => row.capability as CapabilityId);
     // Capabilities the business has ANY row for (including disabled = explicitly turned off)
     const known = new Set(data.map(row => row.capability as CapabilityId));
 
@@ -30,12 +34,12 @@ export async function getEnabledCapabilities(
         ?? [];
       for (const cap of defaults) {
         if (!known.has(cap)) {
-          enabled.add(cap); // new default → auto-enable
+          enabledOrdered.push(cap); // new default → append at end
         }
       }
     }
 
-    return Array.from(enabled);
+    return enabledOrdered;
   }
 
   // Fallback: derive from category (DB-backed → hardcoded fallback)

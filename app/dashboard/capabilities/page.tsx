@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -66,6 +66,76 @@ export default function CapabilitiesPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
 
+  // ── Drag-and-drop reorder state ──
+  const [orderedCaps, setOrderedCaps] = useState<CapabilityId[]>(business.capabilities);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  // Sync orderedCaps when enabled changes
+  useEffect(() => {
+    setOrderedCaps(prev => {
+      // Keep existing order for caps that are still enabled
+      const stillEnabled = prev.filter(c => enabled.includes(c));
+      // Add newly enabled caps at the end
+      const newlyEnabled = enabled.filter(c => !prev.includes(c));
+      return [...stillEnabled, ...newlyEnabled];
+    });
+  }, [enabled]);
+
+  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+    setDragIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIndex(index);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverIndex(null);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragIndex;
+    setDragIndex(null);
+    setDragOverIndex(null);
+
+    if (fromIndex === null || fromIndex === dropIndex) return;
+
+    const newOrder = [...orderedCaps];
+    const [moved] = newOrder.splice(fromIndex, 1);
+    newOrder.splice(dropIndex, 0, moved);
+    setOrderedCaps(newOrder);
+
+    // Auto-save sort_order to database
+    setSavingOrder(true);
+    const supabase = createClient();
+    try {
+      await Promise.all(
+        newOrder.map((cap, i) =>
+          supabase
+            .from('business_capabilities')
+            .update({ sort_order: i })
+            .eq('business_id', business.id)
+            .eq('capability', cap),
+        ),
+      );
+    } catch (err) {
+      console.error('Failed to save sort order:', err);
+    }
+    setSavingOrder(false);
+  }, [dragIndex, orderedCaps, business.id]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }, []);
+
   // Check if business is still in 30-day trial
   const isInTrial = useMemo(() => {
     // Paid plans are never in trial — they have their tier's capabilities
@@ -122,12 +192,14 @@ export default function CapabilitiesPage() {
       .update({ is_enabled: false })
       .eq('business_id', business.id);
 
-    // Enable selected
+    // Enable selected — preserve sort_order from orderedCaps, new ones get 999
     for (const cap of caps) {
+      const existingIndex = orderedCaps.indexOf(cap);
+      const sortOrder = existingIndex >= 0 ? existingIndex : 999;
       await supabase
         .from('business_capabilities')
         .upsert(
-          { business_id: business.id, capability: cap, is_enabled: true },
+          { business_id: business.id, capability: cap, is_enabled: true, sort_order: sortOrder },
           { onConflict: 'business_id,capability' },
         );
     }
@@ -238,7 +310,64 @@ export default function CapabilitiesPage() {
         </div>
       </div>
 
-      {/* Capability Groups */}
+      {/* Bot Menu Order — Drag to Reorder */}
+      {orderedCaps.length > 1 && (
+        <div className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              Bot Menu Order
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Drag to reorder how features appear in your WhatsApp bot menu.
+              {savingOrder && <span className="ml-2 text-brand font-medium">Saving...</span>}
+            </p>
+          </div>
+          <div className="space-y-1">
+            {orderedCaps.map((capId, index) => {
+              const cap = CAP_MAP.get(capId);
+              if (!cap) return null;
+              const isDragging = dragIndex === index;
+              const isDragOver = dragOverIndex === index;
+
+              return (
+                <div
+                  key={capId}
+                  draggable
+                  onDragStart={e => handleDragStart(e, index)}
+                  onDragOver={e => handleDragOver(e, index)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={e => handleDrop(e, index)}
+                  onDragEnd={handleDragEnd}
+                  className={`flex items-center gap-3 rounded-lg border px-4 py-3 cursor-grab active:cursor-grabbing select-none transition-all ${
+                    isDragging
+                      ? 'opacity-40 border-brand bg-brand-50/50 dark:bg-brand-950/20'
+                      : isDragOver
+                        ? 'border-brand border-2 bg-brand-50/30 dark:bg-brand-950/10'
+                        : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:border-gray-300 dark:hover:border-gray-600'
+                  }`}
+                >
+                  {/* Drag handle */}
+                  <span className="text-gray-400 dark:text-gray-500 text-lg font-bold select-none">
+                    &#x2261;
+                  </span>
+                  {/* Position number */}
+                  <span className="text-xs font-bold text-gray-400 dark:text-gray-500 w-5 text-center">
+                    {index + 1}.
+                  </span>
+                  {/* Capability label */}
+                  <span className="flex-1 text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {cap.label}
+                  </span>
+                  {/* Icon */}
+                  <span className="text-lg">{cap.icon}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* All Features — Toggle On/Off */}
       <div className="mt-6 space-y-8">
         {filteredGroups.map(group => (
           <div key={group.label}>

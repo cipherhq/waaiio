@@ -80,7 +80,9 @@ export default async function DashboardLayout({
           .from('business_capabilities')
           .select('capability')
           .eq('business_id', impBiz.id)
-          .eq('is_enabled', true);
+          .eq('is_enabled', true)
+          .order('sort_order', { ascending: true })
+          .order('capability', { ascending: true });
 
         let capabilities: CapabilityId[];
         if (capRows && capRows.length > 0) {
@@ -150,12 +152,14 @@ export default async function DashboardLayout({
     redirect('/get-started');
   }
 
-  // Load capabilities from DB
+  // Load capabilities from DB (ordered by sort_order for bot menu)
   const { data: capRows } = await supabase
     .from('business_capabilities')
     .select('capability')
     .eq('business_id', business.id)
-    .eq('is_enabled', true);
+    .eq('is_enabled', true)
+    .order('sort_order', { ascending: true })
+    .order('capability', { ascending: true });
 
   let capabilities: CapabilityId[];
   if (capRows && capRows.length > 0) {
