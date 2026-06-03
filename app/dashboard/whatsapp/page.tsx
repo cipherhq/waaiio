@@ -396,19 +396,22 @@ export default function WhatsAppPage() {
                         value={btn.action}
                         onChange={(e) => {
                           const updated = [...welcomeButtons];
-                          updated[i] = { ...btn, action: e.target.value as WelcomeButton['action'] };
+                          updated[i] = { ...btn, action: e.target.value as WelcomeButton['action'], payload: '' };
                           setWelcomeButtons(updated);
                         }}
                         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                       >
-                        <option value="start_flow">Start Flow</option>
-                        <option value="quick_reply">Quick Reply</option>
-                        <option value="url">Send URL</option>
+                        <option value="start_flow">Start a Feature</option>
+                        <option value="quick_reply">Send a Message</option>
+                        <option value="url">Open a Link</option>
                       </select>
+                      <p className="mt-0.5 text-[10px] text-gray-400">
+                        {btn.action === 'start_flow' ? 'Opens a bot feature directly' : btn.action === 'quick_reply' ? 'Sends text as the customer\'s message' : 'Opens a URL in the browser'}
+                      </p>
                     </div>
                     {btn.action === 'start_flow' && (
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-gray-500">Feature to Start</label>
+                        <label className="mb-1 block text-xs font-medium text-gray-500">Feature</label>
                         <select
                           value={btn.payload || ''}
                           onChange={(e) => {
@@ -434,11 +437,9 @@ export default function WhatsAppPage() {
                         </select>
                       </div>
                     )}
-                    {btn.action !== 'start_flow' && (
+                    {btn.action === 'quick_reply' && (
                       <div>
-                        <label className="mb-1 block text-xs font-medium text-gray-500">
-                          {btn.action === 'quick_reply' ? 'Reply Trigger' : 'URL'}
-                        </label>
+                        <label className="mb-1 block text-xs font-medium text-gray-500">Message Text</label>
                         <input
                           type="text"
                           value={btn.payload || ''}
@@ -447,7 +448,24 @@ export default function WhatsAppPage() {
                             updated[i] = { ...btn, payload: e.target.value };
                             setWelcomeButtons(updated);
                           }}
-                          placeholder={btn.action === 'quick_reply' ? 'hours' : 'https://...'}
+                          placeholder="e.g. What are your hours?"
+                          className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                        />
+                        <p className="mt-0.5 text-[10px] text-gray-400">When tapped, this text is sent as the customer&apos;s message. Set up an auto-reply keyword to respond.</p>
+                      </div>
+                    )}
+                    {btn.action === 'url' && (
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-gray-500">URL</label>
+                        <input
+                          type="text"
+                          value={btn.payload || ''}
+                          onChange={(e) => {
+                            const updated = [...welcomeButtons];
+                            updated[i] = { ...btn, payload: e.target.value };
+                            setWelcomeButtons(updated);
+                          }}
+                          placeholder="https://..."
                           className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                         />
                       </div>
