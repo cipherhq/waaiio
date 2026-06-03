@@ -41,7 +41,7 @@ export function getCapabilityLabel(cap: CapabilityId, category: string): string 
     case 'waitlist':
       return 'Join Waitlist';
     case 'queue':
-      return 'Check In';
+      return 'Join Queue';
     case 'loyalty':
       return 'My Rewards';
     case 'invoice':

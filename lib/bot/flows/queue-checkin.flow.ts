@@ -306,7 +306,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       businessId: ctx.business.id,
       type: 'queue_checkin',
       channel: 'whatsapp',
-      body: `${customerName} checked in to the queue (#${queueNumber}).`,
+      body: `${customerName} joined the queue (#${queueNumber}).`,
     }).catch(err => console.error('[QUEUE] Notification error:', err));
 
     const waitText = estimatedWait > 0
@@ -315,7 +315,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     await ctx.sender.sendText({
       to: ctx.from,
-      text: `You're checked in, ${customerName}!\n\nYou're *#${queueNumber}* in the queue. ${waitText}\n\nWe'll message you when it's your turn!\n\n💡 *What you can do:*\n• Type *my bookings* to manage your booking\n• Type *receipt* to get your receipt`,
+      text: `✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status`,
     });
 
     return { valid: true };
