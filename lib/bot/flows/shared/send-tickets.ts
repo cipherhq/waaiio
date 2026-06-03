@@ -170,47 +170,28 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
     for (const ticket of tickets) {
       const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
-      const caption = `🎟️ Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\nShow this at the entrance\n\n🔗 ${verifyUrl}`;
+      const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nScan the QR code or show this at the entrance\n\n🔗 ${verifyUrl}`;
 
       try {
-        // Try compositing QR + buyer details onto flyer
+        // Try compositing QR onto flyer (centered, white background)
         if (flyerBuffer) {
           const sharp = (await import('sharp')).default;
-          const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 200, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
+          const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 250, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
 
           const flyer = sharp(flyerBuffer).resize(800, null, { withoutEnlargement: true });
           const flyerMeta = await flyer.metadata();
           const flyerH = flyerMeta.height || 800;
           const flyerW = flyerMeta.width || 800;
 
-          // SVG escape helper
-          const svgEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          const truncate = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + '…' : s;
-
-          // Build ticket card with buyer details around QR
-          const cardW = 320;
-          const cardH = 340;
-          const nameLabel = svgEsc(truncate(guestName || 'Guest', 28));
-          const codeLabel = svgEsc(ticket.ticketCode);
-          const eventLabel = svgEsc(truncate(eventName, 32));
-          const dateLabel = svgEsc(`${eventDate}${eventTime ? ' · ' + eventTime : ''}`);
-
-          const cardSvg = `<svg width="${cardW}" height="${cardH}" xmlns="http://www.w3.org/2000/svg">
-            <rect width="${cardW}" height="${cardH}" rx="16" fill="white" opacity="0.95"/>
-            <rect x="1" y="1" width="${cardW - 2}" height="${cardH - 2}" rx="15" fill="none" stroke="#e5e7eb" stroke-width="1"/>
-            <text x="${cardW / 2}" y="30" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#111">${nameLabel}</text>
-            <text x="${cardW / 2}" y="50" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#6b7280">${eventLabel}</text>
-            <text x="${cardW / 2}" y="66" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#9ca3af">${dateLabel}</text>
-            <text x="${cardW / 2}" y="${cardH - 18}" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="#6C2BD9">${codeLabel}</text>
-            <text x="${cardW / 2}" y="${cardH - 4}" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#9ca3af">Ticket ${ticket.ticketNumber}/${ticket.totalTickets} · Scan to verify</text>
-          </svg>`;
-
-          const cardBuf = await sharp(Buffer.from(cardSvg))
-            .composite([{ input: qrPng, top: 76, left: Math.round((cardW - 200) / 2) }])
+          // White background behind QR for visibility
+          const qrSize = 280;
+          const qrBgSvg = `<svg width="${qrSize}" height="${qrSize}" xmlns="http://www.w3.org/2000/svg"><rect width="${qrSize}" height="${qrSize}" rx="16" fill="white" opacity="0.95"/></svg>`;
+          const qrWithBg = await sharp(Buffer.from(qrBgSvg))
+            .composite([{ input: qrPng, top: 15, left: 15 }])
             .png().toBuffer();
 
           const composited = await flyer
-            .composite([{ input: cardBuf, top: Math.round((flyerH - cardH) / 2), left: Math.round((flyerW - cardW) / 2) }])
+            .composite([{ input: qrWithBg, top: Math.round((flyerH - qrSize) / 2), left: Math.round((flyerW - qrSize) / 2) }])
             .jpeg({ quality: 90 })
             .toBuffer();
 
@@ -228,65 +209,10 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
           }
         }
 
-        // Fallback: generate standalone ticket image (no flyer)
-        try {
-          const sharp = (await import('sharp')).default;
-          const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 260, margin: 1, color: { dark: '#1a1a1a', light: '#FFFFFF' } });
-
-          const svgEsc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          const truncate = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + '…' : s;
-
-          const w = 600;
-          const h = 520;
-          const nameLabel = svgEsc(truncate(guestName || 'Guest', 35));
-          const eventLabel = svgEsc(truncate(eventName, 40));
-          const dateLabel = svgEsc(`${eventDate}${eventTime ? ' · ' + eventTime : ''}`);
-          const venueLabel = venue ? svgEsc(truncate(venue, 40)) : '';
-          const codeLabel = svgEsc(ticket.ticketCode);
-
-          const bgSvg = `<svg width="${w}" height="${h}" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" style="stop-color:#1a1a2e"/>
-                <stop offset="50%" style="stop-color:#16213e"/>
-                <stop offset="100%" style="stop-color:#0f3460"/>
-              </linearGradient>
-            </defs>
-            <rect width="${w}" height="${h}" rx="20" fill="url(#bg)"/>
-            <text x="${w / 2}" y="42" text-anchor="middle" font-family="sans-serif" font-size="22" font-weight="bold" fill="white">${eventLabel}</text>
-            <text x="${w / 2}" y="68" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#a0a0c0">${dateLabel}</text>
-            ${venueLabel ? `<text x="${w / 2}" y="86" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#808090">${venueLabel}</text>` : ''}
-            <rect x="${(w - 290) / 2}" y="${venueLabel ? 100 : 90}" width="290" height="290" rx="14" fill="white"/>
-            <text x="${w / 2}" y="${h - 60}" text-anchor="middle" font-family="sans-serif" font-size="16" font-weight="bold" fill="white">${nameLabel}</text>
-            <text x="${w / 2}" y="${h - 38}" text-anchor="middle" font-family="monospace" font-size="16" font-weight="bold" fill="#6C2BD9">${codeLabel}</text>
-            <text x="${w / 2}" y="${h - 18}" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#808090">Ticket ${ticket.ticketNumber}/${ticket.totalTickets} · Scan to verify</text>
-          </svg>`;
-
-          const qrTop = venueLabel ? 115 : 105;
-          const ticketImage = await sharp(Buffer.from(bgSvg))
-            .composite([{ input: qrPng, top: qrTop, left: Math.round((w - 260) / 2) }])
-            .jpeg({ quality: 90 })
-            .toBuffer();
-
-          const storagePath = `tickets/${businessId}/${ticket.ticketCode}.jpg`;
-          const { error: uploadErr } = await supabase.storage
-            .from('business-documents')
-            .upload(storagePath, ticketImage, { contentType: 'image/jpeg', upsert: true });
-
-          if (!uploadErr) {
-            const { data: urlData } = supabase.storage.from('business-documents').getPublicUrl(storagePath);
-            await sender.sendImage({ to: phone, imageUrl: urlData.publicUrl, caption });
-            logger.info('[TICKETS] Standalone ticket image sent for', ticket.ticketCode);
-            continue;
-          }
-        } catch (fallbackErr) {
-          logger.error('[TICKETS] Standalone ticket image failed:', fallbackErr);
-        }
-
-        // Last resort: plain QR code
-        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&data=${encodeURIComponent(verifyUrl)}`;
+        // Fallback: send QR code image with rich caption (no flyer available)
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&color=1a1a1a&bgcolor=ffffff&data=${encodeURIComponent(verifyUrl)}`;
         await sender.sendImage({ to: phone, imageUrl: qrImageUrl, caption });
-        logger.info('[TICKETS] QR-only sent for', ticket.ticketCode);
+        logger.info('[TICKETS] QR ticket sent for', ticket.ticketCode);
       } catch (err) {
         logger.error('[TICKETS] Ticket image failed for', ticket.ticketCode, ':', err);
         // Text fallback
