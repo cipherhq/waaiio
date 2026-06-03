@@ -5,6 +5,14 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-06-03
+
+### Financials page — include all revenue sources
+
+- `app/dashboard/financials/page.tsx` — Revenue was only counting `bookings` table. Now includes `orders` (confirmed/processing/ready/shipped/delivered) and `invoices` (paid). Total Revenue, monthly chart, and transaction list all reflect the full picture. Added order/invoice type filters and status options (delivered, paid). Fixes: 900k order not showing in 60k revenue.
+
+---
+
 ## 2026-06-01
 
 ### Final verification + admin fixes
