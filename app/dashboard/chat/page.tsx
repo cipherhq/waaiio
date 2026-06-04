@@ -828,7 +828,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col">
+    <div className="flex h-[calc(100dvh-8rem)] flex-col">
       {/* Header */}
       <div className="mb-4 shrink-0">
         <div className="flex items-center justify-between">
@@ -865,7 +865,7 @@ export default function ChatPage() {
       {/* Two-panel layout */}
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border border-gray-100 bg-white">
         {/* Left panel - Conversation list */}
-        <div className="flex w-80 shrink-0 flex-col border-r border-gray-100">
+        <div className={`${selectedPhone ? 'hidden md:flex' : 'flex'} w-full md:w-80 md:shrink-0 flex-col border-r border-gray-100`}>
           {/* Status filter tabs */}
           <div className="flex border-b border-gray-100">
             {([
@@ -1066,7 +1066,7 @@ export default function ChatPage() {
         </div>
 
         {/* Right panel - Message thread */}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className={`${selectedPhone ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col`}>
           {!selectedPhone ? (
             <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-brand-50">
@@ -1099,7 +1099,7 @@ export default function ChatPage() {
                   {/* Back button for mobile */}
                   <button
                     onClick={() => setSelectedPhone(null)}
-                    className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 lg:hidden"
+                    className="shrink-0 rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 md:hidden"
                   >
                     <svg
                       className="h-5 w-5"
@@ -1332,7 +1332,7 @@ export default function ChatPage() {
 
                       {/* Canned responses popover */}
                       {showCanned && cannedResponses.length > 0 && (
-                        <div className="absolute bottom-12 left-0 z-10 w-64 rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+                        <div className="absolute bottom-12 left-0 z-10 w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
                           <p className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                             Quick Replies
                           </p>

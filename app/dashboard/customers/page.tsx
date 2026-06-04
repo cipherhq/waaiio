@@ -464,7 +464,7 @@ export default function CustomersPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{labels.personLabelPlural}</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">

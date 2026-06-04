@@ -394,7 +394,7 @@ export default function WhatsAppPage() {
           {/* Bot Code & Link */}
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-semibold text-gray-900">Your Bot Code</h2>
-            <div className="mt-3 flex items-center gap-3">
+            <div className="mt-3 flex flex-wrap items-center gap-3">
               <code className="rounded-lg bg-brand-50 px-4 py-2 text-lg font-bold text-brand">
                 {business.bot_code || 'Not set'}
               </code>

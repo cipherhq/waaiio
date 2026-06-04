@@ -912,11 +912,11 @@ export default function ServicesPage() {
                     <button onClick={() => deleteAddon(a.id, form.id)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
                   </div>
                 ))}
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <input value={addonForm.name} onChange={e => setAddonForm({ ...addonForm, name: e.target.value })} placeholder="Add-on name"
                     className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
                   <input type="number" value={addonForm.price || ''} onChange={e => setAddonForm({ ...addonForm, price: Number(e.target.value) })} placeholder="Price"
-                    className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    className="w-full sm:w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
                   <button onClick={() => saveAddon(form.id)} disabled={!addonForm.name.trim()}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white disabled:opacity-50">Add</button>
                 </div>
@@ -1014,7 +1014,7 @@ export default function ServicesPage() {
         </div>
 
         {/* Save / Cancel / Delete footer */}
-        <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
+        <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
           <button
             onClick={handleSave}
             disabled={saving || !form.name.trim()}

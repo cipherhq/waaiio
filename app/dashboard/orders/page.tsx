@@ -652,10 +652,10 @@ export default function OrdersPage() {
             className="w-full rounded-lg border border-gray-200 py-2 pl-10 pr-3 text-sm outline-none focus:border-brand"
           />
         </div>
-        <div className="flex items-center gap-2">
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
           <span className="text-xs text-gray-400">to</span>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-auto rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
         </div>
         <CsvExportButton
           data={filtered.map(o => ({
