@@ -8,6 +8,7 @@ import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
+import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
 
 interface PartyItem {
   id: string;
@@ -345,7 +346,11 @@ export default function PartiesPage() {
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Venue Address</label>
-              <input type="text" value={form.venue_address} onChange={e => setForm({ ...form, venue_address: e.target.value })} placeholder="Full address" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <PlacesAutocomplete
+                value={form.venue_address}
+                onChange={(value) => setForm({ ...form, venue_address: value })}
+                placeholder="Start typing an address..."
+              />
             </div>
 
             <div>
