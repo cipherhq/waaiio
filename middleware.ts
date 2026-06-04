@@ -18,7 +18,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://js.stripe.com https://js.squareup.com https://js.paystack.co https://*.facebook.net https://*.facebook.com https://us-assets.i.posthog.com https://maps.googleapis.com https://www.paypal.com",
+      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : ''} https://js.stripe.com https://js.squareup.com https://js.paystack.co https://*.facebook.net https://*.facebook.com https://us-assets.i.posthog.com https://maps.googleapis.com https://www.paypal.com`,
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' https: data: blob:",
       "font-src 'self' data:",
