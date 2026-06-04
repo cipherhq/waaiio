@@ -226,7 +226,16 @@ export default function PartiesPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setStatusMessage('Invite sent!');
+        const result = data.results?.[0];
+        if (result?.status === 'sent') {
+          setStatusMessage('Invite sent!');
+        } else if (result?.error?.includes('No WhatsApp channel')) {
+          setStatusMessage('Invite saved but WhatsApp is not set up. Go to Settings → WhatsApp Setup to configure.');
+        } else if (result?.status === 'created') {
+          setStatusMessage('Invite saved but message could not be delivered.');
+        } else {
+          setStatusMessage('Invite sent!');
+        }
         setInvitePhone('');
         setShowSendForm(false);
         loadInvites(selectedParty.id);
@@ -254,7 +263,12 @@ export default function PartiesPage() {
       const data = await res.json();
       if (res.ok) {
         const sentCount = data.results?.filter((r: { status: string }) => r.status === 'sent').length || 0;
-        setStatusMessage(`${sentCount} of ${phones.length} invites sent!`);
+        const createdCount = data.results?.filter((r: { status: string }) => r.status === 'created').length || 0;
+        if (sentCount === 0 && createdCount > 0) {
+          setStatusMessage(`${createdCount} invites saved but WhatsApp is not set up. Go to Settings → WhatsApp Setup.`);
+        } else {
+          setStatusMessage(`${sentCount} of ${phones.length} invites sent!`);
+        }
         setBulkPhones('');
         setShowBulk(false);
         loadInvites(selectedParty.id);
