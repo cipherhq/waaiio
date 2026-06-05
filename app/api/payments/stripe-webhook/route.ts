@@ -510,6 +510,23 @@ export async function POST(request: NextRequest) {
               failure_count: 0,
             })
             .eq('id', sub.id);
+
+          // Send WhatsApp + email confirmation to customer
+          if (payment) {
+            try {
+              await sendProactiveConfirmation(supabase, {
+                id: payment.id,
+                amount: amountPaid,
+                booking_id: booking?.id || null,
+                invoice_id: null,
+                campaign_id: null,
+                reservation_id: null,
+                order_id: null,
+              }, '[STRIPE RECURRING]');
+            } catch (confirmErr) {
+              logger.error('[STRIPE RECURRING] Confirmation error:', confirmErr);
+            }
+          }
         }
       }
     }

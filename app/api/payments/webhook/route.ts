@@ -3,9 +3,11 @@ import * as Sentry from '@sentry/nextjs';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
+import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -305,6 +307,23 @@ export async function POST(request: NextRequest) {
               failure_count: 0,
             })
             .eq('id', sub.id);
+
+          // Send WhatsApp + email confirmation to customer
+          if (payment) {
+            try {
+              await sendProactiveConfirmation(supabase, {
+                id: payment.id,
+                amount: chargeAmount,
+                booking_id: booking?.id || null,
+                invoice_id: null,
+                campaign_id: null,
+                reservation_id: null,
+                order_id: null,
+              }, '[PAYSTACK RECURRING]');
+            } catch (confirmErr) {
+              logger.error('[PAYSTACK RECURRING] Confirmation error:', confirmErr);
+            }
+          }
         }
       }
     }
