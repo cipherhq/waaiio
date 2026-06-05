@@ -757,26 +757,26 @@ export default function Businesses() {
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Financial Summary</p>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <div className="rounded-lg bg-white p-3 text-center">
-                    <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue)}</p>
+                    <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
                     <p className="text-[10px] text-gray-500">Total Revenue</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
-                    <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees)}</p>
+                    <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
                     <p className="text-[10px] text-gray-500">Platform Fees</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
-                    <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts)}</p>
+                    <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
                     <p className="text-[10px] text-gray-500">Total Payouts</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
-                    <p className="text-lg font-bold text-red-500">{fmtCurrency(selectedFinancials.totalRefunds)}</p>
+                    <p className="text-lg font-bold text-red-500">{fmtCurrency(selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
                     <p className="text-[10px] text-gray-500">Refunds</p>
                   </div>
                 </div>
                 <div className="mt-2 flex items-center gap-4 text-xs text-gray-500">
                   <span>{selectedFinancials.bookingCount} total bookings</span>
-                  <span>Net: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds)}</span>
-                  <span>Balance: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds - selectedFinancials.totalPayouts)}</span>
+                  <span>Net: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
+                  <span>Balance: {fmtCurrency(selectedFinancials.totalRevenue - selectedFinancials.totalFees - selectedFinancials.totalRefunds - selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
                 </div>
 
                 {/* Payout History */}

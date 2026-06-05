@@ -67,20 +67,29 @@ export default function Payments() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      // Resolve business IDs: directly from payment or via booking
+      // Resolve business IDs: directly from payment, via booking, or via order
       const bookingIds = [...new Set((paymentData || []).map(p => p.booking_id).filter(Boolean))];
       const { data: bookings } = bookingIds.length > 0
         ? await adminDb.from('bookings').select('id, business_id, reference_code').in('id', bookingIds)
         : { data: [] };
       const bookingMap = new Map((bookings || []).map(b => [b.id, b]));
 
-      // Collect all business IDs (from payments + bookings)
+      const orderIds = [...new Set((paymentData || []).map(p => p.order_id).filter(Boolean))];
+      const { data: orders } = orderIds.length > 0
+        ? await adminDb.from('orders').select('id, business_id, reference_code').in('id', orderIds)
+        : { data: [] };
+      const orderMap = new Map((orders || []).map(o => [o.id, o]));
+
+      // Collect all business IDs (from payments + bookings + orders)
       const allBizIds = new Set<string>();
       for (const p of paymentData || []) {
         if (p.business_id) allBizIds.add(p.business_id);
         else if (p.booking_id) {
           const bk = bookingMap.get(p.booking_id);
           if (bk?.business_id) allBizIds.add(bk.business_id);
+        } else if (p.order_id) {
+          const ord = orderMap.get(p.order_id);
+          if (ord?.business_id) allBizIds.add(ord.business_id);
         }
       }
 
@@ -97,12 +106,13 @@ export default function Payments() {
       const enriched: PaymentRecord[] = (paymentData || [])
         .map(p => {
           const booking = p.booking_id ? bookingMap.get(p.booking_id) : null;
-          const resolvedBizId = p.business_id || booking?.business_id || null;
+          const order = p.order_id ? orderMap.get(p.order_id) : null;
+          const resolvedBizId = p.business_id || booking?.business_id || order?.business_id || null;
           return {
             ...p,
             business_id: resolvedBizId,
             business_name: resolvedBizId ? bizMap.get(resolvedBizId) || 'Unknown' : 'Unknown',
-            gateway_ref: booking?.reference_code || p.gateway_reference?.slice(-12) || p.id.slice(0, 8),
+            gateway_ref: booking?.reference_code || order?.reference_code || p.gateway_reference?.slice(-12) || p.id.slice(0, 8),
           };
         })
         .filter(p => !givingBizIds.has(p.business_id));
