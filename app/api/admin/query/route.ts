@@ -162,7 +162,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (limit) {
-      query = query.limit(limit);
+      const safeLimited = Math.min(Math.max(1, Number(limit) || 100), 1000);
+      query = query.limit(safeLimited);
     }
 
     const { data, error, count: rowCount } = await query;

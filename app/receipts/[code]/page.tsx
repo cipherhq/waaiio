@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { createServiceClient } from '@/lib/supabase/service';
+import { createClient } from '@/lib/supabase/server';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { ReceiptClient } from './ReceiptClient';
 
@@ -10,7 +10,7 @@ interface PageProps {
 }
 
 async function getReceiptData(code: string) {
-  const supabase = createServiceClient();
+  const supabase = await createClient();
 
   // Fetch booking by reference_code with joins
   const { data: booking } = await supabase
@@ -19,9 +19,10 @@ async function getReceiptData(code: string) {
       `id, reference_code, date, time, status, total_amount, deposit_amount, deposit_status,
        guest_name, guest_phone, created_at,
        services(name),
-       businesses(name, logo_url, country_code)`
+       businesses!inner(name, logo_url, country_code, is_active)`
     )
     .eq('reference_code', code)
+    .eq('businesses.is_active', true)
     .single();
 
   if (!booking) return null;
@@ -30,6 +31,7 @@ async function getReceiptData(code: string) {
     name: string;
     logo_url: string | null;
     country_code: string | null;
+    is_active: boolean;
   } | null;
 
   const service = booking.services as unknown as { name: string } | null;

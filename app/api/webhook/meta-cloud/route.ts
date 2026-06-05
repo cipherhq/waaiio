@@ -264,6 +264,19 @@ export async function POST(request: NextRequest) {
             if (!text) text = '[Voice message]';
           }
 
+          // If the message is an unsupported media type (image/video/sticker/document/location)
+          // with no text, reply with guidance instead of silently skipping
+          const msgAny = msg as Record<string, unknown>;
+          if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
+            try {
+              await resolved.sender.sendText({
+                to: source,
+                text: "Please reply with a text message. I can't process images or files yet.",
+              });
+            } catch { /* ignore send failure */ }
+            continue;
+          }
+
           if (!source || (!text && !mediaUrl)) continue;
 
           // Replay protection: atomic dedup via ON CONFLICT

@@ -695,7 +695,7 @@ export default function StaffPage() {
                   </div>
                   <div className="rounded-lg border border-gray-100 bg-white p-3">
                     <p className="text-xs text-gray-500">Revenue Generated</p>
-                    <p className="text-lg font-bold text-gray-900">{formatCurrency(staffStats.totalRevenue)}</p>
+                    <p className="text-lg font-bold text-gray-900">{formatCurrency(staffStats.totalRevenue, (business.country_code || 'NG') as CountryCode)}</p>
                   </div>
                   {staffStats.lastBookingDate && (
                     <div className="rounded-lg border border-gray-100 bg-white p-3">

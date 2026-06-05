@@ -25,6 +25,7 @@ interface Sub {
   customer_email: string | null;
   setup_channel: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 const statusColors: Record<string, string> = {
@@ -113,10 +114,13 @@ export default function RecurringDashboardPage() {
     .filter(s => s.frequency === 'weekly')
     .reduce((sum, s) => sum + s.amount, 0);
   const churnThisMonth = subs.filter(s => {
-    if (s.status !== 'cancelled' || !s.created_at) return false;
+    if (s.status !== 'cancelled') return false;
     const d = new Date();
     const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1);
-    return new Date(s.created_at) >= startOfMonth;
+    // Use updated_at (when status changed to cancelled) instead of created_at
+    const cancelledAt = s.updated_at || s.created_at;
+    if (!cancelledAt) return false;
+    return new Date(cancelledAt) >= startOfMonth;
   }).length;
 
   if (loading) {

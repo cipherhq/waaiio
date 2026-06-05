@@ -414,14 +414,22 @@ export async function handleModifyBooking(
     // Fetch booking details before cancelling (for staff notification)
     const { data: cancelledBooking } = await supabase
       .from('bookings')
-      .select('id, staff_id, guest_name, date, time, reference_code, business_id, service_id, services:service_id(name)')
+      .select('id, staff_id, guest_name, date, time, reference_code, business_id, service_id, status, services:service_id(name)')
       .eq('id', bookingId)
       .single();
+
+    // Only allow cancelling bookings that are pending or confirmed
+    if (cancelledBooking && !['pending', 'confirmed'].includes(cancelledBooking.status)) {
+      await sendText(from, 'This booking can no longer be cancelled.');
+      await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+      return;
+    }
 
     await supabase
       .from('bookings')
       .update({ status: 'cancelled', cancelled_at: new Date().toISOString(), cancelled_by: 'diner' })
-      .eq('id', bookingId);
+      .eq('id', bookingId)
+      .in('status', ['pending', 'confirmed']);
 
     // Notify assigned staff member about cancellation
     if (cancelledBooking?.staff_id && cancelledBooking.business_id) {
