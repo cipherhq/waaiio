@@ -964,7 +964,7 @@ export const reservationFlow: FlowDefinition = {
 
             // Record platform fee after confirmed payment
             if (ctx.business) {
-              const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
               await recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 reservationId: d.reservation_id as string,

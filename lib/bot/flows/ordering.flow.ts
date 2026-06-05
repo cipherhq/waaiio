@@ -2774,6 +2774,20 @@ export const orderingFlow: FlowDefinition = {
               }),
             });
 
+            // Record platform fee now that payment is verified
+            if (ctx.business) {
+              const orderId = sd.order_id as string;
+              const tier = ctx.business.subscription_tier as SubscriptionTier;
+              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
+              recordPlatformFee(ctx.supabase, {
+                orderId,
+                businessId: ctx.business.id,
+                transactionAmount: totalAmount,
+                tier,
+                isInTrial,
+              }).catch(err => console.error('[ORDERING] Platform fee error:', err));
+            }
+
             // Post-completion: loyalty, feedback, referral, auto-receipt
             if (ctx.business) {
               const customerName = `${sd.first_name || ''} ${sd.last_name || ''}`.trim() || null;

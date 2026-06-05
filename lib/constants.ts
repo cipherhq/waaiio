@@ -221,10 +221,10 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // Total cost to business = waaiio fee + gateway fee
 // Flat fees below are LEGACY and set to 0 in PRICING_TIERS — kept for COUNTRY_PRICING only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 14_999, feeFlat: 100 }, business: { price: 39_999, feeFlat: 75 } },
-  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.40 }, business: { price: 99, feeFlat: 0.35 } },
-  GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 29, feeFlat: 0.30 }, business: { price: 79, feeFlat: 0.25 } },
-  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.40 }, business: { price: 99, feeFlat: 0.35 } },
+  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 14_999, feeFlat: 50 }, business: { price: 39_999, feeFlat: 75 } },
+  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.25 }, business: { price: 99, feeFlat: 0.35 } },
+  GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 29, feeFlat: 0.20 }, business: { price: 79, feeFlat: 0.25 } },
+  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.25 }, business: { price: 99, feeFlat: 0.35 } },
   GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 149, feeFlat: 2 }, business: { price: 399, feeFlat: 1.50 } },
   IN: { free: { price: 0, feeFlat: 10 }, growth: { price: 999, feeFlat: 5 }, business: { price: 2_999, feeFlat: 3 } },
 };
@@ -521,7 +521,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
     name: 'Pro',
     price: 15_000,
     feePercentage: 1.5,
-    feeFlat: 0,
+    feeFlat: 50,
     maxBookings: 500,
     whitelabel: false,
     features: [
@@ -530,7 +530,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
-      '1.5% per transaction',
+      '1.5% + ₦50 per transaction',
     ],
   },
   business: {

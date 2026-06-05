@@ -768,7 +768,7 @@ export const ticketingFlow: FlowDefinition = {
 
             // Record platform fee only after payment is verified
             if (ctx.business) {
-              const isInTrial = new Date(ctx.business.trial_ends_at) > new Date();
+              const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
               recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 bookingId: d.booking_id as string,

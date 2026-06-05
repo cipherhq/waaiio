@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
     // Find the payment record
     const { data: payment } = await supabase
       .from('payments')
-      .select('id, booking_id, amount')
+      .select('id, booking_id, amount, reservation_id, order_id, status')
       .eq('gateway_reference', txRef)
       .single();
 
@@ -91,9 +91,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: 'Payment not found' }, { status: 404 });
     }
 
+    // Skip if already processed (idempotency at payment level)
+    if (payment.status === 'success') {
+      return NextResponse.json({ message: 'Already processed' }, { status: 200 });
+    }
+
     // Verify amount matches
     const webhookAmount = data.amount as number;
     if (Math.abs(webhookAmount - payment.amount) > 0.01) {
+      await supabase.from('payments').update({ status: 'failed', gateway_status: 'amount_mismatch' }).eq('id', payment.id);
       return NextResponse.json({ message: 'Amount mismatch' }, { status: 400 });
     }
 
@@ -113,7 +119,7 @@ export async function POST(request: NextRequest) {
     // Fetch invoice_id and campaign_id (not on the initial select)
     const { data: fullPayment } = await supabase
       .from('payments')
-      .select('invoice_id, campaign_id')
+      .select('invoice_id, campaign_id, reservation_id, order_id')
       .eq('id', payment.id)
       .single();
 
@@ -123,6 +129,8 @@ export async function POST(request: NextRequest) {
       booking_id: payment.booking_id,
       invoice_id: fullPayment?.invoice_id || null,
       campaign_id: fullPayment?.campaign_id || null,
+      reservation_id: fullPayment?.reservation_id || payment.reservation_id || null,
+      order_id: fullPayment?.order_id || payment.order_id || null,
     };
 
     // Confirm booking, record platform fees, process invoice/campaign
