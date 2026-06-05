@@ -69,6 +69,7 @@ export default function CampaignsPage() {
       .from('campaigns')
       .select('*')
       .eq('business_id', business.id)
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
     setCampaigns((data || []) as Campaign[]);
     setLoading(false);
@@ -160,9 +161,9 @@ export default function CampaignsPage() {
   }
 
   async function handleDelete() {
-    if (!form.id || !confirm('Delete this campaign?')) return;
+    if (!form.id || !confirm('Delete this campaign? Donation history and payment records will be preserved for audit purposes.')) return;
     const supabase = createClient();
-    await supabase.from('campaigns').delete().eq('id', form.id);
+    await supabase.from('campaigns').update({ deleted_at: new Date().toISOString() }).eq('id', form.id);
     setView('list');
     loadCampaigns();
   }

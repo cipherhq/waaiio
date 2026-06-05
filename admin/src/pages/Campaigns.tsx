@@ -162,7 +162,10 @@ export default function Campaigns() {
                   onClick={() => setSelected(c)}
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
-                  <td className="px-4 py-3 font-medium text-gray-900">{c.title}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    {c.title}
+                    {c.deleted_at && <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-600">Deleted</span>}
+                  </td>
                   <td className="px-4 py-3 text-gray-600">{c.business_name}</td>
                   <td className="px-4 py-3 text-right text-gray-900">
                     {c.goal_amount != null ? fmtCurrency(c.goal_amount, c.currency || 'NGN') : '—'}
