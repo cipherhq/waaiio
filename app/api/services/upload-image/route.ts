@@ -36,9 +36,9 @@ export async function POST(request: NextRequest) {
   }
 
   // Validate file type (include common MIME variants)
-  const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/x-png', 'image/webp', 'image/gif', 'image/svg+xml', 'image/heic', 'image/heif'];
+  const allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/x-png', 'image/webp', 'image/gif', 'image/heic', 'image/heif'];
   if (!allowed.includes(file.type)) {
-    return NextResponse.json({ error: `File type "${file.type}" not supported. Use JPEG, PNG, WebP, GIF, SVG, or HEIC.` }, { status: 400 });
+    return NextResponse.json({ error: `File type "${file.type}" not supported. Use JPEG, PNG, WebP, GIF, or HEIC.` }, { status: 400 });
   }
 
   // Validate file size (5MB max)

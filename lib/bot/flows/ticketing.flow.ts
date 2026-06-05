@@ -301,7 +301,10 @@ export const ticketingFlow: FlowDefinition = {
         return { valid: false, errorMessage: 'Please tap *Confirm* or *Cancel*.' };
       },
       async next(ctx: FlowContext) {
-        if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'cancel') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Ticket order cancelled. Send *Hi* to start over.' });
+          return null;
+        }
         return 'collect_name';
       },
     },

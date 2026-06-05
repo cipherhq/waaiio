@@ -71,7 +71,8 @@ export async function POST(request: NextRequest) {
     });
 
   if (uploadError) {
-    return NextResponse.json({ error: 'Upload failed: ' + uploadError.message }, { status: 500 });
+    console.error('[VERIFICATION-UPLOAD] Storage error:', uploadError.message);
+    return NextResponse.json({ error: 'Upload failed. Please try again.' }, { status: 500 });
   }
 
   const { data: urlData } = supabase.storage

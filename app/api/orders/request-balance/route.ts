@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
+import { authenticateRequest } from '@/lib/api-auth';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
@@ -14,7 +14,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'order_id and business_id required' }, { status: 400 });
     }
 
-    const supabase = createServiceClient();
+    const auth = await authenticateRequest(request, { requireBusinessOwnership: true, body });
+    if (auth instanceof NextResponse) return auth;
+
+    const supabase = auth.service;
 
     // Fetch order
     const { data: order, error: orderError } = await supabase

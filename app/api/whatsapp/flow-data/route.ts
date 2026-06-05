@@ -29,11 +29,12 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.text();
 
     // Verify Meta signature
-    if (META_APP_SECRET) {
-      const signature = request.headers.get('x-hub-signature-256') || '';
-      if (!verifyMetaSignature(rawBody, signature)) {
-        return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
-      }
+    if (!META_APP_SECRET) {
+      return NextResponse.json({ error: 'Server configuration error' }, { status: 500 });
+    }
+    const signature = request.headers.get('x-hub-signature-256') || '';
+    if (!verifyMetaSignature(rawBody, signature)) {
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
     const body = JSON.parse(rawBody);

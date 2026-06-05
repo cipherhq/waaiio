@@ -112,10 +112,11 @@ export async function POST(request: NextRequest) {
 
           // Record renewal payment
           const chargeAmountKobo = data.amount as number;
+          const chargeAmountNaira = chargeAmountKobo / 100;
           await supabase.from('subscription_payments').insert({
             business_id: platformSub.business_id,
             subscription_id: platformSub.id,
-            amount: chargeAmountKobo,
+            amount: chargeAmountNaira,
             currency: (data.currency as string) || 'NGN',
             gateway: 'paystack',
             gateway_reference: reference,

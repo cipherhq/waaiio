@@ -45,7 +45,7 @@ interface OrderRecord {
   id: string;
   created_at: string;
   status: string;
-  total: number | null;
+  total_amount: number | null;
 }
 
 interface LoyaltyRecord {
@@ -247,7 +247,7 @@ export default function CustomersPage() {
       phone
         ? supabase
             .from('orders')
-            .select('id, created_at, status, total')
+            .select('id, created_at, status, total_amount')
             .eq('business_id', business.id)
             .eq('customer_phone', phone)
             .order('created_at', { ascending: false })
@@ -1074,9 +1074,9 @@ export default function CustomersPage() {
                               </p>
                             </div>
                             <div className="ml-3 flex shrink-0 items-center gap-2">
-                              {o.total != null && o.total > 0 && (
+                              {o.total_amount != null && o.total_amount > 0 && (
                                 <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                                  {formatCurrency(o.total, cc)}
+                                  {formatCurrency(o.total_amount, cc)}
                                 </span>
                               )}
                               <span
