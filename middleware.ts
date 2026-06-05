@@ -100,6 +100,8 @@ export async function middleware(request: NextRequest) {
     '/api/payments/stripe-webhook', '/api/payments/square-webhook', '/api/payments/paypal-webhook',
     '/api/payments/byo-webhook', '/api/payments/webhook',
     '/api/integrations/external-booking',
+    '/api/whatsapp/flow-data',
+    '/api/whatsapp/flow-callback',
   ];
   const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {

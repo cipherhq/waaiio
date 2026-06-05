@@ -80,12 +80,16 @@ export default function AnalyticsPage() {
   const [topIntents, setTopIntents] = useState<{ intent: string; count: number }[]>([]);
   const [avgConfidence, setAvgConfidence] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
+      setError(false);
       const supabase = createClient();
 
+      try {
       const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - days);
@@ -272,9 +276,28 @@ export default function AnalyticsPage() {
       setPaymentFailed(allPayments.filter(p => p.status === 'failed').length);
 
       setLoading(false);
+      } catch (err) {
+        console.error('[ANALYTICS] Failed to load analytics:', err);
+        setError(true);
+        setLoading(false);
+      }
     }
     load();
-  }, [business.id, timeRange, customDateFrom, customDateTo]);
+  }, [business.id, timeRange, customDateFrom, customDateTo, retryCount]);
+
+  if (error) {
+    return (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4">
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load analytics data.</p>
+        <button
+          onClick={() => setRetryCount(c => c + 1)}
+          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

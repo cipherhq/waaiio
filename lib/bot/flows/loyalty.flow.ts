@@ -212,21 +212,16 @@ const loyaltyRedeemStep: FlowStepConfig = {
         reference_type: 'loyalty_points',
       });
 
-      // Update balance and total_redeemed
+      // Atomically update balance and total_redeemed via RPC
+      const { error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
+        p_loyalty_id: loyaltyId,
+        p_points: threshold,
+      });
+      if (redeemErr) {
+        logger.error('[LOYALTY] redeem_loyalty_points RPC failed:', redeemErr);
+        throw new Error('Redemption failed');
+      }
       const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
-      const { data: currentRecord } = await ctx.supabase
-        .from('loyalty_points')
-        .select('total_redeemed')
-        .eq('id', loyaltyId)
-        .single();
-
-      await ctx.supabase
-        .from('loyalty_points')
-        .update({
-          points_balance: balance - threshold,
-          total_redeemed: ((currentRecord?.total_redeemed as number) || 0) + threshold,
-        })
-        .eq('id', loyaltyId);
 
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';
       const redemptionCode = generateRedemptionCode();

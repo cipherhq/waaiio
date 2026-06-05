@@ -185,7 +185,6 @@ export default function FinancialsPage() {
       case 'ordering': return 'Order';
       case 'ticketing': return 'Ticket';
       case 'reservation': return 'Reservation';
-      case 'ordering': return 'Order';
       case 'invoice': return 'Invoice';
       default: return 'Booking';
     }

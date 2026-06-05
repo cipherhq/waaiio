@@ -21,15 +21,27 @@ export const ticketingFlow: FlowDefinition = {
 
         const { data: events } = await ctx.supabase
           .from('events')
-          .select('id, name, date, venue, price, total_tickets, tickets_sold, image_url')
+          .select('id, name, date, time, venue, price, total_tickets, tickets_sold, image_url')
           .eq('business_id', ctx.business.id)
           .in('status', ['published'])
           .gte('date', new Date().toISOString().split('T')[0])
           .order('date')
           .limit(10);
 
-        // Filter out sold-out events so customers only see events they can buy
-        const availableEvents = (events || []).filter(e => e.total_tickets - e.tickets_sold > 0);
+        // Filter out past events (today but time already passed) and sold-out events
+        const now = new Date();
+        const todayStr = now.toISOString().split('T')[0];
+        const timeFilteredEvents = (events || []).filter(e => {
+          if (e.date > todayStr) return true; // future date, always show
+          if (e.date === todayStr && e.time) {
+            const [h, m] = e.time.split(':');
+            const eventTime = new Date();
+            eventTime.setHours(parseInt(h), parseInt(m), 0);
+            return eventTime > now; // only show if event hasn't started yet
+          }
+          return e.date === todayStr; // today with no time, show it
+        });
+        const availableEvents = timeFilteredEvents.filter(e => e.total_tickets - e.tickets_sold > 0);
 
         if (availableEvents.length === 0) {
           return [{ type: 'text', text: 'No upcoming events right now. Check back soon! 🎟️' }];
@@ -105,12 +117,19 @@ export const ticketingFlow: FlowDefinition = {
         const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
 
+        // Filter out sold-out ticket types
+        const availableTypes = types.filter(t => t.total_tickets - t.tickets_sold > 0);
+
+        if (availableTypes.length === 0) {
+          return [{ type: 'text', text: 'All tickets are sold out for this event. Send *Hi* to browse other events.' }];
+        }
+
         return [{
           type: 'list',
           title: 'Ticket Types',
           body: 'Select your ticket type:',
           buttonLabel: 'View Options',
-          items: types.map(t => {
+          items: availableTypes.map(t => {
             const available = t.total_tickets - t.tickets_sold;
             return {
               title: t.name.slice(0, 24),

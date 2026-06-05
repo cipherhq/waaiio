@@ -406,7 +406,7 @@ export default function BookingsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
 
       <PageHelp
         pageKey="reservations"
@@ -425,21 +425,21 @@ export default function BookingsPage() {
 
         return (
           <div className="mt-4 grid gap-3 sm:grid-cols-4">
-            <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-              <p className="text-xs font-medium text-gray-500">Today</p>
-              <p className="mt-1 text-2xl font-bold text-gray-900">{todayBookings.length}</p>
+            <div className="rounded-xl border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Today</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">{todayBookings.length}</p>
             </div>
-            <div className="rounded-xl border border-yellow-100 bg-yellow-50 p-4">
-              <p className="text-xs font-medium text-gray-500">Pending</p>
-              <p className="mt-1 text-2xl font-bold text-gray-900">{pendingCount}</p>
+            <div className="rounded-xl border border-yellow-100 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 p-4">
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Pending</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">{pendingCount}</p>
             </div>
-            <div className="rounded-xl border border-green-100 bg-green-50 p-4">
-              <p className="text-xs font-medium text-gray-500">Confirmed</p>
-              <p className="mt-1 text-2xl font-bold text-gray-900">{confirmedCount}</p>
+            <div className="rounded-xl border border-green-100 dark:border-green-800 bg-green-50 dark:bg-green-900/20 p-4">
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Confirmed</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">{confirmedCount}</p>
             </div>
-            <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
-              <p className="text-xs font-medium text-gray-500">Revenue</p>
-              <p className="mt-1 text-2xl font-bold text-gray-900">{formatCurrency(totalRevenue, (business.country_code || 'NG') as CountryCode)}</p>
+            <div className="rounded-xl border border-purple-100 dark:border-purple-800 bg-purple-50 dark:bg-purple-900/20 p-4">
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Revenue</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">{formatCurrency(totalRevenue, (business.country_code || 'NG') as CountryCode)}</p>
             </div>
           </div>
         );
@@ -452,15 +452,15 @@ export default function BookingsPage() {
         if (todayItems.length === 0) return null;
 
         return (
-          <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50/50 p-4">
-            <h3 className="text-sm font-semibold text-blue-900">Today&apos;s Schedule ({todayItems.length})</h3>
+          <div className="mt-4 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/20 p-4">
+            <h3 className="text-sm font-semibold text-blue-900 dark:text-blue-300">Today&apos;s Schedule ({todayItems.length})</h3>
             <div className="mt-2 space-y-2">
               {todayItems.slice(0, 5).map(b => (
-                <div key={b.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
+                <div key={b.id} className="flex items-center justify-between rounded-lg bg-white dark:bg-gray-800 px-3 py-2 text-sm">
                   <div className="flex items-center gap-3">
-                    <span className="font-medium text-gray-900">{b.guest_name || 'Guest'}</span>
-                    {b.time && !b._isReservation && <span className="text-gray-500">{b.time.slice(0, 5)}</span>}
-                    {b._isReservation && b.staff_name && <span className="text-gray-400">{b.staff_name}</span>}
+                    <span className="font-medium text-gray-900 dark:text-gray-100">{b.guest_name || 'Guest'}</span>
+                    {b.time && !b._isReservation && <span className="text-gray-500 dark:text-gray-400">{b.time.slice(0, 5)}</span>}
+                    {b._isReservation && b.staff_name && <span className="text-gray-400 dark:text-gray-500">{b.staff_name}</span>}
                   </div>
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${
                     b.status === 'confirmed' ? 'bg-green-100 text-green-700' :
@@ -478,7 +478,7 @@ export default function BookingsPage() {
 
       {/* Booking type tabs — only show when business has multiple types */}
       {showReservations && !isReservationType && (
-        <div className="mt-4 flex gap-1 border-b border-gray-200">
+        <div className="mt-4 flex gap-1 border-b border-gray-200 dark:border-gray-700">
           {([
             { id: 'all' as const, label: 'All' },
             { id: 'bookings' as const, label: 'Appointments' },
@@ -486,7 +486,7 @@ export default function BookingsPage() {
           ]).map(tab => (
             <button key={tab.id} onClick={() => { setBookingType(tab.id); setPage(1); }}
               className={`px-4 py-2.5 text-sm font-medium transition border-b-2 -mb-px ${
-                bookingType === tab.id ? 'border-brand text-brand' : 'border-transparent text-gray-500 hover:text-gray-700'
+                bookingType === tab.id ? 'border-brand text-brand' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}>
               {tab.label}
               <span className="ml-1.5 text-xs text-gray-400">
@@ -499,13 +499,13 @@ export default function BookingsPage() {
 
       {/* Filters */}
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <div className="flex gap-1 overflow-x-auto rounded-lg border border-gray-200 bg-white p-1">
+        <div className="flex gap-1 overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-1">
           {statuses.map((s) => (
             <button
               key={s}
               onClick={() => setFilter(s)}
               className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize transition ${
-                filter === s ? 'bg-brand text-white' : 'text-gray-600 hover:bg-gray-50'
+                filter === s ? 'bg-brand text-white' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'
               }`}
             >
               {s === 'all' ? 'All' : s.replace('_', ' ')}
@@ -513,16 +513,16 @@ export default function BookingsPage() {
           ))}
         </div>
         <div className="flex items-center gap-2">
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
-          <span className="text-xs text-gray-400">to</span>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-1.5 text-sm outline-none focus:border-brand" />
+          <span className="text-xs text-gray-400 dark:text-gray-500">to</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-1.5 text-sm outline-none focus:border-brand" />
         </div>
         <input
           type="text"
           placeholder="Search name, phone, ref..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-brand"
+          className="rounded-lg border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 px-3 py-1.5 text-sm outline-none focus:border-brand"
         />
         <CsvExportButton
           data={bookings.map(b => ({
@@ -555,53 +555,53 @@ export default function BookingsPage() {
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-brand border-t-transparent" />
         </div>
       ) : bookings.length === 0 ? (
-        <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">
-          <p className="text-sm text-gray-400">No {labels.entityNamePlural} found</p>
+        <div className="mt-8 rounded-xl border border-dashed border-gray-200 dark:border-gray-700 p-12 text-center">
+          <p className="text-sm text-gray-400 dark:text-gray-500">No {labels.entityNamePlural} found</p>
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 bg-white">
+        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-50 bg-gray-50/50">
-                <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guest</th>
+              <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
+                <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</th>
                 {bookingType === 'reservations' || (bookingType === 'all' && showReservations) ? (
                   <>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.propertyName || 'Property'}</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-in</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Check-out</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Nights</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Guests</th>
-                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500">Amount</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-out</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Nights</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guests</th>
+                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
                   </>
                 ) : (
                   <>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Staff</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Date & Time</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">{labels.quantityLabel}</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Channel</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Staff</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
+                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Channel</th>
                   </>
                 )}
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Ref</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500">Actions</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
+                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50">
+            <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
               {pageItems.map((r) => (
-                <tr key={r.id} className={`cursor-pointer hover:bg-gray-50/50 ${selectedIds.has(r.id) ? 'bg-brand-50/30' : ''}`} onClick={() => setSelectedId(r.id)}>
-                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} className="h-4 w-4 rounded border-gray-300" /></td>
+                <tr key={r.id} className={`cursor-pointer hover:bg-gray-50/50 dark:hover:bg-gray-700/50 ${selectedIds.has(r.id) ? 'bg-brand-50/30' : ''}`} onClick={() => setSelectedId(r.id)}>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></td>
                   <td className="px-4 py-3">
-                    <p className="font-medium text-gray-900">{r.guest_name || '\u2014'}</p>
-                    <p className="text-xs text-gray-400">{r.guest_phone}</p>
+                    <p className="font-medium text-gray-900 dark:text-gray-100">{r.guest_name || '\u2014'}</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">{r.guest_phone}</p>
                   </td>
                   {r._isReservation || bookingType === 'reservations' ? (
                     <>
-                      <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' })}
                       </td>
-                      <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                         {r.time ? r.time.replace(/\d+ night.*/, (m: string) => {
                           const nights = parseInt(m);
                           const checkIn = new Date(r.date + 'T00:00');
@@ -609,22 +609,22 @@ export default function BookingsPage() {
                           return checkIn.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' });
                         }) : '—'}
                       </td>
-                      <td className="px-4 py-3 text-gray-600">{r.time?.match(/\d+/)?.[0] || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">{r.party_size}</td>
-                      <td className="px-4 py-3 text-right font-medium text-gray-900">
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.time?.match(/\d+/)?.[0] || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-gray-100">
                         {formatCurrency(r.total_amount || 0, (business.country_code || 'NG') as CountryCode)}
                       </td>
                     </>
                   ) : (
                     <>
-                      <td className="px-4 py-3 text-sm text-gray-600">{r.staff_name || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600">
+                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
                         {r.time && !r.time.includes('night') && ` at ${r.time.slice(0, 5)}`}
                       </td>
-                      <td className="px-4 py-3 text-gray-600">{r.party_size}</td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
                       <td className="px-4 py-3">
-                        <span className={`rounded-full px-2.5 py-1 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                        <span className={`rounded-full px-2.5 py-1 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
                           {r.channel || 'whatsapp'}
                         </span>
                       </td>
@@ -640,7 +640,7 @@ export default function BookingsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400">{r.reference_code}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500">{r.reference_code}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
                       {(nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
@@ -705,15 +705,15 @@ export default function BookingsPage() {
           <button
             onClick={() => setPage(p => Math.max(1, p - 1))}
             disabled={page === 1}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50"
           >
             Previous
           </button>
-          <span className="text-gray-500">Page {page} of {totalPages}</span>
+          <span className="text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
           <button
             onClick={() => setPage(p => Math.min(totalPages, p + 1))}
             disabled={page === totalPages}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700/50 disabled:opacity-50"
           >
             Next
           </button>
