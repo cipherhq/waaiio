@@ -6,6 +6,7 @@ import { getPlatformFees } from '@/lib/getPlatformFees';
 import { logger } from '@/lib/logger';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { sendEmail } from '@/lib/email/client';
+import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import type { SubscriptionTier } from '@/lib/constants';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
@@ -252,6 +253,39 @@ export async function POST(request: NextRequest) {
             action: 'renewal',
             status: 'success',
           });
+
+          // Send renewal receipt email to business owner
+          try {
+            const { data: biz } = await supabase
+              .from('businesses')
+              .select('name, owner_id')
+              .eq('id', platformSub.business_id)
+              .single();
+            if (biz?.owner_id) {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('email')
+                .eq('id', biz.owner_id)
+                .single();
+              if (profile?.email) {
+                const periodEndDate = data.period_end
+                  ? new Date((data.period_end as number) * 1000)
+                  : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d; })();
+                const amountDisplay = String((data.amount_paid as number) || 0);
+                const curr = ((data.currency as string)?.toUpperCase()) || 'USD';
+                const { subject, html } = subscriptionRenewalReceiptEmail(
+                  biz.name,
+                  platformSub.plan,
+                  curr === 'USD' || curr === 'GBP' || curr === 'CAD' ? (Number(amountDisplay) / 100).toFixed(2) : amountDisplay,
+                  curr,
+                  periodEndDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+                );
+                await sendEmail({ to: profile.email, subject, html });
+              }
+            }
+          } catch (emailErr) {
+            logger.error('[STRIPE WEBHOOK] Subscription renewal email error:', emailErr);
+          }
 
           logger.info(`[STRIPE WEBHOOK] Platform subscription renewed: ${subscriptionId} for business ${platformSub.business_id}`);
         }

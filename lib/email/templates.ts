@@ -467,6 +467,24 @@ export function trialEndedEmail(businessName: string) {
   };
 }
 
+export function subscriptionRenewalReceiptEmail(businessName: string, plan: string, amount: string, currency: string, nextDate: string) {
+  return {
+    subject: `Subscription renewed — ${businessName}`,
+    html: wrap(`
+      ${h('Subscription Renewed')}
+      ${p(`Your <strong>${esc(plan)}</strong> subscription for <strong>${esc(businessName)}</strong> has been renewed.`)}
+      ${table(
+        kv('Business', esc(businessName)) +
+        kv('Plan', esc(plan)) +
+        kv('Amount', `${esc(currency)} ${esc(amount)}`) +
+        kv('Next Renewal', esc(nextDate))
+      )}
+      ${p('Thank you for being a Waaiio customer. Your premium features remain active.')}
+      ${btn('View Dashboard', 'https://www.waaiio.com/dashboard')}
+    `),
+  };
+}
+
 export function subscriptionExpiringEmail(businessName: string, daysLeft: number, renewUrl: string) {
   const urgency = daysLeft === 1 ? 'tomorrow' : `in ${daysLeft} days`;
   const urgencyTitle = daysLeft === 1 ? 'Your Subscription Expires Tomorrow' : 'Your Subscription Is Expiring Soon';

@@ -6,6 +6,8 @@ import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { getPlatformFees } from '@/lib/getPlatformFees';
+import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
+import { sendEmail } from '@/lib/email/client';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
@@ -126,6 +128,36 @@ export async function POST(request: NextRequest) {
             action: 'renewal',
             status: 'success',
           });
+
+          // Send renewal receipt email to business owner
+          try {
+            const { data: biz } = await supabase
+              .from('businesses')
+              .select('name, owner_id')
+              .eq('id', platformSub.business_id)
+              .single();
+            if (biz?.owner_id) {
+              const { data: profile } = await supabase
+                .from('profiles')
+                .select('email')
+                .eq('id', biz.owner_id)
+                .single();
+              if (profile?.email) {
+                const periodEnd = new Date();
+                periodEnd.setDate(periodEnd.getDate() + 30);
+                const { subject, html } = subscriptionRenewalReceiptEmail(
+                  biz.name,
+                  platformSub.plan,
+                  String(chargeAmountNaira),
+                  (data.currency as string)?.toUpperCase() || 'NGN',
+                  periodEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+                );
+                await sendEmail({ to: profile.email, subject, html });
+              }
+            }
+          } catch (emailErr) {
+            logger.error('[PAYSTACK] Subscription renewal email error:', emailErr);
+          }
         }
       }
     }
