@@ -645,6 +645,26 @@ export default function CalendarPage() {
   const today = formatDateKey(new Date());
   const currentMonth = currentDate.getMonth();
 
+  // Monthly summary stats
+  const monthlyStats = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const monthEntries = allEntries.filter(e => {
+      const d = new Date(e.date + 'T00:00');
+      return d.getFullYear() === year && d.getMonth() === month;
+    });
+    const bookingEntries = monthEntries.filter(e => e.type === 'booking');
+    const total = bookingEntries.length;
+    const confirmed = bookingEntries.filter(e => e.status === 'confirmed' || e.status === 'completed' || e.status === 'in_progress').length;
+    const cancelled = bookingEntries.filter(e => e.status === 'cancelled').length;
+    const noShow = bookingEntries.filter(e => e.status === 'no_show').length;
+    const pending = bookingEntries.filter(e => e.status === 'pending').length;
+    const revenue = bookingEntries.reduce((s, e) => s + Number((e.details as Record<string, unknown>).total_amount || (e.details as Record<string, unknown>).deposit_amount || 0), 0);
+    const reservationCount = monthEntries.filter(e => e.type === 'reservation').length;
+    const eventCount = monthEntries.filter(e => e.type === 'event').length;
+    return { total, confirmed, cancelled, noShow, pending, revenue, reservationCount, eventCount };
+  }, [allEntries, currentDate]);
+
   // Determine which filter options to show
   const filterOptions: { key: FilterMode; label: string }[] = [
     { key: 'all', label: 'All' },
@@ -1119,6 +1139,40 @@ export default function CalendarPage() {
         </button>
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">{periodLabel}</h2>
       </div>
+
+      {/* Monthly Stats */}
+      {view === 'month' && !loading && (
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5">
+            <p className="text-[10px] font-medium uppercase text-gray-400 dark:text-gray-500">Total Bookings</p>
+            <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{monthlyStats.total}</p>
+          </div>
+          <div className="rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 px-3 py-2.5">
+            <p className="text-[10px] font-medium uppercase text-green-600 dark:text-green-400">Confirmed</p>
+            <p className="text-lg font-bold text-green-700 dark:text-green-300">{monthlyStats.confirmed}</p>
+          </div>
+          <div className="rounded-lg border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-2.5">
+            <p className="text-[10px] font-medium uppercase text-yellow-600 dark:text-yellow-400">Pending</p>
+            <p className="text-lg font-bold text-yellow-700 dark:text-yellow-300">{monthlyStats.pending}</p>
+          </div>
+          <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/20 px-3 py-2.5">
+            <p className="text-[10px] font-medium uppercase text-red-600 dark:text-red-400">Cancelled</p>
+            <p className="text-lg font-bold text-red-700 dark:text-red-300">{monthlyStats.cancelled}</p>
+          </div>
+          {monthlyStats.noShow > 0 && (
+            <div className="rounded-lg border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 px-3 py-2.5">
+              <p className="text-[10px] font-medium uppercase text-orange-600 dark:text-orange-400">No Shows</p>
+              <p className="text-lg font-bold text-orange-700 dark:text-orange-300">{monthlyStats.noShow}</p>
+            </div>
+          )}
+          {monthlyStats.revenue > 0 && (
+            <div className="rounded-lg border border-brand/20 dark:border-brand/30 bg-brand/5 dark:bg-brand/10 px-3 py-2.5">
+              <p className="text-[10px] font-medium uppercase text-brand dark:text-brand/80">Revenue</p>
+              <p className="text-lg font-bold text-brand">{formatCurrency(monthlyStats.revenue, (business.country_code || 'NG') as CountryCode)}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Loading */}
       {loading ? (
