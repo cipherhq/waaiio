@@ -11,15 +11,22 @@ import { isFullAdmin } from '@/lib/adminAuth';
 
 interface Notification {
   id: string;
-  user_id: string;
-  title: string;
-  message: string;
+  business_id: string;
+  booking_id: string | null;
+  recipient_phone: string | null;
+  recipient_email: string | null;
   type: string;
-  read: boolean;
+  channel: string | null;
+  status: string;
+  subject: string | null;
+  body: string;
+  metadata: Record<string, unknown> | null;
+  sent_at: string | null;
+  delivered_at: string | null;
+  failed_reason: string | null;
   created_at: string;
   // enriched
-  user_name?: string;
-  user_email?: string;
+  business_name?: string;
 }
 
 interface ProfileMatch {
@@ -63,26 +70,17 @@ export default function Notifications() {
 
       const rows = notifData || [];
 
-      // Enrich user names from profiles
-      const userIds = [...new Set(rows.map(n => n.user_id).filter(Boolean))];
-      const { data: profileData } = userIds.length > 0
-        ? await adminDb.from('profiles').select('id, first_name, last_name, email').in('id', userIds)
+      // Enrich business names
+      const bizIds = [...new Set(rows.map(n => n.business_id).filter(Boolean))];
+      const { data: bizData } = bizIds.length > 0
+        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
         : { data: [] };
 
-      const profileMap = new Map(
-        (profileData || []).map(p => [
-          p.id,
-          {
-            name: [p.first_name, p.last_name].filter(Boolean).join(' ') || '—',
-            email: p.email || '—',
-          },
-        ])
-      );
+      const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
 
       const enriched: Notification[] = rows.map(n => ({
         ...n,
-        user_name: profileMap.get(n.user_id)?.name || 'Unknown',
-        user_email: profileMap.get(n.user_id)?.email || '—',
+        business_name: bizMap.get(n.business_id) || 'Unknown',
       }));
 
       setNotifications(enriched);
@@ -174,8 +172,8 @@ export default function Notifications() {
   // Filtering
   const filtered = notifications.filter(n => {
     if (typeFilter !== 'all' && n.type !== typeFilter) return false;
-    if (readFilter === 'read' && !n.read) return false;
-    if (readFilter === 'unread' && n.read) return false;
+    if (readFilter === 'sent' && n.status !== 'sent') return false;
+    if (readFilter === 'failed' && n.status !== 'failed') return false;
     return true;
   });
 
@@ -222,9 +220,9 @@ export default function Notifications() {
           onChange={e => { setReadFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
-          <option value="all">All</option>
-          <option value="read">Read</option>
-          <option value="unread">Unread</option>
+          <option value="all">All Statuses</option>
+          <option value="sent">Sent</option>
+          <option value="failed">Failed</option>
         </select>
         {(typeFilter !== 'all' || readFilter !== 'all') && (
           <button
@@ -245,11 +243,11 @@ export default function Notifications() {
             <thead className="border-b border-gray-100 bg-gray-50">
               <tr>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">ID</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">User</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Title</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Message</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Subject</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Body</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Type</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-500">Read</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Date</th>
               </tr>
             </thead>
@@ -261,10 +259,10 @@ export default function Notifications() {
                   className="cursor-pointer transition hover:bg-gray-50"
                 >
                   <td className="px-4 py-3 text-gray-600 font-mono text-xs">{n.id.slice(0, 8)}...</td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{n.user_name}</td>
-                  <td className="px-4 py-3 text-gray-900">{n.title}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">{n.business_name}</td>
+                  <td className="px-4 py-3 text-gray-900">{n.subject || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">
-                    {n.message.length > 50 ? n.message.slice(0, 50) + '...' : n.message}
+                    {(n.body || '').length > 50 ? (n.body || '').slice(0, 50) + '...' : (n.body || '—')}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge
@@ -278,11 +276,14 @@ export default function Notifications() {
                     />
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`inline-block h-2.5 w-2.5 rounded-full ${
-                        n.read ? 'bg-green-500' : 'bg-gray-300'
-                      }`}
-                      title={n.read ? 'Read' : 'Unread'}
+                    <StatusBadge
+                      status={n.status}
+                      colorMap={{
+                        sent: 'bg-green-100 text-green-700',
+                        pending: 'bg-yellow-100 text-yellow-700',
+                        failed: 'bg-red-100 text-red-700',
+                        delivered: 'bg-blue-100 text-blue-700',
+                      }}
                     />
                   </td>
                   <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(n.created_at)}</td>
@@ -304,23 +305,27 @@ export default function Notifications() {
         {selected && (
           <div className="space-y-3 text-sm">
             <DetailRow label="Notification ID" value={selected.id} />
-            <DetailRow label="Title" value={selected.title} />
+            <DetailRow label="Business" value={selected.business_name || '—'} />
+            <DetailRow label="Subject" value={selected.subject || '—'} />
             <DetailRow label="Type" value={selected.type} />
-            <DetailRow label="Read" value={selected.read ? 'Yes' : 'No'} />
+            <DetailRow label="Channel" value={selected.channel || '—'} />
+            <DetailRow label="Status" value={selected.status} />
             <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
+            {selected.sent_at && <DetailRow label="Sent" value={fmtDateTime(selected.sent_at)} />}
+            {selected.delivered_at && <DetailRow label="Delivered" value={fmtDateTime(selected.delivered_at)} />}
+            {selected.failed_reason && <DetailRow label="Failed Reason" value={selected.failed_reason} />}
 
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
               <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Recipient</p>
               <div className="space-y-2">
-                <DetailRow label="Name" value={selected.user_name || '—'} />
-                <DetailRow label="Email" value={selected.user_email || '—'} />
-                <DetailRow label="User ID" value={selected.user_id} />
+                <DetailRow label="Phone" value={selected.recipient_phone || '—'} />
+                <DetailRow label="Email" value={selected.recipient_email || '—'} />
               </div>
             </div>
 
             <div className="mt-4 rounded-lg bg-gray-50 p-4">
-              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Message</p>
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">{selected.message}</p>
+              <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Body</p>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap">{selected.body || '—'}</p>
             </div>
           </div>
         )}
