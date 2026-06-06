@@ -204,6 +204,107 @@ function renderSettingEditor(
     }
   }
 
+  // Array of strings (supported_countries, directory_featured, directory_hidden)
+  if (parsed && Array.isArray(parsed) && parsed.every((v: unknown) => typeof v === 'string' || typeof v === 'number')) {
+    return (
+      <div className={`rounded-lg border p-3 ${borderClass}`}>
+        <div className="flex flex-wrap gap-1.5">
+          {(parsed as string[]).map((item, i) => (
+            <span key={i} className="inline-flex items-center gap-1 rounded-full bg-gray-200 px-2.5 py-1 text-xs font-medium text-gray-700">
+              {String(item)}
+              <button
+                onClick={() => {
+                  const updated = [...parsed as string[]];
+                  updated.splice(i, 1);
+                  onChange(JSON.stringify(updated));
+                }}
+                className="ml-0.5 text-gray-400 hover:text-red-500"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            placeholder="Add item..."
+            className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.target as HTMLInputElement).value.trim()) {
+                const updated = [...parsed as string[], (e.target as HTMLInputElement).value.trim()];
+                onChange(JSON.stringify(updated));
+                (e.target as HTMLInputElement).value = '';
+              }
+            }}
+          />
+        </div>
+        <p className="mt-1 text-[9px] text-gray-400">Press Enter to add</p>
+      </div>
+    );
+  }
+
+  // Mixed object with arrays (booking_defaults: {maxPartySize, reminderHours[], maxAdvanceDays})
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    const hasMixedTypes = entries.some(([, v]) => Array.isArray(v));
+
+    if (hasMixedTypes) {
+      return (
+        <div className={`rounded-lg border p-3 space-y-2 ${borderClass}`}>
+          {entries.map(([k, v]) => {
+            const label = k.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim();
+            if (Array.isArray(v)) {
+              return (
+                <div key={k}>
+                  <label className="text-[10px] font-medium text-gray-500 capitalize block mb-1">{label}</label>
+                  <div className="flex flex-wrap gap-1">
+                    {(v as (string | number)[]).map((item, i) => (
+                      <span key={i} className="inline-flex items-center gap-1 rounded bg-gray-200 px-2 py-0.5 text-xs">
+                        {String(item)}
+                        <button onClick={() => {
+                          const updated = [...v as (string | number)[]];
+                          updated.splice(i, 1);
+                          onChange(JSON.stringify({ ...parsed, [k]: updated }, null, 2));
+                        }} className="text-gray-400 hover:text-red-500"><X className="h-2.5 w-2.5" /></button>
+                      </span>
+                    ))}
+                    <input
+                      type="number"
+                      placeholder="Add..."
+                      className="w-16 rounded border border-gray-200 px-1.5 py-0.5 text-xs outline-none focus:border-brand"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && (e.target as HTMLInputElement).value) {
+                          const updated = [...v as (string | number)[], Number((e.target as HTMLInputElement).value)];
+                          onChange(JSON.stringify({ ...parsed, [k]: updated }, null, 2));
+                          (e.target as HTMLInputElement).value = '';
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            }
+            return (
+              <div key={k} className="flex items-center gap-2">
+                <label className="w-36 text-xs font-medium text-gray-500 capitalize shrink-0">{label}</label>
+                <input
+                  type={typeof v === 'number' ? 'number' : 'text'}
+                  value={String(v)}
+                  onChange={e => {
+                    const newVal = typeof v === 'number' ? Number(e.target.value) : e.target.value;
+                    onChange(JSON.stringify({ ...parsed, [k]: newVal }, null, 2));
+                  }}
+                  className="flex-1 rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+  }
+
   // Fallback: JSON textarea with line count
   const lines = currentVal.split('\n').length;
   return (
