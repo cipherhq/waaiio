@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -31,6 +32,9 @@ interface BusinessOption {
 }
 
 export default function Events() {
+  const adminSession = useAdminSession();
+  const canMutate = adminSession?.role === 'admin';
+
   const [events, setEvents] = useState<Event[]>([]);
   const [loading, setLoading] = useState(true);
   const [businesses, setBusinesses] = useState<BusinessOption[]>([]);
@@ -42,45 +46,99 @@ export default function Events() {
   const [selected, setSelected] = useState<Event | null>(null);
   const perPage = 20;
 
-  useEffect(() => {
-    async function load() {
-      try {
-        // Load events
-        const { data: eventData } = await adminDb
-          .from('events')
-          .select('*')
-          .order('created_at', { ascending: false });
+  // Edit state
+  const [editName, setEditName] = useState('');
+  const [editDate, setEditDate] = useState('');
+  const [editTime, setEditTime] = useState('');
+  const [editVenue, setEditVenue] = useState('');
+  const [editPrice, setEditPrice] = useState<number | null>(null);
+  const [editStatus, setEditStatus] = useState('');
+  const [savingEvent, setSavingEvent] = useState(false);
 
-        const rows = eventData || [];
+  async function loadData() {
+    try {
+      // Load events
+      const { data: eventData } = await adminDb
+        .from('events')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        // Load business names
-        const bizIds = [...new Set(rows.map(e => e.business_id).filter(Boolean))];
-        const { data: bizData } = bizIds.length > 0
-          ? await adminDb.from('businesses').select('id, name, country_code').in('id', bizIds)
-          : { data: [] };
+      const rows = eventData || [];
 
-        const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
-        const COUNTRY_CUR: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
-        const bizCurrencyMap = new Map((bizData || []).map(b => [b.id, COUNTRY_CUR[b.country_code] || 'NGN']));
-        setBusinesses(
-          (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
-        );
+      // Load business names
+      const bizIds = [...new Set(rows.map(e => e.business_id).filter(Boolean))];
+      const { data: bizData } = bizIds.length > 0
+        ? await adminDb.from('businesses').select('id, name, country_code').in('id', bizIds)
+        : { data: [] };
 
-        const enriched: Event[] = rows.map(e => ({
-          ...e,
-          business_name: bizMap.get(e.business_id) || 'Unknown',
-          currency: bizCurrencyMap.get(e.business_id) || 'NGN',
-        }));
+      const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
+      const COUNTRY_CUR: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+      const bizCurrencyMap = new Map((bizData || []).map(b => [b.id, COUNTRY_CUR[b.country_code] || 'NGN']));
+      setBusinesses(
+        (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
+      );
 
-        setEvents(enriched);
-      } catch (error) {
-        console.warn('Failed to load events:', error);
-      } finally {
-        setLoading(false);
-      }
+      const enriched: Event[] = rows.map(e => ({
+        ...e,
+        business_name: bizMap.get(e.business_id) || 'Unknown',
+        currency: bizCurrencyMap.get(e.business_id) || 'NGN',
+      }));
+
+      setEvents(enriched);
+    } catch (error) {
+      console.warn('Failed to load events:', error);
+    } finally {
+      setLoading(false);
     }
-    load();
+  }
+
+  useEffect(() => {
+    loadData();
   }, []);
+
+  // Populate edit fields when an event is selected
+  useEffect(() => {
+    if (selected) {
+      setEditName(selected.name || '');
+      setEditDate(selected.date ? selected.date.split('T')[0] : '');
+      setEditTime(selected.date ? selected.date.split('T')[1]?.slice(0, 5) || '' : '');
+      setEditVenue(selected.venue || '');
+      setEditPrice(selected.price);
+      setEditStatus(selected.status || '');
+    }
+  }, [selected]);
+
+  async function handleSaveEvent() {
+    if (!selected || !canMutate) return;
+    setSavingEvent(true);
+    try {
+      const dateValue = editDate && editTime ? `${editDate}T${editTime}:00` : editDate || null;
+      await adminDb.from('events').update({
+        name: editName,
+        date: dateValue,
+        venue: editVenue,
+        price: editPrice,
+        status: editStatus,
+      }).eq('id', selected.id);
+      await logAudit({ action: 'edit_event', entity_type: 'events', entity_id: selected.id, details: { name: editName } });
+      loadData();
+      setSelected(null);
+    } catch { alert('Failed to save'); }
+    setSavingEvent(false);
+  }
+
+  async function handleCancelEvent() {
+    if (!selected || !canMutate) return;
+    if (!confirm(`Cancel event "${selected.name}"? This will set status to cancelled.`)) return;
+    setSavingEvent(true);
+    try {
+      await adminDb.from('events').update({ status: 'cancelled' }).eq('id', selected.id);
+      await logAudit({ action: 'cancel_event', entity_type: 'events', entity_id: selected.id, details: { name: selected.name } });
+      loadData();
+      setSelected(null);
+    } catch { alert('Failed to cancel event'); }
+    setSavingEvent(false);
+  }
 
   const filtered = events.filter(e => {
     if (statusFilter !== 'all' && e.status !== statusFilter) return false;
@@ -301,6 +359,89 @@ export default function Events() {
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Description</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{selected.description}</p>
+              </div>
+            )}
+
+            {/* Edit Section (admin only) */}
+            {canMutate && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-3">Edit Event</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Name</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={e => setEditName(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Venue</label>
+                    <input
+                      type="text"
+                      value={editVenue}
+                      onChange={e => setEditVenue(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={editDate}
+                      onChange={e => setEditDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Time</label>
+                    <input
+                      type="time"
+                      value={editTime}
+                      onChange={e => setEditTime(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Price</label>
+                    <input
+                      type="number"
+                      value={editPrice ?? ''}
+                      onChange={e => setEditPrice(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+                    <select
+                      value={editStatus}
+                      onChange={e => setEditStatus(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    >
+                      <option value="active">Active</option>
+                      <option value="cancelled">Cancelled</option>
+                      <option value="completed">Completed</option>
+                      <option value="draft">Draft</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-4 flex items-center gap-3">
+                  <button
+                    onClick={handleSaveEvent}
+                    disabled={savingEvent}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    {savingEvent ? 'Saving...' : 'Save Changes'}
+                  </button>
+                  <button
+                    onClick={handleCancelEvent}
+                    disabled={savingEvent || selected.status === 'cancelled'}
+                    className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Cancel Event
+                  </button>
+                </div>
               </div>
             )}
           </div>

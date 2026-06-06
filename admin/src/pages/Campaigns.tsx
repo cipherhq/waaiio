@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
+import { useAdminSession } from '@/components/AdminLayout';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
@@ -30,6 +31,9 @@ interface BusinessOption {
 }
 
 export default function Campaigns() {
+  const adminSession = useAdminSession();
+  const canMutate = adminSession?.role === 'admin';
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
   const [businesses, setBusinesses] = useState<BusinessOption[]>([]);
@@ -39,42 +43,80 @@ export default function Campaigns() {
   const [selected, setSelected] = useState<Campaign | null>(null);
   const perPage = 20;
 
-  useEffect(() => {
-    async function load() {
-      try {
-        // Load campaigns
-        const { data: campaignData } = await adminDb
-          .from('campaigns')
-          .select('*')
-          .order('created_at', { ascending: false });
+  // Edit state
+  const [editTitle, setEditTitle] = useState('');
+  const [editGoalAmount, setEditGoalAmount] = useState<number | null>(null);
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
+  const [editCampaignStatus, setEditCampaignStatus] = useState('');
+  const [savingCampaign, setSavingCampaign] = useState(false);
 
-        const rows = campaignData || [];
+  async function loadData() {
+    try {
+      // Load campaigns
+      const { data: campaignData } = await adminDb
+        .from('campaigns')
+        .select('*')
+        .order('created_at', { ascending: false });
 
-        // Load business names
-        const bizIds = [...new Set(rows.map(c => c.business_id).filter(Boolean))];
-        const { data: bizData } = bizIds.length > 0
-          ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
-          : { data: [] };
+      const rows = campaignData || [];
 
-        const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
-        setBusinesses(
-          (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
-        );
+      // Load business names
+      const bizIds = [...new Set(rows.map(c => c.business_id).filter(Boolean))];
+      const { data: bizData } = bizIds.length > 0
+        ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
+        : { data: [] };
 
-        const enriched: Campaign[] = rows.map(c => ({
-          ...c,
-          business_name: bizMap.get(c.business_id) || 'Unknown',
-        }));
+      const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
+      setBusinesses(
+        (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
+      );
 
-        setCampaigns(enriched);
-      } catch (error) {
-        console.warn('Failed to load campaigns:', error);
-      } finally {
-        setLoading(false);
-      }
+      const enriched: Campaign[] = rows.map(c => ({
+        ...c,
+        business_name: bizMap.get(c.business_id) || 'Unknown',
+      }));
+
+      setCampaigns(enriched);
+    } catch (error) {
+      console.warn('Failed to load campaigns:', error);
+    } finally {
+      setLoading(false);
     }
-    load();
+  }
+
+  useEffect(() => {
+    loadData();
   }, []);
+
+  // Populate edit fields when a campaign is selected
+  useEffect(() => {
+    if (selected) {
+      setEditTitle(selected.title || '');
+      setEditGoalAmount(selected.goal_amount);
+      setEditStartDate(selected.start_date ? selected.start_date.split('T')[0] : '');
+      setEditEndDate(selected.end_date ? selected.end_date.split('T')[0] : '');
+      setEditCampaignStatus(selected.status || '');
+    }
+  }, [selected]);
+
+  async function handleSaveCampaign() {
+    if (!selected || !canMutate) return;
+    setSavingCampaign(true);
+    try {
+      await adminDb.from('campaigns').update({
+        title: editTitle,
+        goal_amount: editGoalAmount,
+        start_date: editStartDate || null,
+        end_date: editEndDate || null,
+        status: editCampaignStatus,
+      }).eq('id', selected.id);
+      await logAudit({ action: 'edit_campaign', entity_type: 'campaigns', entity_id: selected.id, details: { title: editTitle } });
+      loadData();
+      setSelected(null);
+    } catch { alert('Failed to save'); }
+    setSavingCampaign(false);
+  }
 
   // Collect unique statuses
   const statuses = [...new Set(campaigns.map(c => c.status))].sort();
@@ -286,6 +328,73 @@ export default function Campaigns() {
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold uppercase text-gray-500 mb-2">Description</p>
                 <p className="text-sm text-gray-700 whitespace-pre-wrap">{selected.description}</p>
+              </div>
+            )}
+
+            {/* Edit Section (admin only) */}
+            {canMutate && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase text-gray-500 mb-3">Edit Campaign</p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Title</label>
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={e => setEditTitle(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Goal Amount</label>
+                    <input
+                      type="number"
+                      value={editGoalAmount ?? ''}
+                      onChange={e => setEditGoalAmount(e.target.value ? Number(e.target.value) : null)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Start Date</label>
+                    <input
+                      type="date"
+                      value={editStartDate}
+                      onChange={e => setEditStartDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">End Date</label>
+                    <input
+                      type="date"
+                      value={editEndDate}
+                      onChange={e => setEditEndDate(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Status</label>
+                    <select
+                      value={editCampaignStatus}
+                      onChange={e => setEditCampaignStatus(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+                    >
+                      <option value="active">Active</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                      <option value="draft">Draft</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <button
+                    onClick={handleSaveCampaign}
+                    disabled={savingCampaign}
+                    className="rounded-lg bg-brand px-4 py-2 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    {savingCampaign ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
               </div>
             )}
           </div>
