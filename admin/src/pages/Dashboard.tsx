@@ -40,6 +40,62 @@ export default function Dashboard() {
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
   const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number; revenueByCurrency: Record<string, number> }>>([]);
+  // Revenue summary with time periods
+  const [revenuePeriod, setRevenuePeriod] = useState<'week' | 'month' | 'all'>('month');
+  const [revenueSummary, setRevenueSummary] = useState<{ fees: Record<string, number>; volume: Record<string, number>; count: number }>({ fees: {}, volume: {}, count: 0 });
+  const [revenueLoading, setRevenueLoading] = useState(false);
+
+  // Load revenue summary when period changes
+  useEffect(() => {
+    async function loadRevenue() {
+      setRevenueLoading(true);
+      try {
+        const { adminQuery } = await import('@/lib/adminQuery');
+        const now = new Date();
+        let dateFilter: string | null = null;
+        if (revenuePeriod === 'month') {
+          dateFilter = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+        } else if (revenuePeriod === 'week') {
+          const weekAgo = new Date(now);
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          dateFilter = weekAgo.toISOString();
+        }
+
+        const filters: Array<{ column: string; op: string; value: unknown }> = [
+          { column: 'waived', op: 'eq', value: false },
+          { column: 'refunded_at', op: 'is', value: null },
+        ];
+        if (dateFilter) filters.push({ column: 'created_at', op: 'gte', value: dateFilter });
+
+        const { data: fees } = await adminQuery('platform_fees', {
+          select: 'fee_total, transaction_amount, business_id',
+          filters,
+        });
+
+        // Resolve business countries
+        const bizIds = [...new Set((fees || []).map((f: { business_id: string }) => f.business_id).filter(Boolean))];
+        const { data: bizData } = bizIds.length > 0
+          ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: bizIds }] })
+          : { data: [] };
+        const bizCountry = new Map((bizData || []).map((b: { id: string; country_code: string }) => [b.id, b.country_code || 'NG']));
+        const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+
+        const feesByCur: Record<string, number> = {};
+        const volByCur: Record<string, number> = {};
+        for (const f of fees || []) {
+          const cur = countryToCur[bizCountry.get(f.business_id) || 'NG'] || 'NGN';
+          feesByCur[cur] = (feesByCur[cur] || 0) + Number(f.fee_total || 0);
+          volByCur[cur] = (volByCur[cur] || 0) + Number(f.transaction_amount || 0);
+        }
+
+        setRevenueSummary({ fees: feesByCur, volume: volByCur, count: (fees || []).length });
+      } catch (err) {
+        console.error('Revenue load error:', err);
+      }
+      setRevenueLoading(false);
+    }
+    loadRevenue();
+  }, [revenuePeriod]);
 
   useEffect(() => {
     async function loadStats() {
@@ -449,6 +505,66 @@ export default function Dashboard() {
             </div>
           );
         })}
+      </div>
+
+      {/* Revenue Summary */}
+      <div className="mt-8">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">Platform Revenue</h2>
+            <p className="mt-0.5 text-xs text-gray-400">Fees earned from business transactions</p>
+          </div>
+          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
+            {([
+              { key: 'week' as const, label: 'This Week' },
+              { key: 'month' as const, label: 'This Month' },
+              { key: 'all' as const, label: 'All Time' },
+            ]).map(p => (
+              <button
+                key={p.key}
+                onClick={() => setRevenuePeriod(p.key)}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  revenuePeriod === p.key
+                    ? 'bg-gray-900 text-white'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {revenueLoading ? (
+          <div className="mt-4 flex justify-center py-8">
+            <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {Object.entries(revenueSummary.fees).filter(([, a]) => a > 0).map(([cur, amt]) => (
+              <div key={`fee-${cur}`} className="rounded-xl border border-green-200 bg-green-50 p-5">
+                <p className="text-xs font-medium text-green-600">Fees Earned ({cur})</p>
+                <p className="mt-1 text-2xl font-bold text-green-800">{formatMoney(amt, cur)}</p>
+                <p className="mt-1 text-xs text-green-500">
+                  from {formatMoney(revenueSummary.volume[cur] || 0, cur)} volume
+                </p>
+              </div>
+            ))}
+            {Object.entries(revenueSummary.fees).filter(([, a]) => a > 0).length === 0 && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50 p-5 sm:col-span-2">
+                <p className="text-xs font-medium text-gray-500">No revenue {revenuePeriod === 'all' ? 'yet' : `this ${revenuePeriod}`}</p>
+                <p className="mt-1 text-lg font-bold text-gray-400">—</p>
+              </div>
+            )}
+            <div className="rounded-xl border border-gray-200 bg-white p-5">
+              <p className="text-xs font-medium text-gray-500">Transactions</p>
+              <p className="mt-1 text-2xl font-bold text-gray-900">{revenueSummary.count}</p>
+              <p className="mt-1 text-xs text-gray-400">
+                {revenuePeriod === 'week' ? 'last 7 days' : revenuePeriod === 'month' ? 'this month' : 'all time'}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* System Health */}
