@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { WAIVER_TEMPLATES, fillWaiverPlaceholders } from '@/lib/waiver-templates';
 
 interface WaiverTemplate {
   id: string;
@@ -12,10 +13,13 @@ interface WaiverTemplate {
   fields: string[];
   is_active: boolean;
   require_before_booking: boolean;
+  pdf_url: string | null;
   token: string;
   created_at: string;
   updated_at: string;
 }
+
+type TemplateMode = 'blank' | 'template' | 'pdf';
 
 interface SignedWaiver {
   id: string;
@@ -51,6 +55,11 @@ export default function WaiversPage() {
   const [formBody, setFormBody] = useState('');
   const [formFields, setFormFields] = useState<string[]>(['name', 'signature', 'date']);
   const [formRequireBeforeBooking, setFormRequireBeforeBooking] = useState(false);
+  const [formPdfUrl, setFormPdfUrl] = useState('');
+  const [templateMode, setTemplateMode] = useState<TemplateMode>('blank');
+  const [selectedIndustryTemplate, setSelectedIndustryTemplate] = useState('');
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
 
@@ -117,6 +126,9 @@ export default function WaiversPage() {
     setFormBody('');
     setFormFields(['name', 'signature', 'date']);
     setFormRequireBeforeBooking(false);
+    setFormPdfUrl('');
+    setTemplateMode('blank');
+    setSelectedIndustryTemplate('');
     setEditingTemplate(null);
     setShowForm(false);
   }
@@ -127,25 +139,97 @@ export default function WaiversPage() {
     setFormBody(tpl.body);
     setFormFields(tpl.fields);
     setFormRequireBeforeBooking(tpl.require_before_booking);
+    setFormPdfUrl(tpl.pdf_url || '');
+    setTemplateMode(tpl.pdf_url ? 'pdf' : 'blank');
+    setSelectedIndustryTemplate('');
     setShowForm(true);
   }
 
+  function handleTemplateModeChange(mode: TemplateMode) {
+    setTemplateMode(mode);
+    if (mode === 'blank') {
+      setFormPdfUrl('');
+      setSelectedIndustryTemplate('');
+    } else if (mode === 'template') {
+      setFormPdfUrl('');
+    } else if (mode === 'pdf') {
+      setSelectedIndustryTemplate('');
+    }
+  }
+
+  function handleIndustryTemplateSelect(templateId: string) {
+    setSelectedIndustryTemplate(templateId);
+    const tpl = WAIVER_TEMPLATES.find(t => t.id === templateId);
+    if (tpl) {
+      setFormTitle(tpl.name);
+      const today = new Date().toLocaleDateString('en-US', {
+        month: 'long', day: 'numeric', year: 'numeric',
+      });
+      setFormBody(fillWaiverPlaceholders(tpl.content, {
+        business_name: business.name,
+        date: today,
+      }));
+    }
+  }
+
+  async function handlePdfUpload(file: File) {
+    if (!file || !file.name.toLowerCase().endsWith('.pdf')) {
+      showToast('Only PDF files are allowed');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('File must be under 5MB');
+      return;
+    }
+
+    setUploadingPdf(true);
+    try {
+      const supabase = createClient();
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `waivers/${business.id}/templates/${Date.now()}_${safeName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('contracts')
+        .upload(path, file, { contentType: 'application/pdf', upsert: false });
+
+      if (uploadError) {
+        showToast('Failed to upload PDF');
+        return;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('contracts')
+        .getPublicUrl(path);
+
+      setFormPdfUrl(urlData.publicUrl);
+      showToast('PDF uploaded');
+    } catch {
+      showToast('Failed to upload PDF');
+    } finally {
+      setUploadingPdf(false);
+    }
+  }
+
   async function handleSave() {
-    if (!formTitle.trim() || !formBody.trim()) return;
+    const hasPdf = templateMode === 'pdf' && formPdfUrl;
+    if (!formTitle.trim() || (!formBody.trim() && !hasPdf)) return;
     setSaving(true);
 
     try {
+      const payload = {
+        title: formTitle,
+        body: formBody || '',
+        fields: formFields,
+        require_before_booking: formRequireBeforeBooking,
+        pdf_url: hasPdf ? formPdfUrl : null,
+      };
+
       if (editingTemplate) {
         // Update
         const res = await fetch(`/api/waivers/templates/${editingTemplate.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: formTitle,
-            body: formBody,
-            fields: formFields,
-            require_before_booking: formRequireBeforeBooking,
-          }),
+          body: JSON.stringify(payload),
         });
         if (res.ok) {
           showToast('Template updated');
@@ -157,13 +241,7 @@ export default function WaiversPage() {
         const res = await fetch('/api/waivers/templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            business_id: business.id,
-            title: formTitle,
-            body: formBody,
-            fields: formFields,
-            require_before_booking: formRequireBeforeBooking,
-          }),
+          body: JSON.stringify({ business_id: business.id, ...payload }),
         });
         if (res.ok) {
           showToast('Template created');
@@ -273,6 +351,73 @@ export default function WaiversPage() {
               </h2>
 
               <div className="space-y-4">
+                {/* Template mode selector — only show when creating new */}
+                {!editingTemplate && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Start from
+                    </label>
+                    <div className="flex gap-2">
+                      {([
+                        { key: 'blank' as TemplateMode, label: 'Blank' },
+                        { key: 'template' as TemplateMode, label: 'Industry Template' },
+                        { key: 'pdf' as TemplateMode, label: 'Upload PDF' },
+                      ]).map(opt => (
+                        <button
+                          key={opt.key}
+                          type="button"
+                          onClick={() => handleTemplateModeChange(opt.key)}
+                          className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
+                            templateMode === opt.key
+                              ? 'bg-brand text-white'
+                              : 'border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Industry template selector */}
+                {templateMode === 'template' && !editingTemplate && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Choose a template
+                    </label>
+                    <select
+                      value={selectedIndustryTemplate}
+                      onChange={e => handleIndustryTemplateSelect(e.target.value)}
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    >
+                      <option value="">Select a template...</option>
+                      <optgroup label="Fitness">
+                        <option value="fitness">Fitness &amp; Gym Liability Waiver</option>
+                      </optgroup>
+                      <optgroup label="Beauty &amp; Wellness">
+                        <option value="salon-spa">Salon &amp; Spa Treatment Waiver</option>
+                        <option value="tattoo">Tattoo &amp; Body Art Consent</option>
+                      </optgroup>
+                      <optgroup label="Recreation">
+                        <option value="adventure">Adventure &amp; Sports Activity Waiver</option>
+                      </optgroup>
+                      <optgroup label="Healthcare">
+                        <option value="medical">Medical/Health Treatment Consent</option>
+                      </optgroup>
+                      <optgroup label="Events">
+                        <option value="event">Event Participation Waiver</option>
+                      </optgroup>
+                      <optgroup label="Real Estate">
+                        <option value="property">Property Viewing / Short-Let Waiver</option>
+                      </optgroup>
+                      <optgroup label="General">
+                        <option value="general">General Liability Waiver</option>
+                      </optgroup>
+                    </select>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Title
@@ -287,18 +432,82 @@ export default function WaiversPage() {
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Waiver Text
-                  </label>
-                  <textarea
-                    value={formBody}
-                    onChange={e => setFormBody(e.target.value)}
-                    placeholder="Enter the full waiver/release text that participants must read and agree to..."
-                    rows={8}
-                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
-                  />
-                </div>
+                {/* PDF upload area */}
+                {templateMode === 'pdf' ? (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Waiver PDF
+                    </label>
+                    {formPdfUrl ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 px-3 py-2.5">
+                          <svg className="h-5 w-5 flex-shrink-0 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clipRule="evenodd" />
+                          </svg>
+                          <span className="truncate text-sm text-gray-700 dark:text-gray-300">PDF uploaded</span>
+                          <button
+                            type="button"
+                            onClick={() => { setFormPdfUrl(''); if (pdfInputRef.current) pdfInputRef.current.value = ''; }}
+                            className="ml-auto text-sm font-medium text-red-500 hover:text-red-600"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <iframe src={formPdfUrl} className="w-full h-48 rounded-lg border border-gray-200 dark:border-gray-600" title="PDF preview" />
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <div
+                          onClick={() => pdfInputRef.current?.click()}
+                          className="flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 px-4 py-8 transition hover:border-brand"
+                        >
+                          <svg className="mb-2 h-8 w-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                          </svg>
+                          <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
+                            {uploadingPdf ? 'Uploading...' : 'Click to upload PDF'}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-400">PDF only, max 5MB</p>
+                        </div>
+                        <input
+                          ref={pdfInputRef}
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          className="hidden"
+                          onChange={e => {
+                            const file = e.target.files?.[0];
+                            if (file) handlePdfUpload(file);
+                          }}
+                        />
+                      </div>
+                    )}
+                    <div className="mt-2">
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Description (optional)
+                      </label>
+                      <textarea
+                        value={formBody}
+                        onChange={e => setFormBody(e.target.value)}
+                        placeholder="Optional description or summary of the PDF waiver..."
+                        rows={3}
+                        className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Waiver Text
+                    </label>
+                    <textarea
+                      value={formBody}
+                      onChange={e => setFormBody(e.target.value)}
+                      placeholder="Enter the full waiver/release text that participants must read and agree to..."
+                      rows={8}
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -341,7 +550,7 @@ export default function WaiversPage() {
                 </button>
                 <button
                   onClick={handleSave}
-                  disabled={saving || !formTitle.trim() || !formBody.trim()}
+                  disabled={saving || !formTitle.trim() || (!formBody.trim() && !(templateMode === 'pdf' && formPdfUrl))}
                   className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-700 disabled:opacity-50"
                 >
                   {saving ? 'Saving...' : editingTemplate ? 'Update' : 'Create'}
@@ -385,6 +594,11 @@ export default function WaiversPage() {
                         >
                           {tpl.is_active ? 'Active' : 'Inactive'}
                         </span>
+                        {tpl.pdf_url && (
+                          <span className="inline-flex items-center rounded-full bg-red-100 dark:bg-red-900/30 px-2 py-0.5 text-xs font-medium text-red-700 dark:text-red-400">
+                            PDF
+                          </span>
+                        )}
                       </div>
                       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         Created {new Date(tpl.created_at).toLocaleDateString()}

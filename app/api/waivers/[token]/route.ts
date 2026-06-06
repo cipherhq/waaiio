@@ -18,7 +18,7 @@ export async function GET(
 
     const { data: template, error } = await supabase
       .from('waiver_templates')
-      .select('id, title, body, fields, business_id, is_active')
+      .select('id, title, body, fields, business_id, is_active, pdf_url')
       .eq('token', token)
       .single();
 
@@ -42,6 +42,7 @@ export async function GET(
       title: template.title,
       body: template.body,
       fields: template.fields,
+      pdf_url: template.pdf_url || null,
       business_name: biz?.name || 'Business',
       logo_url: biz?.logo_url || null,
     });

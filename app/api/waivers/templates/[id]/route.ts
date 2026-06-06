@@ -13,7 +13,7 @@ export async function PATCH(
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { title, body: waiverBody, fields, is_active, require_before_booking } = body;
+    const { title, body: waiverBody, fields, is_active, require_before_booking, pdf_url } = body;
 
     // Build update object with only provided fields
     const updates: Record<string, unknown> = {};
@@ -22,6 +22,7 @@ export async function PATCH(
     if (fields !== undefined) updates.fields = fields;
     if (is_active !== undefined) updates.is_active = is_active;
     if (require_before_booking !== undefined) updates.require_before_booking = require_before_booking;
+    if (pdf_url !== undefined) updates.pdf_url = pdf_url;
 
     if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 });

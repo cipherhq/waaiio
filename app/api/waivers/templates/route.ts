@@ -37,10 +37,10 @@ export async function POST(request: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await request.json();
-    const { business_id, title, body: waiverBody, fields, require_before_booking } = body;
+    const { business_id, title, body: waiverBody, fields, require_before_booking, pdf_url } = body;
 
-    if (!business_id || !title || !waiverBody) {
-      return NextResponse.json({ error: 'business_id, title, and body are required' }, { status: 400 });
+    if (!business_id || !title || (!waiverBody && !pdf_url)) {
+      return NextResponse.json({ error: 'business_id, title, and body (or pdf_url) are required' }, { status: 400 });
     }
 
     if (title.length > 300) {
@@ -57,15 +57,18 @@ export async function POST(request: NextRequest) {
 
     if (!biz) return NextResponse.json({ error: 'Business not found' }, { status: 404 });
 
+    const insertData: Record<string, unknown> = {
+      business_id,
+      title,
+      body: waiverBody || '',
+      fields: fields || ['name', 'signature', 'date'],
+      require_before_booking: require_before_booking || false,
+    };
+    if (pdf_url) insertData.pdf_url = pdf_url;
+
     const { data, error } = await supabase
       .from('waiver_templates')
-      .insert({
-        business_id,
-        title,
-        body: waiverBody,
-        fields: fields || ['name', 'signature', 'date'],
-        require_before_booking: require_before_booking || false,
-      })
+      .insert(insertData)
       .select()
       .single();
 

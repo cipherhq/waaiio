@@ -8,6 +8,7 @@ interface WaiverInfo {
   title: string;
   body: string;
   fields: string[];
+  pdf_url: string | null;
   business_name: string;
   logo_url: string | null;
 }
@@ -262,14 +263,22 @@ export default function WaiverSignPage() {
       <main className="flex flex-1 flex-col items-center px-4 py-6">
         <div className="w-full max-w-lg space-y-6 pb-24 md:pb-6">
 
-          {/* Waiver body text */}
+          {/* Waiver body text or PDF */}
           <div>
             <h2 className="mb-2 text-sm font-semibold text-gray-700">Waiver / Release</h2>
-            <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-              <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700">
-                {waiver?.body}
-              </pre>
-            </div>
+            {waiver?.pdf_url ? (
+              <iframe
+                src={waiver.pdf_url}
+                className="w-full h-96 rounded-lg border border-gray-200 shadow-sm"
+                title="Waiver PDF"
+              />
+            ) : (
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-gray-700">
+                  {waiver?.body}
+                </pre>
+              </div>
+            )}
           </div>
 
           {/* Agreement checkbox */}
