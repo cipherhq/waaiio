@@ -31,9 +31,9 @@ export default function WaiverSignPage() {
   const [agreed, setAgreed] = useState(false);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [customerPhone, setCustomerPhone] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
-  const [sendVia, setSendVia] = useState<'email' | 'whatsapp' | 'both'>('email');
+  const [alsoWhatsApp, setAlsoWhatsApp] = useState(false);
+  const [customerPhone, setCustomerPhone] = useState('');
   const [emergencyContactName, setEmergencyContactName] = useState('');
   const [emergencyContactPhone, setEmergencyContactPhone] = useState('');
   const [medicalConditions, setMedicalConditions] = useState('');
@@ -158,9 +158,9 @@ export default function WaiverSignPage() {
           first_name: firstName.trim(),
           last_name: lastName.trim(),
           customer_name: fullName,
-          customer_phone: customerPhone || undefined,
-          customer_email: customerEmail || undefined,
-          send_via: sendVia,
+          customer_phone: alsoWhatsApp ? customerPhone : undefined,
+          customer_email: customerEmail,
+          send_via: alsoWhatsApp ? 'both' : 'email',
           signature: signatureData,
           metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
         }),
@@ -181,11 +181,9 @@ export default function WaiverSignPage() {
   }
 
   const hasFields = (field: string) => waiver?.fields?.includes(field);
-  const needsEmail = sendVia === 'email' || sendVia === 'both';
-  const needsPhone = sendVia === 'whatsapp' || sendVia === 'both';
   const canSubmit = firstName.trim() && lastName.trim() && hasDrawn && agreed
-    && (!needsEmail || customerEmail.trim())
-    && (!needsPhone || customerPhone.trim());
+    && customerEmail.trim()
+    && (!alsoWhatsApp || customerPhone.trim());
 
   if (state === 'loading') {
     return (
@@ -319,60 +317,44 @@ export default function WaiverSignPage() {
               </div>
             </div>
 
-            {/* How to receive signed copy */}
+            {/* Email — always required */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Send my signed copy via
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Email <span className="text-red-500">*</span>
               </label>
-              <div className="flex gap-2">
-                {(['email', 'whatsapp', 'both'] as const).map(opt => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => setSendVia(opt)}
-                    className={`flex-1 rounded-lg border px-3 py-2 text-xs font-medium transition ${
-                      sendVia === opt
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    {opt === 'email' ? '📧 Email' : opt === 'whatsapp' ? '💬 WhatsApp' : '📧 + 💬 Both'}
-                  </button>
-                ))}
-              </div>
+              <input
+                type="email"
+                value={customerEmail}
+                onChange={e => setCustomerEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-400">Your signed copy will be sent here</p>
             </div>
 
-            {/* Email — required if send via email or both */}
-            {(sendVia === 'email' || sendVia === 'both') && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Email <span className="text-red-500">*</span>
-                </label>
+            {/* Optional WhatsApp copy */}
+            <div>
+              <label className="flex items-center gap-2.5 cursor-pointer">
                 <input
-                  type="email"
-                  value={customerEmail}
-                  onChange={e => setCustomerEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  type="checkbox"
+                  checked={alsoWhatsApp}
+                  onChange={e => setAlsoWhatsApp(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
-              </div>
-            )}
-
-            {/* Phone — required if send via whatsapp or both */}
-            {(sendVia === 'whatsapp' || sendVia === 'both') && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  WhatsApp Number <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="tel"
-                  value={customerPhone}
-                  onChange={e => setCustomerPhone(e.target.value)}
-                  placeholder="+1 (555) 000-0000"
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-              </div>
-            )}
+                <span className="text-sm text-gray-700">Also send a copy to my WhatsApp</span>
+              </label>
+              {alsoWhatsApp && (
+                <div className="mt-2">
+                  <input
+                    type="tel"
+                    value={customerPhone}
+                    onChange={e => setCustomerPhone(e.target.value)}
+                    placeholder="+1 (555) 000-0000"
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Emergency Contact */}
             {hasFields('emergency_contact') && (
