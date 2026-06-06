@@ -3,6 +3,28 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
+// ── Maintenance Mode Cache ──
+let maintenanceCache: { value: boolean; expiresAt: number } | null = null;
+const MAINTENANCE_CACHE_TTL = 30_000; // 30 seconds
+
+async function isMaintenanceMode(supabase: ReturnType<typeof createServerClient>): Promise<boolean> {
+  if (maintenanceCache && Date.now() < maintenanceCache.expiresAt) {
+    return maintenanceCache.value;
+  }
+  try {
+    const { data } = await supabase
+      .from('platform_settings')
+      .select('value')
+      .eq('key', 'maintenance_mode')
+      .single();
+    const isOn = data?.value === true;
+    maintenanceCache = { value: isOn, expiresAt: Date.now() + MAINTENANCE_CACHE_TTL };
+    return isOn;
+  } catch {
+    return false; // fail open — don't block users if DB is down
+  }
+}
+
 /** Apply common security headers to any response */
 function applySecurityHeaders(response: NextResponse): NextResponse {
   response.headers.set('X-Content-Type-Options', 'nosniff');
@@ -178,6 +200,28 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  // ── Maintenance Mode Check ──
+  // Check if maintenance_mode is enabled (cached 30s to avoid DB hit per request)
+  const isPublicPage = !request.nextUrl.pathname.startsWith('/api/')
+    && !request.nextUrl.pathname.startsWith('/dashboard')
+    && !request.nextUrl.pathname.startsWith('/maintenance')
+    && !request.nextUrl.pathname.startsWith('/_next')
+    && !request.nextUrl.pathname.startsWith('/favicon');
+
+  const isDashboardPage = request.nextUrl.pathname.startsWith('/dashboard');
+
+  if (isPublicPage || isDashboardPage) {
+    const maintenanceOn = await isMaintenanceMode(supabase);
+    if (maintenanceOn) {
+      // Public pages → redirect to maintenance page
+      if (isPublicPage && request.nextUrl.pathname !== '/maintenance') {
+        const url = request.nextUrl.clone();
+        url.pathname = '/maintenance';
+        return applySecurityHeaders(NextResponse.redirect(url));
+      }
+    }
+  }
 
   // Protect dashboard routes
   const protectedPaths = ['/dashboard'];

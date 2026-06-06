@@ -75,6 +75,19 @@ export class BotService {
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)
     }
 
+    // Pre-check 0b: Maintenance mode
+    try {
+      const { data: maint } = await this.supabase
+        .from('platform_settings')
+        .select('value')
+        .eq('key', 'maintenance_mode')
+        .single();
+      if (maint?.value === true) {
+        await this.sendText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
+        return;
+      }
+    } catch {} // fail open
+
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
     if (timeoutCheck.timedOut) {
