@@ -8,6 +8,22 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { PhoneInput } from '@/components/auth/PhoneInput';
+
+interface ServiceOption {
+  id: string;
+  name: string;
+  price: number;
+  duration_minutes: number | null;
+  requires_staff: boolean;
+  staff_ids: string[];
+  allow_staff_selection: boolean;
+}
+
+interface StaffOption {
+  id: string;
+  name: string;
+}
 
 interface Booking {
   id: string;
@@ -135,6 +151,154 @@ export default function BookingsPage() {
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [rescheduling, setRescheduling] = useState(false);
+
+  // New Booking form state
+  const [showNewBooking, setShowNewBooking] = useState(false);
+  const [nbServices, setNbServices] = useState<ServiceOption[]>([]);
+  const [nbStaff, setNbStaff] = useState<StaffOption[]>([]);
+  const [nbLoadingServices, setNbLoadingServices] = useState(false);
+  const [nbSubmitting, setNbSubmitting] = useState(false);
+  const [nbSuccess, setNbSuccess] = useState<{ refCode: string; whatsappSent: boolean } | null>(null);
+  const [nbForm, setNbForm] = useState({
+    serviceId: '',
+    date: '',
+    time: '',
+    staffId: '',
+    customerName: '',
+    customerPhone: '',
+    customerEmail: '',
+    partySize: 1,
+    notes: '',
+    sendConfirmation: true,
+  });
+  const [nbError, setNbError] = useState('');
+
+  // Selected service for the new booking form
+  const nbSelectedService = nbServices.find(s => s.id === nbForm.serviceId);
+
+  // Generate time slots based on business operating hours
+  const nbTimeSlots: string[] = (() => {
+    if (!nbForm.date || !nbSelectedService) return [];
+    const dayOfWeek = new Date(nbForm.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
+    const meta = business.metadata as Record<string, unknown> | null;
+    const opHours = meta?.operating_hours as Record<string, { open?: string; close?: string; is_open?: boolean }> | undefined;
+    let openTime = '09:00';
+    let closeTime = '17:00';
+    if (opHours && opHours[dayOfWeek]) {
+      const dayHours = opHours[dayOfWeek];
+      if (dayHours.is_open === false) return [];
+      if (dayHours.open) openTime = dayHours.open;
+      if (dayHours.close) closeTime = dayHours.close;
+    }
+    const duration = nbSelectedService.duration_minutes || 30;
+    const slots: string[] = [];
+    const [openH, openM] = openTime.split(':').map(Number);
+    const [closeH, closeM] = closeTime.split(':').map(Number);
+    let current = openH * 60 + openM;
+    const end = closeH * 60 + closeM;
+    while (current + duration <= end) {
+      const h = Math.floor(current / 60).toString().padStart(2, '0');
+      const m = (current % 60).toString().padStart(2, '0');
+      slots.push(`${h}:${m}`);
+      current += duration;
+    }
+    return slots;
+  })();
+
+  // Load services when new booking form opens
+  async function loadNewBookingServices() {
+    setNbLoadingServices(true);
+    const supabase = createClient();
+    const { data } = await supabase
+      .from('services')
+      .select('id, name, price, duration_minutes, requires_staff, staff_ids, allow_staff_selection')
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .is('deleted_at', null)
+      .order('sort_order');
+    setNbServices((data || []) as ServiceOption[]);
+    setNbLoadingServices(false);
+  }
+
+  // Load staff for new booking form when a service requiring staff is selected
+  async function loadNewBookingStaff(service: ServiceOption) {
+    const supabase = createClient();
+    let query = supabase
+      .from('business_staff')
+      .select('id, name')
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+      .order('name');
+
+    const { data } = await query;
+    let staffData = (data || []) as StaffOption[];
+
+    // Filter by staff_ids if service has specific staff
+    if (service.allow_staff_selection && service.staff_ids && service.staff_ids.length > 0) {
+      staffData = staffData.filter(s => service.staff_ids.includes(s.id));
+    }
+
+    setNbStaff(staffData);
+  }
+
+  function resetNewBookingForm() {
+    setNbForm({
+      serviceId: '',
+      date: '',
+      time: '',
+      staffId: '',
+      customerName: '',
+      customerPhone: '',
+      customerEmail: '',
+      partySize: 1,
+      notes: '',
+      sendConfirmation: true,
+    });
+    setNbError('');
+    setNbSuccess(null);
+    setNbStaff([]);
+  }
+
+  async function handleNewBookingSubmit() {
+    setNbError('');
+    if (!nbForm.serviceId || !nbForm.date || !nbForm.time || !nbForm.customerName || !nbForm.customerPhone) {
+      setNbError('Please fill in all required fields.');
+      return;
+    }
+    setNbSubmitting(true);
+    try {
+      const res = await fetch('/api/bookings/create-manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          businessId: business.id,
+          serviceId: nbForm.serviceId,
+          date: nbForm.date,
+          time: nbForm.time,
+          customerName: nbForm.customerName,
+          customerPhone: nbForm.customerPhone,
+          customerEmail: nbForm.customerEmail || undefined,
+          partySize: nbForm.partySize,
+          staffId: nbForm.staffId || undefined,
+          notes: nbForm.notes || undefined,
+          sendConfirmation: nbForm.sendConfirmation,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setNbError(data.error || 'Failed to create booking');
+      } else {
+        setNbSuccess({
+          refCode: data.reference_code,
+          whatsappSent: data.whatsapp_sent,
+        });
+        fetchBookings();
+      }
+    } catch {
+      setNbError('Network error. Please try again.');
+    }
+    setNbSubmitting(false);
+  }
 
   const selected = bookings.find((b) => b.id === selectedId) || null;
 
@@ -406,7 +570,21 @@ export default function BookingsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{title}</h1>
+        {!isReservationType && (
+          <button
+            onClick={() => {
+              resetNewBookingForm();
+              setShowNewBooking(true);
+              loadNewBookingServices();
+            }}
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 transition"
+          >
+            + New Booking
+          </button>
+        )}
+      </div>
 
       <PageHelp
         pageKey="reservations"
@@ -734,6 +912,267 @@ export default function BookingsPage() {
           countryCode={(business.country_code || 'NG') as CountryCode}
           onSuccess={() => { fetchBookings(); setSelectedId(null); }}
         />
+      )}
+
+      {/* New Booking Slide-over */}
+      {showNewBooking && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => { if (!nbSubmitting) setShowNewBooking(false); }}>
+          <div className="fixed inset-0 bg-black/30" />
+          <div className="relative z-10 h-full w-full max-w-lg overflow-y-auto bg-white dark:bg-gray-900 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-900 px-6 py-4">
+              <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">New Booking</h2>
+              <button
+                aria-label="Close"
+                onClick={() => { if (!nbSubmitting) setShowNewBooking(false); }}
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-5">
+              {/* Success State */}
+              {nbSuccess ? (
+                <div className="text-center py-8">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30">
+                    <svg className="h-6 w-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Booking Created</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    Reference: <span className="font-mono font-bold text-brand">{nbSuccess.refCode}</span>
+                  </p>
+                  {nbSuccess.whatsappSent && (
+                    <p className="mt-2 text-sm text-green-600 dark:text-green-400">Confirmation sent via WhatsApp</p>
+                  )}
+                  <button
+                    onClick={() => setShowNewBooking(false)}
+                    className="mt-6 rounded-lg bg-brand px-6 py-2.5 text-sm font-medium text-white hover:bg-brand-600"
+                  >
+                    Done
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Error */}
+                  {nbError && (
+                    <div className="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3 text-sm text-red-700 dark:text-red-300">
+                      {nbError}
+                    </div>
+                  )}
+
+                  {/* Service */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Service <span className="text-red-500">*</span>
+                    </label>
+                    {nbLoadingServices ? (
+                      <div className="flex items-center gap-2 text-sm text-gray-400">
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                        Loading services...
+                      </div>
+                    ) : (
+                      <select
+                        value={nbForm.serviceId}
+                        onChange={(e) => {
+                          const svc = nbServices.find(s => s.id === e.target.value);
+                          setNbForm(f => ({ ...f, serviceId: e.target.value, staffId: '', time: '' }));
+                          if (svc?.requires_staff) loadNewBookingStaff(svc);
+                          else setNbStaff([]);
+                        }}
+                        className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                      >
+                        <option value="">Select a service</option>
+                        {nbServices.map(s => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} - {formatCurrency(s.price, (business.country_code || 'NG') as CountryCode)}
+                            {s.duration_minutes ? ` (${s.duration_minutes}min)` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Date */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Date <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="date"
+                      min={new Date().toISOString().split('T')[0]}
+                      value={nbForm.date}
+                      onChange={(e) => setNbForm(f => ({ ...f, date: e.target.value, time: '' }))}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                    />
+                  </div>
+
+                  {/* Time */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Time <span className="text-red-500">*</span>
+                    </label>
+                    {nbForm.date && nbSelectedService ? (
+                      nbTimeSlots.length > 0 ? (
+                        <select
+                          value={nbForm.time}
+                          onChange={(e) => setNbForm(f => ({ ...f, time: e.target.value }))}
+                          className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                        >
+                          <option value="">Select a time</option>
+                          {nbTimeSlots.map(t => (
+                            <option key={t} value={t}>{t}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-sm text-yellow-600 dark:text-yellow-400">No available slots for this date.</p>
+                      )
+                    ) : (
+                      <p className="text-sm text-gray-400 dark:text-gray-500">Select a service and date first</p>
+                    )}
+                  </div>
+
+                  {/* Staff (conditional) */}
+                  {nbSelectedService?.requires_staff && nbStaff.length > 0 && (
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Staff
+                      </label>
+                      <select
+                        value={nbForm.staffId}
+                        onChange={(e) => setNbForm(f => ({ ...f, staffId: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                      >
+                        <option value="">Any available</option>
+                        {nbStaff.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* Customer Name */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Customer Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={nbForm.customerName}
+                      onChange={(e) => setNbForm(f => ({ ...f, customerName: e.target.value }))}
+                      placeholder="Full name"
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                    />
+                  </div>
+
+                  {/* Customer Phone */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Customer Phone <span className="text-red-500">*</span>
+                    </label>
+                    <PhoneInput
+                      value={nbForm.customerPhone}
+                      onChange={(val) => setNbForm(f => ({ ...f, customerPhone: val }))}
+                      countryCode={(business.country_code || 'NG') as CountryCode}
+                    />
+                  </div>
+
+                  {/* Customer Email */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Customer Email
+                    </label>
+                    <input
+                      type="email"
+                      value={nbForm.customerEmail}
+                      onChange={(e) => setNbForm(f => ({ ...f, customerEmail: e.target.value }))}
+                      placeholder="email@example.com"
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                    />
+                  </div>
+
+                  {/* Party Size */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {labels.quantityLabel || 'Guests'}
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={nbForm.partySize}
+                      onChange={(e) => setNbForm(f => ({ ...f, partySize: Math.max(1, parseInt(e.target.value) || 1) }))}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
+                    />
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                      Notes
+                    </label>
+                    <textarea
+                      value={nbForm.notes}
+                      onChange={(e) => setNbForm(f => ({ ...f, notes: e.target.value }))}
+                      rows={3}
+                      placeholder="Any special requests or notes..."
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2.5 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand resize-none"
+                    />
+                  </div>
+
+                  {/* Send WhatsApp Confirmation */}
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={nbForm.sendConfirmation}
+                      onChange={(e) => setNbForm(f => ({ ...f, sendConfirmation: e.target.checked }))}
+                      className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-brand focus:ring-brand"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-300">Send WhatsApp confirmation to customer</span>
+                  </label>
+
+                  {/* Summary */}
+                  {nbSelectedService && nbForm.date && nbForm.time && (
+                    <div className="rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-4">
+                      <h3 className="text-xs font-semibold uppercase text-gray-400 dark:text-gray-500 mb-2">Summary</h3>
+                      <div className="space-y-1 text-sm">
+                        <p className="text-gray-900 dark:text-gray-100"><span className="text-gray-500 dark:text-gray-400">Service:</span> {nbSelectedService.name}</p>
+                        <p className="text-gray-900 dark:text-gray-100"><span className="text-gray-500 dark:text-gray-400">Date:</span> {new Date(nbForm.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+                        <p className="text-gray-900 dark:text-gray-100"><span className="text-gray-500 dark:text-gray-400">Time:</span> {nbForm.time}</p>
+                        <p className="text-gray-900 dark:text-gray-100"><span className="text-gray-500 dark:text-gray-400">Amount:</span> {formatCurrency(nbSelectedService.price, (business.country_code || 'NG') as CountryCode)}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Submit */}
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      onClick={handleNewBookingSubmit}
+                      disabled={nbSubmitting || !nbForm.serviceId || !nbForm.date || !nbForm.time || !nbForm.customerName || !nbForm.customerPhone}
+                      className="flex-1 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                    >
+                      {nbSubmitting ? (
+                        <span className="flex items-center justify-center gap-2">
+                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                          Creating...
+                        </span>
+                      ) : (
+                        'Create Booking'
+                      )}
+                    </button>
+                    <button
+                      onClick={() => setShowNewBooking(false)}
+                      disabled={nbSubmitting}
+                      className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Detail Panel */}
