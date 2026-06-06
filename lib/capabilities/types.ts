@@ -2,7 +2,7 @@
 // Capability Type Definitions
 // ═══════════════════════════════════════════════════════
 
-export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'table_reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership' | 'estimates' | 'packages' | 'class_booking' | 'multi_location';
+export type CapabilityId = 'scheduling' | 'appointment' | 'payment' | 'ordering' | 'ticketing' | 'reservation' | 'table_reservation' | 'whatsapp_sign' | 'reminders' | 'crowdfunding' | 'reports' | 'queue' | 'feedback' | 'loyalty' | 'chat' | 'waitlist' | 'referral' | 'staff' | 'invoice' | 'survey' | 'poll' | 'giving' | 'broadcast' | 'recurring' | 'auto_reply' | 'membership' | 'estimates' | 'packages' | 'class_booking' | 'multi_location' | 'waiver';
 
 export interface CapabilityDefinition {
   id: CapabilityId;
@@ -49,6 +49,7 @@ export const CAPABILITIES: CapabilityDefinition[] = [
   { id: 'packages', label: 'Session Packages', description: 'Sell multi-session bundles. Customers buy once, redeem over time.', icon: '🎫' },
   { id: 'class_booking', label: 'Class Booking', description: 'Group classes with capacity limits. Customers sign up for available slots.', icon: '👥' },
   { id: 'multi_location', label: 'Multi-Location', description: 'Manage multiple branches. Customers choose their preferred location.', icon: '📍' },
+  { id: 'waiver', label: 'Waivers', description: 'Collect liability waivers and release forms before services. Customers sign digitally from their phone.', icon: '📋' },
 ];
 
 export const CAPABILITY_MAP: Record<CapabilityId, CapabilityDefinition> = Object.fromEntries(
@@ -99,6 +100,7 @@ export const CAPABILITY_TIER_REQUIREMENTS: Record<CapabilityId, SubscriptionTier
   packages: 'growth',       // Session bundles (growth feature)
   class_booking: 'growth',  // Group classes with capacity
   multi_location: 'growth', // Multi-branch management
+  waiver: 'growth',         // Liability waivers and release forms
 };
 
 const TIER_RANK: Record<SubscriptionTier, number> = { free: 0, growth: 1, business: 2 };
