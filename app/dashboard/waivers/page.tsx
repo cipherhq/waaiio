@@ -201,7 +201,7 @@ export default function WaiversPage() {
   }
 
   function copyLink(token: string) {
-    const url = `${appUrl}/waiver/${token}`;
+    const url = `${appUrl}/w/${token}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopiedToken(token);
       setTimeout(() => setCopiedToken(null), 2000);
