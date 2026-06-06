@@ -122,12 +122,16 @@ export async function POST(request: NextRequest) {
           (await resolver.getSharedChannelForCountry(biz?.country_code || 'NG'));
 
         if (resolved) {
+          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+          const viewUrl = `${appUrl}/w/view/${signed.id}`;
           const confirmMsg = [
             `✅ *Waiver Signed*`,
             '',
             `Hi ${first_name || customerName}, you have signed the "${template.title}" waiver for *${biz?.name || 'the business'}*.`,
             '',
-            `This message serves as your signed copy.`,
+            `View your signed copy anytime:`,
+            viewUrl,
+            '',
             `📎 Ref: WAI-${signed.id.slice(0, 6).toUpperCase()}`,
           ].join('\n');
           await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg });
@@ -147,7 +151,7 @@ export async function POST(request: NextRequest) {
           to: customer_email,
           from: businessFrom(biz?.name || 'Business'),
           subject: `Waiver Signed - ${template.title}`,
-          html: `<p>Hi ${first_name || customerName},</p><p>You have signed the <strong>"${template.title}"</strong> waiver for <strong>${biz?.name || 'the business'}</strong>.</p><p>This email serves as your signed copy.</p><p><strong>Reference:</strong> WAI-${signed.id.slice(0, 6).toUpperCase()}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          html: `<p>Hi ${first_name || customerName},</p><p>You have signed the <strong>"${template.title}"</strong> waiver for <strong>${biz?.name || 'the business'}</strong>.</p><p><strong>Reference:</strong> WAI-${signed.id.slice(0, 6).toUpperCase()}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/w/view/${signed.id}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Copy</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
         });
       } catch (emailErr) {
         logger.warn('Failed to send waiver email confirmation:', emailErr);
