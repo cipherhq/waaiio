@@ -64,9 +64,10 @@ export default function Finance() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
 
-  // Date range filter
+  // Filters
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [countryFilter, setCountryFilter] = useState<string>('all');
 
   useEffect(() => {
     async function load() {
@@ -90,16 +91,35 @@ export default function Finance() {
     load();
   }, []);
 
-  // Date-filtered data
+  // Country map for filtering
+  const bizCountryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const b of businesses) map.set(b.id, b.country_code || 'NG');
+    return map;
+  }, [businesses]);
+
+  // Available countries for filter
+  const availableCountries = useMemo(() => {
+    const countries = new Set(businesses.map(b => b.country_code || 'NG'));
+    return Array.from(countries).sort();
+  }, [businesses]);
+
+  const countryLabels: Record<string, string> = { NG: 'Nigeria', US: 'United States', CA: 'Canada', GB: 'United Kingdom', GH: 'Ghana' };
+
+  // Date + country filtered data
   function inRange(date: string): boolean {
     if (dateFrom && date < dateFrom) return false;
     if (dateTo && date > dateTo + 'T23:59:59') return false;
     return true;
   }
-  const filteredPayments = useMemo(() => payments.filter(p => inRange(p.created_at)), [payments, dateFrom, dateTo]);
-  const filteredFees = useMemo(() => fees.filter(f => inRange(f.created_at)), [fees, dateFrom, dateTo]);
+  function matchesCountry(businessId: string): boolean {
+    if (countryFilter === 'all') return true;
+    return bizCountryMap.get(businessId) === countryFilter;
+  }
+  const filteredPayments = useMemo(() => payments.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payments, dateFrom, dateTo, countryFilter, bizCountryMap]);
+  const filteredFees = useMemo(() => fees.filter(f => inRange(f.created_at) && matchesCountry(f.business_id)), [fees, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at)), [payouts, dateFrom, dateTo]);
-  const filteredRefunds = useMemo(() => refunds.filter(r => inRange(r.created_at)), [refunds, dateFrom, dateTo]);
+  const filteredRefunds = useMemo(() => refunds.filter(r => inRange(r.created_at) && matchesCountry(r.business_id)), [refunds, dateFrom, dateTo, countryFilter, bizCountryMap]);
 
   // Resolve business → currency
   const bizCurrencyMap = useMemo(() => {
@@ -318,15 +338,25 @@ export default function Finance() {
           <h1 className="text-2xl font-bold text-gray-900">Finance</h1>
           <p className="mt-1 text-sm text-gray-500">Comprehensive financial dashboard</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={countryFilter}
+            onChange={e => setCountryFilter(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+          >
+            <option value="all">All Countries</option>
+            {availableCountries.map(cc => (
+              <option key={cc} value={cc}>{countryLabels[cc] || cc}</option>
+            ))}
+          </select>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
           <span className="text-sm text-gray-400">to</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
             className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
-          {(dateFrom || dateTo) && (
-            <button onClick={() => { setDateFrom(''); setDateTo(''); }}
-              className="text-xs text-brand hover:underline">Clear</button>
+          {(dateFrom || dateTo || countryFilter !== 'all') && (
+            <button onClick={() => { setDateFrom(''); setDateTo(''); setCountryFilter('all'); }}
+              className="text-xs text-brand hover:underline">Clear all</button>
           )}
           <button
             onClick={() => downloadCSV(

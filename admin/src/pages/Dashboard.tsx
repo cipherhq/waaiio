@@ -42,10 +42,12 @@ export default function Dashboard() {
   const [topBusinesses, setTopBusinesses] = useState<Array<{ name: string; bookings: number; revenue: number; country: string }>>([]);
   const [customerInsights, setCustomerInsights] = useState<{ total: number; returning: number; thisMonth: number }>({ total: 0, returning: 0, thisMonth: 0 });
   const [categoryBreakdown, setCategoryBreakdown] = useState<Array<{ category: string; count: number; bookings: number; revenue: number; revenueByCurrency: Record<string, number> }>>([]);
-  // Revenue summary with time periods
+  // Revenue summary with time periods + country filter
   const [revenuePeriod, setRevenuePeriod] = useState<'week' | 'month' | 'all'>('month');
+  const [revenueCountry, setRevenueCountry] = useState<string>('all');
   const [revenueSummary, setRevenueSummary] = useState<{ fees: Record<string, number>; volume: Record<string, number>; count: number }>({ fees: {}, volume: {}, count: 0 });
   const [revenueLoading, setRevenueLoading] = useState(false);
+  const revenueCountryLabels: Record<string, string> = { NG: 'Nigeria', US: 'United States', CA: 'Canada', GB: 'United Kingdom', GH: 'Ghana' };
 
   // Load revenue summary when period changes
   useEffect(() => {
@@ -81,22 +83,27 @@ export default function Dashboard() {
           : { data: [] };
         const bizCountry = new Map((bizData || []).map((b: { id: string; country_code: string }) => [b.id, b.country_code || 'NG']));
 
+        // Filter by country if selected
+        const filteredFees = revenueCountry === 'all'
+          ? (fees || [])
+          : (fees || []).filter((f: { business_id: string }) => bizCountry.get(f.business_id) === revenueCountry);
+
         const feesByCur: Record<string, number> = {};
         const volByCur: Record<string, number> = {};
-        for (const f of fees || []) {
+        for (const f of filteredFees) {
           const cur = countryToCur[bizCountry.get(f.business_id) || 'NG'] || 'NGN';
           feesByCur[cur] = (feesByCur[cur] || 0) + Number(f.fee_total || 0);
           volByCur[cur] = (volByCur[cur] || 0) + Number(f.transaction_amount || 0);
         }
 
-        setRevenueSummary({ fees: feesByCur, volume: volByCur, count: (fees || []).length });
+        setRevenueSummary({ fees: feesByCur, volume: volByCur, count: filteredFees.length });
       } catch (err) {
         console.error('Revenue load error:', err);
       }
       setRevenueLoading(false);
     }
     loadRevenue();
-  }, [revenuePeriod]);
+  }, [revenuePeriod, revenueCountry]);
 
   useEffect(() => {
     async function loadStats() {
@@ -514,24 +521,38 @@ export default function Dashboard() {
             <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">Platform Revenue</h2>
             <p className="mt-0.5 text-xs text-gray-400">Fees earned from business transactions</p>
           </div>
-          <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
-            {([
-              { key: 'week' as const, label: 'This Week' },
-              { key: 'month' as const, label: 'This Month' },
-              { key: 'all' as const, label: 'All Time' },
-            ]).map(p => (
-              <button
-                key={p.key}
-                onClick={() => setRevenuePeriod(p.key)}
-                className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                  revenuePeriod === p.key
-                    ? 'bg-gray-900 text-white'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={revenueCountry}
+              onChange={e => setRevenueCountry(e.target.value)}
+              className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 focus:border-brand focus:outline-none"
+            >
+              <option value="all">All Countries</option>
+              <option value="NG">Nigeria</option>
+              <option value="US">United States</option>
+              <option value="CA">Canada</option>
+              <option value="GB">United Kingdom</option>
+              <option value="GH">Ghana</option>
+            </select>
+            <div className="flex gap-1 rounded-lg border border-gray-200 bg-white p-0.5">
+              {([
+                { key: 'week' as const, label: 'This Week' },
+                { key: 'month' as const, label: 'This Month' },
+                { key: 'all' as const, label: 'All Time' },
+              ]).map(p => (
+                <button
+                  key={p.key}
+                  onClick={() => setRevenuePeriod(p.key)}
+                  className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                    revenuePeriod === p.key
+                      ? 'bg-gray-900 text-white'
+                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
