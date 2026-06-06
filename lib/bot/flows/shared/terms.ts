@@ -11,9 +11,8 @@ const DEFAULT_TERMS = (businessName: string) =>
  * @param termsUrl - Custom terms URL from business metadata (optional)
  */
 export function getTermsPrompt(businessName: string, customTermsText?: string | null, businessSlug?: string | null, termsUrl?: string | null): PromptMessage[] {
-  // Use business's own terms URL if set, otherwise link to their public page
-  const link = termsUrl
-    || (businessSlug ? `https://www.waaiio.com/b/${businessSlug}` : null);
+  // Use business's own terms URL if set, otherwise link to Waaiio's standard terms
+  const link = termsUrl || 'https://www.waaiio.com/terms';
 
   const termsLink = link ? `\n\n📎 View details: ${link}` : '';
 
