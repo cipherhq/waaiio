@@ -56,10 +56,12 @@ export default function Events() {
         // Load business names
         const bizIds = [...new Set(rows.map(e => e.business_id).filter(Boolean))];
         const { data: bizData } = bizIds.length > 0
-          ? await adminDb.from('businesses').select('id, name').in('id', bizIds)
+          ? await adminDb.from('businesses').select('id, name, country_code').in('id', bizIds)
           : { data: [] };
 
         const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
+        const COUNTRY_CUR: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+        const bizCurrencyMap = new Map((bizData || []).map(b => [b.id, COUNTRY_CUR[b.country_code] || 'NGN']));
         setBusinesses(
           (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
         );
@@ -67,6 +69,7 @@ export default function Events() {
         const enriched: Event[] = rows.map(e => ({
           ...e,
           business_name: bizMap.get(e.business_id) || 'Unknown',
+          currency: bizCurrencyMap.get(e.business_id) || 'NGN',
         }));
 
         setEvents(enriched);
