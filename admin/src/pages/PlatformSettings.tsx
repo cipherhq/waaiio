@@ -130,6 +130,80 @@ function renderSettingEditor(
     }
   }
 
+  // Tier-based settings (broadcast_limits, pricing_tiers)
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const tierKeys = Object.keys(parsed as Record<string, unknown>);
+    const isTierBased = tierKeys.every(k => ['free', 'growth', 'business'].includes(k));
+
+    if (isTierBased) {
+      const tierLabels: Record<string, string> = { free: 'Starter (Free)', growth: 'Pro (Growth)', business: 'Premium (Business)' };
+      const tierColors: Record<string, string> = { free: 'border-gray-200 bg-gray-50', growth: 'border-blue-200 bg-blue-50', business: 'border-purple-200 bg-purple-50' };
+
+      return (
+        <div className="space-y-3">
+          {tierKeys.map(tier => {
+            const tierVal = (parsed as Record<string, Record<string, unknown>>)[tier];
+            if (typeof tierVal !== 'object' || tierVal === null) return null;
+            return (
+              <div key={tier} className={`rounded-lg border p-3 ${tierColors[tier] || borderClass}`}>
+                <p className="text-xs font-semibold text-gray-700 mb-2">{tierLabels[tier] || tier}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(tierVal).map(([field, val]) => {
+                    const friendlyLabels: Record<string, string> = {
+                      feePercentage: 'Fee %',
+                      feeFlat: 'Flat Fee',
+                      maxBookings: 'Max Bookings/mo',
+                      whitelabel: 'White Label',
+                      maxBroadcasts: 'Max Broadcasts/mo',
+                      maxRecipients: 'Max Recipients/mo',
+                    };
+                    const label = friendlyLabels[field] || field.replace(/_/g, ' ');
+                    const displayVal = val === 999999999 ? 'Unlimited' : String(val);
+
+                    if (typeof val === 'boolean') {
+                      return (
+                        <div key={field} className="flex items-center justify-between col-span-2 sm:col-span-1">
+                          <label className="text-xs text-gray-600">{label}</label>
+                          <button
+                            onClick={() => {
+                              const updated = { ...parsed as Record<string, unknown>, [tier]: { ...tierVal, [field]: !val } };
+                              onChange(JSON.stringify(updated, null, 2));
+                            }}
+                            className={`relative h-5 w-10 rounded-full transition ${val ? 'bg-brand' : 'bg-gray-300'}`}
+                          >
+                            <div className="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all" style={{ left: val ? '22px' : '2px' }} />
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div key={field}>
+                        <label className="text-[10px] font-medium text-gray-500 block mb-0.5">{label}</label>
+                        <input
+                          type={typeof val === 'number' ? 'number' : 'text'}
+                          value={displayVal === 'Unlimited' ? 999999999 : val as string | number}
+                          onChange={e => {
+                            const newVal = typeof val === 'number' ? Number(e.target.value) : e.target.value;
+                            const updated = { ...parsed as Record<string, unknown>, [tier]: { ...tierVal, [field]: newVal } };
+                            onChange(JSON.stringify(updated, null, 2));
+                          }}
+                          className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm outline-none focus:border-brand"
+                          placeholder={displayVal === 'Unlimited' ? 'Unlimited (999999999)' : ''}
+                        />
+                        {displayVal === 'Unlimited' && <p className="text-[9px] text-gray-400 mt-0.5">999999999 = Unlimited</p>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+  }
+
   // Fallback: JSON textarea with line count
   const lines = currentVal.split('\n').length;
   return (
