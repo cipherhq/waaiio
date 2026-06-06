@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Notify business owner
+    // Notify business owner — WhatsApp
     if (biz?.phone) {
       try {
         const cleanPhone = biz.phone.replace(/\D/g, '');
@@ -174,6 +174,30 @@ export async function POST(request: NextRequest) {
       } catch (ownerErr) {
         logger.warn('Failed to send waiver owner notification:', ownerErr);
       }
+    }
+
+    // Notify business owner — Email
+    try {
+      const { data: owner } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('id', (await supabase.from('businesses').select('owner_id').eq('id', template.business_id).single()).data?.owner_id || '')
+        .single();
+
+      if (owner?.email) {
+        const { sendEmail: sendOwnerEmail } = await import('@/lib/email/client');
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+        const viewUrl = `${appUrl}/w/view/${signed.id}`;
+        const refCode = `WAI-${signed.id.slice(0, 6).toUpperCase()}`;
+
+        await sendOwnerEmail({
+          to: owner.email,
+          subject: `New Waiver Signed — ${customerName} signed "${template.title}"`,
+          html: `<p>A new waiver has been signed for <strong>${biz?.name || 'your business'}</strong>.</p><p><strong>Customer:</strong> ${customerName}</p>${customer_phone ? `<p><strong>Phone:</strong> ${customer_phone}</p>` : ''}${customer_email ? `<p><strong>Email:</strong> ${customer_email}</p>` : ''}<p><strong>Waiver:</strong> ${template.title}</p><p><strong>Reference:</strong> ${refCode}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p><p><a href="${viewUrl}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Waiver</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+        });
+      }
+    } catch (ownerEmailErr) {
+      logger.warn('Failed to send waiver owner email:', ownerEmailErr);
     }
 
     return NextResponse.json({
