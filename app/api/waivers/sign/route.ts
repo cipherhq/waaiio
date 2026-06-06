@@ -11,11 +11,14 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { token, customer_name, customer_phone, customer_email, signature, metadata } = body;
+    const { token, first_name, last_name, customer_name: legacyName, customer_phone, customer_email, send_via, signature, metadata } = body;
 
-    if (!token || !customer_name) {
-      return NextResponse.json({ error: 'token and customer_name are required' }, { status: 400 });
+    const customerName = legacyName || `${(first_name || '').trim()} ${(last_name || '').trim()}`.trim();
+    if (!token || !customerName) {
+      return NextResponse.json({ error: 'token and name are required' }, { status: 400 });
     }
+
+    const sendVia: string = send_via || 'email';
 
     if (!signature) {
       return NextResponse.json({ error: 'Signature is required' }, { status: 400 });
@@ -25,7 +28,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Signature data too large' }, { status: 400 });
     }
 
-    if (customer_name.length > 200) {
+    if (customerName.length > 200) {
       return NextResponse.json({ error: 'Name too long' }, { status: 400 });
     }
 
@@ -86,12 +89,12 @@ export async function POST(request: NextRequest) {
       .insert({
         template_id: template.id,
         business_id: template.business_id,
-        customer_name,
+        customer_name: customerName,
         customer_phone: customer_phone || null,
         customer_email: customer_email || null,
         signature_url: signatureUrl,
         signed_at: new Date().toISOString(),
-        metadata: metadata || {},
+        metadata: { ...(metadata || {}), first_name: first_name || '', last_name: last_name || '', send_via: sendVia },
         audit_trail: auditTrail,
       })
       .select('id')
@@ -109,8 +112,8 @@ export async function POST(request: NextRequest) {
       .eq('id', template.business_id)
       .single();
 
-    // Send WhatsApp confirmation to customer (if phone provided)
-    if (customer_phone) {
+    // Send WhatsApp confirmation to customer (if phone provided and customer chose whatsapp/both)
+    if (customer_phone && (sendVia === 'whatsapp' || sendVia === 'both')) {
       try {
         const cleanPhone = customer_phone.replace(/\D/g, '');
         const resolver = new ChannelResolver(supabase);
@@ -120,11 +123,12 @@ export async function POST(request: NextRequest) {
 
         if (resolved) {
           const confirmMsg = [
-            `Waiver Signed`,
+            `✅ *Waiver Signed*`,
             '',
-            `Hi ${customer_name}, you have signed the "${template.title}" waiver from ${biz?.name || 'the business'}.`,
+            `Hi ${first_name || customerName}, you have signed the "${template.title}" waiver for *${biz?.name || 'the business'}*.`,
             '',
-            `This confirmation serves as your record.`,
+            `This message serves as your signed copy.`,
+            `📎 Ref: WAI-${signed.id.slice(0, 6).toUpperCase()}`,
           ].join('\n');
           await resolved.sender.sendText({ to: cleanPhone, text: confirmMsg });
         }
@@ -133,8 +137,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Send email confirmation (if email provided)
-    if (customer_email) {
+    // Send email confirmation (if email provided and customer chose email/both)
+    if (customer_email && (sendVia === 'email' || sendVia === 'both')) {
       try {
         const { sendEmail } = await import('@/lib/email/client');
         const { businessFrom } = await import('@/lib/email/templates');
@@ -143,7 +147,7 @@ export async function POST(request: NextRequest) {
           to: customer_email,
           from: businessFrom(biz?.name || 'Business'),
           subject: `Waiver Signed - ${template.title}`,
-          html: `<p>Hi ${customer_name},</p><p>You have signed the "${template.title}" waiver from ${biz?.name || 'the business'}.</p><p>This email serves as your confirmation.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          html: `<p>Hi ${first_name || customerName},</p><p>You have signed the <strong>"${template.title}"</strong> waiver for <strong>${biz?.name || 'the business'}</strong>.</p><p>This email serves as your signed copy.</p><p><strong>Reference:</strong> WAI-${signed.id.slice(0, 6).toUpperCase()}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
         });
       } catch (emailErr) {
         logger.warn('Failed to send waiver email confirmation:', emailErr);
@@ -160,7 +164,7 @@ export async function POST(request: NextRequest) {
           (await resolver.getSharedChannelForCountry(biz.country_code || 'NG'));
 
         if (resolved) {
-          const ownerMsg = `New waiver signed: ${customer_name} signed "${template.title}".`;
+          const ownerMsg = `📋 New waiver signed: *${customerName}* signed "${template.title}".`;
           await resolved.sender.sendText({ to: cleanPhone, text: ownerMsg });
         }
       } catch (ownerErr) {
