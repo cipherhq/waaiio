@@ -17,7 +17,7 @@ const queueStartStep: FlowStepConfig = {
   id: 'queue_start',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     // Check if queue is paused
     const { paused, avgMinutes } = await getQueueConfig(ctx);
@@ -121,7 +121,7 @@ const queueStartStep: FlowStepConfig = {
       } else if (normalized === 'no_thanks') {
         await ctx.sender.sendText({
           to: ctx.from,
-          text: "No problem! You can check back later. Type *Hi* to start again.",
+          text: "No problem! You can check back later. Send *Hi* to start over.",
         });
       }
       return { valid: true };
@@ -191,7 +191,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
   id: 'queue_confirm_checkin',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const customerName = ctx.session.session_data.queue_customer_name as string;
     const { avgMinutes } = await getQueueConfig(ctx);
@@ -241,7 +241,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'Please tap *Join Queue* to confirm or *Cancel* to go back.' };
     }
 
-    if (!ctx.business) return { valid: false, errorMessage: 'Business not found.' };
+    if (!ctx.business) return { valid: false, errorMessage: 'Something went wrong on our end. Send *Hi* to start over.' };
 
     const customerName = ctx.session.session_data.queue_customer_name as string;
     const queueNumber = ctx.session.session_data._queue_preview_number as number ?? 1;
@@ -331,7 +331,7 @@ const queueCheckStatusStep: FlowStepConfig = {
   id: 'queue_check_status',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const today = new Date().toISOString().split('T')[0];
     const { avgMinutes } = await getQueueConfig(ctx);

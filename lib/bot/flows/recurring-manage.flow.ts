@@ -11,7 +11,7 @@ export const recurringManageFlow: FlowDefinition = {
       id: 'list_subscriptions',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         if (!ctx.business) {
-          return [{ type: 'text', text: 'Business not found.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -166,7 +166,7 @@ export const recurringManageFlow: FlowDefinition = {
           .single();
 
         if (!sub) {
-          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start again.' }];
+          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
         }
 
         // Cancel on gateway

@@ -4,7 +4,7 @@ const waitlistJoinStep: FlowStepConfig = {
   id: 'waitlist_join',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
     return [{
       type: 'buttons',
       body: `We're currently fully booked at ${ctx.business.name}. Would you like to join the waitlist? We'll notify you when a spot opens up.`,
@@ -71,7 +71,7 @@ const waitlistConfirmStep: FlowStepConfig = {
   id: 'waitlist_confirm',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const d = ctx.session.session_data;
     const customerName = d.waitlist_name as string;
@@ -90,7 +90,7 @@ const waitlistConfirmStep: FlowStepConfig = {
       .maybeSingle();
 
     if (existing) {
-      return [{ type: 'text', text: `You're already on the waitlist, ${customerName}! We'll notify you when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Type *Hi* to start again` }];
+      return [{ type: 'text', text: `You're already on the waitlist, ${customerName}! We'll notify you when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Send *Hi* to start over` }];
     }
 
     // Insert waitlist entry
@@ -113,7 +113,7 @@ const waitlistConfirmStep: FlowStepConfig = {
 
     return [{
       type: 'text',
-      text: `You're on the waitlist, ${customerName}! We'll send you a message when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Type *Hi* to start again`,
+      text: `You're on the waitlist, ${customerName}! We'll send you a message when a spot opens up.\n\n💡 *What you can do:*\n• Type *my bookings* to check your bookings\n• Send *Hi* to start over`,
     }];
   },
 

@@ -18,7 +18,7 @@ export const reservationFlow: FlowDefinition = {
     {
       id: 'select_apartment',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         // Query properties table (new) with fallback to services (legacy)
         let listings: Array<{ id: string; name: string; price: number; deposit_amount: number; max_guests?: number }> = [];
@@ -620,7 +620,7 @@ export const reservationFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to try again." }];
+          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to start over." }];
         }
 
         const nights = d.nights as number;
@@ -697,7 +697,7 @@ export const reservationFlow: FlowDefinition = {
 
         if (insertError || !reservation) {
           console.error('Failed to create reservation', insertError);
-          return [{ type: 'text', text: 'Sorry, something went wrong. Send "Hi" to try again.' }];
+          return [{ type: 'text', text: 'Sorry, something went wrong. Send *Hi* to start over.' }];
         }
 
         d.reservation_id = reservation.id;

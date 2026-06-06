@@ -19,7 +19,7 @@ export const paymentFlow: FlowDefinition = {
     {
       id: 'select_category',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         // Filter by service_type: giving capability → giving services, payment → all non-giving
         const isGiving = ctx.session.session_data.active_capability === 'giving';
@@ -36,7 +36,7 @@ export const paymentFlow: FlowDefinition = {
         const { data: services } = await query.order('sort_order');
 
         if (!services || services.length === 0) {
-          return [{ type: 'text', text: isGiving ? 'No giving categories are set up yet. Please contact the administrator.' : 'No payment categories are set up yet. Please contact the administrator.' }];
+          return [{ type: 'text', text: isGiving ? `No giving categories are set up yet. Please contact ${ctx.business?.name || 'the business'}.` : `No payment categories are set up yet. Please contact ${ctx.business?.name || 'the business'}.` }];
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
@@ -165,7 +165,7 @@ export const paymentFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Payment cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: 'Payment cancelled. No charges were made. Send *Hi* to start over.' });
           return null;
         }
         return 'collect_name';
@@ -211,7 +211,7 @@ export const paymentFlow: FlowDefinition = {
           await ctx.supabase.from('bot_sessions')
             .update({ current_step: 'complete', is_active: false })
             .eq('id', ctx.session.id);
-          return [{ type: 'text', text: 'No problem! Payment cancelled. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: 'No problem! Payment cancelled. No charges were made. Send *Hi* to start over.' }];
         }
 
         // ── T&C gate ──
@@ -241,7 +241,7 @@ export const paymentFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         // Create a booking record for payment tracking
@@ -269,7 +269,7 @@ export const paymentFlow: FlowDefinition = {
           .single();
 
         if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         d.booking_id = booking.id;
@@ -316,7 +316,7 @@ export const paymentFlow: FlowDefinition = {
             },
             {
               type: 'buttons',
-              body: "⏱️ After paying, wait 5-10 seconds then tap below:",
+              body: "Once your payment is complete, tap below to confirm:",
               buttons: [
                 { id: 'i_paid', title: "I've Paid" },
                 { id: 'go_back', title: 'Cancel' },
@@ -325,7 +325,7 @@ export const paymentFlow: FlowDefinition = {
           ];
         }
 
-        return [{ type: 'text', text: 'Payment initialization failed. Please try again later.' }];
+        return [{ type: 'text', text: "We couldn't set up your payment right now. Send *Hi* to start over." }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input === 'accept_terms') {
@@ -350,7 +350,7 @@ export const paymentFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete your payment using the link above.\n\n⏱️ After paying, wait 5-10 seconds then tap below:",
+          body: "Complete your payment using the link above.\n\nOnce your payment is complete, tap below to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'go_back', title: 'Cancel' },
@@ -368,7 +368,7 @@ export const paymentFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: `Payment to *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start again.` });
+          await ctx.sender.sendText({ to: ctx.from, text: `Payment to *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.` });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -665,7 +665,7 @@ export const paymentFlow: FlowDefinition = {
         const userId = ctx.session.user_id;
 
         if (!ctx.business || !userId) {
-          return [{ type: 'text', text: 'Something went wrong on our end setting up recurring payments. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end setting up recurring payments. Send *Hi* to start over.' }];
         }
 
         // Check for existing active subscription for same service + user

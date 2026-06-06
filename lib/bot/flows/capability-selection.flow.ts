@@ -4,6 +4,7 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
+import { getCategoryLabels } from '@/lib/categoryConfig';
 
 export { getCapabilityLabel };
 
@@ -406,7 +407,7 @@ const myAccountMenuStep: FlowStepConfig = {
           await ctx.sender.sendText({ to: ctx.from, text: 'Sorry, could not generate your receipt right now. Try again later.' });
         }
       } else {
-        await ctx.sender.sendText({ to: ctx.from, text: 'No account found for this number. Send *Hi* to get started!' });
+        await ctx.sender.sendText({ to: ctx.from, text: 'No account found for this number. Send *Hi* to start over.' });
       }
       // Return to menu
       ctx.session.session_data._my_account_route = 'select_capability';
@@ -497,7 +498,7 @@ const myAccountMenuStep: FlowStepConfig = {
         .limit(10);
 
       if (!contracts || contracts.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any contracts. Send *Hi* to get started!" });
+        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any contracts. Send *Hi* to start over." });
       } else {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const pending = contracts.filter(c => c.status === 'pending');
@@ -533,7 +534,7 @@ const myAccountMenuStep: FlowStepConfig = {
         .limit(10);
 
       if (!quotes || quotes.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any price requests. Send *Hi* to get started!" });
+        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any price requests. Send *Hi* to start over." });
       } else {
         const emoji: Record<string, string> = { pending: '⏳', quoted: '💰', accepted: '✅', rejected: '❌', expired: '⌛' };
         const lines = ['📋 *Your Price Requests*', ''];
@@ -629,7 +630,7 @@ const myBookingsStep: FlowStepConfig = {
       for (const r of upcoming) {
         const biz = r.businesses as unknown as { name: string } | null;
         const dateLabel = new Date(r.date + 'T00:00').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' });
-        items.push({ title: biz?.name || 'Business', description: `${dateLabel} at ${r.time} • ${r.party_size} guests`, postbackText: `booking_${r.id}` });
+        items.push({ title: biz?.name || 'Business', description: `${dateLabel} at ${r.time} • ${r.party_size} ${getCategoryLabels(ctx.business?.category || 'restaurant').quantityLabel}`, postbackText: `booking_${r.id}` });
       }
     }
     if (tickets) {
@@ -649,7 +650,7 @@ const myBookingsStep: FlowStepConfig = {
     }
 
     if (items.length === 0) {
-      return [{ type: 'text' as const, text: "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to get started!" }];
+      return [{ type: 'text' as const, text: "You don't have any upcoming bookings, tickets, or stays. Send *Hi* to start over." }];
     }
     return [{
       type: 'list' as const,

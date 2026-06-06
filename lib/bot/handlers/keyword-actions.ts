@@ -89,7 +89,7 @@ export async function executeKeywordAction(
           const phoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: profile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
           if (!profile?.id) {
-            await sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+            await sendText(from, "I don't have an account for this number. Send *Hi* to start over.");
             return true;
           }
           if (action === 'show_history') {
@@ -113,7 +113,7 @@ export async function executeKeywordAction(
           const phoneN = from.startsWith('+') ? from.slice(1) : from;
           const { data: profile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`).limit(1).maybeSingle();
           if (!profile?.id) {
-            await sendText(from, "I don't have an account for this number. Send *Hi* to get started!");
+            await sendText(from, "I don't have an account for this number. Send *Hi* to start over.");
             return true;
           }
           await handleTransactionDocument(supabase, messageSender, sendText, from, profile.id, 'receipt');

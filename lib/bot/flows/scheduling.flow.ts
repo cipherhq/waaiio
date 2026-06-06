@@ -161,7 +161,7 @@ export const schedulingFlow: FlowDefinition = {
     {
       id: 'select_service',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         let query = ctx.supabase
           .from('services')
@@ -721,7 +721,11 @@ export const schedulingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._join_waitlist) return 'waitlist_join';
-        if (ctx.session.session_data._action === 'cancel') return 'select_capability';
+        if (ctx.session.session_data._action === 'cancel') {
+          delete ctx.session.session_data._action;
+          await ctx.sender.sendText({ to: ctx.from, text: 'No problem! Send *Hi* to explore other options.' });
+          return null; // end session cleanly
+        }
         return 'select_staff';
       },
     },
@@ -860,24 +864,15 @@ export const schedulingFlow: FlowDefinition = {
           .filter(s => s.remaining > 0);
 
         if (availableSlots.length === 0) {
-          // Route back to date selection
-          ctx.session.session_data.date = null;
-          ctx.session.session_data._no_slots_date = dateStr;
-          ctx.session.current_step = 'select_date';
-          await ctx.supabase
-            .from('bot_sessions')
-            .update({ session_data: ctx.session.session_data, current_step: 'select_date' })
-            .eq('id', ctx.session.id);
-          // Send fully booked message with buttons to pick new date or cancel
-          await ctx.sender.sendButtons({
-            to: ctx.from,
-            body: `All time slots for ${dateLabel} are fully booked.`,
+          // All slots fully booked — show buttons to pick new date or cancel
+          return [{
+            type: 'buttons',
+            body: `All time slots on ${dateLabel} are fully booked.`,
             buttons: [
-              { id: 'pick_new_date', title: 'Pick Another Date' },
-              { id: 'cancel_terms', title: 'Cancel' },
+              { id: 'pick_another_date', title: 'Pick Another Date' },
+              { id: 'cancel_booking', title: 'Cancel' },
             ],
-          });
-          return [];
+          }];
         }
 
         const prefLabel = pref ? ` ${pref}` : '';
@@ -886,19 +881,33 @@ export const schedulingFlow: FlowDefinition = {
         const bizMeta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const use12hr = bizMeta.time_format !== '24hr'; // default to 12hr
 
+        const items = displaySlots.map(s => ({
+          title: formatTime(s.time, use12hr),
+          description: maxCapacity > 1 ? `${s.remaining} spot${s.remaining !== 1 ? 's' : ''} left` : undefined,
+          postbackText: s.time, // always send 24hr format as postback value
+        }));
+        // Add "Change Date" navigation option at the end
+        items.push({ title: '← Change Date', description: 'Pick a different date', postbackText: 'change_date' });
+
         return [{
           type: 'list',
           title: 'Select Time',
           body: `Available${prefLabel} times for ${dateLabel}:`,
           buttonLabel: 'Choose Time',
-          items: displaySlots.map(s => ({
-            title: formatTime(s.time, use12hr),
-            description: maxCapacity > 1 ? `${s.remaining} spot${s.remaining !== 1 ? 's' : ''} left` : undefined,
-            postbackText: s.time, // always send 24hr format as postback value
-          })),
+          items,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Handle "Change Date" navigation
+        if (input === 'change_date' || input === 'pick_another_date') {
+          return { valid: true, data: { _time_action: 'change_date' } };
+        }
+        // Handle cancel from fully-booked prompt
+        if (input === 'cancel_booking') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'No problem! Send *Hi* to explore other options.' });
+          return { valid: true, data: { _time_action: 'cancel' } };
+        }
+
         const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(input);
         if (!timeMatch) {
           const abuse = ctx.intelligence.recordGibberish(ctx.from);
@@ -928,7 +937,19 @@ export const schedulingFlow: FlowDefinition = {
         ctx.intelligence.resetAbuse(ctx.from);
         return { valid: true, data: { time: input } };
       },
-      async next() { return 'select_addons'; },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._time_action === 'change_date') {
+          delete d.date;
+          delete d._time_action;
+          return 'select_date';
+        }
+        if (d._time_action === 'cancel') {
+          delete d._time_action;
+          return null; // end session cleanly
+        }
+        return 'select_addons';
+      },
     },
 
     // ── Select Add-ons ──
@@ -1203,9 +1224,11 @@ export const schedulingFlow: FlowDefinition = {
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const partySize = ctx.session.session_data.party_size as number;
+        const category = ctx.business?.category || 'restaurant';
+        const labels = getCategoryLabels(category);
         return [{
           type: 'buttons',
-          body: `Please enter the names of all ${partySize} guests, separated by commas.\n\nExample: John, Mary, Sarah`,
+          body: `Please enter the names of all ${partySize} ${labels.quantityLabel}, separated by commas.\n\nExample: John, Mary, Sarah`,
           buttons: [{ id: 'skip', title: 'Skip Names' }],
         }];
       },
@@ -1766,7 +1789,7 @@ export const schedulingFlow: FlowDefinition = {
       id: 'collect_email',
       async prompt(): Promise<PromptMessage[]> {
         return [
-          { type: 'text', text: '📧 Email for confirmation? (type *skip* to skip)' },
+          { type: 'text', text: '📧 We\'ll send your booking confirmation to your email. Type your email or *skip* to skip:' },
         ];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
@@ -1804,7 +1827,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (origError || !originalBooking) {
             console.error('[SCHEDULING] Failed to fetch original booking for reschedule:', origError?.message);
-            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
           const { error: rescheduleError } = await ctx.supabase
@@ -1834,9 +1857,11 @@ export const schedulingFlow: FlowDefinition = {
             .update({ current_step: 'complete', is_active: false })
             .eq('id', ctx.session.id);
 
+          const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
+          const partyCount = (d.party_size as number) || 1;
           return [{
             type: 'text',
-            text: `✅ *Booking Rescheduled!*\n\n📅 ${dateLabel} at ${d.time as string}\n👥 ${(d.party_size as number) || 1} guest${((d.party_size as number) || 1) > 1 ? 's' : ''}\n\nSee you then!`,
+            text: `✅ *Booking Rescheduled!*\n\n📅 ${dateLabel} at ${d.time as string}\n👥 ${partyCount} ${labels.quantityLabel}\n\nSee you then!`,
           }];
         }
 
@@ -1860,7 +1885,7 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (!userId) {
-          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to try again." }];
+          return [{ type: 'text', text: "We couldn't create your account. Send *Hi* to start over." }];
         }
 
         // Get payment amount
@@ -2002,7 +2027,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (slotError || !slotResult) {
             console.error('Failed to create booking', slotError);
-            return [{ type: 'text', text: 'Sorry, something went wrong. Send "Hi" to try again.' }];
+            return [{ type: 'text', text: 'Sorry, something went wrong. Send *Hi* to start over.' }];
           }
 
           if (!slotResult.slot_available) {
@@ -2214,9 +2239,10 @@ export const schedulingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: "⏱️ After paying, wait 5-10 seconds then tap below:",
+                body: "Once your payment is complete, tap below to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
+                  { id: 'retry_payment', title: 'Get New Link' },
                   { id: 'go_back', title: 'Cancel' },
                 ],
               },
@@ -2653,15 +2679,20 @@ export const schedulingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Your confirmation will arrive automatically after payment.\n\n⏱️ After paying, wait 5-10 seconds then tap below:",
+          body: "Your confirmation will arrive automatically after payment.\n\nOnce your payment is complete, tap below to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
+            { id: 'retry_payment', title: 'Get New Link' },
             { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
+
+        if (text === 'retry_payment') {
+          return { valid: true, data: { _retry_payment: true } };
+        }
 
         if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = ctx.session.session_data.booking_id as string;
@@ -2673,7 +2704,7 @@ export const schedulingFlow: FlowDefinition = {
           }
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `Booking at *${ctx.business?.name || 'business'}* has been cancelled. No payment was taken.\n\nSend *Hi* to start again.`,
+            text: `Booking at *${ctx.business?.name || 'business'}* has been cancelled. No payment was taken.\n\nSend *Hi* to start over.`,
           });
           return { valid: true, data: { _action: 'cancel' } };
         }
@@ -2865,6 +2896,11 @@ export const schedulingFlow: FlowDefinition = {
         return { valid: false, errorMessage: "Tap *I've Paid* after completing payment, or *Cancel* to cancel." };
       },
       async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._retry_payment) {
+          delete d._retry_payment;
+          return 'create_booking';
+        }
         return null; // All paths end the flow
       },
     },

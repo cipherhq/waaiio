@@ -96,7 +96,7 @@ export async function handleMyBookings(
     }
 
     if (items.length === 0) {
-      await sendText(from, "You don't have any upcoming bookings, tickets, or stays.\n\nType *my account* for more options or *Hi* to start fresh.");
+      await sendText(from, "You don't have any upcoming bookings, tickets, or stays.\n\nType *my account* for more options or *Hi* to start over.");
       return; // Don't deactivate — user can type another command
     }
 
@@ -204,7 +204,7 @@ export async function handleMyBookings(
           'Your reservation has been cancelled.',
           'Since you had already paid, the business has been notified to process your refund.',
           '',
-          'Send *Hi* to start fresh.',
+          'Send *Hi* to start over.',
         ].join('\n'));
       } else {
         await sendText(from, [
@@ -212,7 +212,7 @@ export async function handleMyBookings(
           '',
           'Your reservation has been cancelled successfully.',
           '',
-          'Send *Hi* to start fresh.',
+          'Send *Hi* to start over.',
         ].join('\n'));
       }
 
@@ -399,7 +399,7 @@ export async function handleModifyBooking(
   const response = input.toLowerCase();
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
-    await sendText(from, 'Action cancelled. Send *Hi* to start fresh or type *switch <business name>* to visit another business. 🙏');
+    await sendText(from, 'Action cancelled. Send *Hi* to start over or type *switch <business name>* to visit another business. 🙏');
     await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
@@ -451,7 +451,7 @@ export async function handleModifyBooking(
       }).catch(() => {});
     }
 
-    await sendText(from, '❌ Booking cancelled.\n\nSend *Hi* to start fresh or *my bookings* to manage others.');
+    await sendText(from, '❌ Booking cancelled.\n\nSend *Hi* to start over or *my bookings* to manage others.');
     await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
@@ -477,7 +477,7 @@ export async function handleModifyBooking(
       .single();
 
     if (!biz) {
-      await sendText(from, 'Business not found. Send *Hi* to start over.');
+      await sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
       await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
       return;
     }

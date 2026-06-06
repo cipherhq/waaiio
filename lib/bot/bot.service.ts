@@ -430,7 +430,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
       await this.supabase.from('bot_sessions')
@@ -517,7 +517,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
       // Remove old inactive sessions for this phone (null business) to avoid unique constraint violation
@@ -543,7 +543,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
       await this.handleTransactionDocument(from, profile.id, isHistoryQuery ? 'history' : 'receipt');
@@ -556,7 +556,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
       await this.handleTransactionDocument(from, profile.id, 'annual');
@@ -798,7 +798,7 @@ export class BotService {
 
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
 
@@ -852,7 +852,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
 
@@ -873,7 +873,7 @@ export class BotService {
 
       const caps = await getEnabledCapabilities(this.supabase, resolvedBusinessId);
       if (!caps.includes('loyalty')) {
-        await this.sendText(from, "This business doesn't have a loyalty program. Type *Hi* to get started!");
+        await this.sendText(from, "This business doesn't have a loyalty program. Send *Hi* to start over.");
         return;
       }
 
@@ -904,7 +904,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
 
@@ -949,7 +949,7 @@ export class BotService {
     if (isGivingQuery) {
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
 
@@ -1002,7 +1002,7 @@ export class BotService {
       allGiving.sort((a, b) => b._ts - a._ts);
 
       if (allGiving.length === 0) {
-        await this.sendText(from, "You don't have any giving history yet. Send *Hi* to get started!");
+        await this.sendText(from, "You don't have any giving history yet. Send *Hi* to start over.");
         return;
       }
 
@@ -1080,7 +1080,7 @@ export class BotService {
       });
 
       if (unique.length === 0) {
-        await this.sendText(from, "You don't have any contracts. Send *Hi* to get started!");
+        await this.sendText(from, "You don't have any contracts. Send *Hi* to start over.");
         return;
       }
 
@@ -1136,7 +1136,7 @@ export class BotService {
         .limit(10);
 
       if (!quotes || quotes.length === 0) {
-        await this.sendText(from, "You don't have any price requests. Send *Hi* to get started!");
+        await this.sendText(from, "You don't have any price requests. Send *Hi* to start over.");
         return;
       }
 
@@ -1177,7 +1177,7 @@ export class BotService {
       }
       const profile = await getProfile();
       if (!profile?.id) {
-        await this.sendText(from, "We don't have an account for this number yet. Type *Hi* to get started!");
+        await this.sendText(from, "We don't have an account for this number yet. Send *Hi* to start over.");
         return;
       }
 
@@ -1685,6 +1685,7 @@ export class BotService {
         }
 
         if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Waaiio_';
+        greeting += '\n\n_Type *cancel* anytime to exit._';
 
         if (!tierInfo.allowed) {
           await this.messageSender.sendButtons({
@@ -1941,7 +1942,7 @@ export class BotService {
         const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
         if (biz?.name) expiredMsg = `Your session with *${biz.name}* has expired.`;
       }
-      await this.sendText(from, `${expiredMsg} Type *Hi* to start again. 🙏`);
+      await this.sendText(from, `${expiredMsg} Send *Hi* to start over. 🙏`);
       return;
     }
 
@@ -2002,7 +2003,7 @@ export class BotService {
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
-      await this.sendText(from, 'Action cancelled. Send *Hi* to start fresh or type *switch <business name>* to visit another business. 🙏');
+      await this.sendText(from, 'Action cancelled. Send *Hi* to start over or type *switch <business name>* to visit another business. 🙏');
       return;
     }
 

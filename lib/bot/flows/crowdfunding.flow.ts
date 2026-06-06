@@ -10,7 +10,7 @@ const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const today = new Date().toISOString().split('T')[0];
     const { data: campaigns } = await ctx.supabase
@@ -23,7 +23,13 @@ const selectCampaignStep: FlowStepConfig = {
       .limit(10);
 
     if (!campaigns || campaigns.length === 0) {
-      return [{ type: 'text', text: 'No active campaigns at the moment. Please check back later!' }];
+      return [{
+        type: 'buttons',
+        body: 'No active campaigns at the moment.',
+        buttons: [
+          { id: 'go_back', title: 'Back to Menu' },
+        ],
+      }];
     }
 
     const country = (ctx.business.country_code || 'NG') as CountryCode;
@@ -47,6 +53,10 @@ const selectCampaignStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext) {
+    if (input === 'go_back') {
+      return { valid: true, data: { _campaign_action: 'back_to_menu' } };
+    }
+
     if (!input.startsWith('campaign_')) {
       return { valid: false, errorMessage: 'Please select a campaign from the list.' };
     }
@@ -76,7 +86,11 @@ const selectCampaignStep: FlowStepConfig = {
     };
   },
 
-  async next() {
+  async next(ctx: FlowContext) {
+    if (ctx.session.session_data._campaign_action === 'back_to_menu') {
+      delete ctx.session.session_data._campaign_action;
+      return 'select_capability';
+    }
     return 'campaign_view';
   },
 };
@@ -356,7 +370,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           .update({ status: 'cancelled' })
           .eq('reference_code', refCode);
       }
-      await ctx.sender.sendText({ to: ctx.from, text: `Donation to *${ctx.business?.name || 'organization'}* cancelled. Send *Hi* to start again.` });
+      await ctx.sender.sendText({ to: ctx.from, text: `Donation to *${ctx.business?.name || 'organization'}* cancelled. Send *Hi* to start over.` });
       return { valid: true, data: { _action: 'cancel' } };
     }
 

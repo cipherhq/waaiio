@@ -14,7 +14,7 @@ const selectAppointmentStep: FlowStepConfig = {
   id: 'select_appointment',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const { data: appointments } = await ctx.supabase
       .from('appointments')

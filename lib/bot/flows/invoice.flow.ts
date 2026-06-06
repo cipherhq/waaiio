@@ -193,7 +193,14 @@ const invoicePayStep: FlowStepConfig = {
     }
 
     if (!userId) {
-      return [{ type: 'text', text: 'We couldn\'t match your number to an account. Send *Hi* to set one up, then try again.' }];
+      ctx.session.session_data._invoice_no_user = true;
+      return [{
+        type: 'buttons',
+        body: "We couldn't match your number to an account. Please contact the business directly for help.",
+        buttons: [
+          { id: 'done', title: 'OK' },
+        ],
+      }];
     }
 
     try {
@@ -268,7 +275,10 @@ const invoicePayStep: FlowStepConfig = {
     }
   },
 
-  async validate(): Promise<ValidationResult> {
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    if (input === 'done' && ctx.session.session_data._invoice_no_user) {
+      return { valid: true };
+    }
     return { valid: true };
   },
 

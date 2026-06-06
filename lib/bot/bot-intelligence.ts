@@ -186,7 +186,7 @@ export class BotIntelligenceService {
       return {
         timeout: true,
         warn: false,
-        message: "I'll be here when you're ready. Send *Hi* to start fresh. 🙏",
+        message: "I'll be here when you're ready. Send *Hi* to start over. 🙏",
       };
     }
 

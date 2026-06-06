@@ -94,7 +94,7 @@ export class FlowExecutor {
 
     if (!step) {
       Sentry.captureMessage('Flow step not found', { level: 'warning', extra: { stepId, flowType, sessionId: session.id } });
-      let errMsg = 'Something went wrong on our end. Send *Hi* to start fresh.';
+      let errMsg = 'Something went wrong on our end. Send *Hi* to start over.';
       errMsg = await this.maybeTranslate(errMsg, session);
       if (!session.conversation_log) session.conversation_log = [];
       session.conversation_log.push({ role: 'bot', content: errMsg, timestamp: new Date().toISOString() });
@@ -172,7 +172,7 @@ export class FlowExecutor {
     const CANCEL_WORDS = ['cancel', 'stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
     const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
     if (CANCEL_WORDS.includes(lowerInput)) {
-      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start again.', session);
+      const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session);
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
@@ -180,7 +180,7 @@ export class FlowExecutor {
       return;
     }
     if (RESTART_WORDS.includes(lowerInput)) {
-      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start fresh.', session);
+      const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session);
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);

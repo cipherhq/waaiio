@@ -89,7 +89,7 @@ export const orderingFlow: FlowDefinition = {
         return !!ctx.session.session_data._skip_browse && !!ctx.session.session_data._auto_added_to_cart;
       },
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         const meta = (ctx.business.metadata || {}) as Record<string, unknown>;
         const browseByCategory = (meta.ordering_browse_by_category as boolean) || false;
@@ -298,7 +298,14 @@ export const orderingFlow: FlowDefinition = {
 
         if (!products || products.length === 0) {
           delete d._selected_category;
-          return [{ type: 'text', text: `Nothing available in ${selectedCat} right now. Send *Hi* to start over.` }];
+          return [{
+            type: 'buttons',
+            body: `Nothing available in ${selectedCat} right now.`,
+            buttons: [
+              { id: 'back_to_categories', title: 'Other Categories' },
+              { id: 'cancel_order', title: 'Cancel' },
+            ],
+          }];
         }
 
         const items = [
@@ -329,6 +336,11 @@ export const orderingFlow: FlowDefinition = {
         if (input === 'back_to_categories') {
           delete ctx.session.session_data._selected_category;
           return { valid: true, data: { _back_to_categories: true } };
+        }
+
+        if (input === 'cancel_order') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          return { valid: true, data: { _cancel_order: true } };
         }
 
         const { data: product } = await ctx.supabase
@@ -363,6 +375,10 @@ export const orderingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         const d = ctx.session.session_data;
+
+        if (d._cancel_order) {
+          return null;
+        }
 
         if (d._back_to_categories) {
           delete d._back_to_categories;
@@ -415,7 +431,7 @@ export const orderingFlow: FlowDefinition = {
         const axis = variantOptions[axisIndex];
 
         if (!axis) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         const messages: PromptMessage[] = [];
@@ -449,7 +465,7 @@ export const orderingFlow: FlowDefinition = {
         const axisIndex = (d.current_option_axis_index as number) || 0;
         const axis = variantOptions[axisIndex];
 
-        if (!axis) return { valid: false, errorMessage: 'Invalid option. Send *Hi* to start again.' };
+        if (!axis) return { valid: false, errorMessage: 'Invalid option. Send *Hi* to start over.' };
 
         // Match input to a value (case-insensitive)
         const match = axis.values.find(v => v.toLowerCase() === input.toLowerCase());
@@ -519,14 +535,31 @@ export const orderingFlow: FlowDefinition = {
       id: 'select_variant_error',
       async prompt(): Promise<PromptMessage[]> {
         return [{
-          type: 'text',
-          text: 'Sorry, that combination is not available. Send *Hi* to start again.',
+          type: 'buttons',
+          body: 'Sorry, that combination is not available.',
+          buttons: [
+            { id: 'back_to_catalog', title: 'Try Another' },
+            { id: 'cancel_order', title: 'Cancel' },
+          ],
         }];
       },
-      async validate(): Promise<ValidationResult> {
-        return { valid: true };
+      async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'back_to_catalog') {
+          return { valid: true, data: { _variant_action: 'retry' } };
+        }
+        if (input === 'cancel_order') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          return { valid: true, data: { _variant_action: 'cancel' } };
+        }
+        return { valid: false, errorMessage: 'Please tap *Try Another* or *Cancel*.' };
       },
-      async next() { return null; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._variant_action === 'retry') {
+          delete ctx.session.session_data._variant_action;
+          return 'browse_catalog';
+        }
+        return null;
+      },
     },
 
     // ── Select Variant (single-axis / legacy flat) ──
@@ -2241,7 +2274,7 @@ export const orderingFlow: FlowDefinition = {
 
         if (error || !quote) {
           logger.error('[ORDERING] Quote request creation failed:', error);
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         // Notify business owner
@@ -2348,7 +2381,7 @@ export const orderingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         // Create order with new fields
         const orderPayload: Record<string, unknown> = {
@@ -2384,7 +2417,7 @@ export const orderingFlow: FlowDefinition = {
           .single();
 
         if (error || !order) {
-          return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end creating your order. Send *Hi* to start over.' }];
         }
 
         // Create order items (with addons) and decrement stock
@@ -2522,6 +2555,7 @@ export const orderingFlow: FlowDefinition = {
                 body: "🔔 Completed payment? Return here and tap *I've Paid* to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
+                  { id: 'retry_payment', title: 'Get New Link' },
                   { id: 'go_back', title: 'Cancel' },
                 ],
               },
@@ -2672,6 +2706,7 @@ export const orderingFlow: FlowDefinition = {
           body: "Complete payment using the link above, then *come back here* and tap *I've Paid* to confirm your order:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
+            { id: 'retry_payment', title: 'Get New Link' },
             { id: 'go_back', title: 'Cancel' },
           ],
         }];
@@ -2679,12 +2714,16 @@ export const orderingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
 
+        if (text === 'retry_payment') {
+          return { valid: true, data: { _retry_payment: true } };
+        }
+
         if ((text === 'cancel' || text === 'go_back' || text === 'cancel_order')) {
           const orderId = ctx.session.session_data.order_id as string;
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: `Order from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start again.` });
+          await ctx.sender.sendText({ to: ctx.from, text: `Order from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.` });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -2827,7 +2866,14 @@ export const orderingFlow: FlowDefinition = {
 
         return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
       },
-      async next() { return null; },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._retry_payment) {
+          delete d._retry_payment;
+          return 'process_order';
+        }
+        return null;
+      },
     },
   ],
 };

@@ -80,7 +80,7 @@ export async function handleMyOrders(
       .limit(10);
 
     if (!orders || orders.length === 0) {
-      await sendText(from, "You don't have any active orders.\n\nType *my account* for more options or *Hi* to start fresh.");
+      await sendText(from, "You don't have any active orders.\n\nType *my account* for more options or *Hi* to start over.");
       return; // Don't deactivate — user can type another command
     }
 
@@ -259,7 +259,7 @@ export async function handleOrderDetailAction(
   const response = input.toLowerCase();
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
-    await sendText(from, 'Action cancelled. Send *Hi* to start fresh or type *switch <business name>* to visit another business. 🙏');
+    await sendText(from, 'Action cancelled. Send *Hi* to start over or type *switch <business name>* to visit another business. 🙏');
     await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }

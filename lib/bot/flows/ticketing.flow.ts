@@ -17,7 +17,7 @@ export const ticketingFlow: FlowDefinition = {
     {
       id: 'select_event',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-        if (!ctx.business) return [{ type: 'text', text: 'Business not found.' }];
+        if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         const { data: events } = await ctx.supabase
           .from('events')
@@ -121,7 +121,14 @@ export const ticketingFlow: FlowDefinition = {
         const availableTypes = types.filter(t => t.total_tickets - t.tickets_sold > 0);
 
         if (availableTypes.length === 0) {
-          return [{ type: 'text', text: 'All tickets are sold out for this event. Send *Hi* to browse other events.' }];
+          return [{
+            type: 'buttons',
+            body: 'All tickets are sold out for this event.',
+            buttons: [
+              { id: 'back_to_events', title: 'Other Events' },
+              { id: 'cancel_tickets', title: 'Cancel' },
+            ],
+          }];
         }
 
         return [{
@@ -140,6 +147,14 @@ export const ticketingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'back_to_events') {
+          return { valid: true, data: { _ticket_type_action: 'back_to_events' } };
+        }
+        if (input === 'cancel_tickets') {
+          await ctx.sender.sendText({ to: ctx.from, text: 'No problem! Send *Hi* to start over.' });
+          return { valid: true, data: { _ticket_type_action: 'cancel' } };
+        }
+
         const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
         const selected = types?.find(t => t.id === input);
         if (!selected) return { valid: false, errorMessage: 'Please select a ticket type from the list.' };
@@ -157,7 +172,17 @@ export const ticketingFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_quantity'; },
+      async next(ctx: FlowContext) {
+        const action = ctx.session.session_data._ticket_type_action;
+        if (action === 'back_to_events') {
+          delete ctx.session.session_data._ticket_type_action;
+          return 'select_event';
+        }
+        if (action === 'cancel') {
+          return null;
+        }
+        return 'select_quantity';
+      },
     },
 
     // ── Select Quantity ──
@@ -388,7 +413,7 @@ export const ticketingFlow: FlowDefinition = {
             await ctx.supabase.from('bot_sessions').update({ user_id: userId }).eq('id', ctx.session.id);
           }
         }
-        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+        if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
         // Create booking for ticket
         const { data: booking, error } = await ctx.supabase
@@ -415,7 +440,7 @@ export const ticketingFlow: FlowDefinition = {
           .single();
 
         if (error || !booking) {
-          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start fresh.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         // tickets_sold is incremented AFTER payment verification in await_ticket_payment.validate()
@@ -456,9 +481,10 @@ export const ticketingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: "⏱️ After paying, wait 5-10 seconds then tap below:",
+                body: "Once your payment is complete, tap below to confirm:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
+                  { id: 'retry_payment', title: 'Get New Link' },
                   { id: 'go_back', title: 'Cancel' },
                 ],
               },
@@ -470,7 +496,7 @@ export const ticketingFlow: FlowDefinition = {
           return [
             {
               type: 'text',
-              text: `Something went wrong setting up your payment. Please type *Hi* to try again.`,
+              text: `Something went wrong setting up your payment. Send *Hi* to start over.`,
             },
           ];
         }
@@ -592,15 +618,20 @@ export const ticketingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete payment using the link above.\n\n⏱️ After paying, wait 5-10 seconds then tap below:",
+          body: "Complete payment using the link above.\n\nOnce your payment is complete, tap below to confirm:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
+            { id: 'retry_payment', title: 'Get New Link' },
             { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
+
+        if (text === 'retry_payment') {
+          return { valid: true, data: { _retry_payment: true } };
+        }
 
         if ((text === 'cancel' || text === 'go_back')) {
           const bookingId = ctx.session.session_data.booking_id as string;
@@ -610,7 +641,7 @@ export const ticketingFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: `Ticket purchase from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start again.` });
+          await ctx.sender.sendText({ to: ctx.from, text: `Ticket purchase from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.` });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -822,7 +853,14 @@ export const ticketingFlow: FlowDefinition = {
 
         return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };
       },
-      async next() { return null; },
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._retry_payment) {
+          delete d._retry_payment;
+          return 'process_tickets';
+        }
+        return null;
+      },
     },
   ],
 };
