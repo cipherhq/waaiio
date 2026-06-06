@@ -119,10 +119,19 @@ export default function AuditLog() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-500 max-w-[300px]">
-                    <pre className="text-xs whitespace-pre-wrap break-words">
-                      {JSON.stringify(e.details, null, 1)}
-                    </pre>
+                  <td className="px-4 py-3 text-gray-500 max-w-[400px]">
+                    {e.details && Object.keys(e.details).length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {Object.entries(e.details).map(([k, v]) => (
+                          <span key={k} className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-[11px]">
+                            <span className="font-medium text-gray-500">{k.replace(/_/g, ' ')}:</span>
+                            <span className="ml-1 text-gray-700">{typeof v === 'object' ? JSON.stringify(v) : String(v)}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">—</span>
+                    )}
                   </td>
                 </tr>
               ))}
