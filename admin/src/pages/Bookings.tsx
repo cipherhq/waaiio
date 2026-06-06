@@ -30,6 +30,7 @@ interface Booking {
   // enriched
   business_name?: string;
   service_name?: string;
+  currency?: string;
 }
 
 // Categories handled by the Giving page — excluded here
@@ -77,8 +78,12 @@ export default function Bookings() {
       // Load business names + categories to filter out giving orgs
       const bizIds = [...new Set(rows.map(b => b.business_id).filter(Boolean))];
       const { data: bizData } = bizIds.length > 0
-        ? await adminDb.from('businesses').select('id, name, category').in('id', bizIds)
+        ? await adminDb.from('businesses').select('id, name, category, country_code').in('id', bizIds)
         : { data: [] };
+
+      // Build business → currency map
+      const COUNTRY_TO_CUR: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+      const bizCurrencyMap = new Map((bizData || []).map(b => [b.id, COUNTRY_TO_CUR[b.country_code] || 'NGN']));
 
       // Exclude giving-category businesses
       const givingBizIds = new Set(
@@ -119,6 +124,7 @@ export default function Bookings() {
           business_name: bizMap.get(b.business_id) || 'Unknown',
           guest_name: b.guest_name || profileMap.get(b.user_id)?.name || '—',
           service_name: b.service_id ? serviceMap.get(b.service_id) || '—' : '—',
+          currency: bizCurrencyMap.get(b.business_id) || 'NGN',
         }));
 
       setBookings(enriched);
@@ -237,7 +243,7 @@ export default function Bookings() {
                     <StatusBadge status={b.status} />
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">
-                    {b.total_amount != null ? fmtCurrency(b.total_amount, 'NGN') : '—'}
+                    {b.total_amount != null ? fmtCurrency(b.total_amount, b.currency || 'NGN') : '—'}
                   </td>
                 </tr>
               ))}
@@ -296,7 +302,7 @@ export default function Bookings() {
               <div className="space-y-2">
                 <DetailRow
                   label="Amount"
-                  value={selected.total_amount != null && selected.total_amount > 0 ? fmtCurrency(selected.total_amount) : '—'}
+                  value={selected.total_amount != null && selected.total_amount > 0 ? fmtCurrency(selected.total_amount, selected.currency || 'NGN') : '—'}
                 />
                 <DetailRow label="Deposit Status" value={selected.deposit_status || '—'} />
                 <DetailRow label="Channel" value={selected.channel || '—'} />

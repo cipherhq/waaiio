@@ -19,6 +19,8 @@ interface ActionAlert {
   path: string;
 }
 
+const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -78,7 +80,6 @@ export default function Dashboard() {
           ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: bizIds }] })
           : { data: [] };
         const bizCountry = new Map((bizData || []).map((b: { id: string; country_code: string }) => [b.id, b.country_code || 'NG']));
-        const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
 
         const feesByCur: Record<string, number> = {};
         const volByCur: Record<string, number> = {};
@@ -131,7 +132,6 @@ export default function Dashboard() {
           : { data: [] };
         const feeBizData = feeBizRes.data || [];
         const feeBizCountry = new Map((feeBizData || []).map(b => [b.id, b.country_code || 'NG']));
-        const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
 
         const revByCurrency: Record<string, number> = {};
         for (const f of feesRes.data || []) {
@@ -720,7 +720,7 @@ export default function Dashboard() {
                   <p className="text-sm font-medium text-gray-900 truncate">{b.name}</p>
                   <p className="text-[10px] text-gray-400">{b.bookings} bookings · {b.country}</p>
                 </div>
-                <span className="text-xs font-semibold text-gray-700">{formatMoney(b.revenue, b.country === 'NG' ? 'NGN' : b.country === 'GH' ? 'GHS' : b.country === 'GB' ? 'GBP' : 'USD')}</span>
+                <span className="text-xs font-semibold text-gray-700">{formatMoney(b.revenue, countryToCur[b.country] || 'NGN')}</span>
               </div>
             ))}
             {topBusinesses.length === 0 && <p className="text-xs text-gray-400">No bookings this month</p>}

@@ -379,30 +379,41 @@ export default function Subscriptions() {
 
   const activeCount = subscriptions.filter(s => s.status === 'active').length;
   const trialCount = subscriptions.filter(s => s.status === 'trial').length;
-  const mrr = subscriptions
-    .filter(s => s.status === 'active')
-    .reduce((sum, s) => {
-      const amt = Number(s.amount || 0);
-      if (s.interval === 'yearly' || s.interval === 'annual') return sum + amt / 12;
-      return sum + amt;
-    }, 0);
+
+  // MRR grouped by currency
+  const mrrByCurrency: Record<string, number> = {};
+  for (const s of subscriptions.filter(s => s.status === 'active')) {
+    const cur = s.currency || 'NGN';
+    const amt = Number(s.amount || 0);
+    const monthly = (s.interval === 'yearly' || s.interval === 'annual') ? amt / 12 : amt;
+    mrrByCurrency[cur] = (mrrByCurrency[cur] || 0) + monthly;
+  }
+
+  /** Format a per-currency record as "NGN 5,000 · $500" */
+  function formatMultiAmounts(amounts: Record<string, number>): string {
+    const entries = Object.entries(amounts).filter(([, a]) => a > 0);
+    if (entries.length === 0) return fmtCurrency(0);
+    return entries.map(([cur, amt]) => fmtCurrency(amt, cur)).join(' · ');
+  }
 
   // Analytics: tier distribution
   const tierDistribution = TIERS.map(tier => {
     const subs = subscriptions.filter(s => s.tier === tier);
     const activeSubs = subs.filter(s => s.status === 'active');
-    const tierMrr = activeSubs.reduce((sum, s) => {
+    const tierMrrByCurrency: Record<string, number> = {};
+    for (const s of activeSubs) {
+      const cur = s.currency || 'NGN';
       const amt = Number(s.amount || 0);
-      if (s.interval === 'yearly' || s.interval === 'annual') return sum + amt / 12;
-      return sum + amt;
-    }, 0);
+      const monthly = (s.interval === 'yearly' || s.interval === 'annual') ? amt / 12 : amt;
+      tierMrrByCurrency[cur] = (tierMrrByCurrency[cur] || 0) + monthly;
+    }
     return {
       tier,
       label: TIER_CATALOG[tier].marketingName,
       total: subs.length,
       active: activeSubs.length,
       trial: subs.filter(s => s.status === 'trial').length,
-      mrr: tierMrr,
+      mrrByCurrency: tierMrrByCurrency,
     };
   });
 
@@ -463,7 +474,7 @@ export default function Subscriptions() {
             </div>
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
               <p className="text-xs font-medium text-gray-500">Est. MRR</p>
-              <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(mrr)}</p>
+              <p className="mt-1 text-xl font-bold text-gray-900">{formatMultiAmounts(mrrByCurrency)}</p>
             </div>
           </div>
 
@@ -652,7 +663,7 @@ export default function Subscriptions() {
             </div>
             <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
               <p className="text-xs font-medium text-gray-500">Est. MRR</p>
-              <p className="mt-1 text-xl font-bold text-gray-900">{fmtCurrency(mrr)}</p>
+              <p className="mt-1 text-xl font-bold text-gray-900">{formatMultiAmounts(mrrByCurrency)}</p>
             </div>
             <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
               <p className="text-xs font-medium text-gray-500">Trial Conversion</p>
@@ -677,7 +688,7 @@ export default function Subscriptions() {
                         <span className="ml-1.5 text-xs text-gray-500">({td.tier})</span>
                       </span>
                       <span className="text-gray-600">
-                        {td.total} subs ({pct}%) &middot; MRR {fmtCurrency(td.mrr)}
+                        {td.total} subs ({pct}%) &middot; MRR {formatMultiAmounts(td.mrrByCurrency)}
                       </span>
                     </div>
                     <div className="mt-1.5 h-3 w-full overflow-hidden rounded-full bg-gray-100">

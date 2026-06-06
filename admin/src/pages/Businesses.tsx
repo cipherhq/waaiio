@@ -787,7 +787,7 @@ export default function Businesses() {
                       {selectedFinancials.payoutHistory.map(p => (
                         <div key={p.id} className="flex items-center justify-between rounded bg-white px-2 py-1.5 text-xs">
                           <span className="text-gray-600">{fmtDate(p.period_start)} — {fmtDate(p.period_end)}</span>
-                          <span className="font-medium text-gray-900">{fmtCurrency(Number(p.net_amount))}</span>
+                          <span className="font-medium text-gray-900">{fmtCurrency(Number(p.net_amount), getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</span>
                           <StatusBadge status={p.status} />
                         </div>
                       ))}

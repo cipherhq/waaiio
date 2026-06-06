@@ -162,29 +162,32 @@ export default function Finance() {
       outstandingByCurrency[cur] = (outstandingByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 
-    // Payment status breakdown
-    const paymentBuckets: Record<string, { count: number; amount: number }> = {};
+    // Payment status breakdown (per-currency)
+    const paymentBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
     for (const p of filteredPayments) {
-      if (!paymentBuckets[p.status]) paymentBuckets[p.status] = { count: 0, amount: 0 };
+      if (!paymentBuckets[p.status]) paymentBuckets[p.status] = { count: 0, amounts: {} };
       paymentBuckets[p.status].count++;
-      paymentBuckets[p.status].amount += Number(p.amount || 0);
+      const cur = getPaymentCurrency(p);
+      paymentBuckets[p.status].amounts[cur] = (paymentBuckets[p.status].amounts[cur] || 0) + Number(p.amount || 0);
     }
 
-    // Payout status breakdown
-    const payoutBuckets: Record<string, { count: number; amount: number }> = {};
+    // Payout status breakdown (per-currency)
+    const payoutBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
     for (const p of filteredPayouts) {
-      if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0, amount: 0 };
+      if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0, amounts: {} };
       payoutBuckets[p.status].count++;
-      payoutBuckets[p.status].amount += Number(p.net_amount || 0);
+      const cur = p.currency || 'NGN';
+      payoutBuckets[p.status].amounts[cur] = (payoutBuckets[p.status].amounts[cur] || 0) + Number(p.net_amount || 0);
     }
 
-    // Gateway breakdown
-    const gatewayBuckets: Record<string, { count: number; amount: number }> = {};
+    // Gateway breakdown (per-currency)
+    const gatewayBuckets: Record<string, { count: number; amounts: Record<string, number> }> = {};
     for (const p of filteredPayments.filter(p => p.status === 'success')) {
       const gw = p.gateway || 'unknown';
-      if (!gatewayBuckets[gw]) gatewayBuckets[gw] = { count: 0, amount: 0 };
+      if (!gatewayBuckets[gw]) gatewayBuckets[gw] = { count: 0, amounts: {} };
       gatewayBuckets[gw].count++;
-      gatewayBuckets[gw].amount += Number(p.amount || 0);
+      const cur = getPaymentCurrency(p);
+      gatewayBuckets[gw].amounts[cur] = (gatewayBuckets[gw].amounts[cur] || 0) + Number(p.amount || 0);
     }
 
     return {
@@ -391,7 +394,7 @@ export default function Finance() {
                 </div>
                 <div className="text-right">
                   <span className="font-medium text-gray-900">{data.count}</span>
-                  <span className="ml-2 text-gray-500">({formatMoney(data.amount)})</span>
+                  <span className="ml-2 text-gray-500">({formatMultiCurrency(data.amounts)})</span>
                 </div>
               </div>
             ))}
@@ -415,7 +418,7 @@ export default function Finance() {
                 </div>
                 <div className="text-right">
                   <span className="font-medium text-gray-900">{data.count}</span>
-                  <span className="ml-2 text-gray-500">({formatMoney(data.amount)})</span>
+                  <span className="ml-2 text-gray-500">({formatMultiCurrency(data.amounts)})</span>
                 </div>
               </div>
             ))}
@@ -440,7 +443,7 @@ export default function Finance() {
                 </div>
                 <div className="text-right">
                   <span className="font-medium text-gray-900">{data.count} payments</span>
-                  <span className="ml-2 text-gray-500">({formatMoney(data.amount)})</span>
+                  <span className="ml-2 text-gray-500">({formatMultiCurrency(data.amounts)})</span>
                 </div>
               </div>
             ))}

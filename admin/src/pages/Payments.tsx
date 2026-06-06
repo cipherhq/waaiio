@@ -39,7 +39,7 @@ export default function Payments() {
   const adminSession = useAdminSession();
   const canMutate = isFullAdmin(adminSession);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; payment_id: string; business_id: string; customer_name: string; customer_phone: string; amount: number; reason: string; status: string; created_at: string }>>([]);
+  const [refundRequests, setRefundRequests] = useState<Array<{ id: string; payment_id: string; business_id: string; customer_name: string; customer_phone: string; amount: number; currency?: string; reason: string; status: string; created_at: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -119,9 +119,14 @@ export default function Payments() {
 
       setPayments(enriched);
 
-      // Load refund requests
+      // Load refund requests and resolve currency from payments
       const { data: reqData } = await adminDb.from('refund_requests').select('*').order('created_at', { ascending: false });
-      setRefundRequests(reqData || []);
+      const paymentCurrencyMap = new Map((enriched || []).map(p => [p.id, p.currency || 'NGN']));
+      const enrichedRequests = (reqData || []).map(r => ({
+        ...r,
+        currency: paymentCurrencyMap.get(r.payment_id) || 'NGN',
+      }));
+      setRefundRequests(enrichedRequests);
     } catch (error) {
       console.warn('Failed to load payments:', error);
     } finally {
@@ -272,13 +277,13 @@ export default function Payments() {
               <div key={req.id} className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm">
                 <div>
                   <span className="font-medium text-gray-900">{req.customer_name || req.customer_phone}</span>
-                  <span className="ml-2 text-gray-500">{fmtCurrency(req.amount)}</span>
+                  <span className="ml-2 text-gray-500">{fmtCurrency(req.amount, req.currency || undefined)}</span>
                   {req.reason && <span className="ml-2 text-xs text-gray-400">— {req.reason}</span>}
                 </div>
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (!canMutate || !confirm(`Approve and process refund of ${fmtCurrency(req.amount)} to ${req.customer_name || req.customer_phone}?`)) return;
+                      if (!canMutate || !confirm(`Approve and process refund of ${fmtCurrency(req.amount, req.currency || undefined)} to ${req.customer_name || req.customer_phone}?`)) return;
                       try {
                         // Call the actual refund API to process the gateway refund
                         const apiUrl = import.meta.env.VITE_API_URL || '';
