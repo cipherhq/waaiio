@@ -45,14 +45,10 @@ export function fmtDateTime(date: string | Date): string {
   });
 }
 
-/** Mask phone number for privacy: shows country code + last 4 digits. */
+/** Format phone number for admin display — shows full number (admin-only panel). */
 export function maskPhone(phone: string | null | undefined): string {
   if (!phone) return '—';
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length <= 4) return phone;
-  const last4 = digits.slice(-4);
-  const prefix = phone.startsWith('+') ? phone.slice(0, phone.indexOf(digits.charAt(0))) : '';
-  return `${prefix}***${last4}`;
+  return phone;
 }
 
 export function fmtRelative(date: string | Date): string {
