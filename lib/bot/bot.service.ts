@@ -1551,6 +1551,14 @@ export class BotService {
           await this.sendText(from, 'This business is currently unavailable. Please try again later.');
           return;
         }
+        // Check if phone is blocked by admin
+        if (biz) {
+          const meta = ((biz as Record<string, unknown>).metadata || {}) as Record<string, unknown>;
+          const blockedPhones = Array.isArray(meta.blocked_phones) ? meta.blocked_phones as string[] : [];
+          if (blockedPhones.includes(from) || blockedPhones.includes('+' + from)) {
+            return; // Silently drop — blocked users get no response
+          }
+        }
         business = biz as BusinessRecord | null;
       }
 
