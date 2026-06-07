@@ -2003,7 +2003,7 @@ export class BotService {
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
-      await this.sendText(from, 'Action cancelled. Send *Hi* to start over or type *switch <business name>* to visit another business. 🙏');
+      await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
       return;
     }
 

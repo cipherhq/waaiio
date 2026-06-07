@@ -176,8 +176,8 @@ const selectCapabilityStep: FlowStepConfig = {
     // List message for 4+ items
     return [{
       type: 'list' as const,
-      title: 'Services',
-      body: 'What would you like to do?',
+      title: ctx.business?.name || 'Menu',
+      body: 'What would you like to do? 👇',
       buttonLabel: 'View Options',
       items: capItems.map(i => ({ title: i.title, postbackText: i.postbackText })),
     }];
@@ -422,7 +422,7 @@ const myAccountMenuStep: FlowStepConfig = {
         .eq('id', ctx.session.id);
       await ctx.sender.sendText({
         to: ctx.from,
-        text: 'To switch to a different business:\n\n• Type *switch <business name>*\n  _e.g. switch FacesByKoph_\n\n• Or type *Hi* to see your recent businesses\n\n• Or send the business code directly',
+        text: 'To switch to a different business:\n\n• Type *switch* followed by the business name\n  _e.g. switch FacesByKoph_\n\n• Or send *Hi* to see your recent businesses',
       });
       return { valid: true, data: {} };
     }

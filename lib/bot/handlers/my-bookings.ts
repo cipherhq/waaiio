@@ -399,7 +399,7 @@ export async function handleModifyBooking(
   const response = input.toLowerCase();
 
   if (response === 'cancel' || response === 'exit' || response === 'quit') {
-    await sendText(from, 'Action cancelled. Send *Hi* to start over or type *switch <business name>* to visit another business. 🙏');
+    await sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
     await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
     return;
   }
