@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
@@ -7,15 +7,23 @@ export const metadata: Metadata = {
   robots: 'noindex',
 };
 
-export default async function SignedWaiverView({ params }: { params: Promise<{ id: string }> }) {
+export default async function SignedWaiverView({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ token?: string }>;
+}) {
   const { id } = await params;
-  const supabase = await createClient();
+  const { token } = await searchParams;
+  const supabase = createServiceClient();
 
-  // Fetch signed waiver with template and business info
+  // Fetch signed waiver with template and business info — verify access_token
   const { data: signed } = await supabase
     .from('signed_waivers')
     .select('*, waiver_templates!inner(title, body, business_id, businesses!inner(name, logo_url))')
     .eq('id', id)
+    .eq('access_token', token || '')
     .single();
 
   if (!signed) notFound();

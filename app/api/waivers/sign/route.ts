@@ -4,6 +4,11 @@ import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
 
+/** Escape user-supplied strings for safe HTML interpolation */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 export async function POST(request: NextRequest) {
   // Rate limit: 10/min per IP
   const rateLimit = rateLimitResponse(getRateLimitKey(request, 'waiver-sign'), 10, 60_000);
@@ -97,7 +102,7 @@ export async function POST(request: NextRequest) {
         metadata: { ...(metadata || {}), first_name: first_name || '', last_name: last_name || '', send_via: sendVia },
         audit_trail: auditTrail,
       })
-      .select('id')
+      .select('id, access_token')
       .single();
 
     if (insertErr || !signed) {
@@ -123,7 +128,7 @@ export async function POST(request: NextRequest) {
 
         if (resolved) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-          const viewUrl = `${appUrl}/w/view/${signed.id}`;
+          const viewUrl = `${appUrl}/w/view/${signed.id}?token=${signed.access_token}`;
           const confirmMsg = [
             `✅ *Waiver Signed*`,
             '',
@@ -151,7 +156,7 @@ export async function POST(request: NextRequest) {
           to: customer_email,
           from: businessFrom(biz?.name || 'Business'),
           subject: `Waiver Signed - ${template.title}`,
-          html: `<p>Hi ${first_name || customerName},</p><p>You have signed the <strong>"${template.title}"</strong> waiver for <strong>${biz?.name || 'the business'}</strong>.</p><p><strong>Reference:</strong> WAI-${signed.id.slice(0, 6).toUpperCase()}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/w/view/${signed.id}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Copy</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          html: `<p>Hi ${esc(first_name || customerName)},</p><p>You have signed the <strong>"${esc(template.title)}"</strong> waiver for <strong>${esc(biz?.name || 'the business')}</strong>.</p><p><strong>Reference:</strong> WAI-${signed.id.slice(0, 6).toUpperCase()}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p><p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/w/view/${signed.id}?token=${signed.access_token}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Copy</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
         });
       } catch (emailErr) {
         logger.warn('Failed to send waiver email confirmation:', emailErr);
@@ -187,13 +192,13 @@ export async function POST(request: NextRequest) {
       if (owner?.email) {
         const { sendEmail: sendOwnerEmail } = await import('@/lib/email/client');
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-        const viewUrl = `${appUrl}/w/view/${signed.id}`;
+        const viewUrl = `${appUrl}/w/view/${signed.id}?token=${signed.access_token}`;
         const refCode = `WAI-${signed.id.slice(0, 6).toUpperCase()}`;
 
         await sendOwnerEmail({
           to: owner.email,
-          subject: `New Waiver Signed — ${customerName} signed "${template.title}"`,
-          html: `<p>A new waiver has been signed for <strong>${biz?.name || 'your business'}</strong>.</p><p><strong>Customer:</strong> ${customerName}</p>${customer_phone ? `<p><strong>Phone:</strong> ${customer_phone}</p>` : ''}${customer_email ? `<p><strong>Email:</strong> ${customer_email}</p>` : ''}<p><strong>Waiver:</strong> ${template.title}</p><p><strong>Reference:</strong> ${refCode}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p><p><a href="${viewUrl}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Waiver</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          subject: `New Waiver Signed — ${esc(customerName)} signed "${esc(template.title)}"`,
+          html: `<p>A new waiver has been signed for <strong>${esc(biz?.name || 'your business')}</strong>.</p><p><strong>Customer:</strong> ${esc(customerName)}</p>${customer_phone ? `<p><strong>Phone:</strong> ${esc(customer_phone)}</p>` : ''}${customer_email ? `<p><strong>Email:</strong> ${esc(customer_email)}</p>` : ''}<p><strong>Waiver:</strong> ${esc(template.title)}</p><p><strong>Reference:</strong> ${refCode}</p><p><strong>Signed:</strong> ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p><p><a href="${viewUrl}" style="display:inline-block;background:#6C2BD9;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;margin-top:8px">View Signed Waiver</a></p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
         });
       }
     } catch (ownerEmailErr) {

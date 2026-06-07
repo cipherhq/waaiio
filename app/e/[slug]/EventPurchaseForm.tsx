@@ -139,8 +139,8 @@ export default function EventPurchaseForm({
   }
 
   async function verifyOtp() {
-    if (!otpCode || otpCode.length !== 4) {
-      setOtpError('Enter the 4-digit code');
+    if (!otpCode || otpCode.length !== 6) {
+      setOtpError('Enter the 6-digit code');
       return;
     }
     setOtpLoading(true);
@@ -490,16 +490,16 @@ export default function EventPurchaseForm({
                         <input
                           type="text"
                           inputMode="numeric"
-                          maxLength={4}
+                          maxLength={6}
                           value={otpCode}
-                          onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                          placeholder="4-digit code"
+                          onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                          placeholder="6-digit code"
                           className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-brand"
                         />
                         <button
                           type="button"
                           onClick={verifyOtp}
-                          disabled={otpLoading || otpCode.length !== 4}
+                          disabled={otpLoading || otpCode.length !== 6}
                           className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
                         >
                           {otpLoading ? '...' : 'Verify'}
@@ -517,7 +517,7 @@ export default function EventPurchaseForm({
                     </div>
                   ) : (
                     <div>
-                      <p className="text-xs text-gray-500 mb-1">We&apos;ll send a 4-digit code to verify your email — your tickets will be sent here.</p>
+                      <p className="text-xs text-gray-500 mb-1">We&apos;ll send a 6-digit code to verify your email — your tickets will be sent here.</p>
                       <div className="flex gap-2">
                         <input
                           type="email"

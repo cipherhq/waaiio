@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
+import { createHmac, timingSafeEqual, randomBytes, randomInt } from 'crypto';
 
 const SECRET = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -10,7 +10,7 @@ const OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes
  * Token format: `phone:code:expiresAtMs:hmac`
  */
 export function generatePhoneOtp(phone: string): { code: string; token: string } {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = String(randomInt(100000, 999999));
   const expiresAt = Date.now() + OTP_TTL_MS;
   const payload = `${phone}:${code}:${expiresAt}`;
   const hmac = createHmac('sha256', SECRET).update(payload).digest('hex');

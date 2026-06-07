@@ -27,8 +27,9 @@ async function handleSend(request: NextRequest) {
     const ipLimit = rateLimitResponse(getRateLimitKey(request, 'email-otp'), 10, 600_000);
     if (ipLimit) return ipLimit;
 
-    // Generate 4-digit code
-    const code = String(Math.floor(1000 + Math.random() * 9000));
+    // Generate 6-digit code using crypto-safe random
+    const { randomInt } = await import('crypto');
+    const code = String(randomInt(100000, 999999));
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // 5 minutes
 
     // Store in DB (upsert by email — replaces any existing code)

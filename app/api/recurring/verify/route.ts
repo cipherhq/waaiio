@@ -3,9 +3,6 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
-// Simple in-memory OTP store (in production, use Redis or DB)
-const otpStore = new Map<string, { code: string; expires: number }>();
-
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = rateLimitResponse(getRateLimitKey(request, 'recurring-verify'), 5, 60_000);
@@ -18,13 +15,23 @@ export async function POST(request: NextRequest) {
     }
 
     const normalizedPhone = phone.startsWith('+') ? phone : `+${phone}`;
+    const supabase = createServiceClient();
 
     if (action === 'request') {
-      // Generate 6-digit OTP
-      const code = String(Math.floor(100000 + Math.random() * 900000));
-      otpStore.set(normalizedPhone, { code, expires: Date.now() + 10 * 60 * 1000 }); // 10 min
+      // Generate 6-digit OTP using crypto-safe random
+      const { randomInt } = await import('crypto');
+      const code = String(randomInt(100000, 999999));
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
 
-      // Send via WhatsApp (in production)
+      // Store OTP in DB (upsert by phone key)
+      await supabase
+        .from('platform_settings')
+        .upsert(
+          { key: `recurring-otp:${normalizedPhone}`, value: { code, expires_at: expiresAt }, description: 'Recurring verify OTP' },
+          { onConflict: 'key' },
+        );
+
+      // Send via WhatsApp
       const whatsappToken = process.env.WHATSAPP_TOKEN;
       const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
@@ -50,22 +57,35 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'verify') {
-      const stored = otpStore.get(normalizedPhone);
+      // Fetch OTP from DB
+      const { data } = await supabase
+        .from('platform_settings')
+        .select('value')
+        .eq('key', `recurring-otp:${normalizedPhone}`)
+        .maybeSingle();
 
-      if (!stored || stored.expires < Date.now()) {
+      if (!data?.value) {
         return NextResponse.json({ error: 'Code expired. Please request a new one.' }, { status: 400 });
       }
 
-      if (stored.code !== otp) {
+      const stored = data.value as { code: string; expires_at: string };
+
+      if (new Date() > new Date(stored.expires_at)) {
+        // Cleanup expired
+        await supabase.from('platform_settings').delete().eq('key', `recurring-otp:${normalizedPhone}`);
+        return NextResponse.json({ error: 'Code expired. Please request a new one.' }, { status: 400 });
+      }
+
+      const { timingSafeEqual } = await import('crypto');
+      const otpStr = String(otp).trim();
+      if (otpStr.length !== stored.code.length || !timingSafeEqual(Buffer.from(stored.code), Buffer.from(otpStr))) {
         return NextResponse.json({ error: 'Invalid verification code.' }, { status: 400 });
       }
 
-      // Clear OTP
-      otpStore.delete(normalizedPhone);
+      // Verified — delete from DB
+      await supabase.from('platform_settings').delete().eq('key', `recurring-otp:${normalizedPhone}`);
 
       // Fetch all subscriptions for this phone
-      const supabase = createServiceClient();
-
       const { data: subs } = await supabase
         .from('customer_subscriptions')
         .select(`

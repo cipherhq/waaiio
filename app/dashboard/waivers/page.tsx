@@ -31,6 +31,7 @@ interface SignedWaiver {
   signed_at: string;
   metadata: Record<string, string>;
   audit_trail: Record<string, string>;
+  access_token: string | null;
   waiver_templates: { title: string; token: string };
 }
 
@@ -833,7 +834,7 @@ export default function WaiversPage() {
             </div>
 
             <a
-              href={`/w/view/${selectedSigned.id}`}
+              href={`/w/view/${selectedSigned.id}?token=${selectedSigned.access_token || ''}`}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand/90"

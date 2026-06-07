@@ -40,6 +40,18 @@ export async function GET(
       supabase = await createClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+      // Verify the invoice belongs to the user's business
+      const serviceDb = createServiceClient();
+      const { data: bizCheck } = await serviceDb
+        .from('invoices')
+        .select('business_id, businesses!inner(owner_id)')
+        .eq('id', id)
+        .single();
+
+      if (!bizCheck || (bizCheck.businesses as unknown as { owner_id: string }).owner_id !== user.id) {
+        return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      }
     }
 
     // Fetch invoice with items

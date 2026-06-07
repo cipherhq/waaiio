@@ -222,7 +222,7 @@ export default function BookingForm({ business, services }: BookingFormProps) {
   }
 
   async function verifyOtp() {
-    if (!otpCode || otpCode.length !== 4) { setOtpError('Enter the 4-digit code'); return; }
+    if (!otpCode || otpCode.length !== 6) { setOtpError('Enter the 6-digit code'); return; }
     setOtpLoading(true); setOtpError('');
     try {
       const res = await fetch('/api/auth/email-otp?action=verify', {
@@ -545,8 +545,8 @@ export default function BookingForm({ business, services }: BookingFormProps) {
                   <div>
                     <p className="mb-2 text-xs text-gray-500">Code sent to {guestEmail}</p>
                     <div className="flex gap-2">
-                      <input type="text" inputMode="numeric" maxLength={4} value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="4-digit code" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-brand" />
-                      <button type="button" onClick={verifyOtp} disabled={otpLoading || otpCode.length !== 4} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-600 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>
+                      <input type="text" inputMode="numeric" maxLength={6} value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit code" className="flex-1 rounded-lg border border-gray-200 px-3 py-2.5 text-center text-lg font-bold tracking-[0.3em] outline-none focus:border-brand" />
+                      <button type="button" onClick={verifyOtp} disabled={otpLoading || otpCode.length !== 6} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white hover:bg-brand-600 disabled:opacity-50">{otpLoading ? '...' : 'Verify'}</button>
                     </div>
                     <button type="button" onClick={sendOtp} disabled={otpLoading} className="mt-1 text-xs text-brand hover:underline">Resend code</button>
                     {otpError && <p className="mt-1 text-xs text-red-500">{otpError}</p>}
