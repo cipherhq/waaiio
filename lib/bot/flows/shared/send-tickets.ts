@@ -30,9 +30,10 @@ export interface SendTicketsOptions {
 /** Generate a short unique ticket code like "TK-A3F8X2" */
 function generateTicketCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous I/O/0/1
+  const randomBytes = crypto.getRandomValues(new Uint8Array(6));
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
+    code += chars[randomBytes[i] % chars.length];
   }
   return `TK-${code}`;
 }
@@ -170,49 +171,82 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
     for (const ticket of tickets) {
       const verifyUrl = `${appUrl}/tickets/${ticket.ticketCode}`;
-      const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nScan the QR code or show this at the entrance\n\n🔗 ${verifyUrl}`;
+      const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nShow this at the entrance\n🔗 ${verifyUrl}`;
 
       try {
-        // Try compositing QR onto flyer (centered, white background)
-        if (flyerBuffer) {
-          const sharp = (await import('sharp')).default;
-          const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 250, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
+        const sharp = (await import('sharp')).default;
+        const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 250, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
 
+        let composited: Buffer;
+
+        if (flyerBuffer) {
+          // Flyer exists: composite QR in bottom-right + dark bar at bottom
           const flyer = sharp(flyerBuffer).resize(800, null, { withoutEnlargement: true });
           const flyerMeta = await flyer.metadata();
           const flyerH = flyerMeta.height || 800;
           const flyerW = flyerMeta.width || 800;
 
           // White background behind QR for visibility
-          const qrSize = 280;
-          const qrBgSvg = `<svg width="${qrSize}" height="${qrSize}" xmlns="http://www.w3.org/2000/svg"><rect width="${qrSize}" height="${qrSize}" rx="16" fill="white" opacity="0.95"/></svg>`;
+          const qrSize = 200;
+          const qrBgSvg = `<svg width="${qrSize}" height="${qrSize}" xmlns="http://www.w3.org/2000/svg"><rect width="${qrSize}" height="${qrSize}" rx="12" fill="white" opacity="0.95"/></svg>`;
           const qrWithBg = await sharp(Buffer.from(qrBgSvg))
-            .composite([{ input: qrPng, top: 15, left: 15 }])
+            .composite([{ input: qrPng, top: 10, left: 10 }])
+            .resize(qrSize, qrSize)
             .png().toBuffer();
 
-          const composited = await flyer
-            .composite([{ input: qrWithBg, top: Math.round((flyerH - qrSize) / 2), left: Math.round((flyerW - qrSize) / 2) }])
+          // Create a dark semi-transparent bar at the bottom
+          const barHeight = 80;
+          const darkBar = await sharp({
+            create: { width: flyerW, height: barHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.75 } }
+          }).png().toBuffer();
+
+          // Composite: flyer + dark bar at bottom + QR in bottom-right (above bar)
+          composited = await flyer
+            .composite([
+              { input: darkBar, top: flyerH - barHeight, left: 0 },
+              { input: qrWithBg, top: flyerH - qrSize - 10, left: flyerW - qrSize - 10 },
+            ])
             .jpeg({ quality: 90 })
             .toBuffer();
+        } else {
+          // No flyer: generate a branded ticket card with purple gradient + QR
+          const cardWidth = 600;
+          const cardHeight = 400;
 
-          // Upload to storage for a public URL
-          const storagePath = `tickets/${businessId}/${ticket.ticketCode}.jpg`;
-          const { error: uploadErr } = await supabase.storage
-            .from('business-documents')
-            .upload(storagePath, composited, { contentType: 'image/jpeg', upsert: true });
+          const bgSvg = `<svg width="${cardWidth}" height="${cardHeight}" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#6C2BD9"/>
+                <stop offset="100%" style="stop-color:#4C1D95"/>
+              </linearGradient>
+            </defs>
+            <rect width="${cardWidth}" height="${cardHeight}" rx="24" fill="url(#g)"/>
+            <rect x="350" y="50" width="220" height="220" rx="16" fill="white" opacity="0.95"/>
+          </svg>`;
 
-          if (!uploadErr) {
-            const { data: urlData } = supabase.storage.from('business-documents').getPublicUrl(storagePath);
-            await sender.sendImage({ to: phone, imageUrl: urlData.publicUrl, caption });
-            logger.info('[TICKETS] Flyer+QR image sent for', ticket.ticketCode);
-            continue; // Success — skip fallbacks
-          }
+          composited = await sharp(Buffer.from(bgSvg))
+            .composite([
+              { input: qrPng, top: 60, left: 360 },
+            ])
+            .jpeg({ quality: 90 })
+            .toBuffer();
         }
 
-        // Fallback: send QR code image with rich caption (no flyer available)
-        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&format=png&color=1a1a1a&bgcolor=ffffff&data=${encodeURIComponent(verifyUrl)}`;
-        await sender.sendImage({ to: phone, imageUrl: qrImageUrl, caption });
-        logger.info('[TICKETS] QR ticket sent for', ticket.ticketCode);
+        // Upload to storage for a public URL
+        const storagePath = `tickets/${businessId}/${ticket.ticketCode}.jpg`;
+        const { error: uploadErr } = await supabase.storage
+          .from('business-documents')
+          .upload(storagePath, composited, { contentType: 'image/jpeg', upsert: true });
+
+        if (!uploadErr) {
+          const { data: urlData } = supabase.storage.from('business-documents').getPublicUrl(storagePath);
+          await sender.sendImage({ to: phone, imageUrl: urlData.publicUrl, caption });
+          logger.info('[TICKETS] Ticket image sent for', ticket.ticketCode);
+        } else {
+          logger.error('[TICKETS] Upload failed for', ticket.ticketCode, ':', uploadErr.message);
+          // Text fallback on upload failure
+          await sender.sendText({ to: phone, text: caption }).catch(() => {});
+        }
       } catch (err) {
         logger.error('[TICKETS] Ticket image failed for', ticket.ticketCode, ':', err);
         // Text fallback
