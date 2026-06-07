@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
+import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 
 export async function POST(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -20,6 +21,13 @@ async function handleSend(request: NextRequest) {
     }
 
     const emailLower = email.toLowerCase().trim();
+
+    // Brute force: check IP-level block before proceeding
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const ipCheck = checkBruteForce(`ip:${ip}`);
+    if (ipCheck.blocked) {
+      return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
+    }
 
     // Rate limit: 3 per email per 10min, 10 per IP per 10min
     const emailLimit = rateLimitResponse(`email-otp:${emailLower}`, 3, 600_000);
@@ -74,6 +82,17 @@ async function handleVerify(request: NextRequest) {
     }
 
     const emailLower = email.toLowerCase().trim();
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+
+    // Brute force: check both email-level and IP-level blocks
+    const emailBf = checkBruteForce(`otp:${emailLower}`);
+    if (emailBf.blocked) {
+      return NextResponse.json({ error: 'Too many failed attempts. Please try again later.' }, { status: 429 });
+    }
+    const ipBf = checkBruteForce(`ip:${ip}`);
+    if (ipBf.blocked) {
+      return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
+    }
 
     // Rate limit: 5 attempts per email per 15min
     const limit = rateLimitResponse(`email-otp-verify:${emailLower}`, 5, 15 * 60 * 1000);
@@ -102,10 +121,15 @@ async function handleVerify(request: NextRequest) {
     const { timingSafeEqual } = await import('crypto');
     const codeStr = String(code).trim();
     if (codeStr.length !== stored.code.length || !timingSafeEqual(Buffer.from(stored.code), Buffer.from(codeStr))) {
+      // Record brute force failure for both email and IP
+      recordFailure(`otp:${emailLower}`);
+      recordFailure(`ip:${ip}`);
       return NextResponse.json({ error: 'Incorrect code' }, { status: 401 });
     }
 
-    // Verified — delete from DB and issue a signed token
+    // Verified — clear brute force records, delete from DB, and issue a signed token
+    clearFailures(`otp:${emailLower}`);
+    clearFailures(`ip:${ip}`);
     await supabase.from('platform_settings').delete().eq('key', `otp:${emailLower}`);
 
     // Generate HMAC token proving this email was verified (valid 15 min)

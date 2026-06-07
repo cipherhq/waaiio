@@ -2,11 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 
 export async function POST(request: NextRequest) {
   try {
     const rl = rateLimitResponse(getRateLimitKey(request, 'otp-verify'), 10, 600_000); // 10 per 10 min
     if (rl) return rl;
+
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const ipBf = checkBruteForce(`ip:${ip}`);
+    if (ipBf.blocked) {
+      return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 });
+    }
 
     const body = await request.json();
     const { token, otp } = body;
@@ -75,8 +82,14 @@ export async function POST(request: NextRequest) {
     const { timingSafeEqual } = await import('crypto');
     const otpStr = String(otp).trim();
     if (otpStr.length !== record.otp_code.length || !timingSafeEqual(Buffer.from(record.otp_code), Buffer.from(otpStr))) {
+      recordFailure(`contract-otp:${token}`);
+      recordFailure(`ip:${ip}`);
       return NextResponse.json({ error: 'Invalid code' }, { status: 400 });
     }
+
+    // Verified — clear brute force records
+    clearFailures(`contract-otp:${token}`);
+    clearFailures(`ip:${ip}`);
 
     // Mark as verified
     await supabase

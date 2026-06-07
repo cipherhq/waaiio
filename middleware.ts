@@ -158,6 +158,19 @@ export async function middleware(request: NextRequest) {
       || request.nextUrl.pathname.startsWith('/api/cron');
 
     if (!isWebhookRoute) {
+      // Stricter rate limit for auth routes: 10 POST/min per IP
+      const authPaths = ['/api/auth/', '/api/admin/login'];
+      const isAuthRoute = authPaths.some(p => request.nextUrl.pathname.startsWith(p));
+      if (isAuthRoute && isStateMutating) {
+        const authKey = `bf:${ip}`;
+        if (!checkMiddlewareRateLimit(authKey, 10, 60_000)) {
+          return new NextResponse(
+            JSON.stringify({ error: 'Too many authentication attempts. Please wait a few minutes.' }),
+            { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': '300' } },
+          );
+        }
+      }
+
       // POST/PUT/PATCH/DELETE: 120 req/min, GET: 300 req/min (scaled for 1000+ users)
       const limit = isStateMutating ? 120 : 300;
       const key = `api:${ip}:${isStateMutating ? 'write' : 'read'}`;
@@ -242,6 +255,14 @@ export async function middleware(request: NextRequest) {
   // Add no-store cache header for API routes
   if (request.nextUrl.pathname.startsWith('/api/')) {
     supabaseResponse.headers.set('Cache-Control', 'no-store');
+  }
+
+  // Prevent caching of auth-related responses
+  const authPagePaths = ['/login', '/signup', '/forgot-password', '/api/auth/'];
+  const isAuthPage = authPagePaths.some(p => request.nextUrl.pathname.startsWith(p));
+  if (isAuthPage) {
+    supabaseResponse.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    supabaseResponse.headers.set('Pragma', 'no-cache');
   }
 
   // Add CORS headers for admin API routes (cross-origin from admin.waaiio.com)

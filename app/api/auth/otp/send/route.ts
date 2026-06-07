@@ -3,6 +3,7 @@ import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { generatePhoneOtp } from '@/lib/otp-phone-token';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { createServiceClient } from '@/lib/supabase/service';
+import { checkBruteForce } from '@/lib/brute-force';
 
 // Support all Waaiio countries: NG (+234), US (+1), GB (+44), CA (+1), GH (+233)
 const PHONE_REGEX = /^\+[1-9][0-9]{6,14}$/;
@@ -15,6 +16,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { message: 'Invalid phone number. Use international format: +1XXXXXXXXXX' },
         { status: 400 },
+      );
+    }
+
+    // Brute force: check IP-level block before sending OTP
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const ipCheck = checkBruteForce(`ip:${ip}`);
+    if (ipCheck.blocked) {
+      return NextResponse.json(
+        { message: 'Too many attempts. Please try again later.' },
+        { status: 429 },
       );
     }
 

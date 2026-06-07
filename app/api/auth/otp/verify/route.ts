@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { verifyPhoneOtp, generatePhonePassword } from '@/lib/otp-phone-token';
+import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,6 +13,26 @@ export async function POST(request: NextRequest) {
     if (phone) {
       const blocked = rateLimitResponse(`otp-verify:${phone}`, 5, 15 * 60 * 1000);
       if (blocked) return blocked;
+    }
+
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+
+    // Brute force: check phone-level and IP-level blocks
+    if (phone) {
+      const phoneBf = checkBruteForce(`otp-phone:${phone}`);
+      if (phoneBf.blocked) {
+        return NextResponse.json(
+          { message: 'Too many failed attempts. Please try again later.' },
+          { status: 429 },
+        );
+      }
+    }
+    const ipBf = checkBruteForce(`ip:${ip}`);
+    if (ipBf.blocked) {
+      return NextResponse.json(
+        { message: 'Too many attempts. Please try again later.' },
+        { status: 429 },
+      );
     }
 
     if (!phone || !otp || !/^\d{6}$/.test(otp) || !pin_id) {
@@ -24,11 +45,18 @@ export async function POST(request: NextRequest) {
     // Verify OTP against HMAC-signed token
     const isValid = verifyPhoneOtp(phone, otp, pin_id);
     if (!isValid) {
+      // Record brute force failure for both phone and IP
+      recordFailure(`otp-phone:${phone}`);
+      recordFailure(`ip:${ip}`);
       return NextResponse.json(
         { message: 'Invalid or expired OTP' },
         { status: 401 },
       );
     }
+
+    // OTP valid — clear brute force records
+    clearFailures(`otp-phone:${phone}`);
+    clearFailures(`ip:${ip}`);
 
     // OTP verified — now find or create the Supabase user and create a session
     const serviceClient = createServiceClient();
