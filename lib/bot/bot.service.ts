@@ -1766,6 +1766,8 @@ export class BotService {
               session.session_data._quick_rebook_service_name = rebookServiceName;
               session.session_data._quick_rebook_sent = true;
               await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+              // Stop here — don't show the full greeting/menu on top of the rebook prompt
+              return;
             } else {
               // No rebookable service — send text greeting as before
               const returnMsg = buildReturnGreeting(
