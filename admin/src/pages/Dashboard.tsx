@@ -562,21 +562,40 @@ export default function Dashboard() {
           </div>
         ) : (
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {Object.entries(revenueSummary.fees).filter(([, a]) => a > 0).map(([cur, amt]) => (
-              <div key={`fee-${cur}`} className="rounded-xl border border-green-200 bg-green-50 p-5">
-                <p className="text-xs font-medium text-green-600">Fees Earned ({cur})</p>
-                <p className="mt-1 text-2xl font-bold text-green-800">{formatMoney(amt, cur)}</p>
-                <p className="mt-1 text-xs text-green-500">
-                  from {formatMoney(revenueSummary.volume[cur] || 0, cur)} volume
-                </p>
-              </div>
-            ))}
-            {Object.entries(revenueSummary.fees).filter(([, a]) => a > 0).length === 0 && (
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-5 sm:col-span-2">
-                <p className="text-xs font-medium text-gray-500">No revenue {revenuePeriod === 'all' ? 'yet' : `this ${revenuePeriod}`}</p>
-                <p className="mt-1 text-lg font-bold text-gray-400">—</p>
-              </div>
-            )}
+            {/* Show all currencies that have either fees or volume */}
+            {(() => {
+              const allCurrencies = new Set([...Object.keys(revenueSummary.fees), ...Object.keys(revenueSummary.volume)]);
+              const entries = [...allCurrencies].filter(cur => (revenueSummary.fees[cur] || 0) > 0 || (revenueSummary.volume[cur] || 0) > 0);
+              if (entries.length === 0) return (
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-5 sm:col-span-2">
+                  <p className="text-xs font-medium text-gray-500">No revenue {revenuePeriod === 'all' ? 'yet' : `this ${revenuePeriod}`}</p>
+                  <p className="mt-1 text-lg font-bold text-gray-400">—</p>
+                </div>
+              );
+              return entries.map(cur => {
+                const fees = revenueSummary.fees[cur] || 0;
+                const vol = revenueSummary.volume[cur] || 0;
+                const isTrial = fees === 0 && vol > 0;
+                return (
+                  <div key={`fee-${cur}`} className={`rounded-xl border p-5 ${isTrial ? 'border-yellow-200 bg-yellow-50' : 'border-green-200 bg-green-50'}`}>
+                    <p className={`text-xs font-medium ${isTrial ? 'text-yellow-600' : 'text-green-600'}`}>
+                      {isTrial ? `Volume (${cur}) — Trial` : `Fees Earned (${cur})`}
+                    </p>
+                    <p className={`mt-1 text-2xl font-bold ${isTrial ? 'text-yellow-800' : 'text-green-800'}`}>
+                      {isTrial ? formatMoney(vol, cur) : formatMoney(fees, cur)}
+                    </p>
+                    {!isTrial && (
+                      <p className="mt-1 text-xs text-green-500">
+                        from {formatMoney(vol, cur)} volume
+                      </p>
+                    )}
+                    {isTrial && (
+                      <p className="mt-1 text-xs text-yellow-500">fees waived (trial period)</p>
+                    )}
+                  </div>
+                );
+              });
+            })()}
             <div className="rounded-xl border border-gray-200 bg-white p-5">
               <p className="text-xs font-medium text-gray-500">Transactions</p>
               <p className="mt-1 text-2xl font-bold text-gray-900">{revenueSummary.count}</p>

@@ -70,6 +70,7 @@ export default function Giving() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [businessFilter, setBusinessFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [countryFilter, setCountryFilter] = useState('all');
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [page, setPage] = useState(1);
@@ -185,6 +186,7 @@ export default function Giving() {
     }
     if (statusFilter !== 'all' && r.status !== statusFilter) return false;
     if (businessFilter !== 'all' && r.business_id !== businessFilter) return false;
+    if (countryFilter !== 'all' && r.country_code !== countryFilter) return false;
     if (typeFilter !== 'all') {
       const isMatch = typeFilter === 'faith'
         ? ['church', 'mosque'].includes(r.business_category)
@@ -215,7 +217,7 @@ export default function Giving() {
   const faithCount = filtered.filter(r => ['church', 'mosque'].includes(r.business_category)).length;
   const crowdCount = filtered.filter(r => ['ngo', 'crowdfunding_org'].includes(r.business_category)).length;
 
-  const hasFilters = search || statusFilter !== 'all' || businessFilter !== 'all' || typeFilter !== 'all' || dateStart || dateEnd;
+  const hasFilters = search || statusFilter !== 'all' || businessFilter !== 'all' || typeFilter !== 'all' || countryFilter !== 'all' || dateStart || dateEnd;
 
   if (loading) {
     return (
@@ -314,6 +316,18 @@ export default function Giving() {
           <option value="cancelled">Cancelled</option>
         </select>
         <select
+          value={countryFilter}
+          onChange={e => { setCountryFilter(e.target.value); setPage(1); }}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+        >
+          <option value="all">All Countries</option>
+          <option value="NG">Nigeria</option>
+          <option value="US">United States</option>
+          <option value="CA">Canada</option>
+          <option value="GB">United Kingdom</option>
+          <option value="GH">Ghana</option>
+        </select>
+        <select
           value={businessFilter}
           onChange={e => { setBusinessFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
@@ -337,7 +351,7 @@ export default function Giving() {
         />
         {hasFilters && (
           <button
-            onClick={() => { setSearch(''); setStatusFilter('all'); setBusinessFilter('all'); setTypeFilter('all'); setDateStart(''); setDateEnd(''); setPage(1); }}
+            onClick={() => { setSearch(''); setStatusFilter('all'); setBusinessFilter('all'); setTypeFilter('all'); setCountryFilter('all'); setDateStart(''); setDateEnd(''); setPage(1); }}
             className="text-sm text-brand hover:underline"
           >
             Clear filters
