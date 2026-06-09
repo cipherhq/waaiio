@@ -103,6 +103,12 @@ const selectCapabilityStep: FlowStepConfig = {
     if (userFacing.length <= 1) {
       const cap = userFacing[0] || capabilities[0] || 'scheduling';
       ctx.session.session_data.active_capability = cap;
+      // Send greeting as standalone text since capability menu is skipped
+      const greeting = ctx.session.session_data._greeting as string | undefined;
+      if (greeting) {
+        await ctx.sender.sendText({ to: ctx.from, text: greeting });
+        delete ctx.session.session_data._greeting;
+      }
       return true;
     }
     return false;
@@ -164,20 +170,29 @@ const selectCapabilityStep: FlowStepConfig = {
       capItems.push({ id: 'cap_my_account', title: 'My Account', postbackText: 'cap_my_account' });
     }
 
+    // Use greeting as body if available (first-time display), then clear it
+    const greeting = ctx.session.session_data._greeting as string | undefined;
+    const bodyText = greeting
+      ? `${greeting}\n\nWhat would you like to do? 👇`
+      : 'What would you like to do? 👇';
+    if (greeting) delete ctx.session.session_data._greeting;
+
     // WhatsApp buttons max 3 — use a list for more options
     if (capItems.length <= 3) {
       return [{
         type: 'buttons' as const,
-        body: 'What would you like to do?',
+        body: bodyText,
         buttons: capItems.map(i => ({ id: i.id, title: i.title })),
       }];
     }
 
     // List message for 4+ items
+    // WhatsApp list body max is 1024 chars — trim greeting if needed
+    const listBody = bodyText.length > 1000 ? bodyText.slice(0, 997) + '...' : bodyText;
     return [{
       type: 'list' as const,
       title: ctx.business?.name || 'Menu',
-      body: 'What would you like to do? 👇',
+      body: listBody,
       buttonLabel: 'View Options',
       items: capItems.map(i => ({ title: i.title, postbackText: i.postbackText })),
     }];

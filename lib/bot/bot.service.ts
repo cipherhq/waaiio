@@ -1687,6 +1687,9 @@ export class BotService {
         if (!tierInfo.isWhitelabel) greeting += '\n\n_Powered by Waaiio_';
         greeting += '\n\n_Type *cancel* anytime to exit._';
 
+        // Store greeting in session for capability selection to merge into one message
+        session.session_data._greeting = greeting;
+
         if (!tierInfo.allowed) {
           await this.messageSender.sendButtons({
             to: from,
@@ -1699,7 +1702,8 @@ export class BotService {
           return;
         }
 
-        await this.sendText(from, greeting);
+        // Greeting is merged into the capability selection message (stored in _greeting)
+        // Only send as separate text if capability selection is skipped (single-capability businesses)
 
         // ── Returning customer: personalized greeting + repeat suggestion ──
         try {
