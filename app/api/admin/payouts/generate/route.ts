@@ -78,29 +78,29 @@ export async function POST(request: NextRequest) {
 
       if (existing) continue;
 
-      // Sum successful payments in the period
-      const { data: payments } = await supabase
-        .from('payments')
-        .select('amount, created_at')
-        .eq('business_id', biz.id)
-        .eq('status', 'success')
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString());
-
-      const gross = (payments || []).reduce((s, p) => s + Number(p.amount || 0), 0);
-      if (gross <= 0) continue;
-
-      // Get platform fees for this period
+      // Get platform fees for this period (authoritative source for transaction amounts and fees)
       const { data: fees } = await supabase
         .from('platform_fees')
-        .select('fee_total')
+        .select('transaction_amount, fee_total, waived')
         .eq('business_id', biz.id)
-        .eq('waived', false)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 
-      const totalFees = (fees || []).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      // Gross from platform_fees.transaction_amount (consistent with auto-payout)
+      const gross = (fees || []).reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+      if (gross <= 0) continue;
+
+      const totalFees = (fees || []).filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+
+      // Still fetch payments for velocity check below
+      const { data: payments } = await supabase
+        .from('payments')
+        .select('created_at')
+        .eq('business_id', biz.id)
+        .eq('status', 'success')
+        .gte('created_at', periodStart.toISOString())
+        .lte('created_at', periodEnd.toISOString());
 
       // Deduct any unapplied payout adjustments (e.g. post-payout refunds)
       const { data: adjustments } = await supabase

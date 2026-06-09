@@ -68,7 +68,8 @@ export async function handleOnboardingComplete(
     const { count: bizCount } = await supabase
       .from('businesses')
       .select('id', { count: 'exact', head: true })
-      .eq('owner_id', userId);
+      .eq('owner_id', userId)
+      .in('status', ['active', 'pending']);
     if ((bizCount || 0) >= 20) {
       return { success: false, error: 'Maximum number of businesses reached (20).' };
     }

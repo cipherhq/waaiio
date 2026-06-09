@@ -35,7 +35,8 @@ export async function POST(request: NextRequest) {
     const { count: bizCount } = await svcCheck
       .from('businesses')
       .select('id', { count: 'exact', head: true })
-      .eq('owner_id', user.id);
+      .eq('owner_id', user.id)
+      .in('status', ['active', 'pending']);
     if ((bizCount || 0) >= 20) {
       return NextResponse.json({ message: 'Maximum number of businesses reached (20). Contact support to increase.' }, { status: 400 });
     }

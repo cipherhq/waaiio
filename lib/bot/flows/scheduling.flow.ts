@@ -2098,6 +2098,8 @@ export const schedulingFlow: FlowDefinition = {
         d.booking_id = booking.id;
         d.reference_code = booking.reference_code;
         d.deposit_amount = totalDeposit;
+        // Store full service total for platform fee calculation (fee is on full price, not deposit)
+        d.total_amount = finalServicePrice * partySize;
 
         // Store guest list if provided (group bookings)
         if (isNewBooking && Array.isArray(d.guest_list) && (d.guest_list as Array<{name: string}>).length > 0) {
@@ -2610,15 +2612,15 @@ export const schedulingFlow: FlowDefinition = {
               .eq('id', d.booking_id as string);
           }
 
-          // Record platform fee now that payment is confirmed
-          if (ctx.business && d.deposit_amount) {
-            const paidAmountForFee = (d.deposit_amount as number) || 0;
-            if (paidAmountForFee > 0) {
+          // Record platform fee now that payment is confirmed (fee on full service total, not deposit)
+          if (ctx.business && d.total_amount) {
+            const feeAmount = (d.total_amount as number) || 0;
+            if (feeAmount > 0) {
               const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
               recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 bookingId: d.booking_id as string,
-                transactionAmount: paidAmountForFee,
+                transactionAmount: feeAmount,
                 tier: ctx.business.subscription_tier as SubscriptionTier,
                 isInTrial,
               }).catch(err => console.error('[SCHEDULING] saved card recordPlatformFee error:', err));
@@ -2766,15 +2768,15 @@ export const schedulingFlow: FlowDefinition = {
               .update({ status: 'confirmed', deposit_status: 'paid' })
               .eq('id', d.booking_id as string);
 
-            // Record platform fee now that payment is confirmed
+            // Record platform fee now that payment is confirmed (fee on full service total, not deposit)
             if (ctx.business) {
-              const paidAmountForFee = (d.deposit_amount as number) || 0;
-              if (paidAmountForFee > 0) {
+              const feeAmount = (d.total_amount as number) || 0;
+              if (feeAmount > 0) {
                 const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
                 recordPlatformFee(ctx.supabase, {
                   businessId: ctx.business.id,
                   bookingId: d.booking_id as string,
-                  transactionAmount: paidAmountForFee,
+                  transactionAmount: feeAmount,
                   tier: ctx.business.subscription_tier as SubscriptionTier,
                   isInTrial,
                 }).catch(err => console.error('[SCHEDULING] recordPlatformFee error:', err));

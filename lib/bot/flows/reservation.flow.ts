@@ -962,13 +962,13 @@ export const reservationFlow: FlowDefinition = {
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 
-            // Record platform fee after confirmed payment
+            // Record platform fee after confirmed payment (fee on full total, not just deposit)
             if (ctx.business) {
               const isInTrial = (ctx.business.subscription_tier === 'free') && new Date(ctx.business.trial_ends_at) > new Date();
               await recordPlatformFee(ctx.supabase, {
                 businessId: ctx.business.id,
                 reservationId: d.reservation_id as string,
-                transactionAmount: d.payable_amount as number,
+                transactionAmount: d.total_amount as number,
                 tier: ctx.business.subscription_tier as SubscriptionTier,
                 isInTrial,
               });

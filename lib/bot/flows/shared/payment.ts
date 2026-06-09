@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { calculatePlatformFee, type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+import { type SubscriptionTier, type CountryCode, type PaymentGatewayName } from '@/lib/constants';
+import { getPlatformFees } from '@/lib/getPlatformFees';
 import { getPaymentGateway, getPaymentGatewayByName } from '@/lib/payments/factory';
 
 export async function initializePayment(
@@ -272,7 +273,15 @@ export async function recordPlatformFee(
     isInTrial: boolean;
   },
 ): Promise<void> {
-  const fee = calculatePlatformFee(opts.transactionAmount, opts.tier, opts.isInTrial);
+  // Skip fee for direct_split businesses — gateway already collected the fee
+  const { data: biz } = await supabase
+    .from('businesses')
+    .select('payout_mode')
+    .eq('id', opts.businessId)
+    .single();
+  if (biz?.payout_mode === 'direct_split') return;
+
+  const fee = await getPlatformFees(opts.transactionAmount, opts.tier, opts.isInTrial);
 
   await supabase.from('platform_fees').insert({
     business_id: opts.businessId,
