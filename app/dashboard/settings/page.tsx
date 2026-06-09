@@ -4188,6 +4188,22 @@ export default function SettingsPage() {
             }
           } else if (reAuthAction === 'downgrade') {
             setDowngrading(true);
+            // Cancel gateway subscription (Stripe/Paystack) BEFORE updating DB
+            try {
+              const cancelRes = await fetch('/api/subscriptions/cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ businessId: business.id }),
+              });
+              if (!cancelRes.ok) {
+                const cancelData = await cancelRes.json();
+                console.error('[DOWNGRADE] Gateway cancellation failed:', cancelData);
+                // Continue with DB update even if gateway cancel fails —
+                // the subscription will eventually expire or be caught by reconciliation
+              }
+            } catch (cancelErr) {
+              console.error('[DOWNGRADE] Gateway cancellation error:', cancelErr);
+            }
             const supabase = createClient();
             await supabase
               .from('businesses')

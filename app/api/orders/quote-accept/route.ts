@@ -4,7 +4,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
-import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export async function POST(request: NextRequest) {
   try {
@@ -200,18 +200,8 @@ export async function POST(request: NextRequest) {
       order_id: order.id,
     }).eq('id', quote_id);
 
-    // Record platform fee
-    if (biz && total > 0) {
-      const { recordPlatformFee } = await import('@/lib/bot/flows/shared/payment');
-      const isInTrial = new Date(biz.trial_ends_at) > new Date();
-      await recordPlatformFee(supabase, {
-        businessId: biz.id,
-        orderId: order.id,
-        transactionAmount: total,
-        tier: biz.subscription_tier as SubscriptionTier,
-        isInTrial,
-      });
-    }
+    // Platform fee is NOT recorded here — it will be recorded when the customer
+    // actually pays via the gateway webhook → processSuccessfulPayment → recordPlatformFee.
 
     // Initialize payment and send link to customer
     const paymentAmount = depositAmount > 0 ? depositAmount : total;

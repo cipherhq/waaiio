@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       // Find our payment record by square_order_id in metadata
       const { data: payments } = await supabase
         .from('payments')
-        .select('id, booking_id, reservation_id, order_id, amount, status, metadata')
+        .select('id, booking_id, invoice_id, campaign_id, reservation_id, order_id, amount, status, metadata')
         .eq('gateway', 'square')
         .neq('status', 'success');
 
@@ -113,8 +113,8 @@ export async function POST(request: NextRequest) {
           id: matchedPayment.id,
           amount: matchedPayment.amount,
           booking_id: matchedPayment.booking_id,
-          invoice_id: null,
-          campaign_id: null,
+          invoice_id: matchedPayment.invoice_id || null,
+          campaign_id: matchedPayment.campaign_id || null,
           reservation_id: matchedPayment.reservation_id || null,
           order_id: matchedPayment.order_id || null,
         });
@@ -125,8 +125,8 @@ export async function POST(request: NextRequest) {
             id: matchedPayment.id,
             amount: matchedPayment.amount,
             booking_id: matchedPayment.booking_id,
-            invoice_id: null,
-            campaign_id: null,
+            invoice_id: matchedPayment.invoice_id || null,
+            campaign_id: matchedPayment.campaign_id || null,
             reservation_id: matchedPayment.reservation_id || null,
             order_id: matchedPayment.order_id || null,
           }, '[SQUARE WEBHOOK]');
