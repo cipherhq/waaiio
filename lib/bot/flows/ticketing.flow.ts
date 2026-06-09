@@ -481,7 +481,7 @@ export const ticketingFlow: FlowDefinition = {
               },
               {
                 type: 'buttons',
-                body: "Once your payment is complete, tap below to confirm:",
+                body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
                 buttons: [
                   { id: 'i_paid', title: "I've Paid" },
                   { id: 'retry_payment', title: 'Get New Link' },
@@ -618,7 +618,7 @@ export const ticketingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete payment using the link above.\n\nOnce your payment is complete, tap below to confirm:",
+          body: "Complete payment using the link above.\n\nYour confirmation will arrive automatically after payment. If it doesn't, tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'retry_payment', title: 'Get New Link' },

@@ -2735,7 +2735,7 @@ export const orderingFlow: FlowDefinition = {
       async prompt(): Promise<PromptMessage[]> {
         return [{
           type: 'buttons',
-          body: "Complete payment using the link above, then *come back here* and tap *I've Paid* to confirm your order:",
+          body: "Your confirmation will arrive automatically after payment. If it doesn't, tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
             { id: 'retry_payment', title: 'Get New Link' },

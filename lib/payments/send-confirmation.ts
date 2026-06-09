@@ -440,13 +440,15 @@ export async function sendProactiveConfirmation(
       }
     }
 
-    // ── 9. Reset session so user stays with this business (only for WhatsApp sessions) ──
+    // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
     if (customerPhone) {
       await supabase
         .from('bot_sessions')
-        .update({ current_step: 'select_capability', session_data: {}, is_active: true })
-        .eq('whatsapp_number', customerPhone)
-        .eq('business_id', businessId);
+        .update({ is_active: false, current_step: 'complete' })
+        .eq('whatsapp_number', stripPlus(customerPhone))
+        .eq('business_id', businessId)
+        .eq('is_active', true)
+        .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);
     }
   } catch (err) {
     logger.error(`${logPrefix} Send confirmation error:`, err);
