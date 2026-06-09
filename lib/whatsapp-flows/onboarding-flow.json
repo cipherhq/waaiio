@@ -1,0 +1,102 @@
+{
+  "version": "5.0",
+  "screens": [
+    {
+      "id": "WELCOME",
+      "title": "Welcome to Waaiio",
+      "terminal": false,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextHeading", "text": "Set up your business" },
+          { "type": "TextBody", "text": "Waaiio helps you automate bookings, payments, orders, and customer engagement on WhatsApp. Set up takes 2 minutes." },
+          { "type": "TextBody", "text": "By continuing, you agree to our Terms of Service and Privacy Policy." },
+          {
+            "type": "Footer",
+            "label": "Continue",
+            "on-click-action": {
+              "name": "navigate",
+              "next": { "type": "screen", "name": "OWNER_DETAILS" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "OWNER_DETAILS",
+      "title": "Your Details",
+      "terminal": false,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextInput", "name": "first_name", "label": "First Name", "required": true },
+          { "type": "TextInput", "name": "last_name", "label": "Last Name", "required": true },
+          { "type": "TextInput", "name": "email", "label": "Email", "input-type": "email", "required": true },
+          { "type": "TextInput", "name": "password", "label": "Password", "input-type": "password", "required": true, "helper-text": "Minimum 6 characters" },
+          {
+            "type": "Footer",
+            "label": "Next",
+            "on-click-action": {
+              "name": "navigate",
+              "next": { "type": "screen", "name": "BUSINESS_DETAILS" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "BUSINESS_DETAILS",
+      "title": "Business Details",
+      "terminal": false,
+      "data": {
+        "categories": { "type": "array", "__example__": [{"id": "salon", "title": "Salon & Barbershop"}] },
+        "countries": { "type": "array", "__example__": [{"id": "NG", "title": "Nigeria"}] }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextInput", "name": "business_name", "label": "Business Name", "required": true },
+          { "type": "Dropdown", "name": "category", "label": "Industry", "data-source": "${data.categories}", "required": true },
+          { "type": "Dropdown", "name": "country", "label": "Country", "data-source": "${data.countries}", "required": true },
+          { "type": "TextInput", "name": "city", "label": "City", "required": true },
+          {
+            "type": "Footer",
+            "label": "Next",
+            "on-click-action": {
+              "name": "data_exchange",
+              "payload": {
+                "category": "${form.category}",
+                "screen": "BUSINESS_DETAILS"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "FEATURES",
+      "title": "Choose Features",
+      "terminal": true,
+      "data": {
+        "capabilities": { "type": "array", "__example__": [{"id": "scheduling", "title": "Bookings"}] }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          { "type": "TextBody", "text": "Select the features you need. You can always add more later from your dashboard." },
+          { "type": "CheckboxGroup", "name": "capabilities", "data-source": "${data.capabilities}", "required": true },
+          {
+            "type": "Footer",
+            "label": "Complete Setup",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "flow_type": "onboarding"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

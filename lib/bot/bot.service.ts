@@ -1903,6 +1903,33 @@ export class BotService {
         return;
       }
 
+      // ── Business registration via WhatsApp Flow ──
+      const onboardingKeywords = /\b(register|sign\s*up|onboard|create\s*(my\s*)?business|start\s*(my\s*)?business|set\s*up)\b/i;
+      if (onboardingKeywords.test(text)) {
+        const flowId = process.env.WHATSAPP_ONBOARDING_FLOW_ID;
+        if (flowId && this.messageSender.sendFlow) {
+          await this.messageSender.sendFlow({
+            to: from,
+            bodyText: 'Set up your business on Waaiio in 2 minutes! Tap below to get started.',
+            flowId,
+            flowCta: 'Get Started',
+            screen: 'WELCOME',
+            flowToken: `onboarding:${from}`,
+          });
+        } else {
+          // Fallback: direct to web registration
+          await this.sendText(from, [
+            '*Register your business on Waaiio!*',
+            '',
+            'Set up your business in under 2 minutes:',
+            '👉 *https://www.waaiio.com/get-started*',
+            '',
+            'Once registered, you can manage bookings, payments, and customers — all from WhatsApp.',
+          ].join('\n'));
+        }
+        return;
+      }
+
       // ── First-time user — onboarding message ──
       const isGreeting = /^(hi|hello|hey|yo|start|help)$/i.test(text.trim());
       if (isGreeting) {

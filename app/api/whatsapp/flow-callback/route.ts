@@ -152,6 +152,19 @@ async function handleFlowComplete(flowToken: string, data: Record<string, unknow
   const supabase = createServiceClient();
 
   const flowType = data.flow_type as string;
+
+  // Onboarding flow — create user, business, and capabilities
+  if (flowType === 'onboarding') {
+    const { handleOnboardingComplete } = await import('./onboarding');
+    const result = await handleOnboardingComplete(flowToken, data);
+    if (!result.success) {
+      logger.error('[FLOW-CALLBACK] Onboarding failed:', result.error);
+    } else {
+      logger.debug('[FLOW-CALLBACK] Onboarding completed via WhatsApp Flow');
+    }
+    return NextResponse.json({ status: 'ok' });
+  }
+
   const businessId = data.business_id as string;
   const customerPhone = data.customer_phone as string;
 

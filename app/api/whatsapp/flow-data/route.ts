@@ -42,7 +42,16 @@ export async function POST(request: NextRequest) {
 
     logger.debug('[FLOW-DATA] Request:', { flow_token, action, screen });
 
-    // flow_token format: "business_id:customer_phone"
+    // flow_token format: "business_id:customer_phone" or "onboarding:customer_phone"
+    const tokenPrefix = (flow_token || '').split(':')[0];
+
+    // Onboarding flow — return categories, countries, and capabilities
+    if (tokenPrefix === 'onboarding') {
+      const { handleOnboardingDataExchange } = await import('./onboarding');
+      const result = handleOnboardingDataExchange(action, screen, data || {});
+      return NextResponse.json(result);
+    }
+
     const [businessId] = (flow_token || '').split(':');
 
     if (!businessId) {

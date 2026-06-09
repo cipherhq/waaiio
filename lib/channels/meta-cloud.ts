@@ -424,8 +424,22 @@ export class MetaCloudService {
     flowId: string;
     flowCta: string;
     screen: string;
+    flowToken?: string;
     data?: Record<string, unknown>;
   }): Promise<{ messageId: string }> {
+    const payload: Record<string, unknown> = {
+      flow_message_version: '3',
+      flow_id: message.flowId,
+      flow_cta: message.flowCta,
+      flow_action: 'navigate',
+      flow_action_payload: {
+        screen: message.screen,
+        data: message.data || {},
+      },
+    };
+    if (message.flowToken) {
+      payload.flow_token = message.flowToken;
+    }
     const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       to: message.to,
@@ -435,16 +449,7 @@ export class MetaCloudService {
         body: { text: message.bodyText },
         action: {
           name: 'flow',
-          parameters: {
-            flow_message_version: '3',
-            flow_id: message.flowId,
-            flow_cta: message.flowCta,
-            flow_action: 'navigate',
-            flow_action_payload: {
-              screen: message.screen,
-              data: message.data || {},
-            },
-          },
+          parameters: payload,
         },
       },
     });

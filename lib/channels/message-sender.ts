@@ -85,6 +85,7 @@ export interface MessageSender {
     flowId: string;
     flowCta: string;
     screen: string;
+    flowToken?: string;
     data?: Record<string, unknown>;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendReaction?(msg: {
@@ -247,6 +248,7 @@ export class MetaCloudSender implements MessageSender {
     flowId: string;
     flowCta: string;
     screen: string;
+    flowToken?: string;
     data?: Record<string, unknown>;
   }) {
     const result = await withRetry(() => this.cloud.sendFlow(msg));
