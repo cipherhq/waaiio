@@ -136,6 +136,48 @@ export class CatalogService {
 
     return { synced, failed, catalogId };
   }
+
+  /**
+   * Delete products from a WhatsApp catalog by retailer IDs.
+   * Uses the batch endpoint to remove multiple products at once.
+   */
+  async deleteProducts(catalogId: string, retailerIds: string[]): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0;
+    let failed = 0;
+
+    // Meta batch endpoint supports up to 1000 items per request
+    const batchSize = 1000;
+    for (let i = 0; i < retailerIds.length; i += batchSize) {
+      const batch = retailerIds.slice(i, i + batchSize);
+      const requests = batch.map(id => ({
+        method: 'DELETE',
+        retailer_id: id,
+      }));
+
+      try {
+        const res = await fetch(`${this.baseUrl}/${catalogId}/batch`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ requests }),
+        });
+
+        if (res.ok) {
+          deleted += batch.length;
+        } else {
+          const err = await res.json();
+          logger.error(`[CATALOG] Batch delete failed:`, err);
+          failed += batch.length;
+        }
+      } catch {
+        failed += batch.length;
+      }
+    }
+
+    return { deleted, failed };
+  }
 }
 
 /**

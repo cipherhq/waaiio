@@ -402,6 +402,18 @@ export default function ProductsPage() {
     }
   }
 
+  // Auto-sync to WhatsApp catalog after product mutations (silent, non-blocking)
+  async function triggerAutoSync() {
+    if (!hasWhatsAppChannel || !business.whatsapp_catalog_id) return;
+    try {
+      await fetch('/api/catalog/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id }),
+      });
+    } catch { /* silent — auto-sync failure shouldn't block the UI */ }
+  }
+
   useEffect(() => { fetchProducts(); fetchAnalytics(); checkWhatsAppChannel(); fetchSyncLogs(); }, [fetchProducts, fetchAnalytics, checkWhatsAppChannel, fetchSyncLogs]);
 
   // Scroll to edited product after save
@@ -786,6 +798,7 @@ export default function ProductsPage() {
     setScrollToProductId(form.id || null);
     setView('list');
     fetchProducts();
+    triggerAutoSync(); // Background sync to WhatsApp catalog
   }
 
   // ── Delete / Toggle ──
@@ -794,12 +807,14 @@ export default function ProductsPage() {
     const supabase = createClient();
     await supabase.from('products').update({ deleted_at: new Date().toISOString() }).eq('id', id);
     fetchProducts();
+    triggerAutoSync(); // Background sync to WhatsApp catalog
   }
 
   async function toggleActive(product: Product) {
     const supabase = createClient();
     await supabase.from('products').update({ is_active: !product.is_active }).eq('id', product.id);
     fetchProducts();
+    triggerAutoSync(); // Background sync to WhatsApp catalog
   }
 
   // ── Bulk ──
@@ -833,7 +848,7 @@ export default function ProductsPage() {
       });
       const json = await res.json();
       setBulkResult(json);
-      if (json.imported > 0) { fetchProducts(); setBulkText(''); setBulkPreview([]); }
+      if (json.imported > 0) { fetchProducts(); setBulkPreview([]); setBulkText(''); triggerAutoSync(); }
     } catch {
       setBulkResult({ imported: 0, skipped: bulkPreview.length, errors: [{ row: 0, reason: 'Network error' }] });
     }

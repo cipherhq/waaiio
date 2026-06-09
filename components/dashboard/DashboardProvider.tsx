@@ -38,6 +38,7 @@ export interface Business {
   trial_ends_at: string;
   country_code: string | null;
   payment_gateway: string | null;
+  whatsapp_catalog_id: string | null;
   payout_mode: string;
   recurring_enabled: boolean;
   metadata: Record<string, unknown>;

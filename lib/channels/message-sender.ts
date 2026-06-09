@@ -100,6 +100,21 @@ export interface MessageSender {
     name?: string;
     address?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
+  sendProduct?(msg: {
+    to: string;
+    catalogId: string;
+    productRetailerId: string;
+    body?: string;
+    footer?: string;
+  }): Promise<{ success?: boolean; messageId?: string }>;
+  sendProductList?(msg: {
+    to: string;
+    catalogId: string;
+    header: string;
+    body: string;
+    footer?: string;
+    sections: Array<{ title: string; productRetailerIds: string[] }>;
+  }): Promise<{ success?: boolean; messageId?: string }>;
 }
 
 /**
@@ -262,6 +277,45 @@ export class MetaCloudSender implements MessageSender {
 
   async sendLocation(msg: { to: string; latitude: number; longitude: number; name?: string; address?: string }) {
     const result = await withRetry(() => this.cloud.sendLocation(msg));
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendProduct(msg: {
+    to: string;
+    catalogId: string;
+    productRetailerId: string;
+    body?: string;
+    footer?: string;
+  }) {
+    const result = await withRetry(() => this.cloud.sendProduct({
+      to: msg.to,
+      catalogId: msg.catalogId,
+      productId: msg.productRetailerId,
+      body: msg.body,
+      footer: msg.footer,
+    }));
+    return { success: true, messageId: result.messageId };
+  }
+
+  async sendProductList(msg: {
+    to: string;
+    catalogId: string;
+    header: string;
+    body: string;
+    footer?: string;
+    sections: Array<{ title: string; productRetailerIds: string[] }>;
+  }) {
+    const result = await withRetry(() => this.cloud.sendProductList({
+      to: msg.to,
+      catalogId: msg.catalogId,
+      headerText: msg.header,
+      bodyText: msg.body,
+      footerText: msg.footer,
+      sections: msg.sections.map(s => ({
+        title: s.title,
+        productIds: s.productRetailerIds,
+      })),
+    }));
     return { success: true, messageId: result.messageId };
   }
 }
