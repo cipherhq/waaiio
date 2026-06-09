@@ -1728,14 +1728,44 @@ export class BotService {
             // Use pre-fetched profile name for personalized greeting
             const customerName = (fullProfile as { first_name?: string } | null)?.first_name || null;
 
-            const returnMsg = buildReturnGreeting(
-              customerName,
-              custHistory,
-              business.name,
-            );
-            if (returnMsg) {
+            // Quick rebook: if we know their last/favorite service, show a "Book Again" button
+            const rebookServiceName = custHistory.lastServiceName || custHistory.favoriteServiceName;
+            const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
+
+            if (rebookServiceName && rebookServiceId) {
+              const rebookMsg = customerName
+                ? `Welcome back, ${customerName}! 👋`
+                : 'Welcome back! 👋';
+
               const lang = session.session_data._detected_language as string | undefined;
-              await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang) : returnMsg);
+              const bodyText = `${rebookMsg}\n\nBook your usual?\n📋 ${rebookServiceName}`;
+              const translatedBody = lang ? await translateBotResponse(bodyText, lang) : bodyText;
+
+              await this.messageSender.sendButtons({
+                to: from,
+                body: translatedBody,
+                buttons: [
+                  { id: 'quick_rebook', title: `Book ${rebookServiceName.slice(0, 15)}` },
+                  { id: 'browse_menu', title: 'Something Else' },
+                ],
+              });
+
+              // Store rebook data in session for handling the button tap
+              session.session_data._quick_rebook_service_id = rebookServiceId;
+              session.session_data._quick_rebook_service_name = rebookServiceName;
+              session.session_data._quick_rebook_sent = true;
+              await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+            } else {
+              // No rebookable service — send text greeting as before
+              const returnMsg = buildReturnGreeting(
+                customerName,
+                custHistory,
+                business.name,
+              );
+              if (returnMsg) {
+                const lang = session.session_data._detected_language as string | undefined;
+                await this.sendText(from, lang ? await translateBotResponse(returnMsg, lang) : returnMsg);
+              }
             }
           }
         } catch (err) {
@@ -2033,6 +2063,66 @@ export class BotService {
     if (text === 'upgrade_now') {
       await this.sendText(from, 'Upgrade your plan here 👇\nhttps://www.waaiio.com/dashboard/settings?tab=account');
       return;
+    }
+
+    // Handle quick rebook button tap — pre-fill service and jump to date picker
+    if (text === 'quick_rebook' && session.session_data._quick_rebook_service_id) {
+      const rebookServiceId = session.session_data._quick_rebook_service_id as string;
+      session.session_data.service_id = rebookServiceId;
+      session.session_data.service_name = session.session_data._quick_rebook_service_name;
+      session.session_data.skip_service = true;
+      session.session_data.active_capability = 'scheduling';
+
+      // Fetch service details to pre-fill duration, price, etc.
+      const { data: svc } = await this.supabase
+        .from('services')
+        .select('price, duration_minutes, deposit_amount, billing_type, recurring_interval, max_capacity, buffer_minutes, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule, auto_approve')
+        .eq('id', rebookServiceId)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (svc) {
+        session.session_data.service_price = svc.price;
+        session.session_data.service_duration = svc.duration_minutes;
+        session.session_data.service_deposit = svc.deposit_amount || 0;
+        session.session_data.service_billing_type = svc.billing_type || 'one_time';
+        session.session_data.service_recurring_interval = svc.recurring_interval || null;
+        session.session_data._service_max_capacity = svc.max_capacity || 1;
+        session.session_data._service_buffer_minutes = svc.buffer_minutes || 0;
+        session.session_data._service_available_days = svc.available_days || [];
+        session.session_data._service_available_from = svc.available_from || null;
+        session.session_data._service_available_to = svc.available_to || null;
+        session.session_data._service_requires_staff = svc.requires_staff || false;
+        session.session_data._service_staff_ids = svc.staff_ids || [];
+        session.session_data._service_allow_staff_selection = svc.allow_staff_selection || false;
+        session.session_data._service_metadata = svc.metadata || null;
+        session.session_data._service_is_class = svc.is_class || false;
+        session.session_data._service_class_schedule = svc.class_schedule || [];
+        session.session_data._auto_approve = svc.auto_approve ?? true;
+      }
+
+      // Clean up rebook data
+      delete session.session_data._quick_rebook_service_id;
+      delete session.session_data._quick_rebook_service_name;
+      delete session.session_data._quick_rebook_sent;
+
+      await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+
+      const business = session.business_id
+        ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
+        : null;
+      if (business) {
+        await this.flowExecutor.execute(from, '', session as unknown as BotSession, business);
+      }
+      return;
+    }
+
+    // Handle "Something Else" button — clean up rebook data and continue to normal flow
+    if (text === 'browse_menu') {
+      delete session.session_data._quick_rebook_service_id;
+      delete session.session_data._quick_rebook_service_name;
+      delete session.session_data._quick_rebook_sent;
+      await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+      // Fall through to normal flow executor
     }
 
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';

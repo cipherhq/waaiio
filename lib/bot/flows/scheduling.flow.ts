@@ -675,6 +675,50 @@ export const schedulingFlow: FlowDefinition = {
           return [...messages, { type: 'text', text: 'Sorry, there are no available dates for this service right now. Please try again later or send *cancel* to exit.' }];
         }
 
+        // ── Quick date shortcuts: show "Tomorrow" / "This Saturday" / "Pick a Date" as buttons ──
+        // Only show shortcuts on first prompt (not after "Pick a Date" was tapped)
+        if (!ctx.session.session_data._show_full_date_list) {
+          const tomorrow = new Date();
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          const tomorrowStr = tomorrow.toISOString().split('T')[0];
+          const tomorrowDay = dayNames[tomorrow.getDay()];
+          const tomorrowOpen = !opHours[tomorrowDay]?.closed && (availableDays.length === 0 || availableDays.includes(tomorrowDay));
+          const tomorrowAvailable = dates.some(d => d.postbackText === tomorrowStr);
+
+          // Find next Saturday
+          const nextSat = new Date();
+          nextSat.setDate(nextSat.getDate() + ((6 - nextSat.getDay() + 7) % 7 || 7));
+          const nextSatStr = nextSat.toISOString().split('T')[0];
+          const satOpen = !opHours['saturday']?.closed && (availableDays.length === 0 || availableDays.includes('saturday'));
+          const satAvailable = dates.some(d => d.postbackText === nextSatStr);
+
+          const quickButtons: Array<{ id: string; title: string }> = [];
+          if (tomorrowAvailable && tomorrowOpen) {
+            const dayLabel = tomorrowDay.charAt(0).toUpperCase() + tomorrowDay.slice(1, 3);
+            quickButtons.push({ id: `date_${tomorrowStr}`, title: `Tomorrow (${dayLabel})` });
+          }
+          if (satAvailable && satOpen && nextSatStr !== tomorrowStr) {
+            quickButtons.push({ id: `date_${nextSatStr}`, title: 'This Saturday' });
+          }
+
+          // Show quick buttons if we have at least 1 shortcut + "Pick a Date"
+          if (quickButtons.length > 0) {
+            quickButtons.push({ id: 'pick_date', title: 'Pick a Date' });
+            messages.push({
+              type: 'buttons' as const,
+              body: getDatePrompt(ctx.business?.category || 'other'),
+              buttons: quickButtons.slice(0, 3),
+            });
+            return messages;
+          }
+        }
+
+        // Full date list (default fallback or after "Pick a Date" tapped)
+        // Reset the flag so next time we show shortcuts again
+        if (ctx.session.session_data._show_full_date_list) {
+          delete ctx.session.session_data._show_full_date_list;
+        }
+
         messages.push({
           type: 'list',
           title: 'Select Date',
@@ -693,8 +737,19 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
 
+        // Handle "Pick a Date" button — show full date list on re-prompt
+        if (input === 'pick_date') {
+          ctx.session.session_data._show_full_date_list = true;
+          await ctx.supabase.from('bot_sessions').update({ session_data: ctx.session.session_data }).eq('id', ctx.session.id);
+          return { valid: false, errorMessage: undefined };
+        }
+
+        // Handle quick date shortcut buttons (date_YYYY-MM-DD)
         let dateStr = input;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+        const quickDateMatch = /^date_(\d{4}-\d{2}-\d{2})$/.exec(input);
+        if (quickDateMatch) {
+          dateStr = quickDateMatch[1];
+        } else if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
           const parsed = new Date(input);
           if (isNaN(parsed.getTime())) {
             const abuse = ctx.intelligence.recordGibberish(ctx.from);
@@ -892,7 +947,7 @@ export const schedulingFlow: FlowDefinition = {
         return [{
           type: 'list',
           title: 'Select Time',
-          body: `Available${prefLabel} times for ${dateLabel}:`,
+          body: `Pick a${prefLabel} time on ${dateLabel}:`,
           buttonLabel: 'Choose Time',
           items,
         }];
@@ -1334,6 +1389,12 @@ export const schedulingFlow: FlowDefinition = {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         // Skip if business explicitly disabled special requests
         if (meta.special_requests_enabled === false) {
+          ctx.session.session_data.special_requests = '';
+          return true;
+        }
+        // Skip by default — business must opt-in via require_special_requests: true
+        // This reduces unnecessary steps for most bookings
+        if (meta.require_special_requests !== true && meta.special_requests_enabled !== true) {
           ctx.session.session_data.special_requests = '';
           return true;
         }
