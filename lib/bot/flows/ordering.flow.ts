@@ -351,7 +351,7 @@ export const orderingFlow: FlowDefinition = {
           .is('deleted_at', null)
           .single();
 
-        if (!product) return { valid: false, errorMessage: 'Please select a valid item.' };
+        if (!product) return { valid: false, errorMessage: 'I didn\'t find that item. Try typing the product name or tap an option from the list.' };
 
         if (!product.has_variants && product.stock_quantity !== null && product.stock_quantity <= 0) {
           return { valid: false, errorMessage: `Sorry, ${product.name} is out of stock.` };
@@ -2106,11 +2106,11 @@ export const orderingFlow: FlowDefinition = {
         ];
       },
       async validate(input: string): Promise<ValidationResult> {
-        if (input === 'confirm_order') return { valid: true, data: { _order_action: 'confirm' } };
-        if (input === 'request_quote') return { valid: true, data: { _order_action: 'quote' } };
-        if (input === 'add_more_items') return { valid: true, data: { _order_action: 'add_more' } };
-        if (input === 'edit_order') return { valid: true, data: { _order_action: 'edit' } };
-        return { valid: false, errorMessage: 'Please select an option.' };
+        if (input === 'confirm_order' || /\b(confirm|yes|checkout|done)\b/i.test(input)) return { valid: true, data: { _order_action: 'confirm' } };
+        if (input === 'request_quote' || /\b(quote)\b/i.test(input)) return { valid: true, data: { _order_action: 'quote' } };
+        if (input === 'add_more_items' || /\b(add more|more items|browse|keep shopping)\b/i.test(input)) return { valid: true, data: { _order_action: 'add_more' } };
+        if (input === 'edit_order' || /\b(edit|change|modify)\b/i.test(input)) return { valid: true, data: { _order_action: 'edit' } };
+        return { valid: false, errorMessage: 'Tap a button above, or type *confirm*, *add more*, or *edit*.' };
       },
       async next(ctx: FlowContext) {
         const action = ctx.session.session_data._order_action;

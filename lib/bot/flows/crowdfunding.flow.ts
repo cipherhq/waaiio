@@ -58,7 +58,7 @@ const selectCampaignStep: FlowStepConfig = {
     }
 
     if (!input.startsWith('campaign_')) {
-      return { valid: false, errorMessage: 'Please select a campaign from the list.' };
+      return { valid: false, errorMessage: 'I didn\'t find that campaign. Tap an option from the list above.' };
     }
 
     const campaignId = input.replace('campaign_', '');

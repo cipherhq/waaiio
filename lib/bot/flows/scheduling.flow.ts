@@ -146,7 +146,7 @@ export const schedulingFlow: FlowDefinition = {
           .maybeSingle();
 
         if (!location) {
-          return { valid: false, errorMessage: 'Please select a valid location from the list.' };
+          return { valid: false, errorMessage: 'I didn\'t find that location. Please tap one from the list, or type the location name.' };
         }
 
         return {
@@ -304,7 +304,7 @@ export const schedulingFlow: FlowDefinition = {
           }
         }
 
-        if (!matched) return { valid: false, errorMessage: 'Please select a valid service from the list.' };
+        if (!matched) return { valid: false, errorMessage: 'I didn\'t find that service. Try typing the name (e.g. *haircut*) or tap an option from the list.' };
 
         return {
           valid: true,
@@ -800,7 +800,7 @@ export const schedulingFlow: FlowDefinition = {
         tomorrow.setDate(tomorrow.getDate() + 1);
         tomorrow.setHours(0, 0, 0, 0);
 
-        if (selected < tomorrow) return { valid: false, errorMessage: 'Please select a future date.' };
+        if (selected < tomorrow) return { valid: false, errorMessage: 'That date has passed. Try *tomorrow* or pick a future date.' };
 
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxAdvanceDays = (meta.max_advance_days as number) || BOOKING_DEFAULTS.maxAdvanceDays;

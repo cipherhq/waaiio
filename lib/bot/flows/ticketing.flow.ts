@@ -72,7 +72,7 @@ export const ticketingFlow: FlowDefinition = {
           .eq('business_id', ctx.business!.id)
           .single();
 
-        if (!event) return { valid: false, errorMessage: 'Please select a valid event.' };
+        if (!event) return { valid: false, errorMessage: 'I didn\'t find that event. Try typing the event name or tap an option from the list.' };
 
         const available = event.total_tickets - event.tickets_sold;
         if (available <= 0) {
@@ -157,7 +157,7 @@ export const ticketingFlow: FlowDefinition = {
 
         const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
         const selected = types?.find(t => t.id === input);
-        if (!selected) return { valid: false, errorMessage: 'Please select a ticket type from the list.' };
+        if (!selected) return { valid: false, errorMessage: 'I didn\'t find that ticket type. Try typing the name (e.g. *VIP*, *Regular*) or tap an option.' };
 
         const available = selected.total_tickets - selected.tickets_sold;
         if (available <= 0) return { valid: false, errorMessage: `Sorry, ${selected.name} tickets are sold out.` };

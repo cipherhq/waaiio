@@ -255,7 +255,7 @@ const selectCapabilityStep: FlowStepConfig = {
     }
 
     if (!capId || !capabilities.includes(capId)) {
-      return { valid: false, errorMessage: 'Please select an option from the menu.' };
+      return { valid: false, errorMessage: 'I didn\'t understand that. Try typing *book*, *order*, *tickets*, or tap *View Options* to see the menu.' };
     }
 
     // Smart intent: extract date/time/service from natural language input
