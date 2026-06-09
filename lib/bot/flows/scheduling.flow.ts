@@ -533,7 +533,23 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: true, data: { staff_id: found.id, staff_name: found.name } };
           }
         }
-        return { valid: false, errorMessage: 'Please select a staff member or tap *Any available*.' };
+        // Fuzzy match by typed name (e.g., "Mike" matches "Mike Johnson")
+        if (input.toLowerCase() === 'any' || input.toLowerCase() === 'anyone') {
+          return { valid: true };
+        }
+        const staff = ctx.session.session_data._available_staff as Array<{ id: string; name: string }>;
+        if (staff) {
+          const lower = input.toLowerCase().trim();
+          const nameMatch = staff.find(s =>
+            s.name.toLowerCase() === lower ||
+            s.name.toLowerCase().includes(lower) ||
+            lower.includes(s.name.toLowerCase().split(' ')[0])
+          );
+          if (nameMatch) {
+            return { valid: true, data: { staff_id: nameMatch.id, staff_name: nameMatch.name } };
+          }
+        }
+        return { valid: false, errorMessage: 'Try typing a name like *Mike*, or tap an option above.' };
       },
       async next() { return 'select_time'; },
     },
@@ -750,12 +766,33 @@ export const schedulingFlow: FlowDefinition = {
         if (quickDateMatch) {
           dateStr = quickDateMatch[1];
         } else if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-          const parsed = new Date(input);
-          if (isNaN(parsed.getTime())) {
-            const abuse = ctx.intelligence.recordGibberish(ctx.from);
-            return { valid: false, errorMessage: abuse.warn ? abuse.message : "Please tap one of the date options." };
+          // Natural language date parsing
+          const lower = input.toLowerCase().trim();
+          const now = new Date();
+          if (lower === 'today') {
+            dateStr = now.toISOString().split('T')[0];
+          } else if (lower === 'tomorrow' || lower === 'tmr' || lower === 'tmrw') {
+            const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
+            dateStr = tmr.toISOString().split('T')[0];
+          } else if (lower === 'next week') {
+            const nw = new Date(now); nw.setDate(nw.getDate() + 7);
+            dateStr = nw.toISOString().split('T')[0];
+          } else if (/^(mon|tue|wed|thu|fri|sat|sun)/i.test(lower)) {
+            const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+            const target = dayMap[lower.slice(0, 3).toLowerCase()];
+            if (target !== undefined) {
+              const d = new Date(now);
+              const diff = (target - d.getDay() + 7) % 7 || 7;
+              d.setDate(d.getDate() + diff);
+              dateStr = d.toISOString().split('T')[0];
+            }
+          } else {
+            const parsed = new Date(input);
+            if (isNaN(parsed.getTime())) {
+              return { valid: false, errorMessage: 'Try typing *tomorrow*, a day like *Saturday*, or tap a date option.' };
+            }
+            dateStr = parsed.toISOString().split('T')[0];
           }
-          dateStr = parsed.toISOString().split('T')[0];
         }
 
         const selected = new Date(dateStr + 'T00:00');
@@ -963,11 +1000,22 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _time_action: 'cancel' } };
         }
 
-        const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(input);
-        if (!timeMatch) {
-          const abuse = ctx.intelligence.recordGibberish(ctx.from);
-          return { valid: false, errorMessage: abuse.warn ? abuse.message : "Please tap one of the time options." };
+        // Accept HH:MM, HH:MM AM/PM, "10am", "2pm", "2:30pm"
+        let normalizedTime = input.trim();
+        const ampmMatch = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(normalizedTime);
+        if (ampmMatch) {
+          let h = parseInt(ampmMatch[1], 10);
+          const m = ampmMatch[2] || '00';
+          const period = ampmMatch[3].toLowerCase();
+          if (period === 'pm' && h < 12) h += 12;
+          if (period === 'am' && h === 12) h = 0;
+          normalizedTime = `${String(h).padStart(2, '0')}:${m}`;
         }
+        const timeMatch = /^(\d{1,2}):(\d{2})$/.exec(normalizedTime);
+        if (!timeMatch) {
+          return { valid: false, errorMessage: 'Try typing a time like *10am*, *2:30pm*, or tap an option.' };
+        }
+        input = normalizedTime;
 
         // Double-check slot availability (prevent race condition)
         const dateStr = ctx.session.session_data.date as string;
