@@ -219,7 +219,19 @@ export async function POST(request: NextRequest) {
         .eq('id', payment.id)
         .single();
 
-      // TODO: PayPal processing fees require the Transactions API to retrieve exact fee.
+      // Extract PayPal processing fee from seller_receivable_breakdown
+      let paypalGatewayFee = 0;
+      try {
+        const breakdown = (resource.seller_receivable_breakdown || {}) as Record<string, unknown>;
+        const paypalFeeObj = breakdown.paypal_fee as { value?: string } | undefined;
+        if (paypalFeeObj?.value) {
+          // PayPal fee value is in dollars (string) — payment.amount is also in dollars
+          paypalGatewayFee = Math.round(Number(paypalFeeObj.value) * 100) / 100;
+        }
+      } catch {
+        logger.warn('[PAYPAL WEBHOOK] Failed to extract gateway fee from seller_receivable_breakdown');
+      }
+
       const paymentForShared = {
         id: payment.id,
         amount: payment.amount,
@@ -228,7 +240,7 @@ export async function POST(request: NextRequest) {
         campaign_id: fullPayment?.campaign_id || null,
         reservation_id: fullPayment?.reservation_id || null,
         order_id: payment.order_id || null,
-        gateway_fee: 0,
+        gateway_fee: paypalGatewayFee,
       };
 
       // Confirm booking, record platform fees, process invoice/campaign

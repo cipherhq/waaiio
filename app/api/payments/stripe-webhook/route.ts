@@ -107,10 +107,30 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', payment.id);
 
-          // TODO: Stripe doesn't include exact processing fee in checkout.session.completed.
-          // To get actual Stripe fees, use the Balance Transaction API after settlement.
-          // For now, set to 0 — reconciliation cron can backfill later.
-          const stripeGatewayFee = 0;
+          // Fetch actual Stripe fee from PaymentIntent → Charge → BalanceTransaction
+          let stripeGatewayFee = 0;
+          try {
+            const piId = data.payment_intent as string;
+            if (piId && process.env.STRIPE_SECRET_KEY) {
+              const piRes = await fetch(
+                `https://api.stripe.com/v1/payment_intents/${piId}?expand[]=latest_charge.balance_transaction`,
+                {
+                  headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
+                  signal: AbortSignal.timeout(10000),
+                },
+              );
+              if (piRes.ok) {
+                const pi = await piRes.json();
+                const bt = pi.latest_charge?.balance_transaction;
+                if (bt && typeof bt === 'object' && bt.fee) {
+                  // bt.fee is in cents — convert to major unit (dollars)
+                  stripeGatewayFee = Math.round(bt.fee) / 100;
+                }
+              }
+            }
+          } catch (err) {
+            logger.warn('[STRIPE WEBHOOK] Failed to fetch gateway fee:', err);
+          }
 
           const paymentForShared = {
             id: payment.id,
@@ -492,6 +512,30 @@ export async function POST(request: NextRequest) {
             .select('id')
             .single();
 
+          // Fetch actual Stripe fee for recurring charge
+          let recurringGatewayFee = 0;
+          try {
+            const recurringPiId = (data.payment_intent as string);
+            if (recurringPiId && process.env.STRIPE_SECRET_KEY) {
+              const piRes = await fetch(
+                `https://api.stripe.com/v1/payment_intents/${recurringPiId}?expand[]=latest_charge.balance_transaction`,
+                {
+                  headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
+                  signal: AbortSignal.timeout(10000),
+                },
+              );
+              if (piRes.ok) {
+                const pi = await piRes.json();
+                const bt = pi.latest_charge?.balance_transaction;
+                if (bt && typeof bt === 'object' && bt.fee) {
+                  recurringGatewayFee = Math.round(bt.fee) / 100;
+                }
+              }
+            }
+          } catch (err) {
+            logger.warn('[STRIPE RECURRING] Failed to fetch gateway fee:', err);
+          }
+
           // Log subscription charge
           await supabase.from('subscription_charges').insert({
             subscription_id: sub.id,
@@ -527,6 +571,7 @@ export async function POST(request: NextRequest) {
                 fee_percentage: feePercentage,
                 fee_flat: feeFlat,
                 fee_total: feeTotal,
+                gateway_fee: recurringGatewayFee,
                 tier: recTier,
               });
             }

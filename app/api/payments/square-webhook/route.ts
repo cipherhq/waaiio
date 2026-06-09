@@ -108,8 +108,18 @@ export async function POST(request: NextRequest) {
           })
           .eq('id', matchedPayment.id);
 
+        // Extract Square processing fee from webhook payload
+        let squareGatewayFee = 0;
+        try {
+          const processingFee = (payment.processing_fee as Array<{ amount_money?: { amount?: number } }>) || [];
+          const totalFeeCents = processingFee.reduce((sum: number, f) => sum + (f.amount_money?.amount || 0), 0);
+          // Square fees are in cents — convert to dollars
+          squareGatewayFee = Math.round(totalFeeCents) / 100;
+        } catch {
+          logger.warn('[SQUARE WEBHOOK] Failed to extract processing fee');
+        }
+
         // Confirm booking, record platform fees
-        // TODO: Square processing fees require the Payments API ListPayments call to retrieve.
         await processSuccessfulPayment(supabase, {
           id: matchedPayment.id,
           amount: matchedPayment.amount,
@@ -118,7 +128,7 @@ export async function POST(request: NextRequest) {
           campaign_id: matchedPayment.campaign_id || null,
           reservation_id: matchedPayment.reservation_id || null,
           order_id: matchedPayment.order_id || null,
-          gateway_fee: 0,
+          gateway_fee: squareGatewayFee,
         });
 
         // Proactive confirmation: send WhatsApp message + post-completion

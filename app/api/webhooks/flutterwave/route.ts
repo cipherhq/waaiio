@@ -123,6 +123,14 @@ export async function POST(request: NextRequest) {
       .eq('id', payment.id)
       .single();
 
+    // Extract Flutterwave processing fee (data.app_fee is in major units)
+    let flutterwaveGatewayFee = 0;
+    try {
+      flutterwaveGatewayFee = Math.round(Number(data.app_fee || 0) * 100) / 100;
+    } catch {
+      logger.warn('[FLUTTERWAVE WEBHOOK] Failed to extract gateway fee from app_fee');
+    }
+
     const paymentForShared = {
       id: payment.id,
       amount: payment.amount,
@@ -131,6 +139,7 @@ export async function POST(request: NextRequest) {
       campaign_id: fullPayment?.campaign_id || null,
       reservation_id: fullPayment?.reservation_id || payment.reservation_id || null,
       order_id: fullPayment?.order_id || payment.order_id || null,
+      gateway_fee: flutterwaveGatewayFee,
     };
 
     // Confirm booking, record platform fees, process invoice/campaign
