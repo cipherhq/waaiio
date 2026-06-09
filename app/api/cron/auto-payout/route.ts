@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
       // Platform fees for the period across all businesses
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total')
+        .select('business_id, transaction_amount, fee_total, gateway_fee')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
 
     // Group fees by business_id
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number }[]>();
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number }[]>();
     for (const row of (allFeeRows || [])) {
       const list = feesByBiz.get(row.business_id) ?? [];
       list.push(row);
@@ -152,7 +152,8 @@ export async function GET(request: NextRequest) {
       const fees = feesByBiz.get(biz.id) ?? [];
       const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       const totalFees = fees.reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      let netAmount = Math.max(0, gross - totalFees);
+      const totalGatewayFees = fees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
+      let netAmount = Math.max(0, gross - totalFees - totalGatewayFees);
 
       if (netAmount <= 0) continue;
 
@@ -201,6 +202,7 @@ export async function GET(request: NextRequest) {
         period_end: periodEndStr,
         gross_amount: gross,
         fee_amount: totalFees,
+        gateway_fee: totalGatewayFees,
         net_amount: net,
         currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,

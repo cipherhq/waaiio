@@ -107,6 +107,11 @@ export async function POST(request: NextRequest) {
             })
             .eq('id', payment.id);
 
+          // TODO: Stripe doesn't include exact processing fee in checkout.session.completed.
+          // To get actual Stripe fees, use the Balance Transaction API after settlement.
+          // For now, set to 0 — reconciliation cron can backfill later.
+          const stripeGatewayFee = 0;
+
           const paymentForShared = {
             id: payment.id,
             amount: payment.amount,
@@ -115,6 +120,7 @@ export async function POST(request: NextRequest) {
             campaign_id: payment.campaign_id || null,
             reservation_id: payment.reservation_id || null,
             order_id: payment.order_id || null,
+            gateway_fee: stripeGatewayFee,
           };
 
           // Confirm booking, record platform fees, process invoice/campaign

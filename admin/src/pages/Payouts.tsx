@@ -415,7 +415,8 @@ export default function Payouts() {
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Business</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Period</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Gross</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-500">Fees</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-500">Platform Fees</th>
+                <th className="px-4 py-3 text-right font-medium text-gray-500">Gateway Fees</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
                 {tab === 'pending' && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
@@ -430,6 +431,7 @@ export default function Payouts() {
                   </td>
                   <td className="px-4 py-3 text-right text-gray-900">{formatMoney(p.gross_amount, p.country_code)}</td>
                   <td className="px-4 py-3 text-right text-gray-500">{formatMoney(p.platform_fee, p.country_code)}</td>
+                  <td className="px-4 py-3 text-right text-orange-500">{formatMoney(p.gateway_fee, p.country_code)}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">{formatMoney(p.net_amount, p.country_code)}</td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[p.status] || 'bg-gray-100 text-gray-600'}`}>

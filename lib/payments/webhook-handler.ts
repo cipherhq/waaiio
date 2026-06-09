@@ -24,6 +24,10 @@ export async function processPaystackChargeSuccess(
 
   if (!existingPayment || existingPayment.status === 'success') return;
 
+  // Extract Paystack processing fee (in kobo) and convert to naira
+  const paystackFeeKobo = (data.fees as number) || 0;
+  const gatewayFee = Math.round(paystackFeeKobo / 100);
+
   const webhookAmountKobo = data.amount as number;
   const expectedKobo = existingPayment.amount * 100;
 
@@ -45,6 +49,7 @@ export async function processPaystackChargeSuccess(
       payment_method: (data.channel as string) || 'card',
       card_last_four: (authorization?.last4 as string) || null,
       card_brand: (authorization?.brand as string) || null,
+      gateway_fee: gatewayFee,
       paid_at: new Date().toISOString(),
     })
     .eq('gateway_reference', reference);
@@ -95,7 +100,7 @@ export async function processPaystackChargeSuccess(
   }).catch(() => {});
 
   // Confirm booking, record platform fees, process invoice/campaign
-  await processSuccessfulPayment(supabase, existingPayment);
+  await processSuccessfulPayment(supabase, { ...existingPayment, gateway_fee: gatewayFee });
 
   // Proactive confirmation: send WhatsApp message to customer after payment
   // This ensures customers get confirmation even if they never tap "I've Paid"

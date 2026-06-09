@@ -78,6 +78,8 @@ interface Business {
   verification_status: string;
   payout_limit_monthly: number;
   assigned_channel_id: string | null;
+  custom_fee_percentage: number | null;
+  custom_fee_flat: number | null;
 }
 
 interface PayoutAccount {
@@ -119,11 +121,16 @@ export default function Businesses() {
   const [selectedFinancials, setSelectedFinancials] = useState<{
     totalRevenue: number;
     totalFees: number;
+    totalGatewayFees: number;
     totalPayouts: number;
     totalRefunds: number;
     bookingCount: number;
     payoutHistory: Array<{ id: string; net_amount: number; status: string; period_start: string; period_end: string; paid_at: string | null }>;
   } | null>(null);
+  // Custom fee override state
+  const [customFeePercentage, setCustomFeePercentage] = useState('');
+  const [customFeeFlat, setCustomFeeFlat] = useState('');
+  const [customFeeSaving, setCustomFeeSaving] = useState(false);
   const [capSaving, setCapSaving] = useState<string | null>(null);
   const [selectedTier, setSelectedTier] = useState('');
   const [tierSaving, setTierSaving] = useState(false);
@@ -146,7 +153,7 @@ export default function Businesses() {
   async function loadData() {
     const { data } = await adminDb
       .from('businesses')
-      .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id')
+      .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat')
       .order('created_at', { ascending: false });
 
     setBusinesses(data || []);
@@ -184,6 +191,8 @@ export default function Businesses() {
     }
     setSelectedTier(selected.subscription_tier);
     setSelectedStatus(selected.status);
+    setCustomFeePercentage(selected.custom_fee_percentage != null ? String(selected.custom_fee_percentage) : '');
+    setCustomFeeFlat(selected.custom_fee_flat != null ? String(selected.custom_fee_flat) : '');
     adminDb
       .from('payout_accounts')
       .select('id, gateway, bank_name, account_name, account_number, is_active')
@@ -240,7 +249,7 @@ export default function Businesses() {
     // Load financial summary
     Promise.all([
       adminDb.from('payments').select('amount').eq('business_id', selected.id).eq('status', 'success'),
-      adminDb.from('platform_fees').select('fee_total').eq('business_id', selected.id).is('refunded_at', null),
+      adminDb.from('platform_fees').select('fee_total, gateway_fee').eq('business_id', selected.id).is('refunded_at', null),
       adminDb.from('business_payouts').select('net_amount, status').eq('business_id', selected.id).in('status', ['paid', 'processing']),
       adminDb.from('payments').select('refund_amount').eq('business_id', selected.id).gt('refund_amount', 0),
       adminDb.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', selected.id),
@@ -249,6 +258,7 @@ export default function Businesses() {
       setSelectedFinancials({
         totalRevenue: (payments.data || []).reduce((sum, p) => sum + Number(p.amount || 0), 0),
         totalFees: (fees.data || []).reduce((sum, f) => sum + Number(f.fee_total || 0), 0),
+        totalGatewayFees: (fees.data || []).reduce((sum, f) => sum + Number(f.gateway_fee || 0), 0),
         totalPayouts: (payouts.data || []).reduce((sum, p) => sum + Number(p.net_amount || 0), 0),
         totalRefunds: (refunds.data || []).reduce((sum, r) => sum + Number(r.refund_amount || 0), 0),
         bookingCount: bookings.count || 0,
@@ -782,7 +792,7 @@ export default function Businesses() {
             {selectedFinancials && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
                 <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Financial Summary</p>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-gray-900">{fmtCurrency(selectedFinancials.totalRevenue, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
                     <p className="text-[10px] text-gray-500">Total Revenue</p>
@@ -790,6 +800,10 @@ export default function Businesses() {
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-brand">{fmtCurrency(selectedFinancials.totalFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
                     <p className="text-[10px] text-gray-500">Platform Fees</p>
+                  </div>
+                  <div className="rounded-lg bg-white p-3 text-center">
+                    <p className="text-lg font-bold text-orange-500">{fmtCurrency(selectedFinancials.totalGatewayFees, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
+                    <p className="text-[10px] text-gray-500">Gateway Fees</p>
                   </div>
                   <div className="rounded-lg bg-white p-3 text-center">
                     <p className="text-lg font-bold text-green-600">{fmtCurrency(selectedFinancials.totalPayouts, getCurrencyCode((selected?.country_code || 'NG') as CountryCode))}</p>
@@ -821,6 +835,119 @@ export default function Businesses() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Custom Fee Overrides */}
+            {isFullAdmin && selected && (
+              <div className="mt-4 rounded-lg bg-gray-50 p-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-3">Custom Fee Override</p>
+                <p className="text-xs text-gray-400 mb-3">
+                  Current tier: <span className="font-medium capitalize">{selected.subscription_tier}</span>.
+                  Leave empty to use tier defaults.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Custom Fee %</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={customFeePercentage}
+                      onChange={e => setCustomFeePercentage(e.target.value)}
+                      placeholder="e.g. 1.5"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Custom Flat Fee</label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="0"
+                      value={customFeeFlat}
+                      onChange={e => setCustomFeeFlat(e.target.value)}
+                      placeholder="e.g. 50"
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      setCustomFeeSaving(true);
+                      try {
+                        const feePercentage = customFeePercentage.trim() !== '' ? parseFloat(customFeePercentage) : null;
+                        const feeFlat = customFeeFlat.trim() !== '' ? parseInt(customFeeFlat, 10) : null;
+                        await adminDb.from('businesses').update({
+                          custom_fee_percentage: feePercentage,
+                          custom_fee_flat: feeFlat,
+                        }).eq('id', selected.id);
+                        await logAudit({
+                          action: 'set_custom_fees',
+                          entity_type: 'business',
+                          entity_id: selected.id,
+                          details: {
+                            business_name: selected.name,
+                            custom_fee_percentage: feePercentage,
+                            custom_fee_flat: feeFlat,
+                            previous_fee_percentage: selected.custom_fee_percentage,
+                            previous_fee_flat: selected.custom_fee_flat,
+                          },
+                        });
+                        setSelected({ ...selected, custom_fee_percentage: feePercentage, custom_fee_flat: feeFlat });
+                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: feePercentage, custom_fee_flat: feeFlat } : b));
+                      } catch (err) {
+                        console.error('Custom fee save error:', err);
+                        alert('Failed to save custom fees');
+                      } finally {
+                        setCustomFeeSaving(false);
+                      }
+                    }}
+                    disabled={customFeeSaving}
+                    className="rounded-lg bg-brand px-3 py-2 text-xs font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
+                  >
+                    {customFeeSaving ? '...' : 'Save Override'}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setCustomFeeSaving(true);
+                      try {
+                        await adminDb.from('businesses').update({
+                          custom_fee_percentage: null,
+                          custom_fee_flat: null,
+                        }).eq('id', selected.id);
+                        await logAudit({
+                          action: 'clear_custom_fees',
+                          entity_type: 'business',
+                          entity_id: selected.id,
+                          details: {
+                            business_name: selected.name,
+                            previous_fee_percentage: selected.custom_fee_percentage,
+                            previous_fee_flat: selected.custom_fee_flat,
+                          },
+                        });
+                        setCustomFeePercentage('');
+                        setCustomFeeFlat('');
+                        setSelected({ ...selected, custom_fee_percentage: null, custom_fee_flat: null });
+                        setBusinesses(prev => prev.map(b => b.id === selected.id ? { ...b, custom_fee_percentage: null, custom_fee_flat: null } : b));
+                      } catch (err) {
+                        console.error('Custom fee clear error:', err);
+                        alert('Failed to clear custom fees');
+                      } finally {
+                        setCustomFeeSaving(false);
+                      }
+                    }}
+                    disabled={customFeeSaving || (selected.custom_fee_percentage == null && selected.custom_fee_flat == null)}
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Clear Override
+                  </button>
+                  {(selected.custom_fee_percentage != null || selected.custom_fee_flat != null) && (
+                    <span className="text-xs text-amber-600 font-medium">Active override</span>
+                  )}
+                </div>
               </div>
             )}
 

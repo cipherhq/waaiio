@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
       const { data: fees } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, waived')
+        .select('transaction_amount, fee_total, gateway_fee, waived')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
       if (gross <= 0) continue;
 
       const totalFees = (fees || []).filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      const totalGatewayFees = (fees || []).reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
 
       // Still fetch payments for velocity check below
       const { data: payments } = await supabase
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
         .is('applied_to_payout_id', null);
 
       const totalAdjustments = (adjustments || []).reduce((s, a) => s + Number(a.amount || 0), 0);
-      const net = Math.max(0, gross - totalFees + totalAdjustments);
+      const net = Math.max(0, gross - totalFees - totalGatewayFees + totalAdjustments);
 
       // Minimum payout threshold — skip if amount too small
       const minPayout = MINIMUM_PAYOUT[biz.country_code || 'NG'] || 5000;
@@ -212,7 +213,7 @@ export async function POST(request: NextRequest) {
         period_end: periodEndStr,
         gross_amount: gross,
         platform_fee: totalFees,
-        gateway_fee: 0,
+        gateway_fee: totalGatewayFees,
         net_amount: net,
         currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,

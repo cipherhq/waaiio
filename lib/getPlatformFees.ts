@@ -14,6 +14,7 @@ export async function getPlatformFees(
   amount: number,
   tier: SubscriptionTier,
   isInTrial: boolean,
+  overrides?: { feePercentage?: number | null; feeFlat?: number | null },
 ): Promise<{ feePercentage: number; feeFlat: number; feeTotal: number }> {
   if (isInTrial) {
     return { feePercentage: 0, feeFlat: 0, feeTotal: 0 };
@@ -22,8 +23,9 @@ export async function getPlatformFees(
   const settings = await loadPlatformSettings({ useServiceClient: true });
   const tierConfig = settings.pricing_tiers[tier];
 
-  const feePercentage = tierConfig.feePercentage;
-  const feeFlat = tierConfig.feeFlat;
+  // Use per-business custom overrides if provided, otherwise fall back to tier defaults
+  const feePercentage = typeof overrides?.feePercentage === 'number' ? overrides.feePercentage : tierConfig.feePercentage;
+  const feeFlat = typeof overrides?.feeFlat === 'number' ? overrides.feeFlat : tierConfig.feeFlat;
 
   // Waive flat fee on micro-transactions to protect small merchants
   // If flat fee would be more than 10% of the transaction, skip it

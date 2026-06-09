@@ -14,6 +14,7 @@ interface PaymentRecord {
   reservation_id?: string | null;
   order_id?: string | null;
   metadata?: Record<string, unknown> | null;
+  gateway_fee?: number;
 }
 
 /**
@@ -44,6 +45,7 @@ export async function processSuccessfulPayment(
     await recordPlatformFee(supabase, {
       bookingId: payment.booking_id,
       paymentAmount: payment.amount,
+      gatewayFee: payment.gateway_fee,
     });
 
     // Track waitlist conversion: if this customer was notified via waitlist, mark as converted
@@ -71,12 +73,12 @@ export async function processSuccessfulPayment(
 
   // 2. Process invoice payment
   if (payment.invoice_id) {
-    await processInvoicePayment(supabase, payment.invoice_id, payment.amount);
+    await processInvoicePayment(supabase, payment.invoice_id, payment.amount, payment.gateway_fee);
   }
 
   // 3. Process campaign donation
   if (payment.campaign_id) {
-    await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount);
+    await processCampaignDonation(supabase, payment.id, payment.campaign_id, payment.amount, payment.gateway_fee);
   }
 
   // 4. Confirm order
@@ -98,6 +100,7 @@ export async function processSuccessfulPayment(
       await recordPlatformFee(supabase, {
         orderId,
         paymentAmount: payment.amount,
+        gatewayFee: payment.gateway_fee,
       });
 
       // Decrement stock only if we actually confirmed the order (prevents double-decrement
@@ -140,6 +143,7 @@ export async function processSuccessfulPayment(
       await recordPlatformFee(supabase, {
         reservationId: payment.reservation_id,
         paymentAmount: payment.amount,
+        gatewayFee: payment.gateway_fee,
       });
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Reservation confirmation error:', err);
@@ -180,6 +184,7 @@ export async function recordPlatformFee(
     reservationId?: string;
     businessId?: string;
     paymentAmount: number;
+    gatewayFee?: number;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
@@ -234,7 +239,7 @@ export async function recordPlatformFee(
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('subscription_tier, trial_ends_at, payout_mode')
+    .select('subscription_tier, trial_ends_at, payout_mode, custom_fee_percentage, custom_fee_flat')
     .eq('id', businessId)
     .single();
 
@@ -244,7 +249,10 @@ export async function recordPlatformFee(
   const tier = (business.subscription_tier || 'free') as SubscriptionTier;
   const isInTrial = tier === 'free' && new Date(business.trial_ends_at) > new Date();
 
-  const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial);
+  const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(transactionAmount, tier, isInTrial, {
+    feePercentage: business.custom_fee_percentage != null ? Number(business.custom_fee_percentage) : null,
+    feeFlat: business.custom_fee_flat != null ? Number(business.custom_fee_flat) : null,
+  });
 
   // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
   const { error: feeErr } = await supabase.from('platform_fees').insert({
@@ -258,6 +266,7 @@ export async function recordPlatformFee(
     fee_percentage: feePercentage,
     fee_flat: feeFlat,
     fee_total: feeTotal,
+    gateway_fee: opts.gatewayFee || 0,
     tier,
   });
   if (feeErr) {
@@ -279,6 +288,7 @@ export async function processInvoicePayment(
   supabase: SupabaseClient,
   invoiceId: string,
   paymentAmount: number,
+  gatewayFee?: number,
 ): Promise<void> {
   const { data: invoice } = await supabase
     .from('invoices')
@@ -301,7 +311,7 @@ export async function processInvoicePayment(
     })
     .eq('id', invoiceId);
 
-  await recordPlatformFee(supabase, { invoiceId, paymentAmount });
+  await recordPlatformFee(supabase, { invoiceId, paymentAmount, gatewayFee });
 }
 
 /**
@@ -312,6 +322,7 @@ export async function processCampaignDonation(
   paymentId: string,
   campaignId: string,
   amount: number,
+  gatewayFee?: number,
 ): Promise<void> {
   // Mark donation as success — try by payment_id first, fallback to campaign_id
   const { data: updated } = await supabase
@@ -361,6 +372,7 @@ export async function processCampaignDonation(
       campaignId,
       businessId: campaign.business_id,
       paymentAmount: amount,
+      gatewayFee,
     });
   }
 }

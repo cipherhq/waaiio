@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
           .eq('id', matchedPayment.id);
 
         // Confirm booking, record platform fees
+        // TODO: Square processing fees require the Payments API ListPayments call to retrieve.
         await processSuccessfulPayment(supabase, {
           id: matchedPayment.id,
           amount: matchedPayment.amount,
@@ -117,6 +118,7 @@ export async function POST(request: NextRequest) {
           campaign_id: matchedPayment.campaign_id || null,
           reservation_id: matchedPayment.reservation_id || null,
           order_id: matchedPayment.order_id || null,
+          gateway_fee: 0,
         });
 
         // Proactive confirmation: send WhatsApp message + post-completion

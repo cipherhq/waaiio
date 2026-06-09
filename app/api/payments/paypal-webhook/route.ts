@@ -219,6 +219,7 @@ export async function POST(request: NextRequest) {
         .eq('id', payment.id)
         .single();
 
+      // TODO: PayPal processing fees require the Transactions API to retrieve exact fee.
       const paymentForShared = {
         id: payment.id,
         amount: payment.amount,
@@ -227,6 +228,7 @@ export async function POST(request: NextRequest) {
         campaign_id: fullPayment?.campaign_id || null,
         reservation_id: fullPayment?.reservation_id || null,
         order_id: payment.order_id || null,
+        gateway_fee: 0,
       };
 
       // Confirm booking, record platform fees, process invoice/campaign
