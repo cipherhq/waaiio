@@ -103,6 +103,14 @@ export async function PUT(request: NextRequest) {
     const { id, businessId, ...updates } = body;
     if (!id || !businessId) return NextResponse.json({ error: 'id and businessId required' }, { status: 400 });
 
+    // Validate percentage discount cannot exceed 100%
+    if (updates.discountType === 'percentage' && updates.discountValue > 100) {
+      return NextResponse.json({ error: 'Percentage discount cannot exceed 100%' }, { status: 400 });
+    }
+    if (updates.discountValue !== undefined && updates.discountValue <= 0) {
+      return NextResponse.json({ error: 'Discount value must be greater than 0' }, { status: 400 });
+    }
+
     const auth = await authenticateAndVerifyOwnership(businessId);
     if ('error' in auth) return auth.error;
 

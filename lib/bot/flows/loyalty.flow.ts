@@ -201,8 +201,19 @@ const loyaltyRedeemStep: FlowStepConfig = {
     const threshold = (meta.loyalty_reward_threshold as number) || 500;
 
     try {
-      // Insert redemption transaction
       const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+
+      // Atomically update balance and total_redeemed via RPC FIRST
+      const { error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
+        p_loyalty_id: loyaltyId,
+        p_points: threshold,
+      });
+      if (redeemErr) {
+        logger.error('[LOYALTY] redeem_loyalty_points RPC failed:', redeemErr);
+        throw new Error('Redemption failed');
+      }
+
+      // Insert redemption transaction only after RPC succeeds
       await ctx.supabase.from('loyalty_transactions').insert({
         business_id: businessId,
         customer_phone: phone,
@@ -212,15 +223,6 @@ const loyaltyRedeemStep: FlowStepConfig = {
         reference_type: 'loyalty_points',
       });
 
-      // Atomically update balance and total_redeemed via RPC
-      const { error: redeemErr } = await ctx.supabase.rpc('redeem_loyalty_points', {
-        p_loyalty_id: loyaltyId,
-        p_points: threshold,
-      });
-      if (redeemErr) {
-        logger.error('[LOYALTY] redeem_loyalty_points RPC failed:', redeemErr);
-        throw new Error('Redemption failed');
-      }
       const balance = (ctx.session.session_data.loyalty_balance as number) || 0;
 
       const rewardDesc = (meta.loyalty_reward_description as string) || 'a free reward';

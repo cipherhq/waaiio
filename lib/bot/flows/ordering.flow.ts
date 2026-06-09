@@ -1467,6 +1467,19 @@ export const orderingFlow: FlowDefinition = {
           if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has been fully redeemed.' };
           if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
 
+          // Check if this customer already used this promo code
+          const promoPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          const { count: priorPromoUses } = await ctx.supabase
+            .from('orders')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', ctx.business!.id)
+            .eq('delivery_phone', promoPhone)
+            .not('status', 'eq', 'cancelled')
+            .eq('promo_code_id', promo.id);
+          if ((priorPromoUses || 0) > 0) {
+            return { valid: false, errorMessage: 'You have already used this promo code.' };
+          }
+
           const cart = (ctx.session.session_data.cart as CartItem[]) || [];
           const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
           if (promo.min_order_amount && total < promo.min_order_amount) {
@@ -1516,6 +1529,19 @@ export const orderingFlow: FlowDefinition = {
         if (!promo) return { valid: false, errorMessage: 'Invalid code. Check and try again:' };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This code has been fully redeemed.' };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This code has expired.' };
+
+        // Check if this customer already used this promo code
+        const promoPhone2 = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const { count: priorPromoUses2 } = await ctx.supabase
+          .from('orders')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business!.id)
+          .eq('delivery_phone', promoPhone2)
+          .not('status', 'eq', 'cancelled')
+          .eq('promo_code_id', promo.id);
+        if ((priorPromoUses2 || 0) > 0) {
+          return { valid: false, errorMessage: 'You have already used this promo code.' };
+        }
 
         const cart = (ctx.session.session_data.cart as CartItem[]) || [];
         const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -1855,6 +1881,12 @@ export const orderingFlow: FlowDefinition = {
 
         if (!referral) {
           return { valid: false, errorMessage: 'Hmm, that code didn\'t work. Double-check it and try again, or type *skip* to continue without one.' };
+        }
+
+        // Prevent self-referral
+        const normalizedFrom = ctx.from.startsWith('+') ? ctx.from : '+' + ctx.from;
+        if (referral.referrer_phone === normalizedFrom || referral.referrer_phone === ctx.from) {
+          return { valid: false, errorMessage: 'You cannot use your own referral code.' };
         }
 
         return {

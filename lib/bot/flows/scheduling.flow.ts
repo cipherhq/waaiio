@@ -1069,6 +1069,19 @@ export const schedulingFlow: FlowDefinition = {
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
 
+        // Check if this customer already used this promo code
+        const promoPhone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const { count: priorPromoUses } = await ctx.supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business!.id)
+          .eq('guest_phone', promoPhone)
+          .not('status', 'eq', 'cancelled')
+          .eq('promo_code_id', promo.id);
+        if ((priorPromoUses || 0) > 0) {
+          return { valid: false, errorMessage: 'You have already used this promo code.' };
+        }
+
         const servicePrice = (ctx.session.session_data.service_price as number) || 0;
         if (promo.min_order_amount && servicePrice < promo.min_order_amount) {
           return { valid: false, errorMessage: `Minimum amount for this code is ${formatCurrency(promo.min_order_amount, (ctx.business?.country_code || 'NG') as CountryCode)}.` };
@@ -1113,6 +1126,19 @@ export const schedulingFlow: FlowDefinition = {
         if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Try again or type *skip*.' };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
+
+        // Check if this customer already used this promo code
+        const promoPhone2 = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const { count: priorPromoUses2 } = await ctx.supabase
+          .from('bookings')
+          .select('id', { count: 'exact', head: true })
+          .eq('business_id', ctx.business!.id)
+          .eq('guest_phone', promoPhone2)
+          .not('status', 'eq', 'cancelled')
+          .eq('promo_code_id', promo.id);
+        if ((priorPromoUses2 || 0) > 0) {
+          return { valid: false, errorMessage: 'You have already used this promo code.' };
+        }
 
         const servicePrice = (ctx.session.session_data.service_price as number) || 0;
         if (promo.min_order_amount && servicePrice < promo.min_order_amount) {
@@ -1776,6 +1802,12 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: false, errorMessage: 'Hmm, that code didn\'t work. Double-check it and try again, or type *skip* to continue without one.' };
         }
 
+        // Prevent self-referral
+        const normalizedFrom = ctx.from.startsWith('+') ? ctx.from : '+' + ctx.from;
+        if (referral.referrer_phone === normalizedFrom || referral.referrer_phone === ctx.from) {
+          return { valid: false, errorMessage: 'You cannot use your own referral code.' };
+        }
+
         return {
           valid: true,
           data: { referral_id: referral.id, referrer_phone: referral.referrer_phone },
@@ -2063,22 +2095,9 @@ export const schedulingFlow: FlowDefinition = {
         }
 
         if (isNewBooking) {
-          // Increment promo code usage if applied
+          // Increment promo code usage atomically
           if (d._promo_id) {
-            const { data: promoData, error: promoErr } = await ctx.supabase
-              .from('promo_codes')
-              .select('current_uses')
-              .eq('id', d._promo_id as string)
-              .single();
-            if (promoErr) {
-              console.error('[SCHEDULING] Failed to fetch promo code:', promoErr.message);
-            }
-            if (promoData) {
-              await ctx.supabase
-                .from('promo_codes')
-                .update({ current_uses: (promoData.current_uses || 0) + 1 })
-                .eq('id', d._promo_id as string);
-            }
+            await ctx.supabase.rpc('increment_promo_usage', { p_code_id: d._promo_id as string });
           }
 
           // Convert referral if applied

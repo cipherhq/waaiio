@@ -36,6 +36,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Referral code already used or expired' }, { status: 400 });
     }
 
+    // Prevent self-referral
+    if (refereePhone) {
+      const normalizedReferee = refereePhone.startsWith('+') ? refereePhone : '+' + refereePhone;
+      if (referral.referrer_phone === normalizedReferee || referral.referrer_phone === refereePhone) {
+        return NextResponse.json({ error: 'You cannot use your own referral code' }, { status: 400 });
+      }
+    }
+
     // Mark as converted
     await supabase
       .from('referrals')
@@ -55,6 +63,25 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     if (loyaltyCap && referral.reward_type === 'points' && referral.reward_amount) {
+      // Cap referral rewards at 20 per referrer per business
+      const { count: totalReferrals } = await supabase
+        .from('referrals')
+        .select('id', { count: 'exact', head: true })
+        .eq('business_id', businessId)
+        .eq('referrer_phone', referral.referrer_phone)
+        .eq('status', 'converted');
+
+      if ((totalReferrals || 0) >= 20) {
+        logger.info('[REFERRALS] Max referrals (20) reached for', referral.referrer_phone);
+        return NextResponse.json({
+          success: true,
+          referrer_name: referral.referrer_name,
+          reward_type: referral.reward_type,
+          reward_amount: 0,
+          capped: true,
+        });
+      }
+
       const points = Math.round(referral.reward_amount);
 
       // Upsert referrer's loyalty points
