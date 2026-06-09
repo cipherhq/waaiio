@@ -3,7 +3,7 @@ import { initCapabilities } from '@/lib/capabilities/service';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import type { CapabilityId } from '@/lib/capabilities/types';
-import type { CountryCode } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -221,6 +221,45 @@ export async function handleOnboardingComplete(
             '_Need help? Type *help* anytime._',
           ].join('\n'),
         });
+
+        // Send upsell message after a short delay
+        setTimeout(async () => {
+          try {
+            const cc = (country || 'NG') as CountryCode;
+            const { getPricingTiers } = await import('@/lib/constants');
+            const tiers = getPricingTiers(cc);
+            const growthPrice = formatCurrency(tiers.growth.price, cc);
+            const bizPrice = formatCurrency(tiers.business.price, cc);
+
+            await resolved.sender.sendButtons({
+              to: phone,
+              body: [
+                `💡 *Unlock more with a paid plan*`,
+                '',
+                `You're on the free plan (30-day trial). Upgrade anytime to get:`,
+                '',
+                `*Pro* — ${growthPrice}/mo`,
+                '• Up to 500 bookings/month',
+                '• Broadcast messages',
+                '• Reminders & recurring payments',
+                '• Lower transaction fees (1.5%)',
+                '',
+                `*Premium* — ${bizPrice}/mo`,
+                '• Unlimited bookings',
+                '• Loyalty & referral programs',
+                '• White-label bot',
+                '• Queue & waitlist management',
+                '',
+                `_Upgrade from your dashboard anytime._`,
+              ].join('\n'),
+              buttons: [
+                { id: 'upgrade_now', title: 'Upgrade Now' },
+              ],
+            });
+          } catch (upsellErr) {
+            logger.warn('[WA-ONBOARD] Upsell message error:', upsellErr);
+          }
+        }, 5000);
       }
     } catch (err) {
       logger.error('[WA-ONBOARD] Confirmation message error:', err);

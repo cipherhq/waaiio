@@ -2028,6 +2028,13 @@ export class BotService {
 
     // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
+
+    // Handle upgrade button tap from post-onboarding upsell
+    if (text === 'upgrade_now') {
+      await this.sendText(from, 'Upgrade your plan here 👇\nhttps://www.waaiio.com/dashboard/settings?tab=account');
+      return;
+    }
+
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
     const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
     const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
