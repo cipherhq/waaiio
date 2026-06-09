@@ -1728,7 +1728,7 @@ export class BotService {
             // Use pre-fetched profile name for personalized greeting
             const customerName = (fullProfile as { first_name?: string } | null)?.first_name || null;
 
-            // Quick rebook: if we know their last/favorite service, show a "Book Again" button
+            // Quick rebook: if we know their last/favorite service, show a contextual "again" button
             const rebookServiceName = custHistory.lastServiceName || custHistory.favoriteServiceName;
             const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
 
@@ -1737,15 +1737,26 @@ export class BotService {
                 ? `Welcome back, ${customerName}! 👋`
                 : 'Welcome back! 👋';
 
+              // Category-aware language
+              const catLabels = getCategoryLabels(business.category);
+              const GIVING_CATS = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
+              const isGiving = GIVING_CATS.includes(business.category);
+              const actionWord = isGiving ? 'Give' : catLabels.actionVerb || 'Book';
+              const promptText = isGiving
+                ? `${rebookMsg}\n\nGive again?\n🙏 ${rebookServiceName}`
+                : `${rebookMsg}\n\n${actionWord} your usual?\n📋 ${rebookServiceName}`;
+              const buttonLabel = isGiving
+                ? `Give ${rebookServiceName.slice(0, 16)}`
+                : `${actionWord} ${rebookServiceName.slice(0, 14)}`;
+
               const lang = session.session_data._detected_language as string | undefined;
-              const bodyText = `${rebookMsg}\n\nBook your usual?\n📋 ${rebookServiceName}`;
-              const translatedBody = lang ? await translateBotResponse(bodyText, lang) : bodyText;
+              const translatedBody = lang ? await translateBotResponse(promptText, lang) : promptText;
 
               await this.messageSender.sendButtons({
                 to: from,
                 body: translatedBody,
                 buttons: [
-                  { id: 'quick_rebook', title: `Book ${rebookServiceName.slice(0, 15)}` },
+                  { id: 'quick_rebook', title: buttonLabel.slice(0, 20) },
                   { id: 'browse_menu', title: 'Something Else' },
                 ],
               });
@@ -2071,7 +2082,12 @@ export class BotService {
       session.session_data.service_id = rebookServiceId;
       session.session_data.service_name = session.session_data._quick_rebook_service_name;
       session.session_data.skip_service = true;
-      session.session_data.active_capability = 'scheduling';
+      // Route to correct capability based on business category
+      const bizForRebook = session.business_id
+        ? (await this.supabase.from('businesses').select('category').eq('id', session.business_id).single()).data
+        : null;
+      const GIVING_REBOOK_CATS = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
+      session.session_data.active_capability = bizForRebook && GIVING_REBOOK_CATS.includes(bizForRebook.category) ? 'giving' : 'scheduling';
 
       // Fetch service details to pre-fill duration, price, etc.
       const { data: svc } = await this.supabase
