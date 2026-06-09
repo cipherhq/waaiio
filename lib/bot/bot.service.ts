@@ -2072,6 +2072,38 @@ export class BotService {
     // ── Escape hatches (hardcoded, never overridable) ──
     const step = session.current_step;
 
+    // Handle "Switch Business" button — deactivate and show business picker
+    if (text === 'switch_biz') {
+      await this.deactivateSession(session.id);
+      // Force business picker by clearing business association and showing suggestions
+      const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
+      if (recentBiz.length > 1) {
+        const quickPick = recentBiz.slice(0, 3);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: quickPick },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'Which business would you like to visit?',
+          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: s.name.slice(0, 20) })),
+        });
+      } else {
+        await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
+      }
+      return;
+    }
+
+    // Handle "Back to Business" button — restart the current business
+    if (text === 'go_back_biz') {
+      // Fall through — the session was deactivated, so the bot will create a new one for the same business
+    }
+
     // Handle upgrade button tap from post-onboarding upsell
     if (text === 'upgrade_now') {
       await this.sendText(from, 'Upgrade your plan here 👇\nhttps://www.waaiio.com/dashboard/settings?tab=account');
@@ -2146,10 +2178,25 @@ export class BotService {
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
     const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
     const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
+    const isExitWord = /^(exit|quit|stop)$/i.test(text.trim());
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
-      await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
+
+      // "exit"/"quit"/"stop" = leave this business entirely
+      // "cancel"/"restart"/"start over" = restart within this business
+      if (isExitWord) {
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'You\'ve exited. What would you like to do?',
+          buttons: [
+            { id: 'go_back_biz', title: session.business_id ? 'Back to Business' : 'Start Over' },
+            { id: 'switch_biz', title: 'Switch Business' },
+          ],
+        });
+      } else {
+        await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
+      }
       return;
     }
 
