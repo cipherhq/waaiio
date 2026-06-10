@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { truncTitle } from '../utils/truncate';
 
 /**
  * Survey Flow
@@ -114,7 +115,7 @@ const surveyQuestionStep: FlowStepConfig = {
           body: prefix + q.text,
           buttons: q.options.map((opt, i) => ({
             id: `survey_opt_${i}`,
-            title: opt.slice(0, 20), // WhatsApp button title max 20 chars
+            title: truncTitle(opt), // WhatsApp button title max 20 chars
           })),
         }];
       }
@@ -125,7 +126,7 @@ const surveyQuestionStep: FlowStepConfig = {
         body: prefix + q.text,
         buttonLabel: 'Choose',
         items: q.options.map((opt, i) => ({
-          title: opt.slice(0, 24),
+          title: truncTitle(opt, 24),
           postbackText: `survey_opt_${i}`,
         })),
       }];

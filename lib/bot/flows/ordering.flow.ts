@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { truncTitle } from '../utils/truncate';
 import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
@@ -15,10 +16,6 @@ function getOrderingLabels(_category: string): { noun: string; emoji: string; br
   return { noun: 'catalog', emoji: '🛍️', browseLabel: 'Browse' };
 }
 
-/** WhatsApp list row titles max 24 chars, descriptions max 72 chars */
-function truncTitle(s: string, max = 24): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + '…';
-}
 
 interface OptionGroup {
   name: string;
@@ -133,7 +130,7 @@ export const orderingFlow: FlowDefinition = {
           if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
             desc += ` (${p.stock_quantity} left)`;
           }
-          return { title: truncTitle(p.name), description: desc, postbackText: p.id };
+          return { title: truncTitle(p.name, 24), description: desc, postbackText: p.id };
         };
 
         // Group products by category
@@ -154,7 +151,7 @@ export const orderingFlow: FlowDefinition = {
             body: `Welcome to ${ctx.business.name}! ${labels.emoji}\n\nChoose a category to browse:`,
             buttonLabel: 'View Categories',
             items: categories.slice(0, 10).map(([cat, items]) => ({
-              title: truncTitle(cat),
+              title: truncTitle(cat, 24),
               description: `${items.length} item${items.length !== 1 ? 's' : ''}`,
               postbackText: `cat:${cat}`,
             })),
@@ -166,7 +163,7 @@ export const orderingFlow: FlowDefinition = {
 
         if (needsSections) {
           const sections = categories.slice(0, 10).map(([cat, items]) => ({
-            title: truncTitle(cat),
+            title: truncTitle(cat, 24),
             items: items.slice(0, 10).map(formatItem),
           }));
 
@@ -315,7 +312,7 @@ export const orderingFlow: FlowDefinition = {
             if (!p.has_variants && p.track_inventory && p.stock_quantity !== null && p.low_stock_threshold && p.stock_quantity <= p.low_stock_threshold) {
               desc += ` (${p.stock_quantity} left)`;
             }
-            return { title: truncTitle(p.name), description: desc, postbackText: p.id };
+            return { title: truncTitle(p.name, 24), description: desc, postbackText: p.id };
           }),
         ];
 
@@ -326,7 +323,7 @@ export const orderingFlow: FlowDefinition = {
 
         return [{
           type: 'list',
-          title: truncTitle(selectedCat),
+          title: truncTitle(selectedCat, 24),
           body: `*${selectedCat}*${cartInfo}\n\nSelect an item:`,
           buttonLabel: 'View Items',
           items: items.slice(0, 10),
@@ -447,11 +444,11 @@ export const orderingFlow: FlowDefinition = {
 
         messages.push({
           type: 'list',
-          title: truncTitle(`Choose ${axis.name}`),
+          title: truncTitle(`Choose ${axis.name}`, 24),
           body: `Select *${axis.name}* for *${d.current_product_name}*:`,
           buttonLabel: truncTitle(`Choose ${axis.name}`, 20),
           items: axis.values.map(val => ({
-            title: truncTitle(val),
+            title: truncTitle(val, 24),
             description: '',
             postbackText: val,
           })),
@@ -628,11 +625,11 @@ export const orderingFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         messages.push({
           type: 'list',
-          title: truncTitle(d.current_product_name as string),
+          title: truncTitle(d.current_product_name as string, 24),
           body: `Choose an option for *${d.current_product_name}*:`,
           buttonLabel: 'Select Option',
           items: available.map(v => ({
-            title: truncTitle(v.label),
+            title: truncTitle(v.label, 24),
             description: formatCurrency(v.price, cc) + (v.stock_quantity !== null && v.stock_quantity <= 3 ? ` (${v.stock_quantity} left)` : ''),
             postbackText: v.id,
           })),
@@ -959,7 +956,7 @@ export const orderingFlow: FlowDefinition = {
           let desc = a.price_type === 'quote' ? 'Get a quote' : formatCurrency(a.price, cc);
           if (a.price_type === 'per_unit' && a.unit_label) desc += ` ${a.unit_label}`;
           if (a.is_required) desc += ' (Required)';
-          return { title: truncTitle(a.name), description: desc, postbackText: a.id };
+          return { title: truncTitle(a.name, 24), description: desc, postbackText: a.id };
         });
 
         // Add "No add-ons" option (if no required addons remain)
@@ -1184,7 +1181,7 @@ export const orderingFlow: FlowDefinition = {
         const useSections = cats.length > 1 && products.length > 9;
 
         const formatProd = (p: typeof products[0]) => ({
-          title: truncTitle(p.name),
+          title: truncTitle(p.name, 24),
           description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
           postbackText: p.id,
         });
@@ -1193,7 +1190,7 @@ export const orderingFlow: FlowDefinition = {
           const sections = [
             { title: 'Your Order', items: [checkoutItem] },
             ...cats.slice(0, 9).map(([cat, items]) => ({
-              title: truncTitle(cat),
+              title: truncTitle(cat, 24),
               items: items.slice(0, 10).map(formatProd),
             })),
           ];
@@ -1286,9 +1283,9 @@ export const orderingFlow: FlowDefinition = {
           const sections = [
             { title: 'Your Order', items: [checkoutItem] },
             ...categories.slice(0, 9).map(([cat, items]) => ({
-              title: truncTitle(cat),
+              title: truncTitle(cat, 24),
               items: items.slice(0, 10).map(p => ({
-                title: truncTitle(p.name),
+                title: truncTitle(p.name, 24),
                 description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
                 postbackText: p.id,
               })),
@@ -1301,7 +1298,7 @@ export const orderingFlow: FlowDefinition = {
             body: `🛒 ${cart.length} item${cart.length !== 1 ? 's' : ''} in cart — ${formatCurrency(total, cc)}\n\nAdd more items or checkout:`,
             buttonLabel: 'View Options',
             items: [checkoutItem, ...products.slice(0, 9).map(p => ({
-              title: truncTitle(p.name),
+              title: truncTitle(p.name, 24),
               description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
               postbackText: p.id,
             }))],
@@ -1312,7 +1309,7 @@ export const orderingFlow: FlowDefinition = {
         const listItems = [
           checkoutItem,
           ...products.slice(0, 9).map(p => ({
-            title: truncTitle(p.name),
+            title: truncTitle(p.name, 24),
             description: p.has_variants ? 'Multiple options' : formatCurrency(p.price, cc),
             postbackText: p.id,
           })),
@@ -1609,7 +1606,7 @@ export const orderingFlow: FlowDefinition = {
             let desc = z.is_pickup ? 'Pickup' : z.price > 0 ? formatCurrency(z.price, cc) : 'FREE';
             if (z.estimated_time) desc += ` • ${z.estimated_time}`;
             if (z.is_negotiable) desc += ' (Negotiable)';
-            return { title: z.name.slice(0, 24), description: desc, postbackText: z.id };
+            return { title: truncTitle(z.name, 24), description: desc, postbackText: z.id };
           }),
         }];
       },
@@ -2136,7 +2133,7 @@ export const orderingFlow: FlowDefinition = {
           const item = cart[i];
           const label = item.variant_label ? `${item.name} (${item.variant_label})` : item.name;
           items.push({
-            title: truncTitle(`❌ ${label}`),
+            title: truncTitle(`❌ ${label}`, 24),
             description: `Remove — x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`,
             postbackText: `remove:${i}`,
           });

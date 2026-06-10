@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import * as Sentry from '@sentry/nextjs';
 import { logger } from '@/lib/logger';
+import { truncTitle } from './utils/truncate';
 import { checkRateLimitAsync } from '@/lib/rate-limit';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { StandaloneService } from './standalone.service';
@@ -134,7 +135,7 @@ export class BotService {
         await this.messageSender.sendButtons({
           to: from,
           body: 'Which business would you like to visit?',
-          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: s.name.slice(0, 20) })),
+          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
         });
       } else {
         await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
@@ -1319,7 +1320,7 @@ export class BotService {
             body: `Which business did you mean?`,
             buttons: detection.suggestions.map((s, i) => ({
               id: `biz_${i}`,
-              title: s.name.slice(0, 20),
+              title: truncTitle(s.name),
             })),
           });
         } else {
@@ -1573,7 +1574,7 @@ export class BotService {
               body: headerText,
               buttons: pendingSuggestions.map((s, i) => ({
                 id: `biz_${i}`,
-                title: s.name.slice(0, 20),
+                title: truncTitle(s.name),
               })),
             });
           } else {
@@ -1805,7 +1806,7 @@ export class BotService {
                 to: from,
                 body: translatedBody,
                 buttons: [
-                  { id: 'quick_rebook', title: buttonLabel.slice(0, 20) },
+                  { id: 'quick_rebook', title: truncTitle(buttonLabel) },
                   { id: 'browse_menu', title: 'Something Else' },
                 ],
               });
@@ -1843,7 +1844,7 @@ export class BotService {
           if (waConfig.welcome_buttons.length > 0 && ufCount <= 1) {
             const buttons = waConfig.welcome_buttons.slice(0, 3).map((btn, i) => ({
               id: `wb_${i}`,
-              title: btn.label.slice(0, 20),
+              title: truncTitle(btn.label),
             }));
             await this.messageSender.sendButtons({
               to: from,
@@ -1989,7 +1990,7 @@ export class BotService {
           body: 'Which business would you like to visit?\n\n_Tip: type *switch <name>* anytime to change business._',
           buttons: quickPick.map((s, i) => ({
             id: `biz_${i}`,
-            title: s.name.slice(0, 20),
+            title: truncTitle(s.name),
           })),
         });
         return;
@@ -2140,7 +2141,7 @@ export class BotService {
         await this.messageSender.sendButtons({
           to: from,
           body: 'Which business would you like to visit?',
-          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: s.name.slice(0, 20) })),
+          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
         });
       } else {
         await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');

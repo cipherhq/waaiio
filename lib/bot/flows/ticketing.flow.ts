@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { truncTitle } from '../utils/truncate';
 import { getTicketConfirmationMessage } from './shared/templates';
 import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
@@ -57,7 +58,7 @@ export const ticketingFlow: FlowDefinition = {
             const cc = (ctx.business?.country_code || 'NG') as CountryCode;
             const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString(getLocale(cc), { day: 'numeric', month: 'short' });
             return {
-              title: e.name.slice(0, 24),
+              title: truncTitle(e.name, 24),
               description: `${dateLabel} • ${formatCurrency(e.price, cc)} • ${available} left`,
               postbackText: e.id,
             };
@@ -139,7 +140,7 @@ export const ticketingFlow: FlowDefinition = {
           items: availableTypes.map(t => {
             const available = t.total_tickets - t.tickets_sold;
             return {
-              title: t.name.slice(0, 24),
+              title: truncTitle(t.name, 24),
               description: `${formatCurrency(t.price, cc)} • ${available} left`,
               postbackText: t.id,
             };

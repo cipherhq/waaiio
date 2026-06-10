@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { truncTitle } from '../utils/truncate';
 import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
 import { getCapabilityLabel } from '@/lib/capabilities/labels';
 import { getCategoryLabels } from '@/lib/categoryConfig';
@@ -711,7 +712,7 @@ const myOrdersStep: FlowStepConfig = {
       });
       return [
         { type: 'text' as const, text: `📦 *Your Orders*\n\n${lines.join('\n\n')}` },
-        { type: 'buttons' as const, body: 'Select an order to view details:', buttons: orders.slice(0, 3).map((o) => ({ id: `order_${o.id}`, title: `${o.reference_code}`.slice(0, 20) })) },
+        { type: 'buttons' as const, body: 'Select an order to view details:', buttons: orders.slice(0, 3).map((o) => ({ id: `order_${o.id}`, title: truncTitle(`${o.reference_code}`) })) },
       ];
     }
 
@@ -724,7 +725,7 @@ const myOrdersStep: FlowStepConfig = {
         const b = o.businesses as unknown as { name: string; country_code?: string } | null;
         const cc = (b?.country_code as CountryCode) || 'NG';
         return {
-          title: `${o.reference_code}`.slice(0, 24),
+          title: truncTitle(`${o.reference_code}`, 24),
           description: `${statusLabel[o.status] || o.status} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, cc)}`.slice(0, 72),
           postbackText: `order_${o.id}`,
         };

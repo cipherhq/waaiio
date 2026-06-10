@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { truncTitle } from '../utils/truncate';
 import type { BotSession } from '../bot-types';
 
 // ── Pure helpers ─────────────────────────────────────────
@@ -106,7 +107,7 @@ export async function handleMyOrders(
         body: 'Select an order to view details:',
         buttons: orders.slice(0, 3).map((o, i) => ({
           id: `order_${o.id}`,
-          title: `${o.reference_code}`.slice(0, 20),
+          title: truncTitle(`${o.reference_code}`),
         })),
       });
     } else {
@@ -117,7 +118,7 @@ export async function handleMyOrders(
         const { label } = formatOrderStatus(o.status);
         const dateLabel = new Date(o.created_at).toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
         return {
-          title: `${o.reference_code}`.slice(0, 24),
+          title: truncTitle(`${o.reference_code}`, 24),
           description: `${label} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, occ)}`.slice(0, 72),
           postbackText: `order_${o.id}`,
         };

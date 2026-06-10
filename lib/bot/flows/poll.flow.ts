@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { truncTitle } from '../utils/truncate';
 
 /**
  * Poll Flow
@@ -74,7 +75,7 @@ const pollQuestionStep: FlowStepConfig = {
         body,
         buttons: options.map((opt, i) => ({
           id: `poll_vote_${i}`,
-          title: opt.slice(0, 20),
+          title: truncTitle(opt),
         })),
       }];
     }
@@ -85,7 +86,7 @@ const pollQuestionStep: FlowStepConfig = {
       body,
       buttonLabel: 'Vote',
       items: options.map((opt, i) => ({
-        title: opt.slice(0, 24),
+        title: truncTitle(opt, 24),
         postbackText: `poll_vote_${i}`,
       })),
     }];

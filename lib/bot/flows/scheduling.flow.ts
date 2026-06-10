@@ -3,6 +3,7 @@ import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQ
 import { getCategoryLabels } from '@/lib/categoryConfig';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
+import { truncTitle } from '../utils/truncate';
 import { getSavedPaymentMethod, chargeSavedCard } from '@/lib/payments/charge-saved';
 import { createNotification } from './shared/notifications';
 import { getConfirmationMessage } from './shared/templates';
@@ -130,7 +131,7 @@ export const schedulingFlow: FlowDefinition = {
           body: 'Which location would you like to visit?',
           buttonLabel: 'Choose Location',
           items: locations.map(l => ({
-            title: l.name.slice(0, 24),
+            title: truncTitle(l.name, 24),
             description: (l.address || '').slice(0, 72),
             postbackText: l.id,
           })),
@@ -494,7 +495,7 @@ export const schedulingFlow: FlowDefinition = {
         // Use a list message for 3+ staff members; buttons for 1-2
         if (staff.length >= 3) {
           const items = staff.map(s => ({
-            title: s.name.slice(0, 24),
+            title: truncTitle(s.name, 24),
             description: '',
             postbackText: `staff_${s.id}`,
           }));
@@ -510,7 +511,7 @@ export const schedulingFlow: FlowDefinition = {
 
         const buttons = staff.slice(0, 2).map(s => ({
           id: `staff_${s.id}`,
-          title: s.name.slice(0, 20),
+          title: truncTitle(s.name),
         }));
         buttons.push({ id: 'staff_any', title: 'Any available' });
 
@@ -1419,7 +1420,7 @@ export const schedulingFlow: FlowDefinition = {
             body: 'Any special requests?',
             buttons: [
               { id: 'req_none', title: "No, I'm good" },
-              ...customOptions.slice(0, 2).map(o => ({ id: `req_${o.id}`, title: o.title.slice(0, 20) })),
+              ...customOptions.slice(0, 2).map(o => ({ id: `req_${o.id}`, title: truncTitle(o.title) })),
             ],
           }];
         }
@@ -1548,7 +1549,7 @@ export const schedulingFlow: FlowDefinition = {
           body: 'How would you like to get your item to us?',
           buttonLabel: 'Choose Option',
           items: zones.map(z => ({
-            title: z.name.slice(0, 24),
+            title: truncTitle(z.name, 24),
             description: z.price > 0 ? `${formatCurrency(z.price, cc)} pickup fee` : 'Free',
             postbackText: z.id,
           })),
