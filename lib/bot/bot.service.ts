@@ -2183,19 +2183,27 @@ export class BotService {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
 
-      // "exit"/"quit"/"stop" = leave this business entirely
-      // "cancel"/"restart"/"start over" = restart within this business
+      // Both exit and cancel now give options
       if (isExitWord) {
+        // exit/quit/stop → leave this business
         await this.messageSender.sendButtons({
           to: from,
           body: 'You\'ve exited. What would you like to do?',
           buttons: [
-            { id: 'go_back_biz', title: session.business_id ? 'Back to Business' : 'Start Over' },
+            { id: 'go_back_biz', title: 'Back to Business' },
             { id: 'switch_biz', title: 'Switch Business' },
           ],
         });
       } else {
-        await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
+        // cancel/restart/start over → stay with this business
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'Action cancelled. What would you like to do?',
+          buttons: [
+            { id: 'go_back_biz', title: 'Start Over' },
+            { id: 'switch_biz', title: 'Switch Business' },
+          ],
+        });
       }
       return;
     }
