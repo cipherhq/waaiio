@@ -353,11 +353,15 @@ export const paymentFlow: FlowDefinition = {
           body: "Complete your payment using the link above.\n\nYour confirmation will arrive automatically after payment. If it doesn't, tap below:",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
+            { id: 'retry_payment', title: 'Get New Link' },
             { id: 'go_back', title: 'Cancel' },
           ],
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'retry_payment') {
+          return { valid: true, data: { _action: 'retry_payment' } };
+        }
         const text = input.toLowerCase();
 
         if ((text === 'cancel' || text === 'go_back')) {
@@ -528,6 +532,10 @@ export const paymentFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') return null;
+        if (ctx.session.session_data._action === 'retry_payment') {
+          delete ctx.session.session_data._action;
+          return 'process_payment'; // regenerate payment link
+        }
         if (ctx.session.session_data._action === 'payment_confirmed') {
           // If the service itself is recurring, skip the offer step and go straight to consent
           if (ctx.session.session_data.service_billing_type === 'recurring') {

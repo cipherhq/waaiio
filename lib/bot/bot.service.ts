@@ -95,6 +95,53 @@ export class BotService {
       return;
     }
 
+    // Pre-check 2b: Handle post-exit buttons (session was already deactivated)
+    if (text === 'go_back_biz') {
+      // Find the last business this user interacted with
+      const { data: lastSession } = await this.supabase
+        .from('bot_sessions')
+        .select('business_id')
+        .eq('whatsapp_number', from)
+        .eq('is_active', false)
+        .not('business_id', 'is', null)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastSession?.business_id) {
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, lastSession.business_id);
+      }
+      // Fallback — no previous business found
+      return this.handleMessage(from, 'Hi', messageType, destinationPhone);
+    }
+
+    if (text === 'switch_biz') {
+      // Show business picker
+      const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
+      if (recentBiz.length > 1) {
+        const quickPick = recentBiz.slice(0, 3);
+        // Clean up old inactive sessions
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: quickPick },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'Which business would you like to visit?',
+          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: s.name.slice(0, 20) })),
+        });
+      } else {
+        await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
+      }
+      return;
+    }
+
     // Pre-check 2: Profanity (only block on repeated offenses)
     if (this.intelligence.containsProfanity(text)) {
       const abuse = this.intelligence.recordProfanity(from);
