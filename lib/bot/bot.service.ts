@@ -2218,8 +2218,23 @@ export class BotService {
       delete session.session_data._quick_rebook_service_id;
       delete session.session_data._quick_rebook_service_name;
       delete session.session_data._quick_rebook_sent;
-      await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
-      // Fall through to normal flow executor
+      // Store greeting so the capability menu includes it
+      if (session.session_data._greeting) {
+        // Greeting already stored — will be used by capability selection
+      }
+      session.current_step = 'select_capability';
+      await this.supabase.from('bot_sessions').update({
+        session_data: session.session_data,
+        current_step: 'select_capability',
+      }).eq('id', session.id);
+      // Execute the flow to show the capability menu
+      const bizForMenu = session.business_id
+        ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
+        : null;
+      if (bizForMenu) {
+        await this.flowExecutor.execute(from, '', session as unknown as BotSession, bizForMenu);
+      }
+      return;
     }
 
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
