@@ -127,24 +127,34 @@ export default function Notifications() {
     setSending(true);
 
     try {
-      const { error } = await adminDb.from('notifications').insert({
-        user_id: selectedUser.id,
-        title: sendTitle,
-        message: sendMessage,
-        type: sendType,
-        read: false,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) throw new Error('Not authenticated');
+
+      const res = await fetch(`${apiUrl}/api/email/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          to: selectedUser.email,
+          subject: sendTitle,
+          html: `<p>${sendMessage.replace(/\n/g, '<br>')}</p>`,
+        }),
       });
 
-      if (error) throw error;
+      if (!res.ok) throw new Error('Email send failed');
 
       await logAudit({
-        action: 'send_notification',
-        entity_type: 'notification',
+        action: 'send_admin_notification',
+        entity_type: 'notifications',
         entity_id: selectedUser.id,
         details: {
           recipient_email: selectedUser.email,
           recipient_name: [selectedUser.first_name, selectedUser.last_name].filter(Boolean).join(' '),
-          title: sendTitle,
+          subject: sendTitle,
           type: sendType,
         },
       });
@@ -157,7 +167,6 @@ export default function Notifications() {
       setSendTitle('');
       setSendMessage('');
       setSendType('info');
-      await loadData();
     } catch (error) {
       console.error('Send notification error:', error);
       alert('Failed to send notification');

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
@@ -113,6 +114,16 @@ export async function POST(
   const rateLimit = rateLimitResponse(getRateLimitKey(req, 'reservation-checkin'), 5, 60_000);
   if (rateLimit) return rateLimit;
 
+  // Require authentication
+  const authSupabase = await createClient();
+  const { data: { user } } = await authSupabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: 'Please log in to check in guests' },
+      { status: 401 },
+    );
+  }
+
   const { code } = await params;
   const supabase = createServiceClient();
 
@@ -143,7 +154,22 @@ export async function POST(
     );
   }
 
-  // Verify business ownership if provided
+  // Verify the authenticated user owns this business
+  const { data: bizOwner } = await supabase
+    .from('businesses')
+    .select('id')
+    .eq('id', reservation.business_id)
+    .eq('owner_id', user.id)
+    .single();
+
+  if (!bizOwner) {
+    return NextResponse.json(
+      { success: false, error: 'You do not have permission to check in guests for this business' },
+      { status: 403 },
+    );
+  }
+
+  // Verify business_id matches if provided
   if (businessId && reservation.business_id !== businessId) {
     return NextResponse.json(
       { success: false, error: 'This reservation is not for your property' },

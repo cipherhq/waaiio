@@ -34,6 +34,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
+    // Reject past dates
+    const today = new Date().toISOString().split('T')[0];
+    if (date < today) {
+      return NextResponse.json({ error: 'Date cannot be in the past' }, { status: 400 });
+    }
+
     // Verify ownership
     const { data: biz } = await supabase
       .from('businesses')
@@ -52,6 +58,19 @@ export async function POST(request: NextRequest) {
       .eq('business_id', businessId)
       .single();
     if (!service) return NextResponse.json({ error: 'Service not found' }, { status: 404 });
+
+    // Check for time conflicts
+    const { count: conflictCount } = await serviceClient
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', businessId)
+      .eq('date', date)
+      .eq('time', time.padStart(5, '0'))
+      .in('status', ['confirmed', 'pending', 'in_progress']);
+
+    if ((conflictCount ?? 0) > 0) {
+      return NextResponse.json({ error: 'This time slot is already booked' }, { status: 409 });
+    }
 
     // Generate reference code
     const refCode = `${businessId.slice(0, 4).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;

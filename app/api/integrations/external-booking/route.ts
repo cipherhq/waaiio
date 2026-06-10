@@ -69,8 +69,29 @@ export async function POST(request: NextRequest) {
     if (time && !/^\d{1,2}:\d{2}$/.test(time)) errors.push('time must be HH:MM format');
     if (!serviceName) errors.push('service_name is required');
 
+    // Reject past dates
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const today = new Date().toISOString().split('T')[0];
+      if (date < today) {
+        errors.push('date cannot be in the past');
+      }
+    }
+
     if (errors.length > 0) {
       return NextResponse.json({ error: 'Validation failed', details: errors }, { status: 400 });
+    }
+
+    // Check for time conflicts
+    const { count: conflictCount } = await supabase
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id)
+      .eq('date', date)
+      .eq('time', time.padStart(5, '0'))
+      .in('status', ['confirmed', 'pending', 'in_progress']);
+
+    if ((conflictCount ?? 0) > 0) {
+      return NextResponse.json({ error: 'This time slot is already booked' }, { status: 409 });
     }
 
     // Generate reference code
