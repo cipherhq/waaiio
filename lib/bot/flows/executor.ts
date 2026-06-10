@@ -435,7 +435,7 @@ export class FlowExecutor {
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
     // Footer: 40 chars — within WhatsApp's 60-char limit
-    const NAV_FOOTER = 'menu to restart \u00b7 exit to leave';
+    const NAV_FOOTER = 'back \u00b7 menu \u00b7 exit';
     for (const msg of messages) {
       if ((msg.type === 'buttons' || msg.type === 'list') && !msg.footer) {
         msg.footer = NAV_FOOTER;
@@ -471,7 +471,7 @@ export class FlowExecutor {
         return {
           ...msg,
           body: await translateBotResponse(msg.body, lang),
-          footer: msg.footer ? await translateBotResponse(msg.footer, lang) : msg.footer,
+          footer: msg.footer, // Don't translate — commands are English-only
           buttons: await Promise.all(msg.buttons.map(async b => ({
             ...b,
             title: await translateBotResponse(b.title, lang),
@@ -481,7 +481,7 @@ export class FlowExecutor {
         return {
           ...msg,
           body: await translateBotResponse(msg.body, lang),
-          footer: msg.footer ? await translateBotResponse(msg.footer, lang) : msg.footer,
+          footer: msg.footer, // Don't translate — commands are English-only
           items: await Promise.all(msg.items.map(async item => ({
             ...item,
             description: item.description ? await translateBotResponse(item.description, lang) : item.description,

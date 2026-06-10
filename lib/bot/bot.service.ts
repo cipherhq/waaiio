@@ -2333,24 +2333,24 @@ export class BotService {
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
     const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
     const trimmedText = text.trim();
-    const isCancelWord = CANCEL_PATTERN.test(trimmedText);
+    // Simplified: cancel = back (go back one step)
+    const isCancelOrBack = CANCEL_PATTERN.test(trimmedText) || BACK_PATTERNS.some(p => p.test(trimmedText));
     const isExitWord = EXIT_PATTERNS.some(p => p.test(trimmedText));
     const isMenuWord = MENU_PATTERNS.some(p => p.test(trimmedText));
-    const isBackWord = BACK_PATTERNS.some(p => p.test(trimmedText));
-    const isEscapeHatch = isCancelWord || isExitWord || isMenuWord;
+    const isEscapeHatch = isCancelOrBack || isExitWord || isMenuWord;
 
-    // "back" in bot.service.ts — only for non-flow steps (my_bookings, etc.)
-    // Flow steps handle "back" in the executor
-    if (isBackWord && isBookingMgmt && !isChatMode) {
-      // For booking management steps, "back" goes to the business menu
+    // ── 3 SIMPLE COMMANDS: back/cancel, menu, exit ──
+
+    // "back" or "cancel" in booking management → go to business menu
+    if (isCancelOrBack && isBookingMgmt && !isChatMode) {
       if (session.business_id) {
         await this.deactivateSession(session.id);
         return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
       }
-      await this.deactivateSession(session.id);
-      await this.sendText(from, 'Send *Hi* to start over.');
-      return;
     }
+
+    // "back" or "cancel" in flow steps → handled by executor (let it fall through)
+    // The executor pops step history and re-prompts the previous step
 
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
@@ -2376,24 +2376,16 @@ export class BotService {
         return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       }
 
-      // ── "cancel" → show 3-option menu ──
-      if (isCancelWord) {
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'What would you like to do?',
-          buttons: [
-            { id: 'nav_back', title: 'Go Back' },
-            { id: 'nav_menu', title: 'Start Over' },
-            { id: 'nav_exit', title: 'Exit Business' },
-          ],
-        });
-        return;
+      // ── "cancel" / "back" → let executor handle (go back one step) ──
+      if (isCancelOrBack) {
+        // Fall through to the executor — it pops step history
       }
 
       // ── "exit" / "quit" / "stop" → leave business ──
-      await this.deactivateSession(session.id);
+      if (isExitWord) {
+        await this.deactivateSession(session.id);
 
-      // Cancel any pending booking/order created during this session
+        // Cancel any pending booking/order created during this session
       const d = session.session_data || {};
       if (d.booking_id) {
         await this.supabase.from('bookings')
@@ -2438,7 +2430,8 @@ export class BotService {
         // No business found at all — guide them
         await this.sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
       }
-      return;
+        return;
+      }
     }
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
