@@ -1792,9 +1792,11 @@ export class BotService {
               const promptText = isGiving
                 ? `${rebookMsg}\n\nGive again?\n🙏 ${rebookServiceName}`
                 : `${rebookMsg}\n\n${actionWord} your usual?\n📋 ${rebookServiceName}`;
-              const buttonLabel = isGiving
-                ? `Give ${rebookServiceName.slice(0, 16)}`
-                : `${actionWord} ${rebookServiceName.slice(0, 14)}`;
+              // WhatsApp button max 20 chars — use short label if name is long
+              const maxNameLen = 20 - actionWord.length - 1; // "Give " = 5 chars
+              const buttonLabel = rebookServiceName.length <= maxNameLen
+                ? `${actionWord} ${rebookServiceName}`
+                : isGiving ? 'Give Again' : `${actionWord} Again`;
 
               const lang = session.session_data._detected_language as string | undefined;
               const translatedBody = lang ? await translateBotResponse(promptText, lang) : promptText;
