@@ -2303,7 +2303,35 @@ export class BotService {
             }
           }
         }
-        // Fallback if no business
+        // Fallback — try to find the last business this user interacted with
+        if (!bizId) {
+          const { data: lastSess } = await this.supabase
+            .from('bot_sessions')
+            .select('business_id')
+            .eq('whatsapp_number', from)
+            .not('business_id', 'is', null)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (lastSess?.business_id) {
+            const { data: lastBiz } = await this.supabase.from('businesses').select('*').eq('id', lastSess.business_id).single();
+            if (lastBiz) {
+              const { data: freshSession } = await this.supabase.from('bot_sessions').insert({
+                whatsapp_number: from,
+                business_id: lastBiz.id,
+                current_step: 'select_capability',
+                session_data: { business_category: lastBiz.category },
+                is_active: true,
+                expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+              }).select('*').single();
+              if (freshSession) {
+                await this.flowExecutor.execute(from, '', freshSession as unknown as BotSession, lastBiz);
+                return;
+              }
+            }
+          }
+        }
+        // Final fallback
         await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
       }
       return;
