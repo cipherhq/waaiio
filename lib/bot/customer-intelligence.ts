@@ -6,6 +6,7 @@ export interface CustomerHistory {
   totalSpent: number;
   lastServiceName: string | null;
   lastServiceId: string | null;
+  lastFlowType: string | null;  // 'scheduling', 'payment', 'ticketing', etc.
   lastVisitDate: string | null;
   daysSinceLastVisit: number | null;
   favoriteServiceName: string | null;
@@ -28,6 +29,7 @@ export async function getCustomerHistory(
     totalSpent: 0,
     lastServiceName: null,
     lastServiceId: null,
+    lastFlowType: null,
     lastVisitDate: null,
     daysSinceLastVisit: null,
     favoriteServiceName: null,
@@ -45,7 +47,7 @@ export async function getCustomerHistory(
     // Get past bookings for this customer at this business
     const { data: bookings } = await supabase
       .from('bookings')
-      .select('id, service_id, date, total_amount, status, guest_phone')
+      .select('id, service_id, appointment_id, flow_type, date, total_amount, status, guest_phone')
       .eq('business_id', businessId)
       .in('guest_phone', phoneVariants)
       .in('status', ['completed', 'confirmed'])
@@ -61,23 +63,40 @@ export async function getCustomerHistory(
       : { data: [] };
     const serviceMap = new Map((services || []).map(s => [s.id, s.name]));
 
+    // Also resolve appointment names for bookings that have appointment_id but no service_id
+    const appointmentIds = [...new Set(bookings.filter(b => b.appointment_id && !b.service_id).map(b => b.appointment_id).filter(Boolean))];
+    if (appointmentIds.length > 0) {
+      const { data: appointments } = await supabase
+        .from('appointments')
+        .select('id, name')
+        .in('id', appointmentIds);
+      if (appointments) {
+        for (const a of appointments) serviceMap.set(a.id, a.name);
+      }
+    }
+
     // Calculate stats
     const totalVisits = bookings.length;
     const totalSpent = bookings.reduce((sum, b) => sum + (b.total_amount || 0), 0);
 
     // Last visit
     const lastBooking = bookings[0];
-    const lastServiceName = lastBooking.service_id ? serviceMap.get(lastBooking.service_id) || null : null;
+    const lastServiceName = lastBooking.service_id
+      ? serviceMap.get(lastBooking.service_id) || null
+      : lastBooking.appointment_id
+        ? serviceMap.get(lastBooking.appointment_id) || null
+        : null;
     const lastVisitDate = lastBooking.date;
     const daysSince = lastVisitDate
       ? Math.floor((Date.now() - new Date(lastVisitDate + 'T00:00').getTime()) / (1000 * 60 * 60 * 24))
       : null;
 
-    // Favorite service (most booked)
+    // Favorite service (most booked) — considers both service_id and appointment_id
     const serviceCounts = new Map<string, number>();
     for (const b of bookings) {
-      if (b.service_id) {
-        serviceCounts.set(b.service_id, (serviceCounts.get(b.service_id) || 0) + 1);
+      const itemId = b.service_id || b.appointment_id;
+      if (itemId) {
+        serviceCounts.set(itemId, (serviceCounts.get(itemId) || 0) + 1);
       }
     }
     let favoriteId: string | null = null;
@@ -102,7 +121,8 @@ export async function getCustomerHistory(
       totalVisits,
       totalSpent,
       lastServiceName,
-      lastServiceId: lastBooking.service_id,
+      lastServiceId: lastBooking.service_id || lastBooking.appointment_id || null,
+      lastFlowType: lastBooking.flow_type || null,
       lastVisitDate,
       daysSinceLastVisit: daysSince,
       favoriteServiceName: favoriteId ? serviceMap.get(favoriteId) || null : null,

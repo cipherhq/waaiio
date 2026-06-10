@@ -1769,6 +1769,7 @@ export class BotService {
               totalVisits: custHistory.totalVisits,
               lastServiceId: custHistory.lastServiceId,
               lastServiceName: custHistory.lastServiceName,
+              lastFlowType: custHistory.lastFlowType,
               favoriteServiceId: custHistory.favoriteServiceId,
               favoriteServiceName: custHistory.favoriteServiceName,
             };
@@ -1785,19 +1786,20 @@ export class BotService {
                 ? `Welcome back, ${customerName}! 👋`
                 : 'Welcome back! 👋';
 
-              // Category-aware language
+              // Use lastFlowType to determine action — not just business category
               const catLabels = getCategoryLabels(business.category);
               const GIVING_CATS = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
-              const isGiving = GIVING_CATS.includes(business.category);
-              const actionWord = isGiving ? 'Give' : catLabels.actionVerb || 'Book';
-              const promptText = isGiving
+              const lastFlowType = custHistory.lastFlowType;
+              const isGivingRebook = lastFlowType === 'payment' && GIVING_CATS.includes(business.category);
+              const actionWord = isGivingRebook ? 'Give' : catLabels.actionVerb || 'Book';
+              const promptText = isGivingRebook
                 ? `${rebookMsg}\n\nGive again?\n🙏 ${rebookServiceName}`
                 : `${rebookMsg}\n\n${actionWord} your usual?\n📋 ${rebookServiceName}`;
               // WhatsApp button max 20 chars — use short label if name is long
               const maxNameLen = 20 - actionWord.length - 1; // "Give " = 5 chars
               const buttonLabel = rebookServiceName.length <= maxNameLen
                 ? `${actionWord} ${rebookServiceName}`
-                : isGiving ? 'Give Again' : `${actionWord} Again`;
+                : isGivingRebook ? 'Give Again' : `${actionWord} Again`;
 
               const lang = session.session_data._detected_language as string | undefined;
               const translatedBody = lang ? await translateBotResponse(promptText, lang) : promptText;
@@ -1814,6 +1816,7 @@ export class BotService {
               // Store rebook data in session for handling the button tap
               session.session_data._quick_rebook_service_id = rebookServiceId;
               session.session_data._quick_rebook_service_name = rebookServiceName;
+              session.session_data._rebook_flow_type = custHistory.lastFlowType;
               session.session_data._quick_rebook_sent = true;
               await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
@@ -2166,12 +2169,9 @@ export class BotService {
       session.session_data.service_id = rebookServiceId;
       session.session_data.service_name = session.session_data._quick_rebook_service_name;
       session.session_data.skip_service = true;
-      // Route to correct capability based on business category
-      const bizForRebook = session.business_id
-        ? (await this.supabase.from('businesses').select('category').eq('id', session.business_id).single()).data
-        : null;
-      const GIVING_REBOOK_CATS = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
-      session.session_data.active_capability = bizForRebook && GIVING_REBOOK_CATS.includes(bizForRebook.category) ? 'giving' : 'scheduling';
+      // Determine capability from what the user is rebooking
+      const rebookFlowType = session.session_data._rebook_flow_type;
+      session.session_data.active_capability = rebookFlowType === 'payment' ? 'giving' : 'scheduling';
 
       // Fetch service details to pre-fill duration, price, etc.
       const { data: svc } = await this.supabase
@@ -2203,6 +2203,7 @@ export class BotService {
       // Clean up rebook data
       delete session.session_data._quick_rebook_service_id;
       delete session.session_data._quick_rebook_service_name;
+      delete session.session_data._rebook_flow_type;
       delete session.session_data._quick_rebook_sent;
 
       // Set the correct first step for the capability (skip capability selection)
@@ -2228,6 +2229,7 @@ export class BotService {
     if (text === 'browse_menu') {
       delete session.session_data._quick_rebook_service_id;
       delete session.session_data._quick_rebook_service_name;
+      delete session.session_data._rebook_flow_type;
       delete session.session_data._quick_rebook_sent;
       // Store greeting so the capability menu includes it
       if (session.session_data._greeting) {

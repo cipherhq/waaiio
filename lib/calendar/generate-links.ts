@@ -145,7 +145,7 @@ export function getCalendarLinksText(opts: {
   const event = buildCalendarEvent(opts);
   if (!event) return '';
 
-  const googleUrl = generateGoogleCalendarUrl(event);
+  const shortUrl = `https://www.waaiio.com/cal/${encodeURIComponent(opts.referenceCode)}`;
 
-  return `\n\n📅 Add to Google Calendar:\n${googleUrl}`;
+  return `\n\n📅 Add to calendar: ${shortUrl}`;
 }
