@@ -173,7 +173,7 @@ export class FlowExecutor {
     // ── Navigation: "back" command ──
     // Only intercept on non-free-text steps so users can literally type "back" as input
     const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
-    const BACK_WORDS = ['back', 'go back', 'previous'];
+    const BACK_WORDS = ['back', 'go back', 'previous', 'cancel'];
     const lowerInputTrimmed = input.toLowerCase().trim();
     if (BACK_WORDS.includes(lowerInputTrimmed) && !FREE_TEXT_STEPS.includes(stepId)) {
       const history = (session.session_data._step_history as string[]) || [];
@@ -210,7 +210,7 @@ export class FlowExecutor {
     // Global escape hatch: cancel / start over at any step
     // Supports English + Pidgin + Yoruba + French + Hausa + Twi
     const lowerInput = input.toLowerCase().trim();
-    const CANCEL_WORDS = ['cancel', 'stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
+    const CANCEL_WORDS = ['stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
     const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
     if (CANCEL_WORDS.includes(lowerInput)) {
       const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session);
