@@ -22,12 +22,16 @@ export interface PromptList {
     title: string;
     items: Array<{ title: string; description?: string; postbackText: string }>;
   }>;
+  /** Optional footer text (max 60 chars per WhatsApp API) */
+  footer?: string;
 }
 
 export interface PromptButtons {
   type: 'buttons';
   body: string;
   buttons: Array<{ id: string; title: string }>;
+  /** Optional footer text (max 60 chars per WhatsApp API) */
+  footer?: string;
 }
 
 export interface PromptImage {

@@ -45,6 +45,7 @@ export interface CloudInteractiveButtonMessage {
   to: string;
   bodyText: string;
   buttons: Array<{ id: string; title: string }>;
+  footerText?: string;
 }
 
 export interface CloudImageMessage {
@@ -177,20 +178,23 @@ export class MetaCloudService {
   // ── Send Interactive Buttons ──
 
   async sendButtons(message: CloudInteractiveButtonMessage): Promise<{ messageId: string }> {
+    const interactive: Record<string, unknown> = {
+      type: 'button',
+      body: { text: message.bodyText },
+      action: {
+        buttons: message.buttons.map((b) => ({
+          type: 'reply',
+          reply: { id: b.id, title: b.title },
+        })),
+      },
+    };
+    if (message.footerText) interactive.footer = { text: message.footerText };
+
     const response = await this.callApi(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       to: message.to,
       type: 'interactive',
-      interactive: {
-        type: 'button',
-        body: { text: message.bodyText },
-        action: {
-          buttons: message.buttons.map((b) => ({
-            type: 'reply',
-            reply: { id: b.id, title: b.title },
-          })),
-        },
-      },
+      interactive,
     });
     return { messageId: response.messages[0].id };
   }

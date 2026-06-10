@@ -33,14 +33,17 @@ import { handleMyBookings as _handleMyBookings, handleViewTicket as _handleViewT
 import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detectBotCodeWithSuggestions, rankSuggestions as _rankSuggestions, findReturningCustomerBusiness as _findReturningCustomerBusiness, findReturningCustomerBusinesses as _findReturningCustomerBusinesses } from './handlers/bot-code-detection';
 import { executeKeywordAction as _executeKeywordAction } from './handlers/keyword-actions';
 
-// ── Escape hatches: always hardcoded, never overridable ──
+// ── Navigation commands: always hardcoded, never overridable ──
+const CANCEL_PATTERN = /^cancel$/i;
+const EXIT_PATTERNS = [/^exit$/i, /^quit$/i, /^stop$/i];
+const MENU_PATTERNS = [/^menu$/i, /^restart$/i, /^start\s*over$/i];
+const HOME_PATTERN = /^home$/i;
+const BACK_PATTERNS = [/^back$/i, /^go\s*back$/i, /^previous$/i];
+// Combined for legacy checks — excludes "back" (handled in executor) and "menu"/"home" (handled separately)
 const ESCAPE_HATCH_PATTERNS = [
-  /^cancel$/i,
-  /^exit$/i,
-  /^quit$/i,
-  /^stop$/i,
-  /^restart$/i,
-  /^start\s*over$/i,
+  CANCEL_PATTERN,
+  ...EXIT_PATTERNS,
+  ...MENU_PATTERNS,
 ];
 
 export class BotService {
@@ -139,6 +142,83 @@ export class BotService {
         });
       } else {
         await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
+      }
+      return;
+    }
+
+    // ── Navigation button postbacks (from "cancel" 3-option menu) ──
+    if (text === 'nav_back') {
+      // Find active session and go back one step via history
+      const navSession = await this.getActiveSession(from);
+      if (navSession) {
+        const history = (navSession.session_data._step_history as string[]) || [];
+        if (history.length >= 2) {
+          history.pop();
+          const prevStep = history[history.length - 1];
+          navSession.session_data._step_history = history;
+          navSession.current_step = prevStep;
+          await this.supabase.from('bot_sessions').update({
+            current_step: prevStep,
+            session_data: navSession.session_data,
+          }).eq('id', navSession.id);
+          // Re-prompt the previous step
+          const business = navSession.business_id
+            ? (await this.supabase.from('businesses').select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway').eq('id', navSession.business_id).single()).data
+            : null;
+          await this.flowExecutor.execute(from, '', navSession as unknown as BotSession, business as BusinessRecord | null);
+          return;
+        }
+      }
+      // No history or no session — treat as "go back to business menu"
+      return this.handleMessage(from, 'go_back_biz', messageType, destinationPhone);
+    }
+
+    if (text === 'nav_menu') {
+      // Restart current business menu — deactivate and re-enter
+      const navSession = await this.getActiveSession(from);
+      if (navSession?.business_id) {
+        const bizId = navSession.business_id;
+        await this.deactivateSession(navSession.id);
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+      }
+      // No business — show marketplace
+      if (navSession) await this.deactivateSession(navSession.id);
+      return this.handleMessage(from, '', messageType, destinationPhone);
+    }
+
+    if (text === 'nav_exit') {
+      // Leave business — same as "exit" command
+      const navSession = await this.getActiveSession(from);
+      if (navSession) await this.deactivateSession(navSession.id);
+      return this.handleMessage(from, 'exit', messageType, destinationPhone);
+    }
+
+    // ── "home" command — return to Waaiio marketplace / business picker ──
+    if (HOME_PATTERN.test(text.trim())) {
+      const activeSession = await this.getActiveSession(from);
+      if (activeSession) await this.deactivateSession(activeSession.id);
+      // Show marketplace greeting by finding returning businesses
+      const recentBiz = await this.findReturningCustomerBusinesses(from, null, null);
+      if (recentBiz.length > 0) {
+        const quickPick = recentBiz.slice(0, 3);
+        await this.supabase.from('bot_sessions').delete()
+          .eq('whatsapp_number', from).eq('is_active', false).is('business_id', null);
+        await this.supabase.from('bot_sessions').insert({
+          whatsapp_number: from,
+          user_id: null,
+          business_id: null,
+          current_step: 'select_business_suggestion',
+          session_data: { suggestions: quickPick },
+          is_active: true,
+          expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        });
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'Welcome to Waaiio! Which business would you like to visit?',
+          buttons: quickPick.map((s, i) => ({ id: `biz_${i}`, title: truncTitle(s.name) })),
+        });
+      } else {
+        await this.sendText(from, 'Welcome to Waaiio! Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
       }
       return;
     }
@@ -2252,10 +2332,65 @@ export class BotService {
 
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
     const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
-    const isEscapeHatch = ESCAPE_HATCH_PATTERNS.some(p => p.test(text.trim()));
-    const isExitWord = /^(exit|quit|stop)$/i.test(text.trim());
+    const trimmedText = text.trim();
+    const isCancelWord = CANCEL_PATTERN.test(trimmedText);
+    const isExitWord = EXIT_PATTERNS.some(p => p.test(trimmedText));
+    const isMenuWord = MENU_PATTERNS.some(p => p.test(trimmedText));
+    const isBackWord = BACK_PATTERNS.some(p => p.test(trimmedText));
+    const isEscapeHatch = isCancelWord || isExitWord || isMenuWord;
+
+    // "back" in bot.service.ts — only for non-flow steps (my_bookings, etc.)
+    // Flow steps handle "back" in the executor
+    if (isBackWord && isBookingMgmt && !isChatMode) {
+      // For booking management steps, "back" goes to the business menu
+      if (session.business_id) {
+        await this.deactivateSession(session.id);
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+      }
+      await this.deactivateSession(session.id);
+      await this.sendText(from, 'Send *Hi* to start over.');
+      return;
+    }
+
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
+
+      // ── "menu" / "restart" / "start over" → restart current business menu ──
+      if (isMenuWord && session.business_id) {
+        const bizId = session.business_id;
+        await this.deactivateSession(session.id);
+        // Cancel any pending booking/order
+        const d = session.session_data || {};
+        if (d.booking_id) {
+          await this.supabase.from('bookings')
+            .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+            .eq('id', d.booking_id as string)
+            .in('status', ['pending']);
+        }
+        if (d.order_id) {
+          await this.supabase.from('orders')
+            .update({ status: 'cancelled' })
+            .eq('id', d.order_id as string)
+            .eq('status', 'pending');
+        }
+        return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
+      }
+
+      // ── "cancel" → show 3-option menu ──
+      if (isCancelWord) {
+        await this.messageSender.sendButtons({
+          to: from,
+          body: 'What would you like to do?',
+          buttons: [
+            { id: 'nav_back', title: 'Go Back' },
+            { id: 'nav_menu', title: 'Start Over' },
+            { id: 'nav_exit', title: 'Exit Business' },
+          ],
+        });
+        return;
+      }
+
+      // ── "exit" / "quit" / "stop" → leave business ──
       await this.deactivateSession(session.id);
 
       // Cancel any pending booking/order created during this session
@@ -2291,28 +2426,14 @@ export class BotService {
       if (escBizId) {
         const { data: escBiz } = await this.supabase.from('businesses').select('name').eq('id', escBizId).single();
         const bizName = escBiz?.name || 'the business';
-
-        if (isExitWord) {
-          // exit/quit/stop → offer to come back or switch
-          await this.messageSender.sendButtons({
-            to: from,
-            body: `You've left ${bizName}. What next?`,
-            buttons: [
-              { id: 'go_back_biz', title: 'Back to Menu' },
-              { id: 'switch_biz', title: 'Switch Business' },
-            ],
-          });
-        } else {
-          // cancel/restart → go straight back to the menu
-          await this.messageSender.sendButtons({
-            to: from,
-            body: `No problem! What would you like to do at ${bizName}?`,
-            buttons: [
-              { id: 'go_back_biz', title: 'Back to Menu' },
-              { id: 'switch_biz', title: 'Switch Business' },
-            ],
-          });
-        }
+        await this.messageSender.sendButtons({
+          to: from,
+          body: `You've left ${bizName}. What next?`,
+          buttons: [
+            { id: 'go_back_biz', title: 'Back to Menu' },
+            { id: 'switch_biz', title: 'Switch Business' },
+          ],
+        });
       } else {
         // No business found at all — guide them
         await this.sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');

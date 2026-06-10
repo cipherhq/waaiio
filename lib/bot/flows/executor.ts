@@ -143,11 +143,15 @@ export class FlowExecutor {
     if (!input) {
       if (!session.conversation_log) session.conversation_log = [];
       if (override?.action === 'custom' && override.customPrompt) {
+        this.trackStepHistory(session, stepId);
         session.conversation_log.push({ role: 'bot', content: override.customPrompt, timestamp: new Date().toISOString() });
         await this.persistConversationLog(session.id, session.conversation_log);
         await this.sendText(from, override.customPrompt);
       } else {
         const messages = await step.prompt(ctx);
+        if (messages.length > 0) {
+          this.trackStepHistory(session, stepId);
+        }
         this.logPromptMessages(session, messages);
         // Persist session_data after prompt — flows may store state (e.g., item lists for validation)
         await this.supabase
@@ -164,6 +168,43 @@ export class FlowExecutor {
     session.conversation_log.push({ role: 'user', content: input, timestamp: new Date().toISOString() });
     if (session.conversation_log.length > 100) {
       session.conversation_log = session.conversation_log.slice(-100);
+    }
+
+    // ── Navigation: "back" command ──
+    // Only intercept on non-free-text steps so users can literally type "back" as input
+    const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'queue_collect_name', 'select_business_suggestion', 'enter_referral_code', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code', 'save_card_pin', 'verify_card_pin', 'chat_handoff', 'chat_start'];
+    const BACK_WORDS = ['back', 'go back', 'previous'];
+    const lowerInputTrimmed = input.toLowerCase().trim();
+    if (BACK_WORDS.includes(lowerInputTrimmed) && !FREE_TEXT_STEPS.includes(stepId)) {
+      const history = (session.session_data._step_history as string[]) || [];
+      if (history.length >= 2) {
+        // Pop current step, get previous
+        history.pop();
+        const prevStep = history[history.length - 1];
+        session.session_data._step_history = history;
+        session.current_step = prevStep;
+        await this.supabase.from('bot_sessions').update({
+          current_step: prevStep,
+          session_data: session.session_data,
+          conversation_log: session.conversation_log,
+        }).eq('id', session.id);
+        // Re-prompt the previous step
+        const prevStepDef = getFlowStep(resolvedFlowType as FlowType, prevStep)
+          || getFlowStepAcrossFlows(prevStep)?.step || null;
+        if (prevStepDef) {
+          const prevMessages = await prevStepDef.prompt(ctx);
+          this.logPromptMessages(session, prevMessages);
+          await this.persistConversationLog(session.id, session.conversation_log);
+          await this.sendMessages(from, prevMessages, session);
+        }
+        return;
+      } else {
+        const noBackMsg = await this.maybeTranslate('You\'re at the beginning. Type *menu* to see the main menu.', session);
+        session.conversation_log.push({ role: 'bot', content: noBackMsg, timestamp: new Date().toISOString() });
+        await this.persistConversationLog(session.id, session.conversation_log);
+        await this.sendText(from, noBackMsg);
+        return;
+      }
     }
 
     // Global escape hatch: cancel / start over at any step
@@ -234,7 +275,7 @@ export class FlowExecutor {
         'Please reply with text. Photos and voice notes aren\'t supported at this step.',
         session,
       );
-      const cancelHint = await this.maybeTranslate('Type *cancel* to exit or *start over* to restart.', session);
+      const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
       const errText = `${mediaHint}\n\n_${cancelHint}_`;
       session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
       await this.sendText(from, errText);
@@ -254,7 +295,7 @@ export class FlowExecutor {
     if (!result.valid) {
       if (result.errorMessage) {
         const translatedError = await this.maybeTranslate(result.errorMessage, session);
-        const cancelHint = await this.maybeTranslate('Type *cancel* to exit or *start over* to restart.', session);
+        const cancelHint = await this.maybeTranslate('Type *back* to go back, *menu* to restart, or *exit* to leave.', session);
         const errText = `${translatedError}\n\n_${cancelHint}_`;
         session.conversation_log.push({ role: 'bot', content: errText, timestamp: new Date().toISOString() });
         await this.sendText(from, errText);
@@ -359,20 +400,47 @@ export class FlowExecutor {
     // Show next step's prompt (possibly customized)
     if (nextOverride?.action === 'custom' && nextOverride.customPrompt) {
       if (!session.conversation_log) session.conversation_log = [];
+      this.trackStepHistory(session, nextStepId);
       const translatedCustom = await this.maybeTranslate(nextOverride.customPrompt, session);
       session.conversation_log.push({ role: 'bot', content: translatedCustom, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.sendText(from, translatedCustom);
     } else {
       const messages = await nextStep.prompt(ctx);
+      if (messages.length > 0) {
+        this.trackStepHistory(session, nextStepId);
+      }
       this.logPromptMessages(session, messages);
       await this.persistConversationLog(session.id, session.conversation_log || []);
       await this.sendMessages(from, messages);
     }
   }
 
+  /** Track which steps the user has actually seen (not auto-skipped) for "back" navigation */
+  private trackStepHistory(
+    session: { session_data: Record<string, unknown> },
+    stepId: string,
+  ): void {
+    const history = (session.session_data._step_history as string[]) || [];
+    if (history[history.length - 1] !== stepId) {
+      history.push(stepId);
+      // Keep last 10 steps max to prevent session bloat
+      if (history.length > 10) history.shift();
+      session.session_data._step_history = history;
+    }
+  }
+
   private async sendMessages(to: string, messages: PromptMessage[], session?: { session_data: Record<string, unknown> }): Promise<void> {
     if (messages.length === 0) return;
+
+    // Inject navigation footer on interactive messages (buttons/list) if not already set
+    // Footer: 40 chars — within WhatsApp's 60-char limit
+    const NAV_FOOTER = 'menu to restart \u00b7 exit to leave';
+    for (const msg of messages) {
+      if ((msg.type === 'buttons' || msg.type === 'list') && !msg.footer) {
+        msg.footer = NAV_FOOTER;
+      }
+    }
 
     // Translate all messages if session has a non-English language
     const lang = session?.session_data?._detected_language as string | undefined;
@@ -403,6 +471,7 @@ export class FlowExecutor {
         return {
           ...msg,
           body: await translateBotResponse(msg.body, lang),
+          footer: msg.footer ? await translateBotResponse(msg.footer, lang) : msg.footer,
           buttons: await Promise.all(msg.buttons.map(async b => ({
             ...b,
             title: await translateBotResponse(b.title, lang),
@@ -412,6 +481,7 @@ export class FlowExecutor {
         return {
           ...msg,
           body: await translateBotResponse(msg.body, lang),
+          footer: msg.footer ? await translateBotResponse(msg.footer, lang) : msg.footer,
           items: await Promise.all(msg.items.map(async item => ({
             ...item,
             description: item.description ? await translateBotResponse(item.description, lang) : item.description,
@@ -434,10 +504,10 @@ export class FlowExecutor {
         await this.sender.sendText({ to, text: msg.text });
         break;
       case 'list':
-        await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections });
+        await this.sender.sendList({ to, title: msg.title, body: msg.body, buttonLabel: msg.buttonLabel, items: msg.items, sections: msg.sections, footer: msg.footer });
         break;
       case 'buttons':
-        await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons });
+        await this.sender.sendButtons({ to, body: msg.body, buttons: msg.buttons, footer: msg.footer });
         break;
       case 'image': {
         // WhatsApp doesn't support WebP — convert via our API proxy

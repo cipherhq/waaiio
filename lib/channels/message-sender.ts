@@ -52,11 +52,13 @@ export interface MessageSender {
       title: string;
       items: Array<{ title: string; description?: string; postbackText: string }>;
     }>;
+    footer?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendButtons(msg: {
     to: string;
     body: string;
     buttons: Array<{ id: string; title: string }>;
+    footer?: string;
   }): Promise<{ success?: boolean; messageId?: string }>;
   sendImage(msg: {
     to: string;
@@ -139,6 +141,7 @@ export class MetaCloudSender implements MessageSender {
       title: string;
       items: Array<{ title: string; description?: string; postbackText: string }>;
     }>;
+    footer?: string;
   }) {
     // Enforce WhatsApp API limits: title 24 chars, body 1024 chars, buttonLabel 20 chars, item title 24 chars, item description 72 chars
     const truncatedTitle = msg.title.length > 24 ? msg.title.slice(0, 21) + '...' : msg.title;
@@ -167,6 +170,7 @@ export class MetaCloudSender implements MessageSender {
       to: msg.to,
       headerText: truncatedTitle,
       bodyText: truncatedBody,
+      footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttonText: truncatedButtonLabel,
       sections,
     }));
@@ -177,11 +181,13 @@ export class MetaCloudSender implements MessageSender {
     to: string;
     body: string;
     buttons: Array<{ id: string; title: string }>;
+    footer?: string;
   }) {
     // Enforce WhatsApp API limits: body 1024 chars, button title 20 chars
     const result = await withRetry(() => this.cloud.sendButtons({
       to: msg.to,
       bodyText: msg.body.slice(0, 1024),
+      footerText: msg.footer ? msg.footer.slice(0, 60) : undefined,
       buttons: msg.buttons.map(b => ({ id: b.id, title: b.title.slice(0, 20) })),
     }));
     return { success: true, messageId: result.messageId };
