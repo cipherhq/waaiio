@@ -2183,9 +2183,8 @@ export class BotService {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
 
-      // Both exit and cancel now give options
       if (isExitWord) {
-        // exit/quit/stop → leave this business
+        // exit/quit/stop → leave this business, give options
         await this.messageSender.sendButtons({
           to: from,
           body: 'You\'ve exited. What would you like to do?',
@@ -2195,15 +2194,29 @@ export class BotService {
           ],
         });
       } else {
-        // cancel/restart/start over → stay with this business
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'Action cancelled. What would you like to do?',
-          buttons: [
-            { id: 'go_back_biz', title: 'Start Over' },
-            { id: 'switch_biz', title: 'Switch Business' },
-          ],
-        });
+        // cancel/restart/start over → go straight back to the menu
+        // Create a fresh session for the same business
+        const bizId = session.business_id;
+        if (bizId) {
+          const { data: biz } = await this.supabase.from('businesses').select('*').eq('id', bizId).single();
+          if (biz) {
+            // Create new session
+            const { data: newSession } = await this.supabase.from('bot_sessions').insert({
+              whatsapp_number: from,
+              business_id: bizId,
+              current_step: 'select_capability',
+              session_data: { business_category: biz.category },
+              is_active: true,
+              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+            }).select('*').single();
+            if (newSession) {
+              await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz);
+              return;
+            }
+          }
+        }
+        // Fallback if no business
+        await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
       }
       return;
     }
