@@ -2271,68 +2271,49 @@ export class BotService {
           .eq('status', 'pending');
       }
 
-      if (isExitWord) {
-        // exit/quit/stop → leave this business, give options
-        await this.messageSender.sendButtons({
-          to: from,
-          body: 'You\'ve exited. What would you like to do?',
-          buttons: [
-            { id: 'go_back_biz', title: 'Back to Business' },
-            { id: 'switch_biz', title: 'Switch Business' },
-          ],
-        });
+      // Find the business — from session or from history
+      let escBizId = session.business_id;
+      if (!escBizId) {
+        const { data: lastSess } = await this.supabase
+          .from('bot_sessions')
+          .select('business_id')
+          .eq('whatsapp_number', from)
+          .not('business_id', 'is', null)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        escBizId = lastSess?.business_id || null;
+      }
+
+      // Always show clear options — never dead-end text
+      if (escBizId) {
+        const { data: escBiz } = await this.supabase.from('businesses').select('name').eq('id', escBizId).single();
+        const bizName = escBiz?.name || 'the business';
+
+        if (isExitWord) {
+          // exit/quit/stop → offer to come back or switch
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `You've left ${bizName}. What next?`,
+            buttons: [
+              { id: 'go_back_biz', title: 'Back to Menu' },
+              { id: 'switch_biz', title: 'Switch Business' },
+            ],
+          });
+        } else {
+          // cancel/restart → go straight back to the menu
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `No problem! What would you like to do at ${bizName}?`,
+            buttons: [
+              { id: 'go_back_biz', title: 'Back to Menu' },
+              { id: 'switch_biz', title: 'Switch Business' },
+            ],
+          });
+        }
       } else {
-        // cancel/restart/start over → go straight back to the menu
-        // Create a fresh session for the same business
-        const bizId = session.business_id;
-        if (bizId) {
-          const { data: biz } = await this.supabase.from('businesses').select('*').eq('id', bizId).single();
-          if (biz) {
-            // Create new session
-            const { data: newSession } = await this.supabase.from('bot_sessions').insert({
-              whatsapp_number: from,
-              business_id: bizId,
-              current_step: 'select_capability',
-              session_data: { business_category: biz.category },
-              is_active: true,
-              expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-            }).select('*').single();
-            if (newSession) {
-              await this.flowExecutor.execute(from, '', newSession as unknown as BotSession, biz);
-              return;
-            }
-          }
-        }
-        // Fallback — try to find the last business this user interacted with
-        if (!bizId) {
-          const { data: lastSess } = await this.supabase
-            .from('bot_sessions')
-            .select('business_id')
-            .eq('whatsapp_number', from)
-            .not('business_id', 'is', null)
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (lastSess?.business_id) {
-            const { data: lastBiz } = await this.supabase.from('businesses').select('*').eq('id', lastSess.business_id).single();
-            if (lastBiz) {
-              const { data: freshSession } = await this.supabase.from('bot_sessions').insert({
-                whatsapp_number: from,
-                business_id: lastBiz.id,
-                current_step: 'select_capability',
-                session_data: { business_category: lastBiz.category },
-                is_active: true,
-                expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-              }).select('*').single();
-              if (freshSession) {
-                await this.flowExecutor.execute(from, '', freshSession as unknown as BotSession, lastBiz);
-                return;
-              }
-            }
-          }
-        }
-        // Final fallback
-        await this.sendText(from, 'Action cancelled. Send *Hi* to start over. 🙏');
+        // No business found at all — guide them
+        await this.sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
       }
       return;
     }
