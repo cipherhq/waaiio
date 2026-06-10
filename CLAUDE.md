@@ -19,7 +19,15 @@
    - SECURITY DEFINER functions go in private schemas, never public
    - Webhook handlers must verify signatures (HMAC) before processing
    - Never trust `user_metadata` / `raw_user_meta_data` for authorization — use `app_metadata`
-8. **Verify after changing.** Run `npx next build` after changes. Check for type errors. If you modified a bot flow, trace the step chain to make sure routing is correct. If you modified a migration, verify column names match what the code uses.
+8. **Verify after changing — properly.** `npx next build` only checks if TypeScript compiles. That is NOT enough. After every change:
+   - Run `npx next build` to check for type errors
+   - Run `npm run test` to check for test failures
+   - **Simulate every user click/tap** by tracing the actual code path line by line — follow every if/else branch, verify variables, confirm routing
+   - For bot changes: trace from `handleMessage()` through escape hatches, keyword matching, executor, validate(), next() — confirm the response is correct
+   - For payment changes: trace from webhook → processSuccessfulPayment → recordPlatformFee → sendProactiveConfirmation — confirm the full chain
+   - For API changes: verify auth, validation, DB query, response format
+   - Never say "done" based on build passing alone. A build passing means it compiles. It does NOT mean it works.
+   - **If you can't verify a path works by reading the code, say so** — don't assume it works
 9. **Check the final state, not just the creation.** When auditing DB schema, RLS policies, or config — don't just grep the migration that created it. Check ALL subsequent migrations that may have altered, dropped, or replaced it. Migration 020 may create a permissive policy, but migration 023 may have already fixed it. The truth is the cumulative result, not any single file.
 10. **Dependencies map.** Key dependency chains to be aware of:
     - `CapabilityId` type → used in: types.ts, sidebar, onboarding, capability-selection flow, dashboard provider, admin panel businesses page
@@ -33,7 +41,15 @@
 12. **Engineered enough.** Not under-engineered (fragile, hacky) and not over-engineered (premature abstraction, unnecessary complexity). Handle edge cases thoughtfully.
 13. **Explicit over clever.** Simple readable code beats clever one-liners. Name things clearly. Comment the "why" not the "what."
 14. **Present options, don't assume.** For non-trivial decisions, present 2-3 options with tradeoffs and ask which direction to go. Include "do nothing" as an option when relevant.
-15. **Log every change in CHANGELOG.md.** After every commit, add an entry to `CHANGELOG.md` with: date, what changed, which file(s), what it affects, and what could break. This is our institutional memory — it tracks bugs we fixed, decisions we made, and the ripple effects of each change. Before making a fix, CHECK the changelog to see if the area was recently changed and what assumptions were made. A fix in one place must not undo a fix logged elsewhere.
+15. **Get it right the first time.** Don't build fast and fix later. Don't deploy and let the user find bugs. Before saying "done":
+   - Trace every button/postback ID to its handler — confirm the handler exists and returns the right response
+   - Check for duplicate handlers (bot.service.ts vs executor.ts) — if the same word is handled in two places, confirm which one fires first
+   - Test edge cases: what if the session has no business_id? What if step history is empty? What if the user is in chat mode?
+   - If building a feature with multiple commands (like navigation), trace ALL commands interacting together — not just each one in isolation
+   - Batch related changes into one commit — don't make 10 commits for one feature
+   - Only suggest deploying when you've verified every path works by code simulation
+   - When using agents to build, review their output against the codebase before committing — agents can miss context
+16. **Log every change in CHANGELOG.md.** After every commit, add an entry to `CHANGELOG.md` with: date, what changed, which file(s), what it affects, and what could break. This is our institutional memory — it tracks bugs we fixed, decisions we made, and the ripple effects of each change. Before making a fix, CHECK the changelog to see if the area was recently changed and what assumptions were made. A fix in one place must not undo a fix logged elsewhere.
 
 ## Quick Start
 ```bash
