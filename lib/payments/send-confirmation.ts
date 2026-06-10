@@ -445,7 +445,7 @@ export async function sendProactiveConfirmation(
       await supabase
         .from('bot_sessions')
         .update({ is_active: false, current_step: 'complete' })
-        .eq('whatsapp_number', stripPlus(customerPhone))
+        .or(`whatsapp_number.eq.${stripPlus(customerPhone)},whatsapp_number.eq.+${stripPlus(customerPhone)}`)
         .eq('business_id', businessId)
         .eq('is_active', true)
         .in('current_step', ['payment', 'await_payment', 'await_ticket_payment', 'await_order_payment', 'create_booking']);

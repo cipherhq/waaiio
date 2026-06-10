@@ -2202,7 +2202,15 @@ export class BotService {
       delete session.session_data._quick_rebook_service_name;
       delete session.session_data._quick_rebook_sent;
 
-      await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+      // Set the correct first step for the capability (skip capability selection)
+      const isGivingRebook = session.session_data.active_capability === 'giving';
+      const firstStep = isGivingRebook ? 'enter_amount' : 'select_date';
+      session.current_step = firstStep;
+
+      await this.supabase.from('bot_sessions').update({
+        session_data: session.session_data,
+        current_step: firstStep,
+      }).eq('id', session.id);
 
       const business = session.business_id
         ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
@@ -2244,6 +2252,21 @@ export class BotService {
     if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
       this.intelligence.resetAbuse(from);
       await this.deactivateSession(session.id);
+
+      // Cancel any pending booking/order created during this session
+      const d = session.session_data || {};
+      if (d.booking_id) {
+        await this.supabase.from('bookings')
+          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+          .eq('id', d.booking_id as string)
+          .in('status', ['pending']);
+      }
+      if (d.order_id) {
+        await this.supabase.from('orders')
+          .update({ status: 'cancelled' })
+          .eq('id', d.order_id as string)
+          .eq('status', 'pending');
+      }
 
       if (isExitWord) {
         // exit/quit/stop → leave this business, give options

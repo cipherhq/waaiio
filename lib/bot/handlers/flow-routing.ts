@@ -11,7 +11,7 @@ export function getFirstStep(flowType: FlowType): string {
     case 'ordering': return 'browse_catalog';
     case 'ticketing': return 'select_event';
     case 'queue': return 'queue_start';
-    case 'reservation': return 'select_service';
+    case 'reservation': return 'select_apartment';
     default: return 'select_service';
   }
 }
@@ -57,6 +57,7 @@ export function capabilityToFirstStep(cap: CapabilityId): string {
     case 'ordering': return 'browse_catalog';
     case 'ticketing': return 'select_event';
     case 'crowdfunding': return 'select_campaign';
+    case 'reservation': return 'select_apartment';
     case 'reminders': return 'select_service'; // reminders piggyback on scheduling
     case 'queue': return 'queue_start';
     case 'reports': return 'select_service'; // reports are dashboard-only, no bot flow
