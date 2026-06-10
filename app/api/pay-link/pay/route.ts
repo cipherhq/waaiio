@@ -1,0 +1,162 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { logger } from '@/lib/logger';
+import type { PaymentGatewayName } from '@/lib/constants';
+
+/**
+ * POST /api/pay-link/pay — Public endpoint (CSRF-exempt).
+ * Initializes payment for a scan-to-pay link.
+ */
+export async function POST(request: NextRequest) {
+  // Rate limit: 20 requests per minute per IP
+  const rl = rateLimitResponse(getRateLimitKey(request, 'pay-link'), 20, 60_000);
+  if (rl) return rl;
+
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  const { token, amount, customer_name, customer_email, customer_phone } = body as {
+    token?: string;
+    amount?: number;
+    customer_name?: string;
+    customer_email?: string;
+    customer_phone?: string;
+  };
+
+  if (!token || typeof token !== 'string') {
+    return NextResponse.json({ error: 'Token is required' }, { status: 400 });
+  }
+
+  if (!amount || typeof amount !== 'number' || amount <= 0 || amount > 10_000_000) {
+    return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
+  }
+
+  const supabase = createServiceClient();
+
+  // Fetch payment link with business info
+  const { data: link } = await supabase
+    .from('payment_links')
+    .select(
+      'id, title, amount, currency, uses_count, business_id, is_active, businesses!inner(name, country_code, payment_gateway)',
+    )
+    .eq('token', token)
+    .eq('is_active', true)
+    .single();
+
+  if (!link) {
+    return NextResponse.json(
+      { error: 'Payment link not found or inactive' },
+      { status: 404 },
+    );
+  }
+
+  // If fixed amount, verify it matches (allow 1 unit tolerance for rounding)
+  if (link.amount && Math.abs(link.amount - amount) > 1) {
+    return NextResponse.json({ error: 'Amount mismatch' }, { status: 400 });
+  }
+
+  const biz = link.businesses as unknown as {
+    name: string;
+    country_code: string;
+    payment_gateway: string;
+  };
+
+  // Determine currency from country
+  const currencyMap: Record<string, string> = {
+    NG: 'NGN',
+    GH: 'GHS',
+    GB: 'GBP',
+    CA: 'CAD',
+    US: 'USD',
+  };
+  const currency = link.currency || currencyMap[biz.country_code] || 'USD';
+  const gatewayName = (biz.payment_gateway || 'paystack') as PaymentGatewayName;
+
+  const refCode = `PL-${Date.now().toString(36).toUpperCase()}`;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+
+  // Create payment record
+  const { data: payment, error: payErr } = await supabase
+    .from('payments')
+    .insert({
+      business_id: link.business_id,
+      amount,
+      currency,
+      gateway: gatewayName,
+      gateway_reference: refCode,
+      status: 'pending',
+      metadata: {
+        payment_link_id: link.id,
+        customer_name: customer_name || null,
+        customer_phone: customer_phone || null,
+        source: 'scan_to_pay',
+      },
+    })
+    .select('id')
+    .single();
+
+  if (payErr) {
+    logger.error('[PAY-LINK] Failed to create payment record:', payErr);
+    return NextResponse.json(
+      { error: 'Failed to create payment' },
+      { status: 500 },
+    );
+  }
+
+  // Initialize gateway payment
+  try {
+    const { getPaymentGatewayByName } = await import('@/lib/payments/factory');
+    const gateway = getPaymentGatewayByName(gatewayName);
+
+    const email =
+      customer_email ||
+      `${refCode.toLowerCase()}@pay.waaiio.com`;
+
+    const result = await gateway.initializePayment({
+      supabase,
+      amount,
+      currency,
+      referenceCode: refCode,
+      businessName: biz.name,
+      phone: customer_phone || '',
+      userEmail: email,
+      userId: '00000000-0000-0000-0000-000000000000', // anonymous payer
+      callbackUrl: `${appUrl}/payment-success?ref=${refCode}`,
+      businessId: link.business_id,
+    });
+
+    if (result?.url) {
+      // Increment uses count atomically
+      await supabase.rpc('increment_payment_link_uses', {
+        link_id: link.id,
+      }).then(({ error: rpcErr }) => {
+        // Fallback to simple update if RPC doesn't exist yet
+        if (rpcErr) {
+          supabase
+            .from('payment_links')
+            .update({ uses_count: (link.uses_count ?? 0) + 1 })
+            .eq('id', link.id)
+            .then(() => {});
+        }
+      });
+
+      return NextResponse.json({ url: result.url });
+    }
+
+    return NextResponse.json(
+      { error: 'Failed to initialize payment' },
+      { status: 500 },
+    );
+  } catch (err) {
+    logger.error('[PAY-LINK] Payment init error:', err);
+    return NextResponse.json(
+      { error: 'Payment service unavailable' },
+      { status: 500 },
+    );
+  }
+}

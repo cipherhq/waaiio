@@ -467,6 +467,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
               { icon: '&#x1F514;', title: 'Cuts No-Shows by 60%', desc: 'Automatic reminders the day before. Follow-ups after every visit. Win-back messages when regulars go quiet. All hands-free.' },
               { icon: '&#x1F3C6;', title: 'Loyalty Without an App', desc: 'Points after every visit. Referral bonuses for bringing friends. Customers earn and redeem right in WhatsApp — no download, no sign-up.' },
               { icon: '&#x1F3AB;', title: 'Tickets with QR Codes', desc: 'Sell event tickets on WhatsApp. Customers get instant QR codes + PDF tickets. Scan at the door. Real-time sales tracking on your dashboard.' },
+              { icon: '&#x1F4F2;', title: 'Scan to Pay', desc: 'Accept payments with a QR code. No POS terminal needed. Create a payment link, print the QR code, and let customers pay by scanning.' },
               { icon: '&#x1F4E2;', title: 'Broadcast to the Right People', desc: 'Promo to your VIPs. Win-back offer to customers who haven\'t returned. Announcement to everyone. You pick who hears what.' },
             ].map((f, i) => (
               <AnimatedSection key={f.title} delay={i * 0.06}>

@@ -124,6 +124,7 @@ export async function middleware(request: NextRequest) {
     '/api/integrations/external-booking',
     '/api/whatsapp/flow-data',
     '/api/whatsapp/flow-callback',
+    '/api/pay-link/pay',
   ];
   const isWebhook = webhookReceiverPaths.some(p => request.nextUrl.pathname.startsWith(p));
   if (isStateMutating && isApiRoute && !isWebhook) {
