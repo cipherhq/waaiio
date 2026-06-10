@@ -43,6 +43,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
         .select('slug, updated_at')
         .eq('status', 'published')
         .not('slug', 'is', null)
+        .gte('date', new Date().toISOString().split('T')[0])
         .order('updated_at', { ascending: false })
         .limit(500),
       supabase

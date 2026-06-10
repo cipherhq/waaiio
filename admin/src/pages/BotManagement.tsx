@@ -190,12 +190,13 @@ export default function BotManagement() {
     try {
       // Deactivate all sessions for this phone+business
       await adminDb.from('bot_sessions').update({ is_active: false }).eq('whatsapp_number', phone).eq('business_id', businessId);
-      // Add to blocked list via business metadata
-      const { data: biz } = await adminDb.from('businesses').select('metadata').eq('id', businessId).single();
-      const meta = (biz?.metadata || {}) as Record<string, unknown>;
-      const blocked = Array.isArray(meta.blocked_phones) ? [...meta.blocked_phones as string[]] : [];
-      if (!blocked.includes(phone)) blocked.push(phone);
-      await adminDb.from('businesses').update({ metadata: { ...meta, blocked_phones: blocked } }).eq('id', businessId);
+      // Insert into blocked_phones table (upsert to avoid duplicates)
+      await adminDb.from('blocked_phones').upsert({
+        business_id: businessId,
+        phone: phone,
+        blocked_by: adminSession?.userId || null,
+        reason: 'Blocked by admin',
+      }, { onConflict: 'business_id,phone' });
       await logAudit({ action: 'block_phone', entity: 'businesses', entity_id: businessId, details: { phone, business_name: selected?.business_name } });
       alert(`${phone} has been blocked`);
       loadData();

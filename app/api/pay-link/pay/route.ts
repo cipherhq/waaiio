@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
   const { data: link } = await supabase
     .from('payment_links')
     .select(
-      'id, title, amount, currency, uses_count, business_id, is_active, businesses!inner(name, country_code, payment_gateway)',
+      'id, title, amount, currency, uses_count, expires_at, max_uses, business_id, is_active, businesses!inner(name, country_code, payment_gateway)',
     )
     .eq('token', token)
     .eq('is_active', true)
@@ -53,6 +53,16 @@ export async function POST(request: NextRequest) {
       { error: 'Payment link not found or inactive' },
       { status: 404 },
     );
+  }
+
+  // Check expiry
+  if (link.expires_at && new Date(link.expires_at) < new Date()) {
+    return NextResponse.json({ error: 'This payment link has expired' }, { status: 410 });
+  }
+
+  // Check max uses
+  if (link.max_uses && (link.uses_count ?? 0) >= link.max_uses) {
+    return NextResponse.json({ error: 'This payment link has reached its usage limit' }, { status: 410 });
   }
 
   // If fixed amount, verify it matches (allow 1 unit tolerance for rounding)

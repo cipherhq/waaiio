@@ -58,6 +58,9 @@ async function getEvent(slug: string): Promise<EventData | null> {
     .eq('status', 'published')
     .single();
 
+  // Note: No date filter here — individual event pages should remain accessible
+  // for ticket holders checking their tickets via direct link, even after the event.
+
   if (error || !data) return null;
   return data as unknown as EventData;
 }

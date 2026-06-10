@@ -62,6 +62,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid amount' }, { status: 400 });
   }
 
+  // Optional expiry and max uses
+  const expiresAt = body.expires_at ? new Date(body.expires_at as string).toISOString() : null;
+  const maxUses = body.max_uses ? Math.max(1, Math.floor(Number(body.max_uses))) : null;
+
   const { data, error } = await service
     .from('payment_links')
     .insert({
@@ -70,6 +74,8 @@ export async function POST(request: NextRequest) {
       amount,
       currency: (body.currency as string) || null,
       description: ((body.description as string) || '').slice(0, 500) || null,
+      expires_at: expiresAt,
+      max_uses: maxUses,
     })
     .select()
     .single();
@@ -120,6 +126,12 @@ export async function PATCH(request: NextRequest) {
   }
   if (body.is_active !== undefined) {
     updates.is_active = !!body.is_active;
+  }
+  if (body.expires_at !== undefined) {
+    updates.expires_at = body.expires_at ? new Date(body.expires_at as string).toISOString() : null;
+  }
+  if (body.max_uses !== undefined) {
+    updates.max_uses = body.max_uses ? Math.max(1, Math.floor(Number(body.max_uses))) : null;
   }
 
   const { data, error } = await service

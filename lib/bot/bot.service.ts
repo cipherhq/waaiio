@@ -1632,11 +1632,22 @@ export class BotService {
           await this.sendText(from, 'This business is currently unavailable. Please try again later.');
           return;
         }
-        // Check if phone is blocked by admin
+        // Check if phone is blocked by admin (table-based + legacy metadata fallback)
         if (biz) {
+          const bizId = (biz as Record<string, unknown>).id as string;
+          const safeFrom = sanitizeFilterValue(from);
+          const { count: blockedCount } = await this.supabase
+            .from('blocked_phones')
+            .select('id', { count: 'exact', head: true })
+            .eq('business_id', bizId)
+            .or(`phone.eq.${safeFrom},phone.eq.+${safeFrom}`);
+          if ((blockedCount || 0) > 0) {
+            return; // Silently drop — blocked users get no response
+          }
+          // Legacy fallback: check metadata.blocked_phones for businesses not yet migrated
           const meta = ((biz as Record<string, unknown>).metadata || {}) as Record<string, unknown>;
-          const blockedPhones = Array.isArray(meta.blocked_phones) ? meta.blocked_phones as string[] : [];
-          if (blockedPhones.includes(from) || blockedPhones.includes('+' + from)) {
+          const legacyBlocked = Array.isArray(meta.blocked_phones) ? meta.blocked_phones as string[] : [];
+          if (legacyBlocked.includes(from) || legacyBlocked.includes('+' + from)) {
             return; // Silently drop — blocked users get no response
           }
         }

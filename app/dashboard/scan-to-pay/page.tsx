@@ -15,6 +15,8 @@ interface PaymentLink {
   is_active: boolean;
   token: string;
   uses_count: number;
+  expires_at: string | null;
+  max_uses: number | null;
   created_at: string;
 }
 
@@ -49,6 +51,8 @@ export default function ScanToPayPage() {
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
+  const [expiresAt, setExpiresAt] = useState('');
+  const [maxUses, setMaxUses] = useState('');
 
   const defaultCurrency = CURRENCY_MAP[business.country_code || 'US'] || 'USD';
   const appUrl = typeof window !== 'undefined'
@@ -83,6 +87,8 @@ export default function ScanToPayPage() {
         title: title.trim(),
         amount: amount ? Number(amount) : null,
         description: description.trim() || null,
+        expires_at: expiresAt || null,
+        max_uses: maxUses ? Number(maxUses) : null,
       }),
     });
 
@@ -90,6 +96,8 @@ export default function ScanToPayPage() {
       setTitle('');
       setAmount('');
       setDescription('');
+      setExpiresAt('');
+      setMaxUses('');
       setShowForm(false);
       await fetchLinks();
     }
@@ -223,6 +231,34 @@ export default function ScanToPayPage() {
             />
           </div>
 
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+                Expires at <span className="text-xs text-gray-400">(optional)</span>
+              </label>
+              <input
+                type="datetime-local"
+                value={expiresAt}
+                onChange={(e) => setExpiresAt(e.target.value)}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+                Max uses <span className="text-xs text-gray-400">(optional)</span>
+              </label>
+              <input
+                type="number"
+                value={maxUses}
+                onChange={(e) => setMaxUses(e.target.value)}
+                placeholder="Unlimited"
+                min="1"
+                step="1"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+              />
+            </div>
+          </div>
+
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
@@ -289,7 +325,13 @@ export default function ScanToPayPage() {
                   )}
                   <p className="mt-2 text-xs text-gray-400">
                     {link.uses_count} payment{link.uses_count !== 1 ? 's' : ''} received
+                    {link.max_uses ? ` / ${link.max_uses} max` : ''}
                   </p>
+                  {link.expires_at && (
+                    <p className={`text-xs ${new Date(link.expires_at) < new Date() ? 'text-red-500' : 'text-gray-400'}`}>
+                      {new Date(link.expires_at) < new Date() ? 'Expired' : `Expires ${new Date(link.expires_at).toLocaleDateString()}`}
+                    </p>
+                  )}
                 </div>
 
                 {/* Actions */}
