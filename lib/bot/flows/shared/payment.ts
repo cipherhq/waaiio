@@ -69,7 +69,7 @@ export async function initializePayment(
 
         const { data: business, error: bizError } = await supabase
           .from('businesses')
-          .select('subscription_tier, trial_ends_at')
+          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
           .eq('id', opts.businessId)
           .single();
 
@@ -78,9 +78,13 @@ export async function initializePayment(
         }
 
         if (business) {
-          const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
-          const { calculatePlatformFee } = await import('@/lib/constants');
-          const feeResult = calculatePlatformFee(opts.amount, business.subscription_tier || 'free', !!isInTrial);
+          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const { getPlatformFees } = await import('@/lib/getPlatformFees');
+          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
+            feePercentage: business.custom_fee_percentage ?? undefined,
+            feeFlat: business.custom_fee_flat ?? undefined,
+          });
           platformFeeAmount = feeResult.feeTotal;
         }
       } else if (byoCreds?.connect_account_id && !byoCreds?.platform_subaccount_code) {
@@ -90,7 +94,7 @@ export async function initializePayment(
 
         const { data: business, error: bizError2 } = await supabase
           .from('businesses')
-          .select('subscription_tier, trial_ends_at')
+          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
           .eq('id', opts.businessId)
           .single();
 
@@ -99,9 +103,13 @@ export async function initializePayment(
         }
 
         if (business) {
-          const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
-          const { calculatePlatformFee } = await import('@/lib/constants');
-          const feeResult = calculatePlatformFee(opts.amount, business.subscription_tier || 'free', !!isInTrial);
+          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const { getPlatformFees } = await import('@/lib/getPlatformFees');
+          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
+            feePercentage: business.custom_fee_percentage ?? undefined,
+            feeFlat: business.custom_fee_flat ?? undefined,
+          });
           platformFeeAmount = feeResult.feeTotal;
         }
       } else if (byoCreds?.secret_key && byoCreds?.platform_subaccount_code) {
@@ -114,7 +122,7 @@ export async function initializePayment(
         // Calculate platform fee based on business tier
         const { data: business, error: bizError3 } = await supabase
           .from('businesses')
-          .select('subscription_tier, trial_ends_at')
+          .select('subscription_tier, trial_ends_at, custom_fee_percentage, custom_fee_flat')
           .eq('id', opts.businessId)
           .single();
 
@@ -123,9 +131,13 @@ export async function initializePayment(
         }
 
         if (business) {
-          const isInTrial = business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
-          const { calculatePlatformFee } = await import('@/lib/constants');
-          const feeResult = calculatePlatformFee(opts.amount, business.subscription_tier || 'free', !!isInTrial);
+          const tier = (business.subscription_tier || 'free') as SubscriptionTier;
+          const isInTrial = tier === 'free' && business.trial_ends_at && new Date(business.trial_ends_at) > new Date();
+          const { getPlatformFees } = await import('@/lib/getPlatformFees');
+          const feeResult = await getPlatformFees(opts.amount, tier, !!isInTrial, {
+            feePercentage: business.custom_fee_percentage ?? undefined,
+            feeFlat: business.custom_fee_flat ?? undefined,
+          });
           platformFeeAmount = feeResult.feeTotal;
         }
       } else {
@@ -276,12 +288,17 @@ export async function recordPlatformFee(
   // Skip fee for direct_split businesses — gateway already collected the fee
   const { data: biz } = await supabase
     .from('businesses')
-    .select('payout_mode')
+    .select('payout_mode, custom_fee_percentage, custom_fee_flat')
     .eq('id', opts.businessId)
     .single();
   if (biz?.payout_mode === 'direct_split') return;
 
-  const fee = await getPlatformFees(opts.transactionAmount, opts.tier, opts.isInTrial);
+  // Look up custom fee overrides for this business
+  let overrides: { feePercentage?: number | null; feeFlat?: number | null } | undefined;
+  if (biz && (biz.custom_fee_percentage != null || biz.custom_fee_flat != null)) {
+    overrides = { feePercentage: biz.custom_fee_percentage, feeFlat: biz.custom_fee_flat };
+  }
+  const fee = await getPlatformFees(opts.transactionAmount, opts.tier, opts.isInTrial, overrides);
 
   await supabase.from('platform_fees').insert({
     business_id: opts.businessId,

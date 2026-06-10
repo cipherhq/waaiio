@@ -277,13 +277,25 @@ const invoicePayStep: FlowStepConfig = {
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     if (input === 'done' && ctx.session.session_data._invoice_no_user) {
-      return { valid: true };
+      return { valid: true, data: { _invoice_action: 'done' } };
+    }
+    if (input === 'cap_invoice') {
+      return { valid: true, data: { _invoice_action: 'retry' } };
+    }
+    if (input === 'cap_chat') {
+      return { valid: true, data: { _invoice_action: 'chat' } };
+    }
+    if (input === 'done') {
+      return { valid: true, data: { _invoice_action: 'done' } };
     }
     return { valid: true };
   },
 
-  async next() {
-    return null;
+  async next(ctx: FlowContext) {
+    const action = ctx.session.session_data._invoice_action;
+    if (action === 'retry') return 'invoice_pay'; // re-prompt (retry payment)
+    if (action === 'chat') return 'chat_start'; // route to live chat
+    return null; // done — end session
   },
 };
 

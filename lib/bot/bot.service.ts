@@ -35,7 +35,7 @@ import { executeKeywordAction as _executeKeywordAction } from './handlers/keywor
 
 // ── Navigation commands: always hardcoded, never overridable ──
 const CANCEL_PATTERN = /^cancel$/i;
-const EXIT_PATTERNS = [/^exit$/i, /^quit$/i, /^stop$/i];
+const EXIT_PATTERNS = [/^exit$/i, /^quit$/i, /^stop$/i, /^end$/i];
 const MENU_PATTERNS = [/^menu$/i, /^restart$/i, /^start\s*over$/i];
 const HOME_PATTERN = /^home$/i;
 const BACK_PATTERNS = [/^back$/i, /^go\s*back$/i, /^previous$/i];
@@ -144,53 +144,6 @@ export class BotService {
         await this.sendText(from, 'Type the name or code of the business you\'d like to visit.');
       }
       return;
-    }
-
-    // ── Navigation button postbacks (from "cancel" 3-option menu) ──
-    if (text === 'nav_back') {
-      // Find active session and go back one step via history
-      const navSession = await this.getActiveSession(from);
-      if (navSession) {
-        const history = (navSession.session_data._step_history as string[]) || [];
-        if (history.length >= 2) {
-          history.pop();
-          const prevStep = history[history.length - 1];
-          navSession.session_data._step_history = history;
-          navSession.current_step = prevStep;
-          await this.supabase.from('bot_sessions').update({
-            current_step: prevStep,
-            session_data: navSession.session_data,
-          }).eq('id', navSession.id);
-          // Re-prompt the previous step
-          const business = navSession.business_id
-            ? (await this.supabase.from('businesses').select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway').eq('id', navSession.business_id).single()).data
-            : null;
-          await this.flowExecutor.execute(from, '', navSession as unknown as BotSession, business as BusinessRecord | null);
-          return;
-        }
-      }
-      // No history or no session — treat as "go back to business menu"
-      return this.handleMessage(from, 'go_back_biz', messageType, destinationPhone);
-    }
-
-    if (text === 'nav_menu') {
-      // Restart current business menu — deactivate and re-enter
-      const navSession = await this.getActiveSession(from);
-      if (navSession?.business_id) {
-        const bizId = navSession.business_id;
-        await this.deactivateSession(navSession.id);
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
-      }
-      // No business — show marketplace
-      if (navSession) await this.deactivateSession(navSession.id);
-      return this.handleMessage(from, '', messageType, destinationPhone);
-    }
-
-    if (text === 'nav_exit') {
-      // Leave business — same as "exit" command
-      const navSession = await this.getActiveSession(from);
-      if (navSession) await this.deactivateSession(navSession.id);
-      return this.handleMessage(from, 'exit', messageType, destinationPhone);
     }
 
     // ── "home" command — return to Waaiio marketplace / business picker ──

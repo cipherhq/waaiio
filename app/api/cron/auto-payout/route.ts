@@ -94,7 +94,7 @@ export async function GET(request: NextRequest) {
       // Platform fees for the period across all businesses
       supabase
         .from('platform_fees')
-        .select('business_id, transaction_amount, fee_total, gateway_fee')
+        .select('business_id, transaction_amount, fee_total, gateway_fee, waived')
         .in('business_id', bizIds)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
@@ -120,7 +120,7 @@ export async function GET(request: NextRequest) {
     const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
 
     // Group fees by business_id
-    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number }[]>();
+    const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean }[]>();
     for (const row of (allFeeRows || [])) {
       const list = feesByBiz.get(row.business_id) ?? [];
       list.push(row);
@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
       // Calculate gross and fee totals from pre-fetched batch data
       const fees = feesByBiz.get(biz.id) ?? [];
       const gross = fees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
-      const totalFees = fees.reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      const totalFees = fees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
       const totalGatewayFees = fees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
       let netAmount = Math.max(0, gross - totalFees - totalGatewayFees);
 
@@ -201,10 +201,9 @@ export async function GET(request: NextRequest) {
         period_start: periodStartStr,
         period_end: periodEndStr,
         gross_amount: gross,
-        fee_amount: totalFees,
+        platform_fee: totalFees,
         gateway_fee: totalGatewayFees,
         net_amount: net,
-        currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,
         payout_account_id: payoutAccount?.id || null,
         flags: holdReasons.length > 0 ? holdReasons : null,

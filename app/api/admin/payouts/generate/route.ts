@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
-import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 
 const COOLING_PERIOD_DAYS = 7;
 const VELOCITY_THRESHOLD = 50; // max transactions per day before flagging
@@ -215,7 +214,6 @@ export async function POST(request: NextRequest) {
         platform_fee: totalFees,
         gateway_fee: totalGatewayFees,
         net_amount: net,
-        currency: getCurrencyCode((biz.country_code || 'NG') as CountryCode),
         status,
         flags,
       }).select('id').single();
