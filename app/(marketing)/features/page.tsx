@@ -361,6 +361,7 @@ export default function FeaturesPage() {
                 { icon: '&#x1F3E2;', title: 'Multi-Location', desc: 'Manage multiple branches or locations from a single account. Each location gets its own schedule and settings.' },
                 { icon: '&#x2728;', title: 'White-Label', desc: 'Remove all Waaiio branding. Your customers see only your brand name, logo, and colors throughout.' },
                 { icon: '&#x1F4CB;', title: 'KYC Verification', desc: 'Built-in identity verification for businesses that need to verify customer identity before transactions.' },
+                { icon: '&#x1F4DD;', title: 'Waivers', desc: 'Digital liability waivers and release forms — customers sign from their phone via WhatsApp or a link. Automatic confirmations via WhatsApp and email, with a full audit trail including IP, device, and timestamp. Available on the Growth plan and above.' },
               ].map((f) => (
                 <div key={f.title} className="group rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur transition hover:bg-white/10">
                   <span className="text-3xl" dangerouslySetInnerHTML={{ __html: f.icon }} />
