@@ -32,19 +32,11 @@ import { routeToMyAccountMenu as _routeToMyAccountMenu } from './handlers/my-acc
 import { handleMyBookings as _handleMyBookings, handleViewTicket as _handleViewTicket, handleViewReservation as _handleViewReservation, handleModifyBooking as _handleModifyBooking } from './handlers/my-bookings';
 import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detectBotCodeWithSuggestions, rankSuggestions as _rankSuggestions, findReturningCustomerBusiness as _findReturningCustomerBusiness, findReturningCustomerBusinesses as _findReturningCustomerBusinesses } from './handlers/bot-code-detection';
 import { executeKeywordAction as _executeKeywordAction } from './handlers/keyword-actions';
+import { handleChatHandoff as _handleChatHandoff, handleChatStart as _handleChatStart } from './handlers/chat-handoff';
+import { handleSaveCard as _handleSaveCard, handleRemoveCard as _handleRemoveCard, handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards';
 
-// ── Navigation commands: always hardcoded, never overridable ──
-const CANCEL_PATTERN = /^cancel$/i;
-const EXIT_PATTERNS = [/^exit$/i, /^quit$/i, /^stop$/i, /^end$/i];
-const MENU_PATTERNS = [/^menu$/i, /^restart$/i, /^start\s*over$/i];
-const HOME_PATTERN = /^home$/i;
-const BACK_PATTERNS = [/^back$/i, /^go\s*back$/i, /^previous$/i];
-// Combined for legacy checks — excludes "back" (handled in executor) and "menu"/"home" (handled separately)
-const ESCAPE_HATCH_PATTERNS = [
-  CANCEL_PATTERN,
-  ...EXIT_PATTERNS,
-  ...MENU_PATTERNS,
-];
+import { HOME_PATTERN, handleEscapeHatch as _handleEscapeHatch } from './handlers/escape-hatches';
+import { handleGlobalQuery, isOrdersQuery, isReferenceCodeMatch, isBookingsQuery, isRescheduleQuery, isLocationQuery, isHistoryQuery, isReceiptQuery, isAnnualQuery, isSubscriptionsQuery, isLoyaltyQuery, isInvoiceQuery, isGivingQuery, isContractQuery, isQuoteQuery, isMyAccountQuery, isQueueQuery, isSaveCardQuery, isRemoveCardQuery, isReorderQuery } from './handlers/global-queries';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -646,153 +638,13 @@ export class BotService {
 
     // ── Save Card (consent-based) ──
     if (isSaveCardQuery) {
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const phoneN = from.startsWith('+') ? from.slice(1) : from;
-
-      // Find the most recent paid booking for this phone, then get its payment
-      const { data: recentBooking } = await this.supabase
-        .from('bookings')
-        .select('id, business_id')
-        .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
-        .eq('deposit_status', 'paid')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      let payment: { id: string; business_id: string | null; metadata: unknown; gateway: string } | null = null;
-
-      if (recentBooking) {
-        const { data: bookingPayment } = await this.supabase
-          .from('payments')
-          .select('id, business_id, metadata, gateway')
-          .eq('booking_id', recentBooking.id)
-          .eq('status', 'success')
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (bookingPayment) {
-          payment = {
-            ...bookingPayment,
-            business_id: bookingPayment.business_id || recentBooking.business_id,
-          };
-        }
-      }
-
-      // Also try direct payment lookup by user_id
-      if (!payment) {
-        const profile = await getProfile();
-        if (profile?.id) {
-          const { data: userPayment } = await this.supabase
-            .from('payments')
-            .select('id, business_id, metadata, gateway')
-            .eq('user_id', profile.id)
-            .eq('status', 'success')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (userPayment) payment = userPayment;
-        }
-      }
-
-      if (!payment) {
-        await this.sendText(from, 'No recent payment found. Make a payment first, then type *save card*.');
-        return;
-      }
-
-      const meta = (payment.metadata || {}) as Record<string, unknown>;
-      const auth = meta._card_authorization as Record<string, unknown> | undefined;
-
-      if (!auth?.authorization_code) {
-        const gateway = payment.gateway || 'unknown';
-        if (gateway === 'stripe' || gateway === 'square' || gateway === 'paypal') {
-          await this.sendText(from, `Card saving is currently available for Paystack payments only. ${gateway.charAt(0).toUpperCase() + gateway.slice(1)} support is coming soon.`);
-        } else {
-          await this.sendText(from, 'Your last payment method cannot be saved. Try again after your next payment.');
-        }
-        return;
-      }
-
-      const businessId = payment.business_id || session?.business_id;
-      if (!businessId) {
-        await this.sendText(from, 'Could not determine the business. Try again from within a business session.');
-        return;
-      }
-
-      const { data: existing } = await this.supabase
-        .from('saved_payment_methods')
-        .select('id')
-        .eq('business_id', businessId)
-        .eq('customer_phone', phoneP)
-        .eq('is_active', true)
-        .maybeSingle();
-
-      if (existing) {
-        await this.sendText(from, 'You already have a saved card for this business. Type *remove card* to remove it first.');
-        return;
-      }
-
-      // Store card data in session and ask for PIN
-      const saveData = {
-        _save_card_pending: true,
-        _save_card_business_id: businessId,
-        _save_card_gateway: payment.gateway || 'paystack',
-        _save_card_auth: auth,
-      };
-
-      if (session) {
-        await this.supabase.from('bot_sessions')
-          .update({ current_step: 'save_card_pin', session_data: { ...session.session_data, ...saveData } })
-          .eq('id', session.id);
-      } else {
-        await this.supabase.from('bot_sessions').insert({
-          whatsapp_number: from, user_id: null, business_id: businessId,
-          current_step: 'save_card_pin', session_data: saveData, is_active: true,
-          expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-        });
-      }
-
-      const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-      await this.sendText(from, `💳 Saving *${cardLabel}*\n\nCreate a *4-digit PIN* to secure this card.\nYou'll need this PIN every time you use the saved card.\n\nType your 4-digit PIN now:`);
+      await _handleSaveCard(this.supabase, this.sendText.bind(this), from, session, getProfile);
       return;
     }
 
     // ── Remove Card ──
     if (isRemoveCardQuery) {
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-      const businessId = session?.business_id;
-
-      // If in a business session, remove card for that business
-      // Otherwise, remove all saved cards for this phone
-      if (businessId) {
-        const { data: deleted } = await this.supabase
-          .from('saved_payment_methods')
-          .delete()
-          .eq('business_id', businessId)
-          .eq('customer_phone', phoneP)
-          .eq('is_active', true)
-          .select('card_last4, card_brand');
-
-        if (deleted && deleted.length > 0) {
-          const card = deleted[0];
-          await this.sendText(from, `Card removed: ${((card.card_brand as string) || 'Card').toUpperCase()} ****${(card.card_last4 as string) || '****'}\n\nYou'll need to enter card details for future payments.`);
-        } else {
-          await this.sendText(from, 'No saved card found for this business.');
-        }
-      } else {
-        const { data: deleted } = await this.supabase
-          .from('saved_payment_methods')
-          .delete()
-          .eq('customer_phone', phoneP)
-          .eq('is_active', true)
-          .select('card_last4');
-
-        if (deleted && deleted.length > 0) {
-          await this.sendText(from, `Removed ${deleted.length} saved card${deleted.length > 1 ? 's' : ''}. You'll need to enter card details for future payments.`);
-        } else {
-          await this.sendText(from, 'No saved cards found.');
-        }
-      }
+      await _handleRemoveCard(this.supabase, this.sendText.bind(this), from, session);
       return;
     }
 
@@ -2326,151 +2178,21 @@ export class BotService {
     }
 
     const isChatMode = step === 'chat_handoff' || step === 'chat_start';
-    const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
-    const trimmedText = text.trim();
-    // Simplified: cancel = back (go back one step)
-    const isCancelOrBack = CANCEL_PATTERN.test(trimmedText) || BACK_PATTERNS.some(p => p.test(trimmedText));
-    const isExitWord = EXIT_PATTERNS.some(p => p.test(trimmedText));
-    const isMenuWord = MENU_PATTERNS.some(p => p.test(trimmedText));
-    const isEscapeHatch = isCancelOrBack || isExitWord || isMenuWord;
 
-    // ── 3 SIMPLE COMMANDS: back/cancel, menu, exit ──
-
-    // "back" or "cancel" in booking management → go to business menu
-    if (isCancelOrBack && isBookingMgmt && !isChatMode) {
-      if (session.business_id) {
-        await this.deactivateSession(session.id);
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
-      }
-    }
-
-    // "back" or "cancel" in flow steps → handled by executor (let it fall through)
-    // The executor pops step history and re-prompts the previous step
-
-    if (isEscapeHatch && (session.business_id || isBookingMgmt) && !isChatMode) {
-      this.intelligence.resetAbuse(from);
-
-      // ── "menu" / "restart" / "start over" → restart current business menu ──
-      if (isMenuWord && session.business_id) {
-        const bizId = session.business_id;
-        await this.deactivateSession(session.id);
-        // Cancel any pending booking/order
-        const d = session.session_data || {};
-        if (d.booking_id) {
-          await this.supabase.from('bookings')
-            .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-            .eq('id', d.booking_id as string)
-            .in('status', ['pending']);
-        }
-        if (d.order_id) {
-          await this.supabase.from('orders')
-            .update({ status: 'cancelled' })
-            .eq('id', d.order_id as string)
-            .eq('status', 'pending');
-        }
-        return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
-      }
-
-      // ── "cancel" / "back" → go back one step ──
-      if (isCancelOrBack) {
-        // For free-text steps (enter_amount, collect_name, etc.), the executor
-        // won't intercept back/cancel. Handle it here instead.
-        const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'];
-        if (FREE_TEXT_STEPS.includes(step)) {
-          const history = (session.session_data._step_history as string[]) || [];
-          if (history.length >= 2) {
-            history.pop();
-            const prevStep = history[history.length - 1];
-            session.session_data._step_history = history;
-            session.current_step = prevStep;
-            await this.supabase.from('bot_sessions').update({
-              current_step: prevStep,
-              session_data: session.session_data,
-            }).eq('id', session.id);
-            const biz = session.business_id
-              ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
-              : null;
-            if (biz) {
-              await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz);
-            }
-            return;
-          }
-          // No history — restart menu
-          if (session.business_id) {
-            await this.deactivateSession(session.id);
-            return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
-          }
-        }
-        // Non-free-text steps: if at beginning (select_capability/greeting), show options instead of dead-end
-        const earlySteps = ['select_capability', 'greeting', 'post_completion'];
-        if (earlySteps.includes(step) && session.business_id) {
-          const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
-          await this.deactivateSession(session.id);
-          await this.messageSender.sendButtons({
-            to: from,
-            body: `You've left ${biz?.name || 'the business'}. What next?`,
-            buttons: [
-              { id: 'go_back_biz', title: 'Back to Menu' },
-              { id: 'switch_biz', title: 'Switch Business' },
-            ],
-          });
-          return;
-        }
-        // Other non-free-text steps: fall through to executor (it handles back/cancel)
-      }
-
-      // ── "exit" / "quit" / "stop" → leave business ──
-      if (isExitWord) {
-        await this.deactivateSession(session.id);
-
-        // Cancel any pending booking/order created during this session
-      const d = session.session_data || {};
-      if (d.booking_id) {
-        await this.supabase.from('bookings')
-          .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-          .eq('id', d.booking_id as string)
-          .in('status', ['pending']);
-      }
-      if (d.order_id) {
-        await this.supabase.from('orders')
-          .update({ status: 'cancelled' })
-          .eq('id', d.order_id as string)
-          .eq('status', 'pending');
-      }
-
-      // Find the business — from session or from history
-      let escBizId = session.business_id;
-      if (!escBizId) {
-        const { data: lastSess } = await this.supabase
-          .from('bot_sessions')
-          .select('business_id')
-          .eq('whatsapp_number', from)
-          .not('business_id', 'is', null)
-          .order('updated_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        escBizId = lastSess?.business_id || null;
-      }
-
-      // Always show clear options — never dead-end text
-      if (escBizId) {
-        const { data: escBiz } = await this.supabase.from('businesses').select('name').eq('id', escBizId).single();
-        const bizName = escBiz?.name || 'the business';
-        await this.messageSender.sendButtons({
-          to: from,
-          body: `You've left ${bizName}. What next?`,
-          buttons: [
-            { id: 'go_back_biz', title: 'Back to Menu' },
-            { id: 'switch_biz', title: 'Switch Business' },
-          ],
-        });
-      } else {
-        // No business found at all — guide them
-        await this.sendText(from, 'Send a *business code* to get started, or visit waaiio.com/directory to find a business.');
-      }
-        return;
-      }
-    }
+    // ── Escape hatches: back/cancel, menu/restart, exit/quit/stop ──
+    const escapeResult = await _handleEscapeHatch(
+      this.ctx,
+      from,
+      session,
+      text,
+      messageType,
+      destinationPhone,
+      step,
+      this.sendText.bind(this),
+      this.deactivateSession.bind(this),
+      this.handleMessage.bind(this),
+    );
+    if (escapeResult.handled) return;
 
     // ── Unified keyword matching (replaces detectIntent + old keyword + quick reply checks) ──
     // Only fire on non-free-text steps
@@ -2490,74 +2212,8 @@ export class BotService {
     }
 
     // Handle save card PIN creation
-    if (step === 'save_card_pin') {
-      const pin = text.trim();
-
-      if (pin === 'cancel' || pin === 'exit') {
-        const updatedData = { ...session.session_data };
-        delete updatedData._save_card_pending;
-        delete updatedData._save_card_business_id;
-        delete updatedData._save_card_gateway;
-        delete updatedData._save_card_auth;
-        await this.supabase.from('bot_sessions')
-          .update({ current_step: 'select_capability', session_data: updatedData })
-          .eq('id', session.id);
-        await this.sendText(from, 'Card save cancelled.');
-        return;
-      }
-
-      if (!/^\d{4}$/.test(pin)) {
-        await this.sendText(from, 'Please enter exactly *4 digits* for your PIN (e.g. 1234):');
-        return;
-      }
-
-      const d = session.session_data;
-      const auth = d._save_card_auth as Record<string, unknown>;
-      const businessId = d._save_card_business_id as string;
-      const gateway = d._save_card_gateway as string;
-      const phoneP = from.startsWith('+') ? from : `+${from}`;
-
-      if (!auth?.authorization_code || !businessId) {
-        await this.sendText(from, 'Something went wrong. Please type *save card* again.');
-        await this.supabase.from('bot_sessions').update({ current_step: 'select_capability', session_data: {} }).eq('id', session.id);
-        return;
-      }
-
-      // Hash the PIN with SHA-256 + phone as salt (not reversible)
-      const { createHash } = await import('crypto');
-      const pinHash = createHash('sha256').update(`${pin}:${phoneP}`).digest('hex');
-
-      await this.supabase.from('saved_payment_methods').insert({
-        business_id: businessId,
-        customer_phone: phoneP,
-        gateway,
-        authorization_code: auth.authorization_code as string,
-        customer_code: (auth.customer_code as string) || null,
-        card_last4: (auth.last4 as string) || null,
-        card_brand: (auth.brand as string) || null,
-        card_exp_month: auth.exp_month ? Number(auth.exp_month) : null,
-        card_exp_year: auth.exp_year ? Number(auth.exp_year) : null,
-        card_type: (auth.card_type as string) || null,
-        bank_name: (auth.bank as string) || null,
-        is_active: true,
-        pin_hash: pinHash,
-        pin_attempts: 0,
-        last_used_at: new Date().toISOString(),
-      });
-
-      const cardLabel = `${((auth.brand as string) || 'Card').toUpperCase()} ****${(auth.last4 as string) || '????'}`;
-
-      // Clear save data from session
-      const cleanData = { ...session.session_data };
-      delete cleanData._save_card_pending;
-      delete cleanData._save_card_business_id;
-      delete cleanData._save_card_gateway;
-      delete cleanData._save_card_auth;
-      await this.supabase.from('bot_sessions')
-        .update({ current_step: 'select_capability', session_data: cleanData })
-        .eq('id', session.id);
-
-      await this.sendText(from, `💳 Card saved! *${cardLabel}*\n\n🔒 PIN set successfully. You'll need this PIN when using your saved card.\n\nType *remove card* anytime to delete it.`);
+    if (step === 'save_card_pin' || step === 'verify_card_pin') {
+      await _handleCardPinStep(this.supabase, this.sendText.bind(this), from, session, text);
       return;
     }
 
@@ -2751,286 +2407,26 @@ export class BotService {
       }, sendMsg).catch(err => logger.error('[BOT] message_received rule error:', err));
     }
 
-    // Chat handoff: bot is paused, route messages to human agent
+    // Chat handoff: bot is paused, route messages to human agent (delegated to handlers/chat-handoff.ts)
     if (session.business_id && step === 'chat_handoff') {
-      const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
-      if (restartMatch) {
-        await this.deactivateSession(session.id);
-        // Also resolve the conversation so the dashboard shows it as resolved
-        try {
-          await this.supabase.from('chat_conversations').update({
-            status: 'resolved',
-            resolved_at: new Date().toISOString(),
-          })
-            .eq('business_id', session.business_id)
-            .eq('customer_phone', from)
-            .eq('status', 'open');
-        } catch { /* non-critical */ }
-        // Re-enter the bot from scratch so they get the menu
-        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
-      }
-
-      // Allow bot capability selections (button payloads) during live chat
-      if (text.startsWith('cap_')) {
-        await this.deactivateSession(session.id);
-        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
-      }
-
-      // Store message for human agent, update conversation
-      const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
-      const chatPhoneN = from.startsWith('+') ? from.slice(1) : from;
-      let handoffName: string | null = null;
-      const { data: hProfile } = await this.supabase
-        .from('profiles')
-        .select('first_name, last_name')
-        .or(`phone.eq.${sanitizeFilterValue(chatPhoneP)},phone.eq.${sanitizeFilterValue(chatPhoneN)}`)
-        .limit(1)
-        .maybeSingle();
-      if (hProfile?.first_name) {
-        handoffName = `${hProfile.first_name}${hProfile.last_name ? ' ' + hProfile.last_name : ''}`;
-      }
-
-      // Get conversation_id
-      const { data: conv } = await this.supabase
-        .from('chat_conversations')
-        .select('id, created_at')
-        .eq('business_id', session.business_id)
-        .eq('customer_phone', from)
-        .maybeSingle();
-
-      await this.supabase.from('chat_messages').insert({
-        business_id: session.business_id,
-        customer_phone: from,
-        customer_name: handoffName,
-        direction: 'inbound',
-        message_text: text,
-        is_read: false,
-        conversation_id: conv?.id || null,
-        media_url: mediaUrl || null,
-        media_type: mediaUrl ? (messageType || 'image') : null,
-      });
-
-      // Update last_message_at on conversation
-      if (conv?.id) {
-        await this.supabase.from('chat_conversations').update({
-          last_message_at: new Date().toISOString(),
-        }).eq('id', conv.id);
-      }
-
-      // ── Inactivity warning: notify customer if business hasn't replied in 10+ min ──
-      if (conv?.id && !session.session_data._inactivity_warned) {
-        try {
-          const { data: lastOutbound } = await this.supabase
-            .from('chat_messages')
-            .select('created_at')
-            .eq('conversation_id', conv.id)
-            .eq('direction', 'outbound')
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          const lastReplyAt = lastOutbound ? new Date(lastOutbound.created_at).getTime() : 0;
-          const convCreatedAt = conv.created_at ? new Date(conv.created_at).getTime() : 0;
-          const waitingSince = lastReplyAt > 0 ? lastReplyAt : convCreatedAt;
-          if (waitingSince > 0 && Date.now() - waitingSince > 10 * 60 * 1000) {
-            await this.sendText(from, "The team hasn't responded yet. You can keep waiting or type *end chat* to go back to the menu.");
-            session.session_data._inactivity_warned = true;
-            await this.supabase.from('bot_sessions').update({
-              session_data: session.session_data,
-            }).eq('id', session.id);
-          }
-        } catch { /* non-critical */ }
-      }
-
-      // ── Email notification for new chat (rate-limited: max 1 per 30 min per conversation) ──
-      try {
-        const lastEmailAt = session.session_data._last_chat_email_at as number || 0;
-        const now = Date.now();
-        if (now - lastEmailAt > 30 * 60 * 1000) {
-          const { data: biz } = await this.supabase
-            .from('businesses')
-            .select('name, profiles:owner_id (email)')
-            .eq('id', session.business_id)
-            .single();
-          const ownerEmail = (biz?.profiles as any)?.email;
-          if (ownerEmail && biz) {
-            const displayName = handoffName || from;
-            const { sendEmail } = await import('@/lib/email/client');
-            sendEmail({
-              to: ownerEmail,
-              subject: `New chat message from ${displayName} — ${biz.name}`,
-              html: `<p><strong>${displayName}</strong> sent you a message:</p>
-                     <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
-                     <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
-                     <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
-            }).catch(() => {});
-            session.session_data._last_chat_email_at = now;
-            await this.supabase.from('bot_sessions').update({
-              session_data: session.session_data,
-            }).eq('id', session.id);
-          }
-        }
-      } catch { /* non-critical */ }
-
-      // Forward message to business owner's phone
-      await this.forwardToBusinessOwner(session.business_id, from, handoffName, text);
-      return;
+      return _handleChatHandoff(
+        this.supabase, this.messageSender, this.sendText.bind(this), from,
+        session as { id: string; business_id: string; session_data: Record<string, unknown> },
+        text, messageType, mediaUrl, this.deactivateSession.bind(this),
+        (f, t, mt, _dp, bid) => this.handleMessage(f, t, mt, destinationPhone, bid),
+        this.forwardToBusinessOwner.bind(this),
+      );
     }
 
-    // Chat fallback: if message doesn't match any flow step and chat is enabled,
-    // store as inbound chat message
+    // Chat fallback: if message doesn't match any flow step and chat is enabled (delegated to handlers/chat-handoff.ts)
     if (session.business_id && step === 'chat_start') {
-      // Allow user to exit chat_start mode
-      const chatExitMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat|hi|hello|menu)$/i.test(text);
-      if (chatExitMatch) {
-        await this.deactivateSession(session.id);
-        try {
-          await this.supabase.from('chat_conversations').update({
-            status: 'resolved',
-            resolved_at: new Date().toISOString(),
-          })
-            .eq('business_id', session.business_id)
-            .eq('customer_phone', from)
-            .eq('status', 'open');
-        } catch { /* non-critical */ }
-        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
-      }
-
-      // Allow bot capability selections during chat
-      if (text.startsWith('cap_')) {
-        await this.deactivateSession(session.id);
-        return this.handleMessage(from, text, messageType, destinationPhone, session.business_id);
-      }
-
-      // This is a chat session — store message and acknowledge
-      // Skip if the chat flow validate() already handled this message
-      const alreadyHandled = session.session_data?.first_message_handled;
-      const caps = (session.session_data?.capabilities as CapabilityId[]) || await getEnabledCapabilities(this.supabase, session.business_id);
-      if (caps.includes('chat') && !alreadyHandled) {
-        // Get customer name
-        const chatPhoneP = from.startsWith('+') ? from : `+${from}`;
-        const chatPhoneN = from.startsWith('+') ? from.slice(1) : from;
-        let customerName: string | null = null;
-        const { data: profile } = await this.supabase
-          .from('profiles')
-          .select('first_name, last_name')
-          .or(`phone.eq.${sanitizeFilterValue(chatPhoneP)},phone.eq.${sanitizeFilterValue(chatPhoneN)}`)
-          .limit(1)
-          .maybeSingle();
-        if (profile?.first_name) {
-          customerName = `${profile.first_name}${profile.last_name ? ' ' + profile.last_name : ''}`;
-        }
-
-        // Check existing conversation to determine if this is a new 24h window
-        const { data: existingConv } = await this.supabase
-          .from('chat_conversations')
-          .select('id, last_message_at')
-          .eq('business_id', session.business_id)
-          .eq('customer_phone', from)
-          .maybeSingle();
-
-        const isNewConversation = !existingConv || !existingConv.last_message_at ||
-          (Date.now() - new Date(existingConv.last_message_at).getTime()) > 24 * 60 * 60 * 1000;
-
-        // Upsert conversation record
-        await this.supabase.from('chat_conversations').upsert({
-          business_id: session.business_id,
-          customer_phone: from,
-          customer_name: customerName,
-          status: 'open',
-          last_message_at: new Date().toISOString(),
-        }, { onConflict: 'business_id,customer_phone' });
-
-        const { data: chatConv } = await this.supabase
-          .from('chat_conversations')
-          .select('id')
-          .eq('business_id', session.business_id)
-          .eq('customer_phone', from)
-          .single();
-
-        await this.supabase.from('chat_messages').insert({
-          business_id: session.business_id,
-          customer_phone: from,
-          customer_name: customerName,
-          direction: 'inbound',
-          message_text: text,
-          is_read: false,
-          conversation_id: chatConv?.id ?? null,
-          media_url: mediaUrl || null,
-          media_type: mediaUrl ? (messageType || 'image') : null,
-        });
-
-        // Track conversation usage (non-blocking)
-        Promise.resolve(
-          this.supabase.rpc('increment_message_usage', {
-            p_business_id: session.business_id,
-            p_direction: 'inbound',
-            p_is_new_conversation: isNewConversation,
-          })
-        ).catch((err) => logger.error('[BOT] Usage tracking failed:', err));
-
-        // Try FAQ auto-response first
-        if (text && session.business_id) {
-          try {
-            const { tryFaqResponse } = await import('@/lib/bot/faq-responder');
-            const { data: biz } = await this.supabase
-              .from('businesses')
-              .select('name, address, phone, operating_hours, metadata')
-              .eq('id', session.business_id)
-              .single();
-
-            if (biz) {
-              const faqAnswer = await tryFaqResponse(this.supabase, session.business_id, biz, text);
-              if (faqAnswer) {
-                await this.sendText(from, faqAnswer);
-                return;
-              }
-            }
-          } catch { /* FAQ lookup failed, fall through to human chat */ }
-        }
-
-        // ── Email notification for new chat (rate-limited: max 1 per 30 min per conversation) ──
-        try {
-          const lastEmailAt = session.session_data._last_chat_email_at as number || 0;
-          const nowMs = Date.now();
-          if (nowMs - lastEmailAt > 30 * 60 * 1000) {
-            const { data: bizForEmail } = await this.supabase
-              .from('businesses')
-              .select('name, profiles:owner_id (email)')
-              .eq('id', session.business_id)
-              .single();
-            const ownerEmailAddr = (bizForEmail?.profiles as any)?.email;
-            if (ownerEmailAddr && bizForEmail) {
-              const displayName = customerName || from;
-              const { sendEmail } = await import('@/lib/email/client');
-              sendEmail({
-                to: ownerEmailAddr,
-                subject: `New chat message from ${displayName} — ${bizForEmail.name}`,
-                html: `<p><strong>${displayName}</strong> sent you a message:</p>
-                       <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
-                       <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
-                       <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
-              }).catch(() => {});
-              session.session_data._last_chat_email_at = nowMs;
-              await this.supabase.from('bot_sessions').update({
-                session_data: session.session_data,
-              }).eq('id', session.id);
-            }
-          }
-        } catch { /* non-critical */ }
-
-        // Forward message to business owner's phone
-        await this.forwardToBusinessOwner(session.business_id, from, customerName, text);
-      }
-
-      // Send acknowledgment on the first message in this chat session
-      if (!session.session_data.chat_ack_sent) {
-        await this.sendText(from, "Thanks for your message! A team member will respond shortly.\n\nType *end chat* anytime to return to the menu.");
-        await this.supabase.from('bot_sessions').update({
-          session_data: { ...session.session_data, chat_ack_sent: true },
-        }).eq('id', session.id);
-      }
-      return;
+      return _handleChatStart(
+        this.supabase, this.messageSender, this.sendText.bind(this), from,
+        session as { id: string; business_id: string; session_data: Record<string, unknown> },
+        text, messageType, mediaUrl, this.deactivateSession.bind(this),
+        (f, t, mt, _dp, bid) => this.handleMessage(f, t, mt, destinationPhone, bid),
+        this.forwardToBusinessOwner.bind(this),
+      );
     }
 
     // Set translation context for AI usage tracking
