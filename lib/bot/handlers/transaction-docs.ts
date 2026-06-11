@@ -44,10 +44,18 @@ export async function handleTransactionDocument(
       if (type === 'receipt') {
         const phoneP = from.startsWith('+') ? from : `+${from}`;
         const phoneN = from.startsWith('+') ? from.slice(1) : from;
-        const [{ data: latestBooking }, { data: latestOrder }] = await Promise.all([
+        const [{ data: latestBooking }, { data: latestBookingByPhone }, { data: latestOrder }] = await Promise.all([
           supabase.from('bookings')
             .select('reference_code, created_at')
             .eq('user_id', userId)
+            .in('status', ['completed', 'confirmed'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          // Fallback: find by guest_phone (bot bookings may not have user_id linked)
+          supabase.from('bookings')
+            .select('reference_code, created_at')
+            .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
             .in('status', ['completed', 'confirmed'])
             .order('created_at', { ascending: false })
             .limit(1)
@@ -61,10 +69,15 @@ export async function handleTransactionDocument(
             .maybeSingle(),
         ]);
 
+        // Use whichever booking is more recent (by user_id or by phone)
+        const effectiveBooking = latestBooking && latestBookingByPhone
+          ? (new Date(latestBooking.created_at) >= new Date(latestBookingByPhone.created_at) ? latestBooking : latestBookingByPhone)
+          : latestBooking || latestBookingByPhone;
+
         // Pick whichever is more recent
-        let refCode = latestBooking?.reference_code;
+        let refCode = effectiveBooking?.reference_code;
         if (latestOrder?.reference_code) {
-          if (!refCode || new Date(latestOrder.created_at) > new Date(latestBooking!.created_at)) {
+          if (!refCode || new Date(latestOrder.created_at) > new Date(effectiveBooking!.created_at)) {
             refCode = latestOrder.reference_code;
           }
         }
@@ -104,10 +117,16 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
   const phoneN = phone.startsWith('+') ? phone.slice(1) : phone;
 
   // Fetch recent transactions from multiple sources (including orders)
-  const [{ data: bookings }, { data: payments }, { data: invoices }, { data: donations }, { data: orders }] = await Promise.all([
+  const [{ data: bookings }, { data: bookingsByPhone }, { data: payments }, { data: invoices }, { data: donations }, { data: orders }] = await Promise.all([
     supabase.from('bookings')
       .select('reference_code, date, total_amount, status, created_at, services(name), businesses(name, country_code)')
       .eq('user_id', userId)
+      .in('status', ['completed', 'confirmed', 'pending'])
+      .order('created_at', { ascending: false }).limit(5),
+    // Fallback: find by guest_phone
+    supabase.from('bookings')
+      .select('reference_code, date, total_amount, status, created_at, services(name), businesses(name, country_code)')
+      .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .in('status', ['completed', 'confirmed', 'pending'])
       .order('created_at', { ascending: false }).limit(5),
     supabase.from('payments')
@@ -131,10 +150,18 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
       .order('created_at', { ascending: false }).limit(5),
   ]);
 
+  // Merge bookings from both queries (dedup by reference_code)
+  const seenRefs = new Set<string>();
+  const allBookings = [...(bookings || []), ...(bookingsByPhone || [])].filter(b => {
+    if (seenRefs.has(b.reference_code)) return false;
+    seenRefs.add(b.reference_code);
+    return true;
+  }).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 5);
+
   const lines: string[] = [];
 
-  if (bookings && bookings.length > 0) {
-    const b = bookings[0];
+  if (allBookings.length > 0) {
+    const b = allBookings[0];
     const biz = b.businesses as unknown as { name: string; country_code?: string } | null;
     const svc = b.services as unknown as { name: string } | null;
     const cc = biz?.country_code as CountryCode || 'NG';
@@ -217,8 +244,8 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
 
   // Add receipt URL if we have a reference code
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-  if (bookings && bookings.length > 0 && bookings[0].reference_code) {
-    lines.push('', `🔗 View receipt: ${appUrl}/api/receipts/image?ref=${bookings[0].reference_code}`);
+  if (allBookings.length > 0 && allBookings[0].reference_code) {
+    lines.push('', `🔗 View receipt: ${appUrl}/api/receipts/image?ref=${allBookings[0].reference_code}`);
   }
 
   lines.push('', 'Type *Hi* to continue');
