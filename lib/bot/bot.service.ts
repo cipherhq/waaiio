@@ -1830,11 +1830,22 @@ export class BotService {
                 ? `Welcome back, ${customerName}! 👋`
                 : 'Welcome back! 👋';
 
-              // Use lastFlowType to determine action — not just business category
+              // Determine giving vs booking by checking service_type on the actual service
+              // This is more reliable than lastFlowType which can be wrong for giving categories
               const catLabels = getCategoryLabels(business.category);
               const GIVING_CATS = ['church', 'mosque', 'school', 'ngo', 'crowdfunding_org'];
-              const lastFlowType = custHistory.lastFlowType;
-              const isGivingRebook = lastFlowType === 'payment' && GIVING_CATS.includes(business.category);
+              let isGivingRebook = false;
+              const { data: svcCheck } = await this.supabase
+                .from('services')
+                .select('service_type')
+                .eq('id', rebookServiceId)
+                .single();
+              if (svcCheck?.service_type === 'giving') {
+                isGivingRebook = true;
+              } else if (!svcCheck?.service_type && GIVING_CATS.includes(business.category)) {
+                // For giving categories, if service_type is null, default to giving
+                isGivingRebook = true;
+              }
               const actionWord = isGivingRebook ? 'Give' : catLabels.actionVerb || 'Book';
               const promptText = isGivingRebook
                 ? `${rebookMsg}\n\nGive again?\n🙏 ${rebookServiceName}`
@@ -1861,6 +1872,7 @@ export class BotService {
               session.session_data._quick_rebook_service_id = rebookServiceId;
               session.session_data._quick_rebook_service_name = rebookServiceName;
               session.session_data._rebook_flow_type = custHistory.lastFlowType;
+              session.session_data._rebook_is_giving = isGivingRebook;
               session.session_data._quick_rebook_sent = true;
               await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
               // Stop here — don't show the full greeting/menu on top of the rebook prompt
@@ -2213,14 +2225,14 @@ export class BotService {
       session.session_data.service_id = rebookServiceId;
       session.session_data.service_name = session.session_data._quick_rebook_service_name;
       session.session_data.skip_service = true;
-      // Determine capability from what the user is rebooking
-      const rebookFlowType = session.session_data._rebook_flow_type;
-      session.session_data.active_capability = rebookFlowType === 'payment' ? 'giving' : 'scheduling';
+      // Determine capability from the pre-resolved flag (set when greeting was shown)
+      const isGivingRebook = session.session_data._rebook_is_giving === true;
+      session.session_data.active_capability = isGivingRebook ? 'giving' : 'scheduling';
 
       // Fetch service details to pre-fill duration, price, etc.
       const { data: svc } = await this.supabase
         .from('services')
-        .select('price, duration_minutes, deposit_amount, billing_type, recurring_interval, max_capacity, buffer_minutes, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule, auto_approve')
+        .select('price, duration_minutes, deposit_amount, billing_type, recurring_interval, max_capacity, buffer_minutes, available_days, available_from, available_to, requires_staff, staff_ids, allow_staff_selection, metadata, is_class, class_schedule, auto_approve, service_type')
         .eq('id', rebookServiceId)
         .eq('is_active', true)
         .maybeSingle();
@@ -2248,12 +2260,15 @@ export class BotService {
       delete session.session_data._quick_rebook_service_id;
       delete session.session_data._quick_rebook_service_name;
       delete session.session_data._rebook_flow_type;
+      delete session.session_data._rebook_is_giving;
       delete session.session_data._quick_rebook_sent;
 
       // Set the correct first step for the capability (skip capability selection)
-      const isGivingRebook = session.session_data.active_capability === 'giving';
       const firstStep = isGivingRebook ? 'enter_amount' : 'select_date';
       session.current_step = firstStep;
+
+      // Initialize step history so "back"/"cancel" works correctly
+      session.session_data._step_history = ['select_capability', firstStep];
 
       await this.supabase.from('bot_sessions').update({
         session_data: session.session_data,
@@ -2274,6 +2289,7 @@ export class BotService {
       delete session.session_data._quick_rebook_service_id;
       delete session.session_data._quick_rebook_service_name;
       delete session.session_data._rebook_flow_type;
+      delete session.session_data._rebook_is_giving;
       delete session.session_data._quick_rebook_sent;
       // Store greeting so the capability menu includes it
       if (session.session_data._greeting) {
