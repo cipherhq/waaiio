@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-10
 
+### Post-completion "What's next?" menu after every successful transaction
+
+- `lib/bot/flows/executor.ts` — When `next()` returns null (flow complete) and it's NOT a cancellation, shows contextual buttons instead of silently ending. Buttons are based on capability: "Book Again" / "Give Again" / "Buy More Tickets" / "Order Again" + history view + "Done". Session stays alive on `post_completion` step with 10-min expiry.
+- `lib/bot/bot.service.ts` — Handles `post_completion` step: "pc_again" restarts the business flow, "pc_history" routes to My Bookings/My Orders, "pc_done" deactivates session, any other text re-processes as new input. Escape hatches (menu/exit/back) still work.
+- Affects: all 6 transaction flows (scheduling, ordering, payment, ticketing, crowdfunding, reservation). Cancellations still end silently.
+
 ### Ticket image: add event + guest details on the image
 
 - `lib/bot/flows/shared/send-tickets.ts` — Both flyer and no-flyer ticket images now show text overlays:

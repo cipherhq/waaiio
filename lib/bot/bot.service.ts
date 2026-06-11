@@ -2606,6 +2606,43 @@ export class BotService {
       }
     }
 
+    // Handle post-completion menu (after successful transaction)
+    if (step === 'post_completion') {
+      if (text === 'pc_done') {
+        // Done — deactivate and say goodbye
+        await this.deactivateSession(session.id);
+        return;
+      }
+      if (text === 'pc_again') {
+        // Start over at the same business
+        await this.deactivateSession(session.id);
+        if (session.business_id) {
+          const { data: biz } = await this.supabase
+            .from('businesses').select('bot_code').eq('id', session.business_id).single();
+          await this.handleMessage(from, biz?.bot_code || 'Hi', messageType, destinationPhone, session.business_id);
+        }
+        return;
+      }
+      if (text === 'pc_history') {
+        // Route to the appropriate history view based on capability
+        const cap = session.session_data._post_completion_cap as string || '';
+        if (cap === 'ordering') {
+          session.current_step = 'my_orders';
+          await this.supabase.from('bot_sessions').update({ current_step: 'my_orders' }).eq('id', session.id);
+          await this.handleMyOrders(session, from, '');
+        } else {
+          session.current_step = 'my_bookings';
+          await this.supabase.from('bot_sessions').update({ current_step: 'my_bookings' }).eq('id', session.id);
+          await this.handleMyBookings(session, from, '');
+        }
+        return;
+      }
+      // Any other text — treat as starting over (they typed something new)
+      await this.deactivateSession(session.id);
+      await this.handleMessage(from, text, messageType, destinationPhone);
+      return;
+    }
+
     // Handle built-in steps (my_bookings, modify_booking, my_orders, order_detail)
     if (step === 'my_bookings') {
       await this.handleMyBookings(session, from, text);

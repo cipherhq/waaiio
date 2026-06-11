@@ -337,7 +337,17 @@ export class FlowExecutor {
     } else {
       // Flow complete — persist log before deactivating
       await this.persistConversationLog(session.id, session.conversation_log || []);
-      await this.deactivateSession(session.id);
+
+      // Check if successful completion (not cancellation) — show "What's next?" menu
+      const sd = session.session_data;
+      const isCancellation = sd._action === 'cancel' || sd._action === 'cancelled'
+        || sd.cancelled === true || sd._action === 'cart_empty';
+
+      if (!isCancellation && session.business_id) {
+        await this.showPostCompletionMenu(from, session, ctx);
+      } else {
+        await this.deactivateSession(session.id);
+      }
     }
   }
 
@@ -579,6 +589,69 @@ export class FlowExecutor {
       .from('bot_sessions')
       .update({ is_active: false })
       .eq('id', sessionId);
+  }
+
+  /**
+   * After a successful transaction, show contextual "What's next?" buttons
+   * instead of silently ending the session.
+   */
+  private async showPostCompletionMenu(
+    from: string,
+    session: { id: string; session_data: Record<string, unknown>; business_id: string | null },
+    ctx: FlowContext,
+  ): Promise<void> {
+    const cap = (session.session_data.active_capability as string) || '';
+    const flowType = ctx.business?.flow_type || 'scheduling';
+    const lang = (session.session_data._lang as string) || '';
+
+    // Contextual buttons based on what the customer just did
+    let buttons: Array<{ id: string; title: string }>;
+
+    if (cap === 'giving' || cap === 'crowdfunding') {
+      buttons = [
+        { id: 'pc_again', title: 'Give Again' },
+        { id: 'pc_history', title: 'My Giving' },
+        { id: 'pc_done', title: 'Done' },
+      ];
+    } else if (cap === 'ticketing') {
+      buttons = [
+        { id: 'pc_again', title: 'Buy More Tickets' },
+        { id: 'pc_history', title: 'My Tickets' },
+        { id: 'pc_done', title: 'Done' },
+      ];
+    } else if (cap === 'ordering') {
+      buttons = [
+        { id: 'pc_again', title: 'Order Again' },
+        { id: 'pc_history', title: 'My Orders' },
+        { id: 'pc_done', title: 'Done' },
+      ];
+    } else if (cap === 'reservation') {
+      buttons = [
+        { id: 'pc_again', title: 'Book Again' },
+        { id: 'pc_history', title: 'My Bookings' },
+        { id: 'pc_done', title: 'Done' },
+      ];
+    } else {
+      // scheduling, appointment, payment, default
+      buttons = [
+        { id: 'pc_again', title: 'Book Again' },
+        { id: 'pc_history', title: 'My Bookings' },
+        { id: 'pc_done', title: 'Done' },
+      ];
+    }
+
+    const body = lang
+      ? await translateBotResponse('What would you like to do next?', lang)
+      : 'What would you like to do next?';
+
+    // Keep session alive on post_completion step so buttons work
+    await this.supabase.from('bot_sessions').update({
+      current_step: 'post_completion',
+      session_data: { ...session.session_data, _post_completion_cap: cap },
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 min timeout
+    }).eq('id', session.id);
+
+    await this.sender.sendButtons({ to: from, body, buttons });
   }
 
   /** Map a capability to its corresponding FlowType */
