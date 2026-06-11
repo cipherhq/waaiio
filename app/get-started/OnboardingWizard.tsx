@@ -6,9 +6,6 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
 import { getPostHogClient } from '@/lib/posthog/client';
-import { PhoneInput } from '@/components/auth/PhoneInput';
-import { OtpInput } from '@/components/auth/OtpInput';
-import AddressAutocomplete from '@/components/ui/AddressAutocomplete';
 import {
   CATEGORY_FLOW_MAP,
   formatCurrency,
@@ -23,6 +20,23 @@ import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
 import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import type { User } from '@supabase/supabase-js';
+import {
+  StepAuth,
+  StepCategory,
+  StepFeatures,
+  StepPlan,
+  StepDetails,
+  StepSuccess,
+} from './steps';
+import type {
+  WizardStep,
+  AuthSubStep,
+  AuthMode,
+  WhatsAppMethod,
+  ConnectSubStep,
+  FbConnectionData,
+  DiscoveredWaba,
+} from './steps';
 
 declare global {
   interface Window {
@@ -39,36 +53,6 @@ const FALLBACK_WHATSAPP_NUMBERS: Record<string, string> = {
   CA: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_CA || '12029226251',
   GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || '12029226251',
 };
-
-/* ─── Popular categories for onboarding ─── */
-const POPULAR_CATEGORY_KEYS = ['restaurant', 'barber', 'salon', 'church', 'shop', 'hotel', 'gym', 'events', 'consultant', 'clinic'];
-
-/* ─── Group icons for the 2-phase category picker ─── */
-const CATEGORY_GROUP_ICONS: Record<string, string> = {
-  'Beauty & Wellness': '\uD83D\uDC87',
-  'Health & Medical': '\uD83C\uDFE5',
-  'Food & Dining': '\uD83C\uDF7D\uFE0F',
-  'Delivery & Retail': '\uD83D\uDECD\uFE0F',
-  'Home & Auto Services': '\uD83D\uDD27',
-  'Professional Services': '\uD83D\uDCBC',
-  'Hospitality': '\uD83C\uDFE8',
-  'Events & Entertainment': '\uD83C\uDFAA',
-  'Faith & Community': '\u26EA',
-  'Fitness': '\uD83C\uDFCB\uFE0F',
-  'Transport & Logistics': '\uD83D\uDE9A',
-  'Education & Training': '\uD83C\uDF93',
-  'Pet Services': '\uD83D\uDC3E',
-  'Creative & Media': '\uD83D\uDCF7',
-  'Real Estate & Property': '\uD83C\uDFE0',
-  'Government & Public': '\uD83C\uDFDB\uFE0F',
-  'Other': '\u2728',
-};
-
-type WizardStep = 'auth' | 'category' | 'features' | 'plan' | 'details' | 'success';
-type AuthSubStep = 'phone' | 'otp';
-type AuthMode = 'phone' | 'email';
-type WhatsAppMethod = 'shared' | 'transfer' | 'coexist';
-type ConnectSubStep = 'choose' | 'warnings' | 'setup' | 'phone_select';
 
 /* ─── Side Panel Content per Step ─── */
 
@@ -339,26 +323,10 @@ function OnboardingWizard() {
   const [fbSdkReady, setFbSdkReady] = useState(false);
   const fbWabaIdRef = useRef('');
   const fbPhoneNumberIdRef = useRef('');
-  const [fbConnectionData, setFbConnectionData] = useState<{
-    waba_id: string;
-    phone_number_id: string;
-    access_token: string;
-    token_expires_at: string | null;
-    display_name?: string;
-    phone_number?: string;
-  } | null>(null);
+  const [fbConnectionData, setFbConnectionData] = useState<FbConnectionData | null>(null);
 
   // Discovered WABAs and phones from Facebook
-  const [discoveredWabas, setDiscoveredWabas] = useState<Array<{
-    waba_id: string;
-    waba_name: string;
-    phones: Array<{
-      id: string;
-      display_phone_number: string;
-      verified_name: string;
-      quality_rating: string;
-    }>;
-  }>>([]);
+  const [discoveredWabas, setDiscoveredWabas] = useState<DiscoveredWaba[]>([]);
   const [selectedWabaId, setSelectedWabaId] = useState('');
   const [selectedPhoneId, setSelectedPhoneId] = useState('');
 
@@ -375,10 +343,10 @@ function OnboardingWizard() {
   // Category search computed values
   const allCategories = getCategoryList();
   const allCategoriesSorted = [...allCategories].filter(c => c.key !== 'other').sort((a, b) => a.label.localeCompare(b.label));
-  const popularCategories = POPULAR_CATEGORY_KEYS
+  const popularCategories = ['restaurant', 'barber', 'salon', 'church', 'shop', 'hotel', 'gym', 'events', 'consultant', 'clinic']
     .map(k => allCategories.find(c => c.key === k))
     .filter((c): c is NonNullable<typeof c> => !!c);
-  const popularKeys = new Set(POPULAR_CATEGORY_KEYS);
+  const popularKeys = new Set(['restaurant', 'barber', 'salon', 'church', 'shop', 'hotel', 'gym', 'events', 'consultant', 'clinic']);
 
   const filteredCategories = categorySearch.trim()
     ? allCategoriesSorted.filter(c =>
@@ -1182,862 +1150,117 @@ function OnboardingWizard() {
 
             {/* ── Step 1: Auth ── */}
             {step === 'auth' && (
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Create your account</h2>
-                <p className="mt-1 text-sm text-gray-500">Sign up with your email and password</p>
-
-                {emailSent ? (
-                  <div className="mt-6 rounded-xl border border-brand-100 bg-brand-50 p-6 text-center">
-                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-100 text-2xl">
-                      &#9993;
-                    </div>
-                    <h3 className="text-lg font-semibold text-gray-900">Check your inbox</h3>
-                    <p className="mt-2 text-sm text-gray-600">
-                      We sent a confirmation link to <span className="font-medium text-gray-900">{email}</span>.
-                      Click the link to verify your email and continue setup.
-                    </p>
-                    <button
-                      type="button"
-                      disabled={authLoading}
-                      onClick={async () => {
-                        setAuthLoading(true);
-                        const supabase = createClient();
-                        await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/get-started` } });
-                        setAuthLoading(false);
-                      }}
-                      className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                    >
-                      {authLoading ? 'Sending...' : 'Resend email'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setEmailSent(false); setEmail(''); setPassword(''); }}
-                      className="mt-3 block w-full text-center text-sm text-gray-500 hover:text-brand"
-                    >
-                      Use a different email
-                    </button>
-                  </div>
-                ) : (
-                  <form onSubmit={handleEmailSignup} className="mt-6 space-y-4">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Email</label>
-                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required autoComplete="email" />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Password</label>
-                      <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Min. 6 characters" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required minLength={6} autoComplete="new-password" />
-                    </div>
-                    <button type="submit" disabled={!email || !password || authLoading} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-                      {authLoading ? 'Creating account...' : 'Create Account'}
-                    </button>
-                    <div className="relative mt-6">
-                      <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
-                      <div className="relative flex justify-center text-xs"><span className="bg-white px-3 text-gray-400">or</span></div>
-                    </div>
-                    <a
-                      href="https://wa.me/12029226251?text=I%20want%20to%20register%20my%20business"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-whatsapp py-3.5 text-sm font-bold text-white transition hover:bg-whatsapp/90"
-                    >
-                      <svg aria-hidden="true" className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                      Sign up via WhatsApp
-                    </a>
-                    <p className="mt-4 text-center text-sm text-gray-500">
-                      Already have an account?{' '}
-                      <a href="/login" className="font-medium text-brand hover:underline">Log in</a>
-                    </p>
-                  </form>
-                )}
-              </div>
+              <StepAuth
+                email={email}
+                setEmail={setEmail}
+                password={password}
+                setPassword={setPassword}
+                authLoading={authLoading}
+                emailSent={emailSent}
+                setEmailSent={setEmailSent}
+                handleEmailSignup={handleEmailSignup}
+                setAuthLoading={setAuthLoading}
+              />
             )}
 
             {/* ── Step 2: Category ── */}
             {step === 'category' && (
-              <div>
-                {/* Country selection */}
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-gray-700">Which country is your business in?</label>
-                  <div className="flex flex-wrap gap-2">
-                    {countryList.map(c => (
-                      <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); }}
-                        className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${selectedCountry === c.code ? 'border-brand bg-brand-50 text-brand' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
-                        <span>{c.flag}</span><span>{c.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {!selectedGroup ? (
-                  /* ── Phase 1: Show group buttons ── */
-                  <div className="mt-8">
-                    <h2 className="text-2xl font-bold text-gray-900">What type of business do you run?</h2>
-                    <p className="mt-1 text-sm text-gray-500">30-day free trial. All features included.</p>
-                    <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                      {getCategoryGroups().map(g => (
-                        <button
-                          key={g.group}
-                          type="button"
-                          onClick={() => setSelectedGroup(g.group)}
-                          className="flex flex-col items-center gap-2 rounded-xl border-2 border-gray-200 bg-white px-3 py-4 text-center transition hover:border-brand hover:bg-brand-50/30"
-                        >
-                          <span className="text-2xl">{CATEGORY_GROUP_ICONS[g.group] || '\u2728'}</span>
-                          <span className="text-sm font-medium text-gray-700">{g.group}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  /* ── Phase 2: Show specific types within the group ── */
-                  <div className="mt-8">
-                    <button type="button" onClick={() => setSelectedGroup(null)} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                      Back to groups
-                    </button>
-                    <h2 className="text-2xl font-bold text-gray-900">What specifically?</h2>
-                    <p className="mt-1 text-sm text-gray-500">Pick the one that best matches your business</p>
-                    <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {(getCategoryGroups()
-                        .find(g => g.group === selectedGroup)
-                        ?.categories || BUSINESS_CATEGORIES.filter(c => c.group === selectedGroup)
-                      ).map(cat => (
-                          <button
-                            key={cat.key}
-                            type="button"
-                            onClick={() => {
-                              const key = cat.key as BusinessCategoryKey;
-                              setCategory(key);
-                              const defaults = CATEGORY_DEFAULT_CAPABILITIES[key] || ['scheduling'];
-                              setSelectedCapabilities([...defaults]);
-                              setSelectedPlan('free');
-                              setStep('details');
-                            }}
-                            className="flex items-center gap-3 rounded-xl border-2 border-gray-200 bg-white px-3 py-3 text-left transition hover:border-brand hover:bg-brand-50/30"
-                          >
-                            <span className="text-xl">{cat.icon}</span>
-                            <span className="text-xs font-medium text-gray-700">{cat.label}</span>
-                          </button>
-                        ))}
-                      {/* "Other" option for every group */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCategory('other' as BusinessCategoryKey);
-                          const groupCats = BUSINESS_CATEGORIES.filter(c => c.group === selectedGroup);
-                          const firstKey = groupCats[0]?.key as BusinessCategoryKey || 'other';
-                          const defaults = CATEGORY_DEFAULT_CAPABILITIES[firstKey] || ['appointment', 'feedback', 'chat'];
-                          setSelectedCapabilities([...defaults]);
-                          setSelectedPlan('free');
-                          setStep('details');
-                        }}
-                        className="flex items-center gap-3 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-left transition hover:border-brand hover:bg-brand-50/30"
-                      >
-                        <span className="text-xl">✨</span>
-                        <span className="text-xs font-medium text-gray-500">Other</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <StepCategory
+                selectedCountry={selectedCountry}
+                setSelectedCountry={setSelectedCountry}
+                countryList={countryList}
+                setCity={setCity}
+                selectedGroup={selectedGroup}
+                setSelectedGroup={setSelectedGroup}
+                category={category}
+                setCategory={setCategory}
+                setSelectedCapabilities={setSelectedCapabilities}
+                setSelectedPlan={setSelectedPlan}
+                setStep={setStep}
+              />
             )}
 
             {/* ── Step 3: Features ── */}
             {step === 'features' && (
-              <div>
-                <button type="button" onClick={() => setStep('category')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                  Back
-                </button>
-                <h2 className="text-2xl font-bold text-gray-900">What should your bot do?</h2>
-                <p className="mt-1 text-sm text-gray-500">Pick the features you need. We&apos;ve pre-selected the most popular ones for your industry. You can always change this later in settings.</p>
-
-                {/* Feature cards */}
-                <div className="mt-6 space-y-3">
-                  {/* Customer-facing features */}
-                  {([
-                    {
-                      id: 'appointment' as CapabilityId,
-                      title: 'Book Appointments',
-                      desc: 'Customers pick a date, time, and staff member to book with you.',
-                      tip: 'Great for salons, barbers, clinics, consultants, gyms, and any business where customers need to reserve a specific time slot.',
-                      example: 'e.g. "Book a haircut for Saturday at 2pm with James"',
-                    },
-                    {
-                      id: 'ordering' as CapabilityId,
-                      title: 'Take Orders',
-                      desc: 'Customers browse your menu or catalog and place orders on WhatsApp.',
-                      tip: 'Perfect for restaurants, food delivery, shops, pharmacies, and anyone selling products. Includes cart, checkout, and order tracking.',
-                      example: 'e.g. "I\'d like 2 Jollof Rice and 1 Peppered Chicken"',
-                    },
-                    {
-                      id: 'table_reservation' as CapabilityId,
-                      title: 'Make Reservations',
-                      desc: 'Customers reserve tables or spots with date, time, and party size.',
-                      tip: 'For restaurants, cafes, bars, lounges, and any business where customers reserve a table or spot for dining.',
-                      example: 'e.g. "Reserve a table for 4 on Friday at 7pm"',
-                    },
-                    {
-                      id: 'reservation' as CapabilityId,
-                      title: 'Book Stays / Rentals',
-                      desc: 'Guests pick check-in and check-out dates to book your property.',
-                      tip: 'For hotels, Airbnb hosts, shortlets, car rentals, and any business that rents space or vehicles by the day/night.',
-                      example: 'e.g. "Book the Loft Suite from Dec 20-23"',
-                    },
-                    {
-                      id: 'ticketing' as CapabilityId,
-                      title: 'Sell Tickets',
-                      desc: 'Customers buy tickets to your events with QR code entry.',
-                      tip: 'For concerts, workshops, conferences, cinema, church events, comedy shows, and any ticketed event. Includes QR code generation for check-in.',
-                      example: 'e.g. "Buy 2 VIP tickets for the Jazz Night"',
-                    },
-                    {
-                      id: 'payment' as CapabilityId,
-                      title: 'Accept Payments',
-                      desc: 'Send payment links and collect money through WhatsApp.',
-                      tip: 'For any business that needs to collect payments without appointments or orders. Schools (fees), parking (charges), government (permits), etc.',
-                      example: 'e.g. "Pay your school fees" or "Pay parking fee"',
-                    },
-                    {
-                      id: 'giving' as CapabilityId,
-                      title: 'Collect Donations',
-                      desc: 'Accept tithes, offerings, and donations through WhatsApp.',
-                      tip: 'For churches, mosques, NGOs, and nonprofits. Supporters can give with one message. Tracks donors and amounts.',
-                      example: 'e.g. "Give tithe of N5,000" or "Donate to Building Fund"',
-                    },
-                    {
-                      id: 'scheduling' as CapabilityId,
-                      title: 'On-Demand Services',
-                      desc: 'Customers request services without choosing a specific time.',
-                      tip: 'For laundry, printing, repairs, cleaning, and services where you handle the scheduling. Customer just says what they need.',
-                      example: 'e.g. "I need 3 shirts washed and ironed"',
-                    },
-                    {
-                      id: 'crowdfunding' as CapabilityId,
-                      title: 'Run Campaigns',
-                      desc: 'Set fundraising goals and track donations in real time.',
-                      tip: 'For crowdfunding campaigns, building projects, emergency appeals. Shows progress toward goal and donor recognition.',
-                      example: 'e.g. "New Church Building Fund — N2M of N5M raised"',
-                    },
-                    {
-                      id: 'chat' as CapabilityId,
-                      title: 'Live Chat',
-                      desc: 'Let customers chat with your team directly on WhatsApp.',
-                      tip: 'Two-way messaging between your staff and customers. Handle questions, complaints, and custom requests. You can reply from your dashboard.',
-                      example: 'e.g. "Do you have this in size 42?"',
-                    },
-                    {
-                      id: 'invoice' as CapabilityId,
-                      title: 'Send Invoices',
-                      desc: 'Create professional invoices and send them via WhatsApp.',
-                      tip: 'For freelancers, contractors, mechanics, and service providers. Create invoices with line items and payment links. Customer pays in one click.',
-                      example: 'e.g. "Invoice #1042 — Plumbing repair: N15,000"',
-                    },
-                    {
-                      id: 'recurring' as CapabilityId,
-                      title: 'Subscriptions & Recurring',
-                      desc: 'Automatically charge customers weekly, monthly, or yearly.',
-                      tip: 'Perfect for gym memberships, monthly subscriptions, weekly services, church monthly giving, and any recurring charge. Customers can manage their own subscriptions.',
-                      example: 'e.g. "Your N5,000/month gym membership renews tomorrow"',
-                    },
-                    {
-                      id: 'broadcast' as CapabilityId,
-                      title: 'Broadcast Messages',
-                      desc: 'Send promotions and announcements to all your customers at once.',
-                      tip: 'Announce sales, new products, schedule changes, events, or holiday hours. Message all customers or specific groups. Great for marketing and re-engagement.',
-                      example: 'e.g. "Flash Sale! 50% off all haircuts this Friday only"',
-                    },
-                    {
-                      id: 'auto_reply' as CapabilityId,
-                      title: 'Auto-Reply & Business Hours',
-                      desc: 'Automatically reply when you\'re closed or busy.',
-                      tip: 'Set your opening hours and a custom away message. Customers who message outside hours get an instant reply telling them when you\'re open. No messages go unanswered.',
-                      example: 'e.g. "Thanks for reaching out! We\'re open Mon-Sat 9am-6pm"',
-                    },
-                    {
-                      id: 'membership' as CapabilityId,
-                      title: 'Membership Tiers',
-                      desc: 'Reward your best customers with automatic VIP tiers.',
-                      tip: 'Create Bronze/Silver/Gold tiers based on customer spending. Members get automatic discounts and bonus loyalty points. Tiers upgrade automatically — no manual work.',
-                      example: 'e.g. "Congrats! You\'ve been upgraded to Gold Member — 10% off everything"',
-                    },
-                    {
-                      id: 'whatsapp_sign' as CapabilityId,
-                      title: 'E-Signatures',
-                      desc: 'Send contracts and documents for digital signature via WhatsApp.',
-                      tip: 'For real estate, legal, freelancers, and any business that needs signed agreements. Customers review and sign directly from their phone.',
-                      example: 'e.g. "Please review and sign your service agreement"',
-                    },
-                    {
-                      id: 'survey' as CapabilityId,
-                      title: 'Surveys',
-                      desc: 'Create and send custom surveys to collect customer feedback.',
-                      tip: 'Build surveys with multiple question types (choice, rating, text, yes/no). Send via WhatsApp and track responses in your dashboard.',
-                      example: 'e.g. "How did you hear about us?" with multiple choice options',
-                    },
-                    {
-                      id: 'poll' as CapabilityId,
-                      title: 'Polls',
-                      desc: 'Create quick polls and let customers vote via WhatsApp.',
-                      tip: 'Great for churches, communities, and events. Ask a question, customers vote, see results live. Perfect for deciding event dates, menu items, etc.',
-                      example: 'e.g. "What time works best for Bible study? 5pm / 6pm / 7pm"',
-                    },
-                    {
-                      id: 'queue' as CapabilityId,
-                      title: 'Queue Management',
-                      desc: 'Walk-in customers check in and get notified when it\'s their turn.',
-                      tip: 'For clinics, barbers, government offices, and any walk-in business. Customers join the queue via WhatsApp and get a notification when their turn is next.',
-                      example: 'e.g. "You are #5 in line. Estimated wait: 15 minutes"',
-                    },
-                    {
-                      id: 'staff' as CapabilityId,
-                      title: 'Staff Management',
-                      desc: 'Assign team members to services and manage their schedules.',
-                      tip: 'For businesses with multiple staff. Assign services to specific people, set work schedules, auto-balance bookings. Customers can pick their preferred staff.',
-                      example: 'e.g. "Book with James (Barber) or Sarah (Stylist)"',
-                    },
-                  ] as const).map(feat => {
-                    const isSelected = selectedCapabilities.includes(feat.id);
-                    const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
-                    const tierLabel = tier === 'free' ? null : tier === 'growth' ? 'Pro' : 'Premium';
-                    const tierColor = tier === 'growth' ? 'bg-blue-100 text-blue-700' : tier === 'business' ? 'bg-brand-100 text-brand-700' : '';
-                    // Disable if capability requires a higher plan than selected
-                    const planOrder = ['free', 'growth', 'business'] as const;
-                    const capTierIdx = planOrder.indexOf(tier as typeof planOrder[number]);
-                    const selectedPlanIdx = planOrder.indexOf(selectedPlan);
-                    // During onboarding, all features are available (30-day trial unlocks everything)
-                    // Tier badge still shown so users know what they'll need after trial
-                    const isLocked = false;
-                    return (
-                      <div key={feat.id} className="group relative">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (isLocked) return;
-                            setSelectedCapabilities(prev =>
-                              prev.includes(feat.id)
-                                ? prev.filter(c => c !== feat.id)
-                                : [...prev, feat.id]
-                            );
-                          }}
-                          className={`w-full rounded-xl border-2 p-4 text-left transition ${
-                            isLocked
-                              ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
-                              : isSelected
-                                ? 'border-brand bg-brand-50/50'
-                                : 'border-gray-200 hover:border-gray-300 bg-white'
-                          }`}
-                        >
-                          <div className="flex items-start gap-3">
-                            {/* Checkbox */}
-                            <div className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition ${
-                              isSelected ? 'border-brand bg-brand' : 'border-gray-300'
-                            }`}>
-                              {isSelected && (
-                                <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-sm font-semibold text-gray-900">{feat.title}</span>
-                                {tierLabel && (
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tierColor}`}>{tierLabel}</span>
-                                )}
-                              </div>
-                              <p className="mt-0.5 text-xs text-gray-500">{feat.desc}</p>
-                              <p className="mt-1 text-[11px] text-gray-400 italic">{feat.example}</p>
-                            </div>
-                          </div>
-                        </button>
-                        {/* Tooltip on hover */}
-                        <div className="pointer-events-none absolute left-0 right-0 -bottom-1 translate-y-full z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                          <div className="mx-4 rounded-lg bg-gray-900 px-3 py-2 text-xs text-white shadow-lg">
-                            <p>{feat.tip}</p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Background features (auto-enabled, not shown to customer in bot) */}
-                <div className="mt-6">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const el = document.getElementById('background-features');
-                      if (el) el.classList.toggle('hidden');
-                    }}
-                    className="flex items-center gap-2 text-xs font-medium text-gray-500 hover:text-gray-700"
-                  >
-                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                    Advanced: Background features
-                  </button>
-                  <div id="background-features" className="hidden mt-3 space-y-2">
-                    <p className="text-xs text-gray-400 mb-2">These work behind the scenes. Customers don&apos;t see them in the bot menu.</p>
-                    {([
-                      { id: 'feedback' as CapabilityId, title: 'Customer Reviews', desc: 'Automatically ask for ratings after a booking or order' },
-                      { id: 'loyalty' as CapabilityId, title: 'Loyalty Program', desc: 'Reward repeat customers with points' },
-                      { id: 'referral' as CapabilityId, title: 'Referral Program', desc: 'Let customers earn rewards for referring friends' },
-                      { id: 'reminders' as CapabilityId, title: 'Auto Reminders', desc: 'Send booking/payment reminders automatically' },
-                      { id: 'reports' as CapabilityId, title: 'Document Sharing', desc: 'Send documents to customers via WhatsApp' },
-                      { id: 'waitlist' as CapabilityId, title: 'Waitlist', desc: 'Automatically manage waitlists when fully booked' },
-                    ] as const).map(feat => {
-                      const isSelected = selectedCapabilities.includes(feat.id);
-                      const tier = CAPABILITY_TIER_REQUIREMENTS[feat.id] || 'free';
-                      const tierLabel = tier === 'free' ? null : tier === 'growth' ? 'Pro' : 'Premium';
-                      const tierColor = tier === 'growth' ? 'bg-blue-100 text-blue-700' : tier === 'business' ? 'bg-brand-100 text-brand-700' : '';
-                      return (
-                        <button
-                          key={feat.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedCapabilities(prev =>
-                              prev.includes(feat.id)
-                                ? prev.filter(c => c !== feat.id)
-                                : [...prev, feat.id]
-                            );
-                          }}
-                          className={`w-full flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
-                            isSelected ? 'border-brand/50 bg-brand-50/30' : 'border-gray-200 bg-white'
-                          }`}
-                        >
-                          <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
-                            isSelected ? 'border-brand bg-brand' : 'border-gray-300'
-                          }`}>
-                            {isSelected && <svg className="h-2.5 w-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium text-gray-700">{feat.title}</span>
-                            {tierLabel && <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${tierColor}`}>{tierLabel}</span>}
-                            <span className="text-[11px] text-gray-400">{feat.desc}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Selected count & plan indicator */}
-                <div className="mt-6 rounded-xl bg-gray-50 border border-gray-200 px-4 py-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-medium text-gray-700">
-                        {selectedCapabilities.length} feature{selectedCapabilities.length !== 1 ? 's' : ''} selected
-                      </p>
-                      <p className="text-[11px] text-gray-500 mt-0.5">
-                        {requiredPlan === 'free' ? (
-                          <span className="text-green-600 font-medium">Free plan — no monthly fee, {String(localTiers?.free?.feePercentage ?? 2)}% per transaction</span>
-                        ) : requiredPlan === 'growth' ? (
-                          <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}/mo, {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
-                        ) : (
-                          <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}/mo, {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
-                        )}
-                      </p>
-                    </div>
-                    {selectedCapabilities.length === 0 && (
-                      <button type="button" onClick={() => {
-                        const defaults = CATEGORY_DEFAULT_CAPABILITIES[category!] || ['chat'];
-                        setSelectedCapabilities([...defaults]);
-                      }} className="text-xs font-medium text-brand hover:underline">
-                        Reset to defaults
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-gray-400 mt-1">You can always change this later in Dashboard &rarr; Settings</p>
-                </div>
-
-                <div className="mt-6">
-                  <p className="text-center text-xs text-gray-500 mb-3">All features included free for 30 days. No credit card required.</p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Auto-select plan based on features (for backend tier assignment)
-                      const planOrder = ['free', 'growth', 'business'] as const;
-                      const requiredIdx = planOrder.indexOf(requiredPlan);
-                      const currentIdx = planOrder.indexOf(selectedPlan);
-                      if (requiredIdx > currentIdx) {
-                        setSelectedPlan(requiredPlan as SubscriptionTier);
-                      }
-                      setStep('details');
-                    }}
-                    disabled={selectedCapabilities.length === 0}
-                    className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50"
-                  >
-                    Start Free Trial
-                  </button>
-                  {selectedCapabilities.length === 0 && (
-                    <p className="text-center text-xs text-red-500 mt-2">Please select at least one feature to continue</p>
-                  )}
-                </div>
-              </div>
+              <StepFeatures
+                selectedCapabilities={selectedCapabilities}
+                setSelectedCapabilities={setSelectedCapabilities}
+                selectedPlan={selectedPlan}
+                setSelectedPlan={setSelectedPlan}
+                selectedCountry={selectedCountry}
+                category={category}
+                requiredPlan={requiredPlan}
+                localTiers={localTiers}
+                setStep={setStep}
+              />
             )}
 
             {/* ── Step 4: Plan ── */}
             {step === 'plan' && (
-              <div>
-                <button type="button" onClick={() => setStep('category')} className="mb-4 flex items-center gap-1 text-sm text-gray-500 hover:text-brand">
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-                  Back
-                </button>
-                <h2 className="text-2xl font-bold text-gray-900">Choose your plan</h2>
-                <p className="mt-1 text-sm text-gray-500">
-                  Select the plan that fits your business needs. Each tier unlocks more capabilities.
-                </p>
-
-                <div className="mt-6 space-y-4">
-                  {/* Free / Starter */}
-                  <button type="button" onClick={() => {
-                    setSelectedPlan('free');
-                    // Remove capabilities above free tier
-                    setSelectedCapabilities(prev => prev.filter(c => (CAPABILITY_TIER_REQUIREMENTS[c] || 'free') === 'free'));
-                  }} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'free' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
-                    {requiredPlan === 'free' && selectedCapabilities.length > 0 && (
-                      <span className="absolute -top-3 left-4 rounded-full bg-green-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.free?.name || 'Starter')}</h3>
-                        <p className="text-2xl font-bold text-brand">{formatCurrency(0, selectedCountry)} <span className="text-sm font-normal text-gray-400">30-day trial</span></p>
-                      </div>
-                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'free' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                        {selectedPlan === 'free' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                      </div>
-                    </div>
-                    <p className="mt-2 text-sm text-gray-600">Try Waaiio risk-free. Accept bookings, collect payments, and chat with customers on WhatsApp.</p>
-                    <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Auto-book appointments &amp; take orders</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Collect payments via WhatsApp</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 50 bookings/month</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> {String(localTiers?.free?.feePercentage ?? 2)}% per transaction — no monthly fee</li>
-                    </ul>
-                  </button>
-
-                  {/* Growth / Pro */}
-                  <button type="button" onClick={() => {
-                    setSelectedPlan('growth');
-                    // Remove capabilities above growth tier
-                    setSelectedCapabilities(prev => prev.filter(c => {
-                      const t = CAPABILITY_TIER_REQUIREMENTS[c] || 'free';
-                      return t === 'free' || t === 'growth';
-                    }));
-                  }} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'growth' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
-                    <span className="absolute -top-3 right-4 rounded-full bg-accent px-3 py-0.5 text-xs font-bold text-gray-900">Most Popular</span>
-                    {requiredPlan === 'growth' && (
-                      <span className="absolute -top-3 left-4 rounded-full bg-blue-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.growth?.name || 'Pro')}</h3>
-                        <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
-                      </div>
-                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'growth' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                        {selectedPlan === 'growth' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                      </div>
-                    </div>
-                    <p className="mt-2 text-sm text-gray-600">Grow faster with automated reminders, loyalty rewards, and your own WhatsApp number.</p>
-                    <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Starter</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Automated reminders — reduce no-shows by 60%</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Loyalty points &amp; referral program — customers come back</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {String(localTiers?.growth?.feePercentage ?? 1.5)}% fees</li>
-                      <li className="flex items-center gap-2"><span className="text-brand">&#9733;</span> <span className="font-medium text-gray-700">Connect your own WhatsApp number</span></li>
-                    </ul>
-                  </button>
-
-                  {/* Business / Premium */}
-                  <button type="button" onClick={() => setSelectedPlan('business')} className={`relative w-full rounded-2xl border-2 p-5 text-left transition ${selectedPlan === 'business' ? 'border-brand bg-brand-50/30' : 'border-gray-200 hover:border-gray-300'}`}>
-                    {requiredPlan === 'business' && (
-                      <span className="absolute -top-3 left-4 rounded-full bg-brand-600 px-3 py-0.5 text-[10px] font-bold text-white">Based on your features</span>
-                    )}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.business?.name || 'Premium')}</h3>
-                        <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
-                      </div>
-                      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'business' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                        {selectedPlan === 'business' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                      </div>
-                    </div>
-                    <p className="mt-2 text-sm text-gray-600">Full platform with unlimited bookings, e-signatures, staff management, and your brand — not ours.</p>
-                    <ul className="mt-3 space-y-1.5 text-xs text-gray-500">
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Pro</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Unlimited bookings &amp; conversations</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> WhatsApp Sign — send documents for e-signature</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Staff management, queue, waitlist, invoices</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Whitelabel — your brand, not Waaiio</li>
-                      <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Lowest fees: {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</li>
-                    </ul>
-                  </button>
-                </div>
-
-                <div className="mt-8">
-                  <button type="button" onClick={() => setStep('details')} disabled={!selectedPlan} className="w-full rounded-xl bg-brand py-3.5 text-sm font-bold text-white transition hover:bg-brand-600 disabled:opacity-50">
-                    Continue
-                  </button>
-                </div>
-              </div>
+              <StepPlan
+                selectedPlan={selectedPlan}
+                setSelectedPlan={setSelectedPlan}
+                selectedCapabilities={selectedCapabilities}
+                setSelectedCapabilities={setSelectedCapabilities}
+                selectedCountry={selectedCountry}
+                requiredPlan={requiredPlan}
+                localTiers={localTiers}
+                setStep={setStep}
+              />
             )}
 
-            {/* ── Step 3: Details ── */}
+            {/* ── Step 5: Details ── */}
             {step === 'details' && (
-              <form onSubmit={handleRegister}>
-                <h2 className="text-2xl font-bold text-gray-900">{categoryInfo ? `${categoryInfo.label} Details` : 'Business Details'}</h2>
-                <p className="mt-1 text-sm text-gray-500">Tell us about your {categoryInfo?.label.toLowerCase() || 'business'}</p>
-                <div className="mt-6 space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">First Name *</label>
-                      <input type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)}
-                        placeholder="e.g. Ayodeji"
-                        className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Last Name *</label>
-                      <input type="text" value={lastName} onChange={(e) => setLastName(e.target.value)}
-                        placeholder="e.g. Ogunleye"
-                        className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">{categoryInfo?.label || 'Business'} Name *</label>
-                    <input type="text" value={name} onChange={(e) => handleNameChange(e.target.value)}
-                      placeholder={category === 'restaurant' ? 'e.g. Bukka Hut & Grill' : category === 'barber' ? "e.g. King's Cuts" : 'e.g. Your Business Name'}
-                      className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
-                    {nameCheckStatus === 'checking' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-gray-500">
-                        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
-                        Checking availability...
-                      </p>
-                    )}
-                    {nameCheckStatus === 'available' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-green-600">
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                        Available
-                      </p>
-                    )}
-                    {nameCheckStatus === 'taken' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-600">
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        Name taken, will be adjusted automatically
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Your WhatsApp Business Name *</label>
-                    <p className="mb-2 text-xs text-gray-500">
-                      This is the name customers will text to the Waaiio WhatsApp number to find and interact with your business.
-                      It also appears in your WhatsApp link. Pick something short, memorable, and easy to spell.
-                    </p>
-                    <input
-                      type="text"
-                      value={customBotCode}
-                      onChange={(e) => handleBotCodeChange(e.target.value)}
-                      placeholder="e.g. LOLAH-BEAUTY"
-                      className="w-full rounded-xl border border-gray-300 px-4 py-3 font-mono text-sm uppercase outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
-                      required
-                    />
-                    {botCodeStatus === 'checking' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-gray-500">
-                        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-gray-400 border-t-transparent" />
-                        Checking availability...
-                      </p>
-                    )}
-                    {botCodeStatus === 'available' && customBotCode.length >= 2 && (
-                      <div className="mt-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
-                        <p className="flex items-center gap-1.5 text-xs font-medium text-green-700">
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                          Available!
-                        </p>
-                        <p className="mt-1 text-xs text-green-600">
-                          Customers will text <strong>&quot;{customBotCode}&quot;</strong> to the Waaiio WhatsApp number to reach your business.
-                        </p>
-                      </div>
-                    )}
-                    {botCodeStatus === 'taken' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-red-600">
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        Already taken. Try something different like &quot;{suggestedBotCode ? suggestedBotCode + '-' + (name.split(' ')[name.split(' ').length - 1]?.toUpperCase().slice(0, 4) || 'BIZ') : 'YOUR-CODE'}&quot;
-                      </p>
-                    )}
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Address *</label>
-                    <AddressAutocomplete
-                      defaultValue={address}
-                      countryCode={selectedCountry}
-                      onSelect={(result) => {
-                        setAddress(result.address);
-                        setCity(result.city);
-                        setState(result.state);
-                        setZipCode(result.zipCode);
-                      }}
-                      onManualChange={(val) => setAddress(val)}
-                    />
-                    <p className="mt-1 text-xs text-gray-400">Start typing to search — city, state, and zip will auto-fill</p>
-                  </div>
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">City *</label>
-                      <input type="text" value={city} onChange={(e) => setCity(e.target.value)} placeholder="City" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">State</label>
-                      <input type="text" value={state} onChange={(e) => setState(e.target.value)} placeholder="State / Province" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" />
-                    </div>
-                    <div>
-                      <label className="mb-1.5 block text-sm font-medium text-gray-700">Zip Code</label>
-                      <input type="text" value={zipCode} onChange={(e) => setZipCode(e.target.value)} placeholder="Zip / Postal" className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Phone *</label>
-                    <PhoneInput value={businessPhone} onChange={setBusinessPhone} />
-                  </div>
-                </div>
-                {/* WhatsApp Connection (Pro/Premium only) */}
-                {selectedPlan !== 'free' && (
-                  <div className="mt-8 rounded-2xl border border-gray-200 bg-gray-50 p-5">
-                    <h3 className="text-sm font-bold text-gray-900">WhatsApp Connection</h3>
-                    <p className="mt-1 text-xs text-gray-500">As a {selectedPlan === 'growth' ? 'Pro' : 'Premium'} user, you can connect your own WhatsApp number.</p>
-                    <div className="mt-4 space-y-2">
-                      <button type="button" onClick={() => setWaMethod('shared')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod === 'shared' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
-                        <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod === 'shared' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                          {waMethod === 'shared' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">Use Waaiio&apos;s shared number</p>
-                          <p className="text-xs text-gray-500">Get started instantly — no setup needed</p>
-                        </div>
-                      </button>
-                      <button type="button" onClick={() => setWaMethod('transfer')} className={`flex w-full items-center gap-3 rounded-xl border-2 p-3 text-left transition ${waMethod !== 'shared' ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'}`}>
-                        <div className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border-2 ${waMethod !== 'shared' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
-                          {waMethod !== 'shared' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">Connect my own WhatsApp number</p>
-                          <p className="text-xs text-gray-500">Use your existing business or personal number</p>
-                        </div>
-                      </button>
-                    </div>
-                    {waMethod !== 'shared' && (
-                      <div className="mt-4 space-y-4">
-                        {/* Facebook Embedded Signup */}
-                        {!fbConnected ? (
-                          <div className="rounded-xl border border-gray-200 bg-white p-4">
-                            <div className="flex items-center gap-3 mb-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#1877F2]">
-                                <svg className="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                                </svg>
-                              </div>
-                              <div>
-                                <h4 className="text-sm font-bold text-gray-900">Connect with Facebook</h4>
-                                <p className="text-xs text-gray-500">Link your WhatsApp Business Account</p>
-                              </div>
-                            </div>
-                            {fbConnecting ? (
-                              <div className="flex flex-col items-center py-4">
-                                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-                                <p className="mt-3 text-xs text-gray-500">Complete the signup in the popup...</p>
-                                <button type="button" onClick={() => setFbConnecting(false)} className="mt-2 text-xs text-gray-400 hover:text-brand underline">Cancel</button>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={launchWhatsAppSignup}
-                                disabled={!fbSdkReady}
-                                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1877F2] py-3 text-sm font-bold text-white transition hover:bg-[#166FE5] disabled:opacity-50"
-                              >
-                                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
-                                  <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/>
-                                </svg>
-                                {fbSdkReady ? 'Connect with Facebook' : 'Loading Facebook...'}
-                              </button>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="rounded-xl border-2 border-green-200 bg-green-50 p-4">
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-green-100">
-                                <svg className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                </svg>
-                              </div>
-                              <div>
-                                <h4 className="text-sm font-bold text-green-900">Facebook Connected</h4>
-                                <p className="text-xs text-green-700">{discoveredWabas[0]?.waba_name || 'WhatsApp Business Account linked'}</p>
-                              </div>
-                              <button type="button" onClick={() => { setFbConnected(false); setFbConnectionData(null); setDiscoveredWabas([]); }} className="ml-auto text-xs text-green-600 hover:underline">Reconnect</button>
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Phone number + Display name */}
-                        <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                          <div>
-                            <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Phone Number *</label>
-                            <PhoneInput value={ownPhone} onChange={setOwnPhone} countryCode={selectedCountry} />
-                            <p className="mt-1 text-xs text-gray-400">The number you want to use with Waaiio</p>
-                          </div>
-                          <div>
-                            <label className="mb-1.5 block text-sm font-medium text-gray-700">WhatsApp Display Name</label>
-                            <input
-                              type="text"
-                              value={fbConnectionData?.display_name || ''}
-                              onChange={(e) => setFbConnectionData(prev => prev ? { ...prev, display_name: e.target.value } : { waba_id: '', phone_number_id: '', access_token: '', token_expires_at: '', display_name: e.target.value })}
-                              placeholder={name || 'Your business name on WhatsApp'}
-                              className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100"
-                            />
-                          </div>
-                        </div>
-
-                        <p className="text-xs text-gray-400 text-center">You can also set this up later from your dashboard settings.</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {error && <p className="mt-4 text-sm text-red-600">{error}</p>}
-
-                {/* Terms & Conditions */}
-                <label className="mt-6 flex items-start gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={agreedToTerms}
-                    onChange={e => setAgreedToTerms(e.target.checked)}
-                    className="mt-0.5 rounded border-gray-300"
-                    required
-                  />
-                  <span className="text-xs text-gray-500 leading-relaxed">
-                    I agree to Waaiio&apos;s{' '}
-                    <a href="/terms" target="_blank" className="text-brand underline hover:text-brand-600">Terms of Service</a>.
-                  </span>
-                </label>
-
-                {/* Data Processing Consent (GDPR — separate from Terms) */}
-                <label className="mt-3 flex items-start gap-2.5 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={agreedToDataProcessing}
-                    onChange={e => setAgreedToDataProcessing(e.target.checked)}
-                    className="mt-0.5 rounded border-gray-300"
-                    required
-                  />
-                  <span className="text-xs text-gray-500 leading-relaxed">
-                    I consent to Waaiio processing my business and customer data as described in the{' '}
-                    <a href="/privacy" target="_blank" className="text-brand underline hover:text-brand-600">Privacy Policy</a>.
-                  </span>
-                </label>
-
-                <div className="mt-4 flex gap-3">
-                  <button type="button" onClick={() => setStep('category')} className="rounded-xl border border-gray-300 px-5 py-3.5 text-sm font-medium text-gray-600 transition hover:bg-gray-50">Back</button>
-                  <button type="submit" disabled={loading || !agreedToTerms || !agreedToDataProcessing || !firstName || !lastName || !name || !city || !address || !businessPhone || !customBotCode || customBotCode.length < 2 || botCodeStatus === 'taken'} className={`flex-1 rounded-xl py-3.5 text-sm font-bold transition disabled:opacity-50 ${selectedPlan === 'free' ? 'bg-brand text-white hover:bg-brand-600' : 'bg-accent text-gray-900 shadow-lg shadow-accent/20 hover:bg-accent-400'}`}>
-                    {loading ? 'Setting up...' : selectedPlan === 'free' ? 'Start Free Trial' : `Pay ${formatCurrency(localTiers[selectedPlan]?.price as number || 0, selectedCountry)}/mo & Launch`}
-                  </button>
-                </div>
-              </form>
+              <StepDetails
+                firstName={firstName}
+                setFirstName={setFirstName}
+                lastName={lastName}
+                setLastName={setLastName}
+                name={name}
+                handleNameChange={handleNameChange}
+                nameCheckStatus={nameCheckStatus}
+                customBotCode={customBotCode}
+                handleBotCodeChange={handleBotCodeChange}
+                botCodeStatus={botCodeStatus}
+                suggestedBotCode={suggestedBotCode}
+                address={address}
+                setAddress={setAddress}
+                city={city}
+                setCity={setCity}
+                state={state}
+                setState={setState}
+                zipCode={zipCode}
+                setZipCode={setZipCode}
+                businessPhone={businessPhone}
+                setBusinessPhone={setBusinessPhone}
+                selectedCountry={selectedCountry}
+                selectedPlan={selectedPlan}
+                waMethod={waMethod}
+                setWaMethod={setWaMethod}
+                ownPhone={ownPhone}
+                setOwnPhone={setOwnPhone}
+                fbConnecting={fbConnecting}
+                setFbConnecting={setFbConnecting}
+                fbConnected={fbConnected}
+                setFbConnected={setFbConnected}
+                fbSdkReady={fbSdkReady}
+                fbConnectionData={fbConnectionData}
+                setFbConnectionData={setFbConnectionData}
+                discoveredWabas={discoveredWabas}
+                setDiscoveredWabas={setDiscoveredWabas}
+                agreedToTerms={agreedToTerms}
+                setAgreedToTerms={setAgreedToTerms}
+                agreedToDataProcessing={agreedToDataProcessing}
+                setAgreedToDataProcessing={setAgreedToDataProcessing}
+                loading={loading}
+                error={error}
+                category={category}
+                categoryInfo={categoryInfo}
+                localTiers={localTiers}
+                launchWhatsAppSignup={launchWhatsAppSignup}
+                handleRegister={handleRegister}
+                setStep={setStep}
+              />
             )}
 
             {/* Persona and Connect steps removed — persona is post-signup, connect is merged into details */}
@@ -2045,108 +1268,17 @@ function OnboardingWizard() {
 
             {/* ── Step 7: Success ── */}
             {step === 'success' && (
-              <div className="text-center">
-                {loading ? (
-                  <div className="py-16">
-                    <div className="mx-auto h-10 w-10 animate-spin rounded-full border-4 border-brand border-t-transparent" />
-                    <p className="mt-4 text-sm text-gray-500">Verifying payment...</p>
-                  </div>
-                ) : successData ? (
-                  <>
-                    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-green-100">
-                      <svg className="h-10 w-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                    <h2 className="mt-6 text-2xl font-bold text-gray-900">Your automation is live!</h2>
-                    <p className="mt-2 text-sm text-gray-500">
-                      {waMethod === 'shared'
-                        ? 'Share this link with customers to start taking '
-                        : 'Your WhatsApp number is being connected. In the meantime, share this test link: '}
-                      {selectedCapabilities.includes('scheduling') ? 'bookings' : selectedCapabilities.includes('ordering') ? 'orders' : selectedCapabilities.includes('ticketing') ? 'tickets' : 'payments'}
-                    </p>
-
-                    {waMethod !== 'shared' && (
-                      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left">
-                        <p className="text-xs font-semibold text-amber-800">WhatsApp Number Connection</p>
-                        <p className="mt-1 text-xs text-amber-700">
-                          Our team is setting up your dedicated WhatsApp number. You&apos;ll receive an email when it&apos;s ready (usually within 24 hours). For now, you can test using our shared number below.
-                        </p>
-                      </div>
-                    )}
-
-                    {/* WhatsApp link + QR */}
-                    <div className="mt-6 rounded-2xl bg-green-50 border border-green-200 p-5">
-                      <p className="text-xs font-bold uppercase tracking-wider text-green-700">Your WhatsApp Link</p>
-                      <p className="mt-2 break-all text-sm font-mono text-green-900">{waLink}</p>
-                      <div className="mt-4 flex gap-2 justify-center">
-                        <button type="button" onClick={() => navigator.clipboard.writeText(waLink)} className="rounded-lg border border-green-300 px-4 py-2 text-xs font-medium text-green-700 hover:bg-green-100">Copy Link</button>
-                        <a href={waLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 rounded-lg bg-whatsapp px-4 py-2 text-xs font-bold text-white">
-                          <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-                          Test on WhatsApp
-                        </a>
-                      </div>
-                    </div>
-
-                    {/* ── What to set up next ── */}
-                    <div className="mt-8 text-left">
-                      <h3 className="text-lg font-bold text-gray-900">Set up your bot</h3>
-                      <p className="mt-1 text-xs text-gray-500">Your bot is live but needs content. Add your services, products, or events so customers can interact with it.</p>
-
-                      <div className="mt-4 space-y-2">
-                        {([
-                          { cap: 'appointment' as CapabilityId, icon: '📅', title: 'Add your appointments', desc: 'Add the services customers can book — name, price, duration, staff.', href: '/dashboard/appointments-management', cta: 'Add appointments' },
-                          { cap: 'scheduling' as CapabilityId, icon: '🛎️', title: 'Add your services', desc: 'List the services you offer with prices.', href: '/dashboard/services', cta: 'Add services' },
-                          { cap: 'ordering' as CapabilityId, icon: '🛒', title: 'Add your products', desc: 'Build your menu or catalog — name, price, photo, description.', href: '/dashboard/products', cta: 'Add products' },
-                          { cap: 'reservation' as CapabilityId, icon: '🏠', title: 'Add your properties', desc: 'Add rooms, apartments, or vehicles with photos and pricing.', href: '/dashboard/properties', cta: 'Add properties' },
-                          { cap: 'ticketing' as CapabilityId, icon: '🎫', title: 'Create your first event', desc: 'Add an event with ticket types, pricing, and venue details.', href: '/dashboard/events', cta: 'Create event' },
-                          { cap: 'giving' as CapabilityId, icon: '🙏', title: 'Set up giving categories', desc: 'Add tithe, offering, or donation categories for your community.', href: '/dashboard/giving', cta: 'Set up giving' },
-                          { cap: 'payment' as CapabilityId, icon: '💳', title: 'Set up payment categories', desc: 'Add fee types or payment categories customers can pay for.', href: '/dashboard/services', cta: 'Add categories' },
-                          { cap: 'invoice' as CapabilityId, icon: '🧾', title: 'Create your first invoice', desc: 'Send a professional invoice with payment link.', href: '/dashboard/invoices', cta: 'Create invoice' },
-                        ] as const)
-                          .filter(item => selectedCapabilities.includes(item.cap))
-                          .map(item => (
-                            <a
-                              key={item.cap}
-                              href={item.href}
-                              className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-4 transition hover:border-brand hover:bg-brand-50/30"
-                            >
-                              <span className="text-2xl">{item.icon}</span>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-semibold text-gray-900">{item.title}</p>
-                                <p className="text-xs text-gray-500">{item.desc}</p>
-                              </div>
-                              <span className="shrink-0 rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-white">{item.cta}</span>
-                            </a>
-                          ))}
-
-                        {/* Always show payout setup */}
-                        <a
-                          href="/dashboard/payouts"
-                          className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 transition hover:border-amber-300"
-                        >
-                          <span className="text-2xl">🏦</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-amber-800">Connect your payout account</p>
-                            <p className="text-xs text-amber-700">Add your bank details so you can receive customer payments.</p>
-                          </div>
-                          <span className="shrink-0 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white">Set up</span>
-                        </a>
-                      </div>
-                    </div>
-
-                    <div className="mt-8 border-t border-gray-200 pt-6">
-                      <a href="/dashboard" className="inline-block rounded-xl bg-brand px-8 py-3.5 text-sm font-bold text-white transition hover:bg-brand-600">Go to Dashboard</a>
-                      <p className="mt-2 text-xs text-gray-400">You can always set these up later from your dashboard</p>
-                    </div>
-                  </>
-                ) : (
-                  <div className="py-16">
-                    <p className="text-sm text-gray-500">{error || 'Something went wrong. Please contact support.'}</p>
-                    <button type="button" onClick={() => { setStep('details'); setError(''); }} className="mt-4 text-sm font-semibold text-brand hover:underline">Try again</button>
-                  </div>
-                )}
-              </div>
+              <StepSuccess
+                loading={loading}
+                successData={successData}
+                waMethod={waMethod}
+                waLink={waLink}
+                selectedCapabilities={selectedCapabilities}
+                error={error}
+                setStep={setStep}
+                setError={setError}
+                fbConnectionData={fbConnectionData}
+              />
             )}
           </div>
         </div>
