@@ -46,6 +46,7 @@ export default function ScanToPayPage() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [qrModal, setQrModal] = useState<PaymentLink | null>(null);
+  const [editingLink, setEditingLink] = useState<PaymentLink | null>(null);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -93,6 +94,48 @@ export default function ScanToPayPage() {
     });
 
     if (res.ok) {
+      setTitle('');
+      setAmount('');
+      setDescription('');
+      setExpiresAt('');
+      setMaxUses('');
+      setShowForm(false);
+      await fetchLinks();
+    }
+    setSaving(false);
+  }
+
+  function startEdit(link: PaymentLink) {
+    setEditingLink(link);
+    setTitle(link.title);
+    setAmount(link.amount ? String(link.amount) : '');
+    setDescription(link.description || '');
+    setExpiresAt(link.expires_at ? link.expires_at.slice(0, 16) : '');
+    setMaxUses(link.max_uses ? String(link.max_uses) : '');
+    setShowForm(true);
+  }
+
+  async function handleUpdate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingLink || !title.trim()) return;
+
+    setSaving(true);
+    const res = await fetch('/api/pay-link/manage', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        businessId: business.id,
+        id: editingLink.id,
+        title: title.trim(),
+        amount: amount ? Number(amount) : null,
+        description: description.trim() || null,
+        expires_at: expiresAt || null,
+        max_uses: maxUses ? Number(maxUses) : null,
+      }),
+    });
+
+    if (res.ok) {
+      setEditingLink(null);
       setTitle('');
       setAmount('');
       setDescription('');
@@ -174,7 +217,7 @@ export default function ScanToPayPage() {
       {/* Create form */}
       {showForm && (
         <form
-          onSubmit={handleCreate}
+          onSubmit={editingLink ? handleUpdate : handleCreate}
           className="mt-6 rounded-xl border border-gray-100 bg-white p-5 dark:border-gray-700 dark:bg-gray-800"
         >
           <h2 className="text-sm font-semibold text-gray-900 dark:text-white">
@@ -262,7 +305,7 @@ export default function ScanToPayPage() {
           <div className="mt-4 flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setShowForm(false)}
+              onClick={() => { setShowForm(false); setEditingLink(null); setTitle(''); setAmount(''); setDescription(''); setExpiresAt(''); setMaxUses(''); }}
               className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
             >
               Cancel
@@ -272,7 +315,7 @@ export default function ScanToPayPage() {
               disabled={saving || !title.trim()}
               className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
             >
-              {saving ? 'Creating...' : 'Create Link'}
+              {saving ? (editingLink ? 'Saving...' : 'Creating...') : (editingLink ? 'Save Changes' : 'Create Link')}
             </button>
           </div>
         </form>
@@ -337,6 +380,13 @@ export default function ScanToPayPage() {
                 {/* Actions */}
                 <div className="flex shrink-0 items-center gap-2">
                   <button
+                    onClick={() => startEdit(link)}
+                    className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                    title="Edit"
+                  >
+                    Edit
+                  </button>
+                  <button
                     onClick={() => setQrModal(link)}
                     className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                     title="Show QR Code"
@@ -397,7 +447,11 @@ export default function ScanToPayPage() {
               </div>
             </div>
 
-            <p className="mt-4 break-all text-center font-mono text-xs text-gray-400">
+            <p className="mt-3 text-center text-[10px] font-medium tracking-wider text-gray-300 dark:text-gray-600">
+              Powered by Waaiio
+            </p>
+
+            <p className="mt-2 break-all text-center font-mono text-xs text-gray-400">
               {appUrl}/pay/{qrModal.token}
             </p>
 
