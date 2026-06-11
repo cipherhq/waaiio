@@ -81,17 +81,16 @@ export async function handleMyOrders(
       .limit(10);
 
     if (!orders || orders.length === 0) {
-      await sendText(from, "You don't have any active orders.\n\nType *my account* for more options or *Hi* to start over.");
-      return; // Don't deactivate — user can type another command
+      await messageSender.sendButtons({
+        to: from,
+        body: "You don't have any active orders.",
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      });
+      return;
     }
 
-    if (orders.length <= 3) {
-      // Show as buttons
-      const firstOrder = orders[0];
-      const biz = firstOrder.businesses as unknown as { name: string; country_code?: CountryCode } | null;
-      const cc = (biz?.country_code as CountryCode) || 'NG';
-      const { emoji } = formatOrderStatus(firstOrder.status);
-
+    if (orders.length <= 2) {
+      // Show as buttons (max 2 orders + back button = 3 total)
       const lines = orders.map((o) => {
         const b = o.businesses as unknown as { name: string; country_code?: CountryCode } | null;
         const occ = (b?.country_code as CountryCode) || 'NG';
@@ -102,16 +101,19 @@ export async function handleMyOrders(
 
       await sendText(from, `📦 *Your Orders*\n\n${lines.join('\n\n')}`);
 
+      const buttons = orders.map((o) => ({
+        id: `order_${o.id}`,
+        title: truncTitle(`${o.reference_code}`),
+      }));
+      buttons.push({ id: 'back_to_account', title: '← Back' });
+
       await messageSender.sendButtons({
         to: from,
         body: 'Select an order to view details:',
-        buttons: orders.slice(0, 3).map((o, i) => ({
-          id: `order_${o.id}`,
-          title: truncTitle(`${o.reference_code}`),
-        })),
+        buttons,
       });
     } else {
-      // Show as list
+      // Show as list with back option
       const items = orders.map((o) => {
         const b = o.businesses as unknown as { name: string; country_code?: CountryCode } | null;
         const occ = (b?.country_code as CountryCode) || 'NG';
@@ -123,6 +125,7 @@ export async function handleMyOrders(
           postbackText: `order_${o.id}`,
         };
       });
+      items.push({ title: '← Back to My Account', description: 'Return to account menu', postbackText: 'back_to_account' });
 
       await messageSender.sendList({
         to: from,

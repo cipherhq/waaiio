@@ -96,8 +96,12 @@ export async function handleMyBookings(
     }
 
     if (items.length === 0) {
-      await sendText(from, "You don't have any upcoming bookings, tickets, or stays.\n\nType *my account* for more options or *Hi* to start over.");
-      return; // Don't deactivate — user can type another command
+      await messageSender.sendButtons({
+        to: from,
+        body: "You don't have any upcoming bookings, tickets, or stays.",
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      });
+      return;
     }
 
     await messageSender.sendList({
