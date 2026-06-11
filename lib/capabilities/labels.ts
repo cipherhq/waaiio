@@ -46,6 +46,8 @@ export function getCapabilityLabel(cap: CapabilityId, category: string, customLa
       return 'My Rewards';
     case 'invoice':
       return 'My Invoices';
+    case 'waiver':
+      return 'Sign Waiver';
     default:
       return cap;
   }

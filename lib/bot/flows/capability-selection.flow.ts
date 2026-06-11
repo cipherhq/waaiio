@@ -85,6 +85,11 @@ const selectCapabilityStep: FlowStepConfig = {
             .eq('business_id', businessId).eq('is_active', true).neq('service_type', 'giving').is('deleted_at', null);
           return [cap, (count || 0) > 0];
         }
+        case 'waiver': {
+          const { count } = await ctx.supabase.from('waiver_templates').select('id', { count: 'exact', head: true })
+            .eq('business_id', businessId).eq('is_active', true);
+          return [cap, (count || 0) > 0];
+        }
         case 'waitlist':
           return [cap, false]; // waitlist is never shown as a menu option — triggered automatically when no slots
         default:
@@ -250,6 +255,8 @@ const selectCapabilityStep: FlowStepConfig = {
             capId = userFacing.find(c => c === 'ticketing') || null;
           } else if (/\b(chat|talk|speak|help|support)\b/i.test(input)) {
             capId = userFacing.find(c => c === 'chat') || null;
+          } else if (/\b(waiver|sign|release\s*form|liability)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'waiver') || null;
           }
         }
       }
@@ -336,6 +343,40 @@ const selectCapabilityStep: FlowStepConfig = {
       }
     }
 
+    // Waiver: send signing link inline (no separate flow)
+    if (capId === 'waiver' && ctx.business) {
+      const { data: templates } = await ctx.supabase
+        .from('waiver_templates')
+        .select('id, title, token')
+        .eq('business_id', ctx.business.id)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false });
+
+      if (templates && templates.length > 0) {
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+        if (templates.length === 1) {
+          const t = templates[0];
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t(`📋 *${t.title}*\n\nSign your waiver here:\n${appUrl}/w/${t.token}\n\nOpen the link on your phone to read and sign.`),
+          });
+        } else {
+          const lines = templates.map((t, i) => `${i + 1}. *${t.title}*\n   ${appUrl}/w/${t.token}`);
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t(`📋 *Waivers to Sign*\n\n${lines.join('\n\n')}\n\nOpen a link to read and sign.`),
+          });
+        }
+      } else {
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: await ctx.t('No waivers are available right now.'),
+        });
+      }
+      // Return to capability menu
+      return { valid: true, data: { active_capability: 'waiver', _waiver_handled: true } };
+    }
+
     return {
       valid: true,
       data: { active_capability: capId },
@@ -345,6 +386,11 @@ const selectCapabilityStep: FlowStepConfig = {
   async next(ctx: FlowContext) {
     const cap = ctx.session.session_data.active_capability as string;
     if (cap === 'my_account') return 'my_account_menu';
+    // Waiver was handled inline — return to capability menu
+    if (ctx.session.session_data._waiver_handled) {
+      delete ctx.session.session_data._waiver_handled;
+      return 'select_capability';
+    }
     return getFirstStepForCapability(cap as CapabilityId);
   },
 };
