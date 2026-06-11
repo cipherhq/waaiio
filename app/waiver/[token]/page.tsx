@@ -40,6 +40,13 @@ export default function WaiverSignPage() {
   const [medicalConditions, setMedicalConditions] = useState('');
   const [allergies, setAllergies] = useState('');
 
+  // Age verification
+  const [isAdult, setIsAdult] = useState(true);
+  const [guardianName, setGuardianName] = useState('');
+  const [guardianRelationship, setGuardianRelationship] = useState('');
+  const [guardianHasDrawn, setGuardianHasDrawn] = useState(false);
+  const guardianCanvasRef = useRef<HTMLCanvasElement>(null);
+
   // Fetch waiver details
   useEffect(() => {
     async function fetchWaiver() {
@@ -80,13 +87,30 @@ export default function WaiverSignPage() {
     ctx.lineJoin = 'round';
   }, []);
 
+  const initGuardianCanvas = useCallback(() => {
+    const canvas = guardianCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * 2;
+    canvas.height = rect.height * 2;
+    ctx.scale(2, 2);
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }, []);
+
   useEffect(() => {
     if (state === 'ready') {
-      // Small delay to ensure canvas is rendered
-      const timer = setTimeout(initCanvas, 100);
+      const timer = setTimeout(() => {
+        initCanvas();
+        initGuardianCanvas();
+      }, 100);
       return () => clearTimeout(timer);
     }
-  }, [state, initCanvas]);
+  }, [state, initCanvas, initGuardianCanvas, isAdult]);
 
   function getPoint(e: React.TouchEvent | React.MouseEvent) {
     const canvas = canvasRef.current!;
@@ -133,6 +157,49 @@ export default function WaiverSignPage() {
     setHasDrawn(false);
   }
 
+  // Guardian signature drawing helpers
+  function getGuardianPoint(e: React.TouchEvent | React.MouseEvent) {
+    const canvas = guardianCanvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    if ('touches' in e) {
+      const touch = e.touches[0];
+      return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+    }
+    return { x: (e as React.MouseEvent).clientX - rect.left, y: (e as React.MouseEvent).clientY - rect.top };
+  }
+  const [guardianDrawing, setGuardianDrawing] = useState(false);
+  function startGuardianDraw(e: React.TouchEvent | React.MouseEvent) {
+    e.preventDefault();
+    const ctx = guardianCanvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    setGuardianDrawing(true);
+    setGuardianHasDrawn(true);
+    const point = getGuardianPoint(e);
+    ctx.beginPath();
+    ctx.moveTo(point.x, point.y);
+  }
+  function guardianDraw(e: React.TouchEvent | React.MouseEvent) {
+    e.preventDefault();
+    if (!guardianDrawing) return;
+    const ctx = guardianCanvasRef.current?.getContext('2d');
+    if (!ctx) return;
+    const point = getGuardianPoint(e);
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+  }
+  function endGuardianDraw(e: React.TouchEvent | React.MouseEvent) {
+    e.preventDefault();
+    setGuardianDrawing(false);
+  }
+  function clearGuardianCanvas() {
+    const canvas = guardianCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setGuardianHasDrawn(false);
+  }
+
   async function handleSubmit() {
     const canvas = canvasRef.current;
     if (!canvas || !waiver) return;
@@ -148,6 +215,14 @@ export default function WaiverSignPage() {
     }
     if (medicalConditions) metadata.medical_conditions = medicalConditions;
     if (allergies) metadata.allergies = allergies;
+    if (!isAdult) {
+      metadata.is_minor = 'true';
+      metadata.guardian_name = guardianName.trim();
+      metadata.guardian_relationship = guardianRelationship.trim();
+      if (guardianCanvasRef.current) {
+        metadata.guardian_signature = guardianCanvasRef.current.toDataURL('image/png');
+      }
+    }
 
     try {
       const fullName = `${firstName.trim()} ${lastName.trim()}`.trim();
@@ -182,9 +257,11 @@ export default function WaiverSignPage() {
   }
 
   const hasFields = (field: string) => waiver?.fields?.includes(field);
+  const guardianValid = isAdult || (guardianName.trim() && guardianRelationship.trim() && guardianHasDrawn);
   const canSubmit = firstName.trim() && lastName.trim() && hasDrawn && agreed
     && customerEmail.trim()
-    && (!alsoWhatsApp || customerPhone.trim());
+    && (!alsoWhatsApp || customerPhone.trim())
+    && guardianValid;
 
   if (state === 'loading') {
     return (
@@ -293,6 +370,92 @@ export default function WaiverSignPage() {
               I have read and agree to the above waiver and release
             </span>
           </label>
+
+          {/* Age verification */}
+          <div className="space-y-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isAdult}
+                onChange={e => setIsAdult(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <span className="text-sm text-gray-600">
+                I confirm that I am 18 years of age or older
+              </span>
+            </label>
+
+            {!isAdult && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+                <p className="text-sm font-semibold text-amber-800">Parent / Guardian Required</p>
+                <p className="text-xs text-amber-700">
+                  Since the participant is under 18, a parent or legal guardian must provide their information and signature below.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-amber-800 mb-1">
+                      Guardian Full Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={guardianName}
+                      onChange={e => setGuardianName(e.target.value)}
+                      placeholder="Parent/Guardian name"
+                      maxLength={200}
+                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-amber-800 mb-1">
+                      Relationship <span className="text-red-500">*</span>
+                    </label>
+                    <select
+                      value={guardianRelationship}
+                      onChange={e => setGuardianRelationship(e.target.value)}
+                      className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="">Select...</option>
+                      <option value="Parent">Parent</option>
+                      <option value="Legal Guardian">Legal Guardian</option>
+                      <option value="Mother">Mother</option>
+                      <option value="Father">Father</option>
+                      <option value="Grandparent">Grandparent</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="mb-2 text-xs font-medium text-amber-800">
+                    Guardian Signature <span className="text-red-500">*</span>
+                  </p>
+                  <div className="overflow-hidden rounded-xl border-2 border-dashed border-amber-300 bg-white">
+                    <canvas
+                      ref={guardianCanvasRef}
+                      className="h-36 w-full cursor-crosshair"
+                      style={{ touchAction: 'none' }}
+                      onMouseDown={startGuardianDraw}
+                      onMouseMove={guardianDraw}
+                      onMouseUp={endGuardianDraw}
+                      onMouseLeave={endGuardianDraw}
+                      onTouchStart={startGuardianDraw}
+                      onTouchMove={guardianDraw}
+                      onTouchEnd={endGuardianDraw}
+                    />
+                  </div>
+                  {guardianHasDrawn && (
+                    <button
+                      onClick={clearGuardianCanvas}
+                      type="button"
+                      className="mt-1 text-xs font-medium text-amber-700 hover:text-amber-800"
+                    >
+                      Clear guardian signature
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Form fields */}
           <div className="space-y-4">
