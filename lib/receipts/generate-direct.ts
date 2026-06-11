@@ -88,10 +88,16 @@ async function buildReceipt(
     ? [customerPhone, customerPhone.slice(1)]
     : [customerPhone, `+${customerPhone}`];
 
-  const [bookingRes, chargeRes, paymentRes, orderRes, donationRes] = await Promise.all([
+  const [bookingRes, bookingByPhoneRes, chargeRes, paymentRes, orderRes, donationRes] = await Promise.all([
     supabase.from('bookings')
       .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
       .eq('user_id', userId).in('status', ['completed', 'confirmed', 'pending'])
+      .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    // Fallback: find by guest_phone (bot bookings may not link user_id correctly)
+    supabase.from('bookings')
+      .select('id, reference_code, date, status, total_amount, created_at, services(name), businesses(name, country_code, subscription_tier, logo_url)')
+      .or(`guest_phone.eq.${phoneVariants[0]},guest_phone.eq.${phoneVariants[1]}`)
+      .in('status', ['completed', 'confirmed', 'pending'])
       .order('created_at', { ascending: false }).limit(1).maybeSingle(),
     supabase.from('subscription_charges')
       .select('id, reference_code, amount, status, created_at, businesses:business_id(name, country_code, subscription_tier, logo_url)')
@@ -113,6 +119,7 @@ async function buildReceipt(
   ]);
 
   const recentBooking = bookingRes.data;
+  const recentBookingByPhone = bookingByPhoneRes.data;
   const recentCharge = chargeRes.data;
   const recentPayment = paymentRes.data;
   const recentOrder = orderRes.data;
@@ -120,6 +127,7 @@ async function buildReceipt(
 
   // Log errors for debugging (non-blocking)
   if (bookingRes.error) logger.warn('[RECEIPTS] Booking query error:', bookingRes.error.message);
+  if (bookingByPhoneRes.error) logger.warn('[RECEIPTS] Booking by phone query error:', bookingByPhoneRes.error.message);
   if (chargeRes.error) logger.warn('[RECEIPTS] Charge query error:', chargeRes.error.message);
   if (paymentRes.error) logger.warn('[RECEIPTS] Payment query error:', paymentRes.error.message);
   if (orderRes.error) logger.warn('[RECEIPTS] Order query error:', orderRes.error.message);
@@ -128,6 +136,7 @@ async function buildReceipt(
   type Candidate = { source: string; date: Date; data: any };
   const candidates: Candidate[] = [];
   if (recentBooking) candidates.push({ source: 'booking', date: new Date(recentBooking.created_at), data: recentBooking });
+  if (recentBookingByPhone && recentBookingByPhone.id !== recentBooking?.id) candidates.push({ source: 'booking', date: new Date(recentBookingByPhone.created_at), data: recentBookingByPhone });
   if (recentCharge) candidates.push({ source: 'charge', date: new Date(recentCharge.created_at), data: recentCharge });
   if (recentPayment) candidates.push({ source: 'payment', date: new Date(recentPayment.created_at), data: recentPayment });
   if (recentOrder) candidates.push({ source: 'order', date: new Date(recentOrder.created_at), data: recentOrder });
