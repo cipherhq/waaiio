@@ -22,7 +22,11 @@ const loyaltyMenuStep: FlowStepConfig = {
     const businessId = ctx.session.business_id || ctx.session.session_data.loyalty_business_id as string;
     if (!businessId) {
       ctx.session.session_data._loyalty_empty = true;
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! Send *Hi* to start over." }];
+      return [{
+        type: 'buttons',
+        body: "You don't have any loyalty points yet. Start using our services to earn rewards!",
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      }];
     }
 
     const { data: loyalty } = await ctx.supabase
@@ -34,7 +38,11 @@ const loyaltyMenuStep: FlowStepConfig = {
 
     if (!loyalty) {
       ctx.session.session_data._loyalty_empty = true;
-      return [{ type: 'text', text: "You don't have any loyalty points yet. Start using our services to earn rewards! Send *Hi* to start over." }];
+      return [{
+        type: 'buttons',
+        body: "You don't have any loyalty points yet. Start using our services to earn rewards!",
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      }];
     }
 
     // Store loyalty ID for later steps
@@ -65,24 +73,26 @@ const loyaltyMenuStep: FlowStepConfig = {
         buttons: [
           { id: 'view_history', title: 'View History' },
           { id: 'redeem', title: 'Redeem Reward' },
+          { id: 'back_to_account', title: '← Back' },
         ],
       },
     ];
   },
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    if (input === 'back_to_account') return { valid: true, data: { _loyalty_action: 'back_to_account' } };
     if (input === 'view_history') return { valid: true, data: { _loyalty_action: 'history' } };
     if (input === 'redeem') return { valid: true, data: { _loyalty_action: 'redeem' } };
     // If no loyalty record, any input routes back to my account
-    if (ctx.session.session_data._loyalty_empty) return { valid: true, data: { _loyalty_action: 'back' } };
+    if (ctx.session.session_data._loyalty_empty) return { valid: true, data: { _loyalty_action: 'back_to_account' } };
     return { valid: false, errorMessage: 'Please select an option.' };
   },
 
   async next(ctx: FlowContext) {
     const action = ctx.session.session_data._loyalty_action;
+    if (action === 'back_to_account') return 'my_account_menu';
     if (action === 'history') return 'loyalty_history';
     if (action === 'redeem') return 'loyalty_redeem';
-    if (action === 'back') return null; // End session cleanly when no loyalty data
     return null;
   },
 };
@@ -112,7 +122,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
         {
           type: 'buttons',
           body: 'Anything else?',
-          buttons: [{ id: 'back_menu', title: 'Back to Menu' }],
+          buttons: [{ id: 'back_menu', title: 'Back to Menu' }, { id: 'back_to_account', title: '← Back' }],
         },
       ];
     }
@@ -139,12 +149,14 @@ const loyaltyHistoryStep: FlowStepConfig = {
   },
 
   async validate(input: string): Promise<ValidationResult> {
+    if (input === 'back_to_account') return { valid: true, data: { _loyalty_nav: 'account' } };
     if (input === 'back_menu') return { valid: true, data: { _loyalty_nav: 'menu' } };
     // Any text → treat as back to menu
     return { valid: true, data: { _loyalty_nav: 'menu' } };
   },
 
   async next(ctx: FlowContext) {
+    if (ctx.session.session_data._loyalty_nav === 'account') return 'my_account_menu';
     return 'loyalty_menu';
   },
 };

@@ -17,7 +17,11 @@ const invoiceListStep: FlowStepConfig = {
 
     if (!businessId) {
       ctx.session.session_data._invoice_empty = true;
-      return [{ type: 'text', text: 'You\'re all caught up — no outstanding invoices! ✅ Send *Hi* to start over.' }];
+      return [{
+        type: 'buttons',
+        body: 'You\'re all caught up — no outstanding invoices! ✅',
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      }];
     }
 
     const { data: invoices } = await ctx.supabase
@@ -31,7 +35,11 @@ const invoiceListStep: FlowStepConfig = {
 
     if (!invoices || invoices.length === 0) {
       ctx.session.session_data._invoice_empty = true;
-      return [{ type: 'text', text: 'You\'re all caught up — no outstanding invoices! ✅ Send *Hi* to start over.' }];
+      return [{
+        type: 'buttons',
+        body: 'You\'re all caught up — no outstanding invoices! ✅',
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      }];
     }
 
     // Store invoice list for selection
@@ -53,16 +61,28 @@ const invoiceListStep: FlowStepConfig = {
       return `${emoji} ${inv.invoice_number} • ${formatCurrency(inv.total_amount, cc)} • Due ${dueDateStr}${statusTag}`;
     });
 
-    return [{
-      type: 'text',
-      text: `📄 *Your Invoices*\n\n${lines.join('\n')}\n\nReply with a number to view or pay.`,
-    }];
+    return [
+      {
+        type: 'text',
+        text: `📄 *Your Invoices*\n\n${lines.join('\n')}\n\nReply with a number to view or pay.`,
+      },
+      {
+        type: 'buttons',
+        body: ' ',
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      },
+    ];
   },
 
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    // Handle back to account
+    if (input === 'back_to_account') {
+      return { valid: true, data: { _invoice_action: 'back_to_account' } };
+    }
+
     // If no invoices were found, any input just routes back
     if (ctx.session.session_data._invoice_empty) {
-      return { valid: true };
+      return { valid: true, data: { _invoice_action: 'back_to_account' } };
     }
 
     const list = (ctx.session.session_data._invoice_list as string[]) || [];
@@ -76,6 +96,7 @@ const invoiceListStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
+    if (ctx.session.session_data._invoice_action === 'back_to_account') return 'my_account_menu';
     if (ctx.session.session_data._invoice_empty) return null; // End session cleanly when no invoices
     return 'invoice_detail';
   },

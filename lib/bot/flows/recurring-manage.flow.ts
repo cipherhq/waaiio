@@ -26,7 +26,11 @@ export const recurringManageFlow: FlowDefinition = {
 
         if (!subs || subs.length === 0) {
           ctx.session.session_data._recurring_empty = true;
-          return [{ type: 'text', text: 'You have no active recurring payments. Send *Hi* to start a new payment.' }];
+          return [{
+            type: 'buttons',
+            body: 'You have no active recurring payments.',
+            buttons: [{ id: 'back_to_account', title: '← Back' }],
+          }];
         }
 
         // Load service names
@@ -44,22 +48,30 @@ export const recurringManageFlow: FlowDefinition = {
           label: `${serviceMap.get(s.service_id) || 'Payment'} - ${formatCurrency(s.amount, cc)}/${s.frequency}`,
         }));
 
+        const listItems = subs.map((s, i) => ({
+          title: `${serviceMap.get(s.service_id) || 'Payment'}`,
+          description: `${formatCurrency(s.amount, cc)}/${s.frequency} - ${s.status}${s.card_last_four ? ` (*${s.card_last_four})` : ''}`,
+          postbackText: s.id,
+        }));
+        listItems.push({ title: '← Back to My Account', description: 'Return to account menu', postbackText: 'back_to_account' });
+
         return [{
           type: 'list',
           title: 'Your Recurring Payments',
           body: `You have ${subs.length} recurring payment(s):`,
           buttonLabel: 'Select',
-          items: subs.map((s, i) => ({
-            title: `${serviceMap.get(s.service_id) || 'Payment'}`,
-            description: `${formatCurrency(s.amount, cc)}/${s.frequency} - ${s.status}${s.card_last_four ? ` (*${s.card_last_four})` : ''}`,
-            postbackText: s.id,
-          })),
+          items: listItems,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // Handle back to account
+        if (input === 'back_to_account') {
+          return { valid: true, data: { _recurring_action: 'back_to_account' } };
+        }
+
         // If no subscriptions found, any input routes back
         if (ctx.session.session_data._recurring_empty) {
-          return { valid: true };
+          return { valid: true, data: { _recurring_action: 'back_to_account' } };
         }
 
         const subs = ctx.session.session_data._recurring_subs as Array<{ id: string; label: string }>;
@@ -68,6 +80,7 @@ export const recurringManageFlow: FlowDefinition = {
         return { valid: true, data: { _selected_sub_id: selected.id, _selected_sub_label: selected.label } };
       },
       async next(ctx: FlowContext) {
+        if (ctx.session.session_data._recurring_action === 'back_to_account') return 'my_account_menu';
         if (ctx.session.session_data._recurring_empty) return null; // End session cleanly when no recurring payments
         return 'select_action';
       },

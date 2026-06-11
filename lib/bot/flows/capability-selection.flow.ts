@@ -445,6 +445,12 @@ const myAccountMenuStep: FlowStepConfig = {
   async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
     const action = input.toLowerCase().trim();
 
+    // Handle back to account menu (from sub-section back buttons)
+    if (action === 'back_to_account') {
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
+    }
+
     // Map selections to built-in bot.service.ts handlers via session step
     // Handle receipt request — try PDF, fall back to text receipt via transaction-docs handler
     if (action === 'acct_receipt' || action === 'receipt' || action === 'my receipt') {
@@ -526,7 +532,11 @@ const myAccountMenuStep: FlowStepConfig = {
       }
 
       if (allGiving.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("You don't have any giving history yet. Send *Hi* to give!") });
+        await ctx.sender.sendButtons({
+          to: ctx.from,
+          body: await ctx.t("You don't have any giving history yet. Send *Hi* to give!"),
+          buttons: [{ id: 'back_to_account', title: '← Back' }],
+        });
       } else {
         const total = allGiving.reduce((sum, g) => sum + g.amount, 0);
         const bizCC = (ctx.business?.country_code || 'NG') as CountryCode;
@@ -534,9 +544,14 @@ const myAccountMenuStep: FlowStepConfig = {
           ...allGiving.slice(0, 8).map(g => `📅 ${g.date} — *${g.label}* — ${formatCurrency(g.amount, bizCC)}`),
           '', `💰 *Total: ${formatCurrency(total, bizCC)}*`];
         await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(lines.join('\n')) });
+        await ctx.sender.sendButtons({
+          to: ctx.from,
+          body: ' ',
+          buttons: [{ id: 'back_to_account', title: '← Back' }],
+        });
       }
-      ctx.session.session_data._my_account_route = 'select_capability';
-      return { valid: true, data: { _my_account_route: 'select_capability' } };
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
     }
 
     // Handle contracts inline
@@ -551,7 +566,11 @@ const myAccountMenuStep: FlowStepConfig = {
         .limit(10);
 
       if (!contracts || contracts.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("You don't have any contracts. Send *Hi* to start over.") });
+        await ctx.sender.sendButtons({
+          to: ctx.from,
+          body: await ctx.t("You don't have any contracts."),
+          buttons: [{ id: 'back_to_account', title: '← Back' }],
+        });
       } else {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const pending = contracts.filter(c => c.status === 'pending');
@@ -570,9 +589,14 @@ const myAccountMenuStep: FlowStepConfig = {
           }
         }
         await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(lines.join('\n')) });
+        await ctx.sender.sendButtons({
+          to: ctx.from,
+          body: ' ',
+          buttons: [{ id: 'back_to_account', title: '← Back' }],
+        });
       }
-      ctx.session.session_data._my_account_route = 'select_capability';
-      return { valid: true, data: { _my_account_route: 'select_capability' } };
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
     }
 
     // Handle quotes inline
@@ -587,7 +611,11 @@ const myAccountMenuStep: FlowStepConfig = {
         .limit(10);
 
       if (!quotes || quotes.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("You don't have any price requests. Send *Hi* to start over.") });
+        await ctx.sender.sendButtons({
+          to: ctx.from,
+          body: await ctx.t("You don't have any price requests."),
+          buttons: [{ id: 'back_to_account', title: '← Back' }],
+        });
       } else {
         const emoji: Record<string, string> = { pending: '⏳', quoted: '💰', accepted: '✅', rejected: '❌', expired: '⌛' };
         const lines = ['📋 *Your Price Requests*', ''];
@@ -601,9 +629,14 @@ const myAccountMenuStep: FlowStepConfig = {
           lines.push(line);
         }
         await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(lines.join('\n')) });
+        await ctx.sender.sendButtons({
+          to: ctx.from,
+          body: ' ',
+          buttons: [{ id: 'back_to_account', title: '← Back' }],
+        });
       }
-      ctx.session.session_data._my_account_route = 'select_capability';
-      return { valid: true, data: { _my_account_route: 'select_capability' } };
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
     }
 
     // Route to flow steps — bookings/orders are stub steps in this flow,
