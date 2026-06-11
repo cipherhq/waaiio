@@ -43,7 +43,7 @@ export async function handleEscapeHatch(
   const { supabase, messageSender, flowExecutor, intelligence } = ctx;
 
   const isChatMode = step === 'chat_handoff' || step === 'chat_start';
-  const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail';
+  const isBookingMgmt = step === 'my_bookings' || step === 'modify_booking' || step === 'my_orders' || step === 'order_detail' || step === 'list_subscriptions' || step === 'loyalty_menu' || step === 'invoice_list';
   const trimmedText = text.trim();
   // Simplified: cancel = back (go back one step)
   const isCancelOrBack = CANCEL_PATTERN.test(trimmedText) || BACK_PATTERNS.some(p => p.test(trimmedText));
@@ -53,15 +53,25 @@ export async function handleEscapeHatch(
 
   // ── 3 SIMPLE COMMANDS: back/cancel, menu, exit ──
 
-  // "back" or "cancel" in booking management → go to business menu or marketplace
+  // "back" or "cancel" in booking management → go back to My Account menu
   if (isCancelOrBack && isBookingMgmt && !isChatMode) {
-    await deactivateSession(session.id);
+    // Route back to My Account menu (not restart completely)
+    session.current_step = 'my_account_menu';
+    session.session_data = { ...session.session_data, active_capability: 'my_account' };
+    await supabase.from('bot_sessions').update({
+      current_step: 'my_account_menu',
+      session_data: session.session_data,
+    }).eq('id', session.id);
+    // Load business context if available
+    let biz = null;
     if (session.business_id) {
-      await handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
-    } else {
-      // No business context (accessed via global "my orders" etc.) → restart fresh
-      await handleMessage(from, 'Hi', messageType, destinationPhone);
+      const { data } = await supabase
+        .from('businesses')
+        .select('id, name, slug, category, flow_type, subscription_tier, trial_ends_at, metadata, operating_hours, country_code, payment_gateway')
+        .eq('id', session.business_id).single();
+      biz = data;
     }
+    await flowExecutor.execute(from, '', session, biz);
     return { handled: true };
   }
 
