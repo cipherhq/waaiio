@@ -27,7 +27,7 @@ export async function handleChatHandoff(
   reenterBot: (from: string, text: string, messageType: string, destinationPhone?: string, businessId?: string) => Promise<void>,
   forwardToBusinessOwner: (businessId: string, customerPhone: string, customerName: string | null, messageText: string) => Promise<void>,
 ): Promise<void> {
-  const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat)$/i.test(text);
+  const restartMatch = /^(restart|start\s*over|end\s*chat|exit\s*chat|close\s*chat|stop\s*chat|back|cancel|exit|quit|stop|menu)$/i.test(text);
   if (restartMatch) {
     await deactivateSession(session.id);
     // Also resolve the conversation so the dashboard shows it as resolved

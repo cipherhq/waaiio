@@ -525,7 +525,9 @@ export class BotService {
       isGreetingText ||
       (!isMidFlow && isBookingText && !isBareActionWord) ||
       isBotCodeRestart
-    );
+    )
+    // Allow greetings to trigger restart even at free-text steps (not chat) — prevents "Hi" being saved as a name
+    || (isFreeTextStep && !isChatStep && isGreetingText);
 
     // Mid-flow greeting: ask for confirmation before resetting
     if (session && isMidFlow && isRestart && isGreetingText && !isBotCodeRestart) {
@@ -1471,7 +1473,7 @@ export class BotService {
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
       // Handle navigation commands at suggestion step (no business_id, so escape hatch guard skips these)
-      if (/^(menu|back|exit|home|cancel|quit|stop)$/i.test(text)) {
+      if (/^(menu|back|exit|home|cancel|quit|stop|restart|start\s*over|hi|hello|hey)$/i.test(text)) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
         await this.handleMessage(from, 'Hi', messageType, destinationPhone);
         return;
