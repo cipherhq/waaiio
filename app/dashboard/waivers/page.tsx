@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 import { WAIVER_TEMPLATES, fillWaiverPlaceholders } from '@/lib/waiver-templates';
 
 interface WaiverTemplate {
@@ -18,8 +19,6 @@ interface WaiverTemplate {
   created_at: string;
   updated_at: string;
 }
-
-type TemplateMode = 'blank' | 'template' | 'pdf';
 
 interface SignedWaiver {
   id: string;
@@ -36,6 +35,7 @@ interface SignedWaiver {
 }
 
 type ActiveTab = 'templates' | 'signed';
+type TemplateMode = 'blank' | 'template' | 'pdf';
 
 const FIELD_OPTIONS = [
   { key: 'emergency_contact', label: 'Emergency Contact' },
@@ -43,8 +43,20 @@ const FIELD_OPTIONS = [
   { key: 'allergies', label: 'Allergies' },
 ];
 
+const FIELD_LABELS: Record<string, string> = {
+  name: 'Name',
+  signature: 'Signature',
+  date: 'Date',
+  email: 'Email',
+  phone: 'Phone',
+  emergency_contact: 'Emergency Contact',
+  medical_conditions: 'Medical Conditions',
+  allergies: 'Allergies',
+};
+
 export default function WaiversPage() {
   const business = useBusiness();
+  const supabase = createClient();
   const [tab, setTab] = useState<ActiveTab>('templates');
   const [loading, setLoading] = useState(true);
 
@@ -68,7 +80,11 @@ export default function WaiversPage() {
   const [signedWaivers, setSignedWaivers] = useState<SignedWaiver[]>([]);
   const [signedLoading, setSignedLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [filterTemplateId, setFilterTemplateId] = useState('');
   const [selectedSigned, setSelectedSigned] = useState<SignedWaiver | null>(null);
+
+  // Signed count per template
+  const [signedCounts, setSignedCounts] = useState<Record<string, number>>({});
 
   // Copied link state
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
@@ -80,28 +96,54 @@ export default function WaiversPage() {
     setTimeout(() => setToastMsg(''), 3000);
   }, []);
 
-  // Fetch templates
+  // Fetch templates via direct supabase client (reads)
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/waivers/templates?business_id=${business.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        setTemplates(data);
-      }
+      const { data } = await supabase
+        .from('waiver_templates')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('is_active', { ascending: false })
+        .order('created_at', { ascending: false });
+
+      setTemplates(data || []);
     } catch {
       // silent
     } finally {
       setLoading(false);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 
-  // Fetch signed waivers
+  // Fetch signed waivers count per template
+  const fetchSignedCounts = useCallback(async () => {
+    try {
+      const { data } = await supabase
+        .from('signed_waivers')
+        .select('template_id')
+        .eq('business_id', business.id);
+
+      if (data) {
+        const counts: Record<string, number> = {};
+        for (const row of data) {
+          counts[row.template_id] = (counts[row.template_id] || 0) + 1;
+        }
+        setSignedCounts(counts);
+      }
+    } catch {
+      // silent
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [business.id]);
+
+  // Fetch signed waivers via API (supports search + filter)
   const fetchSigned = useCallback(async () => {
     setSignedLoading(true);
     try {
       const params = new URLSearchParams({ business_id: business.id });
       if (search) params.set('search', search);
+      if (filterTemplateId) params.set('template_id', filterTemplateId);
       const res = await fetch(`/api/waivers/signed?${params}`);
       if (res.ok) {
         const data = await res.json();
@@ -112,11 +154,12 @@ export default function WaiversPage() {
     } finally {
       setSignedLoading(false);
     }
-  }, [business.id, search]);
+  }, [business.id, search, filterTemplateId]);
 
   useEffect(() => {
     fetchTemplates();
-  }, [fetchTemplates]);
+    fetchSignedCounts();
+  }, [fetchTemplates, fetchSignedCounts]);
 
   useEffect(() => {
     if (tab === 'signed') fetchSigned();
@@ -185,7 +228,6 @@ export default function WaiversPage() {
 
     setUploadingPdf(true);
     try {
-      const supabase = createClient();
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
       const path = `waivers/${business.id}/templates/${Date.now()}_${safeName}`;
 
@@ -226,7 +268,6 @@ export default function WaiversPage() {
       };
 
       if (editingTemplate) {
-        // Update
         const res = await fetch(`/api/waivers/templates/${editingTemplate.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -238,7 +279,6 @@ export default function WaiversPage() {
           fetchTemplates();
         }
       } else {
-        // Create
         const res = await fetch('/api/waivers/templates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -287,15 +327,27 @@ export default function WaiversPage() {
     });
   }
 
-  // Get signature URL from Supabase storage
   function getSignatureDisplayUrl(signatureUrl: string | null) {
     if (!signatureUrl) return null;
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     return `${supabaseUrl}/storage/v1/object/public/contracts/${signatureUrl}`;
   }
 
+  // Sort templates: active first, then inactive
+  const sortedTemplates = [...templates].sort((a, b) => {
+    if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+      {/* PageHelp */}
+      <PageHelp
+        pageKey="waivers"
+        title="Waivers"
+        description="Create digital liability waivers and release forms. Share a link with customers to sign before their appointment or event. Track all signed waivers in one place."
+      />
+
       {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -338,13 +390,18 @@ export default function WaiversPage() {
           }`}
         >
           Signed Waivers
+          {Object.values(signedCounts).reduce((a, b) => a + b, 0) > 0 && (
+            <span className="ml-1.5 inline-flex items-center rounded-full bg-brand/10 px-1.5 py-0.5 text-xs font-medium text-brand">
+              {Object.values(signedCounts).reduce((a, b) => a + b, 0)}
+            </span>
+          )}
         </button>
       </div>
 
-      {/* Templates Tab */}
+      {/* ===== Templates Tab ===== */}
       {tab === 'templates' && (
         <>
-          {/* Form modal */}
+          {/* Create/Edit Form */}
           {showForm && (
             <div className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
@@ -352,7 +409,7 @@ export default function WaiversPage() {
               </h2>
 
               <div className="space-y-4">
-                {/* Template mode selector — only show when creating new */}
+                {/* Template mode selector -- only for new templates */}
                 {!editingTemplate && (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -419,6 +476,7 @@ export default function WaiversPage() {
                   </div>
                 )}
 
+                {/* Title */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                     Title
@@ -433,7 +491,7 @@ export default function WaiversPage() {
                   />
                 </div>
 
-                {/* PDF upload area */}
+                {/* PDF upload OR text body */}
                 {templateMode === 'pdf' ? (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -510,6 +568,7 @@ export default function WaiversPage() {
                   </div>
                 )}
 
+                {/* Additional fields checkboxes */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Additional Fields
@@ -529,6 +588,7 @@ export default function WaiversPage() {
                   </div>
                 </div>
 
+                {/* Require before booking toggle */}
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -537,11 +597,12 @@ export default function WaiversPage() {
                     className="h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
                   />
                   <span className="text-sm text-gray-600 dark:text-gray-400">
-                    Require before booking (coming soon)
+                    Require before booking
                   </span>
                 </label>
               </div>
 
+              {/* Form actions */}
               <div className="mt-6 flex gap-3">
                 <button
                   onClick={resetForm}
@@ -575,14 +636,19 @@ export default function WaiversPage() {
             />
           ) : (
             <div className="space-y-3">
-              {templates.map(tpl => (
+              {sortedTemplates.map(tpl => (
                 <div
                   key={tpl.id}
-                  className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm"
+                  className={`rounded-xl border bg-white dark:bg-gray-800 p-4 shadow-sm transition ${
+                    tpl.is_active
+                      ? 'border-gray-200 dark:border-gray-700'
+                      : 'border-gray-200 dark:border-gray-700 opacity-60'
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      {/* Title + badges */}
+                      <div className="flex flex-wrap items-center gap-2">
                         <h3 className="truncate text-sm font-semibold text-gray-900 dark:text-white">
                           {tpl.title}
                         </h3>
@@ -600,22 +666,51 @@ export default function WaiversPage() {
                             PDF
                           </span>
                         )}
+                        {tpl.require_before_booking && (
+                          <span className="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 text-xs font-medium text-blue-700 dark:text-blue-400">
+                            Required before booking
+                          </span>
+                        )}
                       </div>
-                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+
+                      {/* Body preview */}
+                      {tpl.body && (
+                        <p className="mt-1 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">
+                          {tpl.body}
+                        </p>
+                      )}
+
+                      {/* Fields list */}
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {tpl.fields.map(f => (
+                          <span
+                            key={f}
+                            className="inline-flex items-center rounded bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-400"
+                          >
+                            {FIELD_LABELS[f] || f}
+                          </span>
+                        ))}
+                      </div>
+
+                      {/* Meta: created date + signed count */}
+                      <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
                         Created {new Date(tpl.created_at).toLocaleDateString()}
+                        {signedCounts[tpl.id] ? (
+                          <span className="ml-2 font-medium text-brand">
+                            {signedCounts[tpl.id]} signed
+                          </span>
+                        ) : null}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {/* Copy Link */}
+                    {/* Action buttons */}
+                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => copyLink(tpl.token)}
                         className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700"
                       >
-                        {copiedToken === tpl.token ? 'Copied!' : 'Copy Link'}
+                        {copiedToken === tpl.token ? 'Copied!' : 'Share'}
                       </button>
-
-                      {/* Edit */}
                       <button
                         onClick={() => openEditForm(tpl)}
                         className="rounded-lg border border-gray-200 dark:border-gray-600 p-1.5 text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700 hover:text-gray-600"
@@ -625,8 +720,6 @@ export default function WaiversPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                         </svg>
                       </button>
-
-                      {/* Toggle active */}
                       <button
                         onClick={() => handleToggleActive(tpl)}
                         className={`rounded-lg border p-1.5 transition ${
@@ -655,7 +748,7 @@ export default function WaiversPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
                     <span className="truncate text-xs text-gray-500 dark:text-gray-400 font-mono">
-                      {appUrl}/waiver/{tpl.token}
+                      {appUrl}/w/{tpl.token}
                     </span>
                   </div>
                 </div>
@@ -665,18 +758,32 @@ export default function WaiversPage() {
         </>
       )}
 
-      {/* Signed Waivers Tab */}
+      {/* ===== Signed Waivers Tab ===== */}
       {tab === 'signed' && (
         <>
-          {/* Search */}
-          <div className="mb-4">
+          {/* Search + filter row */}
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row">
             <input
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search by name, phone, or email..."
-              className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
+              className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
             />
+            {templates.length > 0 && (
+              <select
+                value={filterTemplateId}
+                onChange={e => setFilterTemplateId(e.target.value)}
+                className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand sm:w-56"
+              >
+                <option value="">All templates</option>
+                {templates.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.title} ({signedCounts[t.id] || 0})
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {signedLoading ? (
@@ -696,7 +803,8 @@ export default function WaiversPage() {
                   <thead className="bg-gray-50 dark:bg-gray-800">
                     <tr>
                       <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Customer</th>
-                      <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Phone</th>
+                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 sm:table-cell">Phone</th>
+                      <th className="hidden px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 md:table-cell">Email</th>
                       <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Waiver</th>
                       <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Signed</th>
                       <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">Actions</th>
@@ -708,8 +816,11 @@ export default function WaiversPage() {
                         <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-white whitespace-nowrap">
                           {sw.customer_name}
                         </td>
-                        <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                        <td className="hidden px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap sm:table-cell">
                           {sw.customer_phone || '-'}
+                        </td>
+                        <td className="hidden px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap md:table-cell">
+                          {sw.customer_email || '-'}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
                           {sw.waiver_templates?.title || '-'}
@@ -717,7 +828,6 @@ export default function WaiversPage() {
                         <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
                           {new Date(sw.signed_at).toLocaleDateString('en-US', {
                             month: 'short', day: 'numeric', year: 'numeric',
-                            hour: '2-digit', minute: '2-digit',
                           })}
                         </td>
                         <td className="px-4 py-3 text-right">
@@ -738,7 +848,7 @@ export default function WaiversPage() {
         </>
       )}
 
-      {/* Signed waiver detail modal */}
+      {/* ===== Signed Waiver Detail Modal ===== */}
       {selectedSigned && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white dark:bg-gray-800 p-6 shadow-xl">
@@ -833,6 +943,7 @@ export default function WaiversPage() {
               )}
             </div>
 
+            {/* View full document link */}
             <a
               href={`/w/view/${selectedSigned.id}?token=${selectedSigned.access_token || ''}`}
               target="_blank"
@@ -840,7 +951,9 @@ export default function WaiversPage() {
               className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand/90"
             >
               View Full Document
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
             </a>
             <button
               onClick={() => setSelectedSigned(null)}
@@ -852,7 +965,7 @@ export default function WaiversPage() {
         </div>
       )}
 
-      {/* Toast */}
+      {/* Toast notification */}
       {toastMsg && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm text-white shadow-lg">
           {toastMsg}
