@@ -2401,7 +2401,22 @@ export class BotService {
             return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
           }
         }
-        // Non-free-text steps: fall through to executor (it handles back/cancel)
+        // Non-free-text steps: if at beginning (select_capability/greeting), show options instead of dead-end
+        const earlySteps = ['select_capability', 'greeting', 'post_completion'];
+        if (earlySteps.includes(step) && session.business_id) {
+          const { data: biz } = await this.supabase.from('businesses').select('name').eq('id', session.business_id).single();
+          await this.deactivateSession(session.id);
+          await this.messageSender.sendButtons({
+            to: from,
+            body: `You've left ${biz?.name || 'the business'}. What next?`,
+            buttons: [
+              { id: 'go_back_biz', title: 'Back to Menu' },
+              { id: 'switch_biz', title: 'Switch Business' },
+            ],
+          });
+          return;
+        }
+        // Other non-free-text steps: fall through to executor (it handles back/cancel)
       }
 
       // ── "exit" / "quit" / "stop" → leave business ──
@@ -2608,9 +2623,12 @@ export class BotService {
 
     // Handle post-completion menu (after successful transaction)
     if (step === 'post_completion') {
-      if (text === 'pc_done') {
-        // Done — deactivate and say goodbye
+      if (text === 'pc_options' || text === 'pc_done') {
+        // View Options — restart at capability menu for same business
         await this.deactivateSession(session.id);
+        if (session.business_id) {
+          await this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+        }
         return;
       }
       if (text === 'pc_again') {

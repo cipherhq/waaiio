@@ -611,32 +611,32 @@ export class FlowExecutor {
       buttons = [
         { id: 'pc_again', title: 'Give Again' },
         { id: 'pc_history', title: 'My Giving' },
-        { id: 'pc_done', title: 'Done' },
+        { id: 'pc_options', title: 'View Options' },
       ];
     } else if (cap === 'ticketing') {
       buttons = [
         { id: 'pc_again', title: 'Buy More Tickets' },
         { id: 'pc_history', title: 'My Tickets' },
-        { id: 'pc_done', title: 'Done' },
+        { id: 'pc_options', title: 'View Options' },
       ];
     } else if (cap === 'ordering') {
       buttons = [
         { id: 'pc_again', title: 'Order Again' },
         { id: 'pc_history', title: 'My Orders' },
-        { id: 'pc_done', title: 'Done' },
+        { id: 'pc_options', title: 'View Options' },
       ];
     } else if (cap === 'reservation') {
       buttons = [
         { id: 'pc_again', title: 'Book Again' },
         { id: 'pc_history', title: 'My Bookings' },
-        { id: 'pc_done', title: 'Done' },
+        { id: 'pc_options', title: 'View Options' },
       ];
     } else {
       // scheduling, appointment, payment, default
       buttons = [
         { id: 'pc_again', title: 'Book Again' },
         { id: 'pc_history', title: 'My Bookings' },
-        { id: 'pc_done', title: 'Done' },
+        { id: 'pc_options', title: 'View Options' },
       ];
     }
 
