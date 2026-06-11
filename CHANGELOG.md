@@ -7,6 +7,10 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-03
 
+### Fix: Mid-flow "Hi" restart confirmation loop
+
+- `lib/bot/bot.service.ts` — When user typed "Hi" mid-flow, bot showed restart confirmation buttons. Tapping "Yes, start over" (`restart_yes`) fell through without restarting because `isRestart` was false (button ID isn't a greeting keyword). The text then hit the current step's `validate()` which rejected it, creating an infinite loop. Fix: `restart_yes` handler now deactivates the session and recursively calls `handleMessage` with the business bot_code, creating a fresh session. Affects: all mid-flow restart confirmations.
+
 ### External Booking API Integration
 
 - `supabase/migrations/180_api_keys_external_booking.sql` — New `api_keys` table (hashed keys, prefix, revoke), added `'api'` to `booking_channel` enum

@@ -1468,8 +1468,24 @@ export class BotService {
         return;
       }
       if (text === 'restart_yes') {
-        // Confirmed restart — proceed below
+        // Confirmed restart — deactivate current session and restart fresh
         delete session.session_data._restart_pending;
+        await this.supabase.from('bot_sessions')
+          .update({ is_active: false })
+          .eq('id', session.id);
+        // Restart with the same business context
+        const restartBizId = session.business_id || null;
+        if (restartBizId) {
+          const { data: restartBiz } = await this.supabase
+            .from('businesses')
+            .select('bot_code')
+            .eq('id', restartBizId)
+            .single();
+          await this.handleMessage(from, restartBiz?.bot_code || 'Hi', messageType, destinationPhone, restartBizId);
+        } else {
+          await this.handleMessage(from, 'Hi', messageType, destinationPhone);
+        }
+        return;
       } else {
         // Unrecognized response to restart prompt — clear flag, continue current flow
         delete session.session_data._restart_pending;
