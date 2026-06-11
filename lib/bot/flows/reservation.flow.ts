@@ -507,7 +507,7 @@ export const reservationFlow: FlowDefinition = {
         });
 
         // Send summary first, then buttons — so customer reads details before acting
-        await ctx.sender.sendText({ to: ctx.from, text: summary });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(summary) });
         return [
           {
             type: 'buttons',
@@ -531,7 +531,7 @@ export const reservationFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Reservation cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Reservation cancelled. Send *Hi* to start over.') });
           return null;
         }
         return 'collect_name';
@@ -940,7 +940,7 @@ export const reservationFlow: FlowDefinition = {
               });
               await ctx.sender.sendText({
                 to: ctx.from,
-                text: [
+                text: await ctx.t([
                   `✅ *Payment Confirmed!*`,
                   '',
                   `Your reservation at *${ctx.business?.name}* is fully confirmed.`,
@@ -958,7 +958,7 @@ export const reservationFlow: FlowDefinition = {
                   '• Type *my bookings* to view your reservation',
                   '• Type *receipt* to get your receipt',
                   '• Type *Hi* to make another booking',
-                ].filter(Boolean).join('\n'),
+                ].filter(Boolean).join('\n')),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
@@ -993,7 +993,7 @@ export const reservationFlow: FlowDefinition = {
 
             await ctx.sender.sendText({
               to: ctx.from,
-              text: [
+              text: await ctx.t([
                 `✅ *Payment Confirmed!*`,
                 '',
                 `Your reservation at *${ctx.business?.name}* is fully confirmed.`,
@@ -1005,7 +1005,7 @@ export const reservationFlow: FlowDefinition = {
                 '',
                 'See you soon!',
                 resPayCalLinks ? resPayCalLinks : null,
-              ].filter(Boolean).join('\n'),
+              ].filter(Boolean).join('\n')),
             });
 
             if (ctx.business) {

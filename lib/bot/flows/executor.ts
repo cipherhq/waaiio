@@ -104,6 +104,7 @@ export class FlowExecutor {
       return;
     }
 
+    const lang = (session.session_data._lang as string) || '';
     const ctx: FlowContext = {
       supabase: this.supabase,
       sender: this.sender,
@@ -114,6 +115,7 @@ export class FlowExecutor {
       business,
       mediaUrl,
       mediaType,
+      t: (text: string) => translateBotResponse(text, lang),
     };
 
     // ── Step overrides: load business-level overrides ──

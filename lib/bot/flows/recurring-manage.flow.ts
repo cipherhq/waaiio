@@ -107,7 +107,7 @@ export const recurringManageFlow: FlowDefinition = {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           await ctx.sender.sendText({
             to: ctx.from,
-            text: [
+            text: await ctx.t([
               `📋 *Subscription Details*`,
               '',
               `Amount: ${formatCurrency(sub.amount, cc)}`,
@@ -118,7 +118,7 @@ export const recurringManageFlow: FlowDefinition = {
               sub.next_charge_at ? `Next Charge: ${new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '',
               sub.card_last_four ? `Card: *${sub.card_last_four} (${sub.card_brand || 'card'})` : '',
             ].filter(Boolean).join('\n')
-            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`),
           });
         }
         return null;
@@ -146,7 +146,7 @@ export const recurringManageFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (!ctx.session.session_data._confirm_cancel) {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Your recurring payment is still active.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your recurring payment is still active.') });
           return null;
         }
         return 'process_cancel';

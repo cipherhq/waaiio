@@ -239,7 +239,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
 
       await ctx.sender.sendText({
         to: ctx.from,
-        text: [
+        text: await ctx.t([
           `*Reward Redeemed!*`,
           '',
           `You've redeemed *${rewardDesc}*.`,
@@ -252,7 +252,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
           '',
           `Type *my points* to check your balance`,
           `Type *Hi* to book or order`,
-        ].join('\n'),
+        ].join('\n')),
       });
 
       // Notify business owner about redemption
@@ -272,7 +272,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
       logger.error('[LOYALTY] Redemption error:', err);
       await ctx.sender.sendText({
         to: ctx.from,
-        text: 'Something went wrong on our end. Please try again in a few minutes, or send *Hi* to start over.',
+        text: await ctx.t('Something went wrong on our end. Please try again in a few minutes, or send *Hi* to start over.'),
       });
     }
 

@@ -5,6 +5,23 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-06-10
+
+### Fix: Ticket QR code not generating on Vercel
+
+- `next.config.mjs` — Added `serverExternalPackages: ['sharp']` so Sharp's native binaries load at runtime instead of being bundled (dynamic imports invisible to Vercel's tree-shaker). Added `outputFileTracingIncludes` for Sharp on all 7 webhook routes that trigger ticket generation. This was causing `sendTicketsAfterPurchase` to silently fail at the Sharp import, falling through to text fallback or no output.
+
+### Bot translation: wrap ~80 direct sendText calls with ctx.t()
+
+- `lib/bot/flows/types.ts` — Added `t(text: string): Promise<string>` to FlowContext interface
+- `lib/bot/flows/executor.ts` — Wire `ctx.t` to `translateBotResponse` using session `_lang`
+- `lib/bot/bot.service.ts` — Added `sendLocalizedText()` helper method
+- All flow files (ordering, scheduling, payment, crowdfunding, reservation, ticketing, queue-checkin, recurring-manage, loyalty, capability-selection) — wrapped customer-facing `ctx.sender.sendText()` calls with `await ctx.t()`
+- `lib/bot/flows/shared/post-completion.ts` — Added optional `translate` param (backward-compatible)
+- `lib/bot/flows/shared/send-tickets.ts` — Added optional `translate` param for fallback messages
+
+---
+
 ## 2026-06-03
 
 ### Fix: Mid-flow "Hi" restart confirmation loop

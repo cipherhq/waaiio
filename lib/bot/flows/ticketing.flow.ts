@@ -152,7 +152,7 @@ export const ticketingFlow: FlowDefinition = {
           return { valid: true, data: { _ticket_type_action: 'back_to_events' } };
         }
         if (input === 'cancel_tickets') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'No problem! Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No problem! Send *Hi* to start over.') });
           return { valid: true, data: { _ticket_type_action: 'cancel' } };
         }
 
@@ -347,7 +347,7 @@ export const ticketingFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Ticket order cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Ticket order cancelled. Send *Hi* to start over.') });
           return null;
         }
         return 'collect_name';
@@ -642,7 +642,7 @@ export const ticketingFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: `Ticket purchase from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Ticket purchase from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -673,7 +673,7 @@ export const ticketingFlow: FlowDefinition = {
               });
               await ctx.sender.sendText({
                 to: ctx.from,
-                text: getTicketConfirmationMessage({
+                text: await ctx.t(getTicketConfirmationMessage({
                   eventName: d.event_name as string,
                   dateLabel: dedupDateLabel,
                   venue: (d.event_venue as string) || '',
@@ -681,7 +681,7 @@ export const ticketingFlow: FlowDefinition = {
                   totalAmount: d.total_amount as number,
                   referenceCode: d.reference_code as string,
                   countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
-                }),
+                })),
               });
 
               // Dedup path: webhook confirmed payment but doesn't generate tickets.
@@ -708,7 +708,7 @@ export const ticketingFlow: FlowDefinition = {
                 // Text fallback with reference code
                 await ctx.sender.sendText({
                   to: ctx.from,
-                  text: `🎟️ Your booking is confirmed!\nRef: *${d.reference_code}*\n\nShow this at the entrance or type *my bookings* to view tickets.`,
+                  text: await ctx.t(`🎟️ Your booking is confirmed!\nRef: *${d.reference_code}*\n\nShow this at the entrance or type *my bookings* to view tickets.`),
                 });
               }
 
@@ -753,14 +753,14 @@ export const ticketingFlow: FlowDefinition = {
             });
             await ctx.sender.sendText({
               to: ctx.from,
-              text: getTicketConfirmationMessage({
+              text: await ctx.t(getTicketConfirmationMessage({
                 eventName: d.event_name as string,
                 dateLabel,
                 venue: (d.event_venue as string) || '',
                 quantity: d.ticket_quantity as number,
                 totalAmount: d.total_amount as number,
                 referenceCode: d.reference_code as string,
-              }),
+              })),
             });
 
             // Send ticket PDF + QR codes (MUST await — Vercel kills process after response)
@@ -791,7 +791,7 @@ export const ticketingFlow: FlowDefinition = {
                 const codes = ticketCodes.data.map(t => t.ticket_code).join('\n');
                 await ctx.sender.sendText({
                   to: ctx.from,
-                  text: `🎟️ Your ticket code${ticketCodes.data.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance. You can also type *my bookings* to view your tickets.`,
+                  text: await ctx.t(`🎟️ Your ticket code${ticketCodes.data.length > 1 ? 's' : ''}:\n\n${codes}\n\nShow this at the entrance. You can also type *my bookings* to view your tickets.`),
                 });
               }
             }

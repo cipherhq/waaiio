@@ -24,6 +24,8 @@ interface PostCompletionParams {
   referenceCode?: string;
   /** If true, skip loyalty points (e.g. giving/donation transactions) */
   skipLoyalty?: boolean;
+  /** Optional translation function for customer-facing messages (from ctx.t) */
+  translate?: (text: string) => Promise<string>;
 }
 
 function generateReferralCode(): string {
@@ -40,7 +42,8 @@ function generateReferralCode(): string {
  * Checks enabled capabilities and triggers loyalty, feedback, and referral actions.
  */
 export async function handlePostCompletion(params: PostCompletionParams): Promise<void> {
-  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty } = params;
+  const { supabase, businessId, customerPhone, customerName, serviceType, referenceId, sender, amountPaid, serviceName, referenceCode, skipLoyalty, translate } = params;
+  const t = translate ?? ((text: string) => Promise.resolve(text));
 
   // Parallel: load capabilities + business data in one round-trip
   let capabilities: CapabilityId[];
@@ -126,7 +129,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         `Thank you for your payment, ${customerName || 'there'}! 🙏`,
       ].filter(Boolean).join('\n');
 
-      if (sender) await sender.sendText({ to: phone, text: receiptLines });
+      if (sender) await sender.sendText({ to: phone, text: await t(receiptLines) });
 
       // Send PDF receipt as WhatsApp document attachment
       try {
@@ -241,7 +244,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       } else {
         loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
       }
-      if (sender) sender.sendText({ to: customerPhone, text: loyaltyMsg }).catch(() => {});
+      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(() => {});
     } catch (err) {
       logger.error('[POST-COMPLETION] Loyalty error:', err);
     }

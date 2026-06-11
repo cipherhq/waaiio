@@ -3111,6 +3111,13 @@ export class BotService {
     return sendBotText(this.messageSender, to, text);
   }
 
+  /** Send text with auto-translation based on session language */
+  private async sendLocalizedText(to: string, text: string, session: { session_data: Record<string, unknown> } | null): Promise<void> {
+    const lang = (session?.session_data?._lang as string) || '';
+    const translated = lang ? await translateBotResponse(text, lang) : text;
+    return sendBotText(this.messageSender, to, translated);
+  }
+
   private async forwardToBusinessOwner(
     businessId: string,
     customerPhone: string,

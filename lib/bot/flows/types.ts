@@ -91,6 +91,8 @@ export interface FlowContext {
   mediaUrl?: string;
   /** Current message media type */
   mediaType?: string;
+  /** Translate text using session language. No-op if English or no language set. */
+  t(text: string): Promise<string>;
 }
 
 // ── Flow step config ──

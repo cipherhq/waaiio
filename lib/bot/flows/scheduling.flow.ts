@@ -816,7 +816,7 @@ export const schedulingFlow: FlowDefinition = {
         if (ctx.session.session_data._join_waitlist) return 'waitlist_join';
         if (ctx.session.session_data._action === 'cancel') {
           delete ctx.session.session_data._action;
-          await ctx.sender.sendText({ to: ctx.from, text: 'No problem! Send *Hi* to explore other options.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No problem! Send *Hi* to explore other options.') });
           return null; // end session cleanly
         }
         return 'select_staff';
@@ -997,7 +997,7 @@ export const schedulingFlow: FlowDefinition = {
         }
         // Handle cancel from fully-booked prompt
         if (input === 'cancel_booking') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'No problem! Send *Hi* to explore other options.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No problem! Send *Hi* to explore other options.') });
           return { valid: true, data: { _time_action: 'cancel' } };
         }
 
@@ -1203,7 +1203,7 @@ export const schedulingFlow: FlowDefinition = {
         if (ctx.session.session_data._promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data._promo_discount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data._promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data._promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
         }
         return 'select_quantity';
       },
@@ -1260,7 +1260,7 @@ export const schedulingFlow: FlowDefinition = {
         if (ctx.session.session_data._promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data._promo_discount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data._promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data._promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
         }
         return 'select_quantity';
       },
@@ -2570,7 +2570,7 @@ export const schedulingFlow: FlowDefinition = {
           if (d.booking_id) {
             await ctx.supabase.from('bookings').update({ status: 'cancelled' }).eq('id', d.booking_id as string);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: 'Booking cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Booking cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _action: 'cancel' } };
         }
         return { valid: true };
@@ -2627,11 +2627,11 @@ export const schedulingFlow: FlowDefinition = {
           if (cardWithPin?.pin_hash) {
             // Card has a PIN — ask for verification
             if (cardWithPin.pin_locked_until && new Date(cardWithPin.pin_locked_until) > new Date()) {
-              await ctx.sender.sendText({ to: ctx.from, text: '🔒 This card is locked due to too many wrong PIN attempts. Type *remove card* to delete it and save again.' });
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 This card is locked due to too many wrong PIN attempts. Type *remove card* to delete it and save again.') });
               return { valid: true, data: { _skip_saved_card: true } };
             }
             // Move to PIN verification step
-            await ctx.sender.sendText({ to: ctx.from, text: '🔒 Enter your *4-digit card PIN* to confirm payment:' });
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 Enter your *4-digit card PIN* to confirm payment:') });
             return { valid: true, data: { _awaiting_card_pin: true, _saved_method_id: savedMethod.id } };
           }
 
@@ -2679,10 +2679,10 @@ export const schedulingFlow: FlowDefinition = {
                 .eq('id', card.id);
             }
             if (attempts >= 3) {
-              await ctx.sender.sendText({ to: ctx.from, text: '🔒 Too many wrong attempts. Card locked for 30 minutes. Type *remove card* to delete and re-save.' });
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('🔒 Too many wrong attempts. Card locked for 30 minutes. Type *remove card* to delete and re-save.') });
               return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
             }
-            await ctx.sender.sendText({ to: ctx.from, text: `Wrong PIN. ${3 - attempts} attempt${3 - attempts !== 1 ? 's' : ''} remaining. Try again:` });
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Wrong PIN. ${3 - attempts} attempt${3 - attempts !== 1 ? 's' : ''} remaining. Try again:`) });
             return { valid: false };
           }
 
@@ -2715,7 +2715,7 @@ export const schedulingFlow: FlowDefinition = {
           if (action === 'cancel' || action === 'go_back') {
             return { valid: true, data: { _skip_saved_card: true, _awaiting_card_pin: false } };
           }
-          await ctx.sender.sendText({ to: ctx.from, text: 'Please enter your *4-digit PIN* or type *cancel*:' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Please enter your *4-digit PIN* or type *cancel*:') });
           return { valid: false };
         }
 
@@ -2835,7 +2835,7 @@ export const schedulingFlow: FlowDefinition = {
           }
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `Booking at *${ctx.business?.name || 'business'}* has been cancelled. No payment was taken.\n\nSend *Hi* to start over.`,
+            text: await ctx.t(`Booking at *${ctx.business?.name || 'business'}* has been cancelled. No payment was taken.\n\nSend *Hi* to start over.`),
           });
           return { valid: true, data: { _action: 'cancel' } };
         }
@@ -2887,7 +2887,7 @@ export const schedulingFlow: FlowDefinition = {
                 '• Type *reschedule* to change the date/time',
                 '• Type *receipt* to get your payment receipt',
               ].filter(Boolean);
-              await ctx.sender.sendText({ to: ctx.from, text: confirmLines2.join('\n') });
+              await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(confirmLines2.join('\n')) });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
 
@@ -2946,7 +2946,7 @@ export const schedulingFlow: FlowDefinition = {
 
             await ctx.sender.sendText({
               to: ctx.from,
-              text: confirmLines.join('\n') + payTips,
+              text: await ctx.t(confirmLines.join('\n') + payTips),
             });
 
             // Notify business owner (email always, WhatsApp for dedicated numbers)

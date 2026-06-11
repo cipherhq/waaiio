@@ -259,7 +259,7 @@ const confirmDonationStep: FlowStepConfig = {
 
   async next(ctx: FlowContext) {
     if (ctx.session.session_data.cancelled) {
-      await ctx.sender.sendText({ to: ctx.from, text: 'Donation cancelled. Send *Hi* to start over.' });
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Donation cancelled. Send *Hi* to start over.') });
       return null; // End flow
     }
     return 'donation_payment';
@@ -370,7 +370,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
           .update({ status: 'cancelled' })
           .eq('reference_code', refCode);
       }
-      await ctx.sender.sendText({ to: ctx.from, text: `Donation to *${ctx.business?.name || 'organization'}* cancelled. Send *Hi* to start over.` });
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Donation to *${ctx.business?.name || 'organization'}* cancelled. Send *Hi* to start over.`) });
       return { valid: true, data: { _action: 'cancel' } };
     }
 
@@ -397,7 +397,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         if (currentDonation?.status === 'success') {
           await ctx.sender.sendText({
             to: ctx.from,
-            text: [
+            text: await ctx.t([
               `✅ *Donation Confirmed!*`,
               '',
               `🙏 Thank you for supporting *${sd.campaign_title}*`,
@@ -410,7 +410,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
               '• Type *my giving* to see your giving history',
               '• Type *receipt* to get your donation receipt',
               '• Type *Hi* to give again',
-            ].join('\n'),
+            ].join('\n')),
           });
           return { valid: true, data: { _action: 'already_confirmed' } };
         }
@@ -419,7 +419,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         // Just send the confirmation message here
         await ctx.sender.sendText({
           to: ctx.from,
-          text: [
+          text: await ctx.t([
             `✅ *Donation Confirmed!*`,
             '',
             `🙏 Thank you for supporting *${sd.campaign_title}*`,
@@ -432,7 +432,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             '• Type *my giving* to see your giving history',
             '• Type *receipt* to get your donation receipt',
             '• Type *Hi* to give again',
-          ].join('\n'),
+          ].join('\n')),
         });
 
         // Record platform fee (safety net — webhook also records, but may not fire)

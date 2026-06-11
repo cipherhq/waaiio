@@ -116,12 +116,12 @@ const queueStartStep: FlowStepConfig = {
         }
         await ctx.sender.sendText({
           to: ctx.from,
-          text: "We'll notify you when the queue reopens. Send *Hi* to do something else.",
+          text: await ctx.t("We'll notify you when the queue reopens. Send *Hi* to do something else."),
         });
       } else if (normalized === 'no_thanks') {
         await ctx.sender.sendText({
           to: ctx.from,
-          text: "No problem! You can check back later. Send *Hi* to start over.",
+          text: await ctx.t("No problem! You can check back later. Send *Hi* to start over."),
         });
       }
       return { valid: true };
@@ -268,7 +268,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
       await ctx.sender.sendText({
         to: ctx.from,
-        text: `${posText}\n\nWe'll message you when it's your turn!`,
+        text: await ctx.t(`${posText}\n\nWe'll message you when it's your turn!`),
       });
       return { valid: true };
     }
@@ -315,7 +315,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     await ctx.sender.sendText({
       to: ctx.from,
-      text: `✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status`,
+      text: await ctx.t(`✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status`),
     });
 
     return { valid: true };

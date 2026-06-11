@@ -336,7 +336,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         if (input === 'cancel_order') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _cancel_order: true } };
         }
 
@@ -545,7 +545,7 @@ export const orderingFlow: FlowDefinition = {
           return { valid: true, data: { _variant_action: 'retry' } };
         }
         if (input === 'cancel_order') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _variant_action: 'cancel' } };
         }
         return { valid: false, errorMessage: 'Please tap *Try Another* or *Cancel*.' };
@@ -1498,7 +1498,7 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.session.session_data._promo_action === 'applied' && ctx.session.session_data.promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data.discount_amount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
         }
         // Logistics mode: skip delivery zones, collect pickup+dropoff addresses
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
@@ -1558,7 +1558,7 @@ export const orderingFlow: FlowDefinition = {
         if (ctx.session.session_data.promo_code) {
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const discount = ctx.session.session_data.discount_amount as number;
-          await ctx.sender.sendText({ to: ctx.from, text: `Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Promo code *${ctx.session.session_data.promo_code}* verified! ${formatCurrency(discount, cc)} discount will be applied at checkout.`) });
         }
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         if (meta.logistics_mode) return 'collect_pickup_address';
@@ -2192,7 +2192,7 @@ export const orderingFlow: FlowDefinition = {
             const cart = (d.cart as CartItem[]) || [];
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `❌ *${d._removed_name}* removed.\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}`,
+              text: await ctx.t(`❌ *${d._removed_name}* removed.\n\n🛒 Cart: ${cart.length} item${cart.length !== 1 ? 's' : ''} — ${formatCurrency(calculateCartTotal(cart), cc)}`),
             });
             delete d._removed_name;
           }
@@ -2201,7 +2201,7 @@ export const orderingFlow: FlowDefinition = {
         if (action === 'cart_empty') {
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `❌ *${d._removed_name}* removed. Your cart is now empty.\n\nSend *Hi* to start a new order.`,
+            text: await ctx.t(`❌ *${d._removed_name}* removed. Your cart is now empty.\n\nSend *Hi* to start a new order.`),
           });
           delete d._removed_name;
           return null; // deactivate session
@@ -2692,7 +2692,7 @@ export const orderingFlow: FlowDefinition = {
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: 'Order cancelled. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Order cancelled. Send *Hi* to start over.') });
           return { valid: true, data: { _action: 'cancelled' } };
         }
         return { valid: true };
@@ -2752,7 +2752,7 @@ export const orderingFlow: FlowDefinition = {
           if (orderId) {
             await ctx.supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: `Order from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Order from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -2782,7 +2782,7 @@ export const orderingFlow: FlowDefinition = {
               const dedupShipping = (sd.shipping_cost as number) || 0;
               await ctx.sender.sendText({
                 to: ctx.from,
-                text: `✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
+                text: await ctx.t(`✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
                   businessName: ctx.business?.name || 'Shop',
                   items: dedupCart,
                   totalAmount: dedupTotal,
@@ -2794,7 +2794,7 @@ export const orderingFlow: FlowDefinition = {
                   addonsTotal: dedupAddonsTotal || undefined,
                   volumeDiscountAmount: dedupVolumeDiscount || undefined,
                   countryCode: cc,
-                }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`,
+                }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
@@ -2827,7 +2827,7 @@ export const orderingFlow: FlowDefinition = {
 
             await ctx.sender.sendText({
               to: ctx.from,
-              text: `✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
+              text: await ctx.t(`✅ *Payment Confirmed!*\n\n` + getOrderConfirmationMessage({
                 businessName: ctx.business?.name || 'Shop',
                 items: cart,
                 totalAmount,
@@ -2839,7 +2839,7 @@ export const orderingFlow: FlowDefinition = {
                 addonsTotal: addonsTotal || undefined,
                 volumeDiscountAmount: volumeDiscountTotal || undefined,
                 countryCode: cc,
-              }),
+              })),
             });
 
             // Record platform fee now that payment is verified

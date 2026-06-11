@@ -165,7 +165,7 @@ export const paymentFlow: FlowDefinition = {
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._action === 'cancel') {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Payment cancelled. No charges were made. Send *Hi* to start over.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Payment cancelled. No charges were made. Send *Hi* to start over.') });
           return null;
         }
         return 'collect_name';
@@ -372,7 +372,7 @@ export const paymentFlow: FlowDefinition = {
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
-          await ctx.sender.sendText({ to: ctx.from, text: `Payment to *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.` });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Payment to *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
@@ -400,14 +400,14 @@ export const paymentFlow: FlowDefinition = {
                 : `\n\n💡 *What you can do:*\n• Type *my bookings* to view your bookings\n• Type *receipt* to get your payment receipt\n• Type *Hi* to make another payment`;
               await ctx.sender.sendText({
                 to: ctx.from,
-                text: getPaymentReceiptMessage({
+                text: await ctx.t(getPaymentReceiptMessage({
                   emoji: labels.confirmationEmoji,
                   businessName: ctx.business?.name || 'Business',
                   categoryName: d.service_name as string,
                   amount: d.amount as number,
                   referenceCode: d.reference_code as string,
                   countryCode: cc,
-                }) + dedupTips,
+                }) + dedupTips),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
             }
@@ -471,14 +471,14 @@ export const paymentFlow: FlowDefinition = {
 
             await ctx.sender.sendText({
               to: ctx.from,
-              text: getPaymentReceiptMessage({
+              text: await ctx.t(getPaymentReceiptMessage({
                 emoji: labels.confirmationEmoji,
                 businessName: ctx.business?.name || 'Business',
                 categoryName: d.service_name as string,
                 amount: d.amount as number,
                 referenceCode: d.reference_code as string,
                 countryCode: cc,
-              }) + tipsText,
+              }) + tipsText),
             });
 
             // Post-completion: auto-receipt, loyalty, feedback, referral
@@ -787,7 +787,7 @@ export const paymentFlow: FlowDefinition = {
 
           await ctx.sender.sendText({
             to: ctx.from,
-            text: `Complete your recurring payment setup here:\n${shortUrl}\n\n⚠️ After completing setup, *return to WhatsApp*.`,
+            text: await ctx.t(`Complete your recurring payment setup here:\n${shortUrl}\n\n⚠️ After completing setup, *return to WhatsApp*.`),
           });
         }
 

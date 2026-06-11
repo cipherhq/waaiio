@@ -15,12 +15,18 @@ const nextConfig = {
       },
     ],
   },
+  serverExternalPackages: ['sharp'],
   experimental: {
     outputFileTracingIncludes: {
-      '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*'],
-      '/api/webhook/whatsapp': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*', './node_modules/sharp/**/*'],
+      '/api/webhook/whatsapp': ['./node_modules/pdfkit/js/data/**/*', './node_modules/sharp/**/*'],
       '/api/receipts/generate': ['./node_modules/pdfkit/js/data/**/*'],
-      '/api/webhooks/route': ['./node_modules/pdfkit/js/data/**/*'],
+      '/api/webhooks/route': ['./node_modules/pdfkit/js/data/**/*', './node_modules/sharp/**/*'],
+      '/api/payments/webhook': ['./node_modules/sharp/**/*'],
+      '/api/payments/stripe-webhook': ['./node_modules/sharp/**/*'],
+      '/api/payments/paypal-webhook': ['./node_modules/sharp/**/*'],
+      '/api/payments/square-webhook': ['./node_modules/sharp/**/*'],
+      '/api/webhooks/flutterwave': ['./node_modules/sharp/**/*'],
     },
   },
   async headers() {

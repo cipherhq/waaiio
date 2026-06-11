@@ -25,6 +25,8 @@ export interface SendTicketsOptions {
   quantity: number;
   amount?: number;
   countryCode?: CountryCode;
+  /** Optional translation function for customer-facing messages (from ctx.t) */
+  translate?: (text: string) => Promise<string>;
 }
 
 /** Generate a short unique ticket code like "TK-A3F8X2" */
@@ -52,6 +54,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     eventName, eventDate, eventTime, venue,
     guestName, guestPhone, referenceCode, quantity,
   } = opts;
+  const t = opts.translate ?? ((text: string) => Promise.resolve(text));
 
   logger.info('[TICKETS] Starting sendTicketsAfterPurchase | booking:', bookingId, '| event:', eventName, '| qty:', quantity);
 
@@ -245,12 +248,12 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
         } else {
           logger.error('[TICKETS] Upload failed for', ticket.ticketCode, ':', uploadErr.message);
           // Text fallback on upload failure
-          await sender.sendText({ to: phone, text: caption }).catch(() => {});
+          await sender.sendText({ to: phone, text: await t(caption) }).catch(() => {});
         }
       } catch (err) {
         logger.error('[TICKETS] Ticket image failed for', ticket.ticketCode, ':', err);
         // Text fallback
-        await sender.sendText({ to: phone, text: caption }).catch(() => {});
+        await sender.sendText({ to: phone, text: await t(caption) }).catch(() => {});
       }
     }
     logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);

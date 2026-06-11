@@ -328,7 +328,7 @@ const selectCapabilityStep: FlowStepConfig = {
           const { getLocale } = await import('@/lib/constants');
           const ack = buildAcknowledgment(parsed, ctx.session.session_data.service_name as string | null || productName, getLocale(ctx.business.country_code));
           if (ack) {
-            await ctx.sender.sendText({ to: ctx.from, text: ack });
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(ack) });
           }
         }
       } catch {
@@ -417,13 +417,13 @@ const myAccountMenuStep: FlowStepConfig = {
           if (result) {
             await ctx.sender.sendDocument({ to: ctx.from, documentUrl: result.url, filename: result.filename, caption: 'Your latest receipt' });
           } else {
-            await ctx.sender.sendText({ to: ctx.from, text: 'No recent transactions found. Make a purchase first!' });
+            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No recent transactions found. Make a purchase first!') });
           }
         } catch {
-          await ctx.sender.sendText({ to: ctx.from, text: 'Sorry, could not generate your receipt right now. Try again later.' });
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Sorry, could not generate your receipt right now. Try again later.') });
         }
       } else {
-        await ctx.sender.sendText({ to: ctx.from, text: 'No account found for this number. Send *Hi* to start over.' });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No account found for this number. Send *Hi* to start over.') });
       }
       // Return to menu
       ctx.session.session_data._my_account_route = 'select_capability';
@@ -438,7 +438,7 @@ const myAccountMenuStep: FlowStepConfig = {
         .eq('id', ctx.session.id);
       await ctx.sender.sendText({
         to: ctx.from,
-        text: 'To switch to a different business:\n\n• Type *switch* followed by the business name\n  _e.g. switch FacesByKoph_\n\n• Or send *Hi* to see your recent businesses',
+        text: await ctx.t('To switch to a different business:\n\n• Type *switch* followed by the business name\n  _e.g. switch FacesByKoph_\n\n• Or send *Hi* to see your recent businesses'),
       });
       return { valid: true, data: {} };
     }
@@ -489,14 +489,14 @@ const myAccountMenuStep: FlowStepConfig = {
       }
 
       if (allGiving.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any giving history yet. Send *Hi* to give!" });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("You don't have any giving history yet. Send *Hi* to give!") });
       } else {
         const total = allGiving.reduce((sum, g) => sum + g.amount, 0);
         const bizCC = (ctx.business?.country_code || 'NG') as CountryCode;
         const lines = ['🙏 *Your Giving History*', '',
           ...allGiving.slice(0, 8).map(g => `📅 ${g.date} — *${g.label}* — ${formatCurrency(g.amount, bizCC)}`),
           '', `💰 *Total: ${formatCurrency(total, bizCC)}*`];
-        await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(lines.join('\n')) });
       }
       ctx.session.session_data._my_account_route = 'select_capability';
       return { valid: true, data: { _my_account_route: 'select_capability' } };
@@ -514,7 +514,7 @@ const myAccountMenuStep: FlowStepConfig = {
         .limit(10);
 
       if (!contracts || contracts.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any contracts. Send *Hi* to start over." });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("You don't have any contracts. Send *Hi* to start over.") });
       } else {
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
         const pending = contracts.filter(c => c.status === 'pending');
@@ -532,7 +532,7 @@ const myAccountMenuStep: FlowStepConfig = {
             lines.push(`• ${c.title} — ${d}`);
           }
         }
-        await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(lines.join('\n')) });
       }
       ctx.session.session_data._my_account_route = 'select_capability';
       return { valid: true, data: { _my_account_route: 'select_capability' } };
@@ -550,7 +550,7 @@ const myAccountMenuStep: FlowStepConfig = {
         .limit(10);
 
       if (!quotes || quotes.length === 0) {
-        await ctx.sender.sendText({ to: ctx.from, text: "You don't have any price requests. Send *Hi* to start over." });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t("You don't have any price requests. Send *Hi* to start over.") });
       } else {
         const emoji: Record<string, string> = { pending: '⏳', quoted: '💰', accepted: '✅', rejected: '❌', expired: '⌛' };
         const lines = ['📋 *Your Price Requests*', ''];
@@ -563,7 +563,7 @@ const myAccountMenuStep: FlowStepConfig = {
           else if (q.status === 'pending') line += ' — Awaiting response';
           lines.push(line);
         }
-        await ctx.sender.sendText({ to: ctx.from, text: lines.join('\n') });
+        await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(lines.join('\n')) });
       }
       ctx.session.session_data._my_account_route = 'select_capability';
       return { valid: true, data: { _my_account_route: 'select_capability' } };
