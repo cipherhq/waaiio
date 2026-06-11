@@ -17,7 +17,10 @@ export async function handleTransactionDocument(
 ): Promise<void> {
   const labelMap = { history: 'transaction history', receipt: 'receipt', annual: 'annual statement' };
   const label = labelMap[type];
+  const phoneP = from.startsWith('+') ? from : `+${from}`;
+  const phoneN = from.startsWith('+') ? from.slice(1) : from;
   await sendText(from, `Generating your ${label}... 📄`);
+  logger.debug(`[RECEIPT] userId=${userId}, phone=${from}, type=${type}`);
 
   try {
     // Try PDF first, fall back to text receipt
@@ -42,9 +45,7 @@ export async function handleTransactionDocument(
     if (!pdfSent) {
       // Try to find the latest reference code to generate a receipt image
       if (type === 'receipt') {
-        const phoneP = from.startsWith('+') ? from : `+${from}`;
-        const phoneN = from.startsWith('+') ? from.slice(1) : from;
-        const [{ data: latestBooking }, { data: latestBookingByPhone }, { data: latestOrder }] = await Promise.all([
+        const [{ data: latestBooking }, { data: latestBookingByPhone }, { data: latestOrder }, { data: latestDonation }] = await Promise.all([
           supabase.from('bookings')
             .select('reference_code, created_at')
             .eq('user_id', userId)
@@ -52,7 +53,6 @@ export async function handleTransactionDocument(
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle(),
-          // Fallback: find by guest_phone (bot bookings may not have user_id linked)
           supabase.from('bookings')
             .select('reference_code, created_at')
             .or(`guest_phone.eq.${sanitizeFilterValue(phoneP)},guest_phone.eq.${sanitizeFilterValue(phoneN)}`)
@@ -62,25 +62,29 @@ export async function handleTransactionDocument(
             .maybeSingle(),
           supabase.from('orders')
             .select('reference_code, created_at')
-            .eq('user_id', userId)
+            .or(`user_id.eq.${sanitizeFilterValue(userId)},customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
             .in('status', ['confirmed', 'processing', 'ready', 'delivered'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase.from('campaign_donations')
+            .select('reference_code, created_at')
+            .or(`donor_phone.eq.${sanitizeFilterValue(phoneP)},donor_phone.eq.${sanitizeFilterValue(phoneN)}`)
+            .eq('status', 'success')
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle(),
         ]);
 
-        // Use whichever booking is more recent (by user_id or by phone)
-        const effectiveBooking = latestBooking && latestBookingByPhone
-          ? (new Date(latestBooking.created_at) >= new Date(latestBookingByPhone.created_at) ? latestBooking : latestBookingByPhone)
-          : latestBooking || latestBookingByPhone;
-
-        // Pick whichever is more recent
-        let refCode = effectiveBooking?.reference_code;
-        if (latestOrder?.reference_code) {
-          if (!refCode || new Date(latestOrder.created_at) > new Date(effectiveBooking!.created_at)) {
-            refCode = latestOrder.reference_code;
-          }
-        }
+        // Pick the most recent transaction across all sources
+        const candidates = [
+          latestBooking && { ref: latestBooking.reference_code, at: latestBooking.created_at },
+          latestBookingByPhone && { ref: latestBookingByPhone.reference_code, at: latestBookingByPhone.created_at },
+          latestOrder && { ref: latestOrder.reference_code, at: latestOrder.created_at },
+          latestDonation && { ref: latestDonation.reference_code, at: latestDonation.created_at },
+        ].filter(Boolean) as Array<{ ref: string; at: string }>;
+        candidates.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+        const refCode = candidates[0]?.ref || null;
         if (refCode) {
           const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
           try {
@@ -131,7 +135,8 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
       .order('created_at', { ascending: false }).limit(5),
     supabase.from('payments')
       .select('gateway_reference, amount, status, created_at, businesses:business_id(name, country_code)')
-      .eq('user_id', userId).eq('status', 'success')
+      .eq('user_id', userId)
+      .eq('status', 'success')
       .order('created_at', { ascending: false }).limit(5),
     supabase.from('invoices')
       .select('invoice_number, total_amount, status, paid_at, businesses:business_id(name, country_code)')
@@ -145,10 +150,12 @@ export async function buildTextReceipt(supabase: SupabaseClient, userId: string,
       .order('created_at', { ascending: false }).limit(3),
     supabase.from('orders')
       .select('reference_code, total_amount, status, created_at, businesses:business_id(name, country_code)')
-      .eq('user_id', userId)
+      .or(`user_id.eq.${sanitizeFilterValue(userId)},customer_phone.eq.${sanitizeFilterValue(phoneP)},customer_phone.eq.${sanitizeFilterValue(phoneN)}`)
       .in('status', ['confirmed', 'processing', 'ready', 'delivered'])
       .order('created_at', { ascending: false }).limit(5),
   ]);
+
+  logger.debug(`[RECEIPT] buildTextReceipt: userId=${userId}, phone=${phone}, bookings=${bookings?.length || 0}, bookingsByPhone=${bookingsByPhone?.length || 0}, payments=${payments?.length || 0}, invoices=${invoices?.length || 0}, donations=${donations?.length || 0}, orders=${orders?.length || 0}`);
 
   // Merge bookings from both queries (dedup by reference_code)
   const seenRefs = new Set<string>();
