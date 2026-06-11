@@ -447,7 +447,7 @@ export class FlowExecutor {
 
     // Inject navigation footer on interactive messages (buttons/list) if not already set
     // Footer: 40 chars — within WhatsApp's 60-char limit
-    const NAV_FOOTER = 'back \u00b7 menu \u00b7 exit';
+    const NAV_FOOTER = 'Type: back, menu (restart), or exit (leave)';
     for (const msg of messages) {
       if ((msg.type === 'buttons' || msg.type === 'list') && !msg.footer) {
         msg.footer = NAV_FOOTER;
