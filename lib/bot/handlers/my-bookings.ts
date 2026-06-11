@@ -104,17 +104,14 @@ export async function handleMyBookings(
       return;
     }
 
+    items.push({ title: '← Back to My Account', description: 'Return to account menu', postbackText: 'back_to_account' });
+
     await messageSender.sendList({
       to: from,
       title: 'Your Bookings & Tickets',
       body: 'Select a booking, ticket, or stay to view:',
       buttonLabel: 'View All',
       items,
-    });
-    await messageSender.sendButtons({
-      to: from,
-      body: 'Or go back:',
-      buttons: [{ id: 'back_to_account', title: 'My Account' }],
     });
     return;
   }
