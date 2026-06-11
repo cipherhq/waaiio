@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-10
 
+### Ticket image: add event + guest details on the image
+
+- `lib/bot/flows/shared/send-tickets.ts` — Both flyer and no-flyer ticket images now show text overlays:
+  - **With flyer:** Dark bar at bottom shows event name, date/time, venue, guest name, ticket code, ticket number
+  - **Without flyer:** Purple branded card shows TICKET header, event name, date/time, venue, guest name, ticket code (gold), ticket number, ref code, "Scan to verify", Waaiio branding
+  - QR code remains composited on both variants
+  - SVG text is XML-escaped and truncated to prevent overflow
+
 ### Fix: Ticket QR code not generating on Vercel
 
 - `next.config.mjs` — Added `serverExternalPackages: ['sharp']` so Sharp's native binaries load at runtime instead of being bundled (dynamic imports invisible to Vercel's tree-shaker). Added `outputFileTracingIncludes` for Sharp on all 7 webhook routes that trigger ticket generation. This was causing `sendTicketsAfterPurchase` to silently fail at the Sharp import, falling through to text fallback or no output.

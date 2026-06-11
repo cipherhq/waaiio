@@ -182,39 +182,58 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
 
         let composited: Buffer;
 
+        // Helper: escape XML special characters for SVG text
+        const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        // Truncate text for SVG (avoid overflow)
+        const trunc = (s: string, max: number) => s.length > max ? s.slice(0, max - 1) + '…' : s;
+
+        const displayName = trunc(esc(guestName || 'Guest'), 30);
+        const displayEvent = trunc(esc(eventName), 40);
+        const displayDate = esc(eventDate + (eventTime ? ` · ${eventTime}` : ''));
+        const displayVenue = trunc(esc(venue || ''), 35);
+        const displayCode = esc(ticket.ticketCode);
+        const displayRef = esc(`Ref: ${referenceCode}`);
+        const displayTicketNum = esc(`Ticket ${ticket.ticketNumber}/${ticket.totalTickets}`);
+
         if (flyerBuffer) {
-          // Flyer exists: composite QR in bottom-right + dark bar at bottom
+          // Flyer exists: composite QR + details bar at bottom
           const flyer = sharp(flyerBuffer).resize(800, null, { withoutEnlargement: true });
           const flyerMeta = await flyer.metadata();
           const flyerH = flyerMeta.height || 800;
           const flyerW = flyerMeta.width || 800;
 
           // White background behind QR for visibility
-          const qrSize = 200;
+          const qrSize = 180;
           const qrBgSvg = `<svg width="${qrSize}" height="${qrSize}" xmlns="http://www.w3.org/2000/svg"><rect width="${qrSize}" height="${qrSize}" rx="12" fill="white" opacity="0.95"/></svg>`;
           const qrWithBg = await sharp(Buffer.from(qrBgSvg))
             .composite([{ input: qrPng, top: 10, left: 10 }])
             .resize(qrSize, qrSize)
             .png().toBuffer();
 
-          // Create a dark semi-transparent bar at the bottom
-          const barHeight = 80;
-          const darkBar = await sharp({
-            create: { width: flyerW, height: barHeight, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0.75 } }
-          }).png().toBuffer();
+          // Create a dark semi-transparent bar at the bottom with event/guest details
+          const barHeight = 120;
+          const textPadLeft = 20;
+          const barSvg = `<svg width="${flyerW}" height="${barHeight}" xmlns="http://www.w3.org/2000/svg">
+            <rect width="${flyerW}" height="${barHeight}" fill="black" opacity="0.8"/>
+            <text x="${textPadLeft}" y="28" font-family="sans-serif" font-size="18" font-weight="bold" fill="white">${displayEvent}</text>
+            <text x="${textPadLeft}" y="52" font-family="sans-serif" font-size="14" fill="#e0e0e0">${displayDate}</text>
+            <text x="${textPadLeft}" y="74" font-family="sans-serif" font-size="13" fill="#c0c0c0">${displayVenue ? '📍 ' + displayVenue : ''}</text>
+            <text x="${textPadLeft}" y="98" font-family="sans-serif" font-size="13" fill="#a0a0ff">👤 ${displayName}  ·  🎫 ${displayCode}  ·  ${displayTicketNum}</text>
+          </svg>`;
+          const darkBar = await sharp(Buffer.from(barSvg)).png().toBuffer();
 
-          // Composite: flyer + dark bar at bottom + QR in bottom-right (above bar)
+          // Composite: flyer + info bar at bottom + QR in bottom-right
           composited = await flyer
             .composite([
               { input: darkBar, top: flyerH - barHeight, left: 0 },
-              { input: qrWithBg, top: flyerH - qrSize - 10, left: flyerW - qrSize - 10 },
+              { input: qrWithBg, top: flyerH - barHeight - qrSize + 10, left: flyerW - qrSize - 15 },
             ])
             .jpeg({ quality: 90 })
             .toBuffer();
         } else {
-          // No flyer: generate a branded ticket card with purple gradient + QR
-          const cardWidth = 600;
-          const cardHeight = 400;
+          // No flyer: generate a branded ticket card with event details + QR
+          const cardWidth = 700;
+          const cardHeight = 420;
 
           const bgSvg = `<svg width="${cardWidth}" height="${cardHeight}" xmlns="http://www.w3.org/2000/svg">
             <defs>
@@ -224,13 +243,26 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
               </linearGradient>
             </defs>
             <rect width="${cardWidth}" height="${cardHeight}" rx="24" fill="url(#g)"/>
-            <rect x="350" y="50" width="220" height="220" rx="16" fill="white" opacity="0.95"/>
+            <text x="36" y="55" font-family="sans-serif" font-size="11" fill="#c4a8ff" letter-spacing="2">TICKET</text>
+            <text x="36" y="90" font-family="sans-serif" font-size="24" font-weight="bold" fill="white">${displayEvent}</text>
+            <text x="36" y="125" font-family="sans-serif" font-size="15" fill="#e0d0ff">${displayDate}</text>
+            <text x="36" y="155" font-family="sans-serif" font-size="14" fill="#c4a8ff">${displayVenue ? '📍 ' + displayVenue : ''}</text>
+            <line x1="36" y1="185" x2="310" y2="185" stroke="#8b5cf6" stroke-width="1" opacity="0.5"/>
+            <text x="36" y="215" font-family="sans-serif" font-size="12" fill="#c4a8ff">GUEST</text>
+            <text x="36" y="240" font-family="sans-serif" font-size="18" font-weight="bold" fill="white">${displayName}</text>
+            <text x="36" y="280" font-family="sans-serif" font-size="12" fill="#c4a8ff">TICKET CODE</text>
+            <text x="36" y="305" font-family="sans-serif" font-size="18" font-weight="bold" fill="#fbbf24">${displayCode}</text>
+            <text x="36" y="340" font-family="sans-serif" font-size="12" fill="#c4a8ff">${displayTicketNum}  ·  ${displayRef}</text>
+            <rect x="420" y="50" width="240" height="240" rx="16" fill="white" opacity="0.95"/>
+            <text x="490" y="320" font-family="sans-serif" font-size="11" fill="#c4a8ff">Scan to verify</text>
+            <text x="36" y="${cardHeight - 16}" font-family="sans-serif" font-size="10" fill="#8b5cf6" opacity="0.7">Powered by Waaiio</text>
           </svg>`;
 
           composited = await sharp(Buffer.from(bgSvg))
             .composite([
-              { input: qrPng, top: 60, left: 360 },
+              { input: qrPng, top: 60, left: 430 },
             ])
+            .resize(cardWidth, cardHeight)
             .jpeg({ quality: 90 })
             .toBuffer();
         }
