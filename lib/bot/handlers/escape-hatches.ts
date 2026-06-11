@@ -53,13 +53,16 @@ export async function handleEscapeHatch(
 
   // ── 3 SIMPLE COMMANDS: back/cancel, menu, exit ──
 
-  // "back" or "cancel" in booking management → go to business menu
+  // "back" or "cancel" in booking management → go to business menu or marketplace
   if (isCancelOrBack && isBookingMgmt && !isChatMode) {
+    await deactivateSession(session.id);
     if (session.business_id) {
-      await deactivateSession(session.id);
       await handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
-      return { handled: true };
+    } else {
+      // No business context (accessed via global "my orders" etc.) → restart fresh
+      await handleMessage(from, 'Hi', messageType, destinationPhone);
     }
+    return { handled: true };
   }
 
   // "back" or "cancel" in flow steps → handled by executor (let it fall through)

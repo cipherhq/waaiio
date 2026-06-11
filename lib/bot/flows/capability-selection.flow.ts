@@ -400,9 +400,8 @@ const myAccountMenuStep: FlowStepConfig = {
     const action = input.toLowerCase().trim();
 
     // Map selections to built-in bot.service.ts handlers via session step
-    // Handle receipt request directly — no flow step, uses bot.service.ts handler
+    // Handle receipt request — try PDF, fall back to text receipt via transaction-docs handler
     if (action === 'acct_receipt' || action === 'receipt' || action === 'my receipt') {
-      // Use session user_id if available, fallback to phone lookup
       let userId = ctx.session.user_id;
       if (!userId) {
         const { findUserByPhone } = await import('./shared/user');
@@ -411,21 +410,13 @@ const myAccountMenuStep: FlowStepConfig = {
       }
 
       if (userId) {
-        try {
-          const { generateDocumentDirect } = await import('@/lib/receipts/generate-direct');
-          const result = await generateDocumentDirect(userId, 'receipt', ctx.from);
-          if (result) {
-            await ctx.sender.sendDocument({ to: ctx.from, documentUrl: result.url, filename: result.filename, caption: 'Your latest receipt' });
-          } else {
-            await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No recent transactions found. Make a purchase first!') });
-          }
-        } catch {
-          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Sorry, could not generate your receipt right now. Try again later.') });
-        }
+        // Delegate to the same handler used by typing "receipt" — handles PDF, image, and text fallbacks
+        const { handleTransactionDocument } = await import('../handlers/transaction-docs');
+        const sendText = async (to: string, text: string) => { await ctx.sender.sendText({ to, text: await ctx.t(text) }); };
+        await handleTransactionDocument(ctx.supabase, ctx.sender, sendText, ctx.from, userId, 'receipt');
       } else {
         await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No account found for this number. Send *Hi* to start over.') });
       }
-      // Return to menu
       ctx.session.session_data._my_account_route = 'select_capability';
       return { valid: true, data: { _my_account_route: 'select_capability' } };
     }
