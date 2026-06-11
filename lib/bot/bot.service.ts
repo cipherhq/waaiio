@@ -1879,7 +1879,7 @@ export class BotService {
                 body: translatedBody,
                 buttons: [
                   { id: 'quick_rebook', title: truncTitle(buttonLabel) },
-                  { id: 'browse_menu', title: 'Something Else' },
+                  { id: 'browse_menu', title: 'View Options' },
                 ],
               });
 
@@ -2551,8 +2551,15 @@ export class BotService {
       const suggestions = (session.session_data.suggestions || []) as { id: string; name: string; bot_code: string }[];
       let selectedBiz: { id: string; name: string; bot_code: string } | null = null;
 
+      // Handle navigation commands at suggestion step (no business_id, so escape hatch guard skips these)
+      if (/^(menu|back|exit|home|cancel|quit|stop)$/i.test(text)) {
+        await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+        await this.handleMessage(from, 'Hi', messageType, destinationPhone);
+        return;
+      }
+
       // Check for "No" / rejection
-      const isNo = /^(biz_no|no|nah|nope|wrong|not|cancel)$/i.test(text);
+      const isNo = /^(biz_no|no|nah|nope|wrong|not)$/i.test(text);
       if (isNo) {
         await this.supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
         await this.sendText(from, 'No problem! Send a *business code* to connect to a business.\n\nOr type *switch* followed by a name, e.g.:\n_switch Bukka Hut_');
@@ -2731,7 +2738,7 @@ export class BotService {
       // Get conversation_id
       const { data: conv } = await this.supabase
         .from('chat_conversations')
-        .select('id')
+        .select('id, created_at')
         .eq('business_id', session.business_id)
         .eq('customer_phone', from)
         .maybeSingle();
@@ -2768,7 +2775,9 @@ export class BotService {
             .maybeSingle();
 
           const lastReplyAt = lastOutbound ? new Date(lastOutbound.created_at).getTime() : 0;
-          if (lastReplyAt > 0 && Date.now() - lastReplyAt > 10 * 60 * 1000) {
+          const convCreatedAt = conv.created_at ? new Date(conv.created_at).getTime() : 0;
+          const waitingSince = lastReplyAt > 0 ? lastReplyAt : convCreatedAt;
+          if (waitingSince > 0 && Date.now() - waitingSince > 10 * 60 * 1000) {
             await this.sendText(from, "The team hasn't responded yet. You can keep waiting or type *end chat* to go back to the menu.");
             session.session_data._inactivity_warned = true;
             await this.supabase.from('bot_sessions').update({

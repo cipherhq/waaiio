@@ -1169,7 +1169,7 @@ export const schedulingFlow: FlowDefinition = {
           .eq('is_active', true)
           .maybeSingle();
 
-        if (!promo) return { valid: false, errorMessage: 'Invalid promo code.' };
+        if (!promo) return { valid: false, errorMessage: 'Invalid promo code. Check the spelling and try again, or type *skip*.' };
         if (promo.max_uses && promo.current_uses >= promo.max_uses) return { valid: false, errorMessage: 'This promo code has reached its usage limit.' };
         if (promo.valid_until && new Date(promo.valid_until) < new Date()) return { valid: false, errorMessage: 'This promo code has expired.' };
 
@@ -3021,7 +3021,7 @@ export const schedulingFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 
-          return { valid: false, errorMessage: "Payment not yet received. Please complete payment using the link sent earlier." };
+          return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
         }
 
         return { valid: false, errorMessage: "Tap *I've Paid* after completing payment, or *Cancel* to cancel." };

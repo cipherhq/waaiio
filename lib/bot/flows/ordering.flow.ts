@@ -462,7 +462,7 @@ export const orderingFlow: FlowDefinition = {
         const axisIndex = (d.current_option_axis_index as number) || 0;
         const axis = variantOptions[axisIndex];
 
-        if (!axis) return { valid: false, errorMessage: 'Invalid option. Send *Hi* to start over.' };
+        if (!axis) return { valid: false, errorMessage: 'Invalid option. Please tap one of the options above.' };
 
         // Match input to a value (case-insensitive)
         const match = axis.values.find(v => v.toLowerCase() === input.toLowerCase());
@@ -2890,7 +2890,7 @@ export const orderingFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 
-          return { valid: false, errorMessage: "Payment not yet received. Please complete payment." };
+          return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
         }
 
         return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };

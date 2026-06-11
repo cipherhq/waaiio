@@ -69,7 +69,7 @@ const selectCampaignStep: FlowStepConfig = {
       .single();
 
     if (error || !campaign) {
-      return { valid: false, errorMessage: 'Campaign not found. Please try again.' };
+      return { valid: false, errorMessage: 'Campaign not found. Please tap one of the options above.' };
     }
 
     return {
@@ -480,7 +480,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
         return { valid: true, data: { _action: 'payment_confirmed' } };
       }
 
-      return { valid: false, errorMessage: "Payment not yet received. Please complete payment using the link." };
+      return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
     }
 
     return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };

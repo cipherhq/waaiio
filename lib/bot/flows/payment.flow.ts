@@ -525,7 +525,7 @@ export const paymentFlow: FlowDefinition = {
             return { valid: true, data: { _action: 'payment_confirmed' } };
           }
 
-          return { valid: false, errorMessage: "Payment not yet received. Please complete payment using the link." };
+          return { valid: false, errorMessage: "Payment not yet received. The link may have expired — tap *Get New Link* for a fresh one." };
         }
 
         return { valid: false, errorMessage: "Tap *I've Paid* or *Cancel*." };

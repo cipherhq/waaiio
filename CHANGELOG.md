@@ -11,6 +11,17 @@ If something breaks, check this log to find what changed and when.
 
 - `lib/bot/bot.service.ts` — When user typed "Hi" mid-flow, bot showed restart confirmation buttons. Tapping "Yes, start over" (`restart_yes`) fell through without restarting because `isRestart` was false (button ID isn't a greeting keyword). The text then hit the current step's `validate()` which rejected it, creating an infinite loop. Fix: `restart_yes` handler now deactivates the session and recursively calls `handleMessage` with the business bot_code, creating a fresh session. Affects: all mid-flow restart confirmations.
 
+### Bot UX audit fixes — 7 improvements
+
+- `lib/bot/bot.service.ts` — Chat inactivity warning now fires even when business never replies (uses conversation created_at as fallback). Was silently waiting 4 hours.
+- `lib/bot/bot.service.ts` — Navigation commands (menu/back/exit/cancel) now work at business suggestion step. Was showing wrong error.
+- `lib/bot/bot.service.ts` — Quick rebook "Something Else" button renamed to "View Options" for clarity.
+- `lib/bot/bot.service.ts` — Added created_at to chat conversation select for inactivity check.
+- `lib/bot/flows/{scheduling,payment,crowdfunding,reservation,ordering,ticketing}.flow.ts` — "Payment not yet received" messages now mention expired links and suggest "Get New Link".
+- `lib/bot/flows/ordering.flow.ts` — "Invalid option. Send Hi to start over" changed to re-prompt instead of killing flow.
+- `lib/bot/flows/crowdfunding.flow.ts` — "Campaign not found. Please try again" now guides user to tap options.
+- `lib/bot/flows/scheduling.flow.ts` — Terse "Invalid promo code" now includes guidance to check spelling or skip.
+
 ### External Booking API Integration
 
 - `supabase/migrations/180_api_keys_external_booking.sql` — New `api_keys` table (hashed keys, prefix, revoke), added `'api'` to `booking_channel` enum
