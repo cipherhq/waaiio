@@ -208,9 +208,6 @@ export const paymentFlow: FlowDefinition = {
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Payment cancelled. No charges were made. Send *Hi* to start over.' }];
         }
 

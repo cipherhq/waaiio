@@ -391,9 +391,6 @@ export const ticketingFlow: FlowDefinition = {
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your ticket purchase has been cancelled. Send *Hi* to start over.' }];
         }
 
@@ -578,11 +575,6 @@ export const ticketingFlow: FlowDefinition = {
           channel: 'whatsapp',
           body: `New ticket sale: ${qty} ticket${qty > 1 ? 's' : ''} for ${d.event_name}. Ref: ${booking.reference_code}`,
         }).catch(err => console.error('[TICKETING] Notification error:', err));
-
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
-          .eq('id', ctx.session.id);
 
         return [{
           type: 'text',

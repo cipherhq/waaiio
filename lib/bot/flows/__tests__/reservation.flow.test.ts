@@ -102,8 +102,7 @@ describe('Reservation Flow', () => {
       );
       expect(hasTermsButton).toBe(false);
 
-      // Must have deactivated the session
-      expect(mockSupabase.from).toHaveBeenCalledWith('bot_sessions');
+      // Executor now handles session deactivation after next() returns null
     });
 
     it('T&C cancel check order: _terms_cancelled is checked before !_terms_accepted gate in source', async () => {

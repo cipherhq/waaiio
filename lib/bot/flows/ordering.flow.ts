@@ -2324,12 +2324,6 @@ export const orderingFlow: FlowDefinition = {
           }).catch(err => logger.error('[ORDERING] Quote notification error:', err));
         }
 
-        // End session
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
-          .eq('id', ctx.session.id);
-
         return [{
           type: 'text',
           text: `📋 *Price Request Submitted!*\n\n${ctx.business?.name || 'The business'} will review your order and send you a price.\n\nYou'll receive a WhatsApp message with their response.\n\nThank you! 🙏`,
@@ -2387,9 +2381,6 @@ export const orderingFlow: FlowDefinition = {
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your order has been cancelled. Send *Hi* to start over.' }];
         }
 
@@ -2621,12 +2612,6 @@ export const orderingFlow: FlowDefinition = {
             if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
           }
         }
-
-        // Free order — confirm immediately
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
-          .eq('id', ctx.session.id);
 
         // Post-completion: loyalty, feedback, referral
         if (ctx.business) {

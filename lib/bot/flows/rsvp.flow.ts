@@ -174,12 +174,6 @@ export const rsvpFlow: FlowDefinition = {
             .eq('id', inviteId);
         }
 
-        // End the session
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
-          .eq('id', ctx.session.id);
-
         // Build confirmation message based on response
         if (response === 'declined') {
           return [{

@@ -1994,11 +1994,6 @@ export const schedulingFlow: FlowDefinition = {
             weekday: 'long', day: 'numeric', month: 'long',
           });
 
-          await ctx.supabase
-            .from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
-
           const labels = getCategoryLabels(ctx.business?.category || 'restaurant');
           const partyCount = (d.party_size as number) || 1;
           return [{
@@ -2083,9 +2078,6 @@ export const schedulingFlow: FlowDefinition = {
 
         // ── T&C cancel check (before gate) ──
         if (d._terms_cancelled) {
-          await ctx.supabase.from('bot_sessions')
-            .update({ current_step: 'complete', is_active: false })
-            .eq('id', ctx.session.id);
           return [{ type: 'text', text: 'No problem! Your booking has been cancelled. Send *Hi* to start over.' }];
         }
 
@@ -2393,12 +2385,6 @@ export const schedulingFlow: FlowDefinition = {
             },
           ];
         }
-
-        // No deposit — booking confirmed
-        await ctx.supabase
-          .from('bot_sessions')
-          .update({ current_step: 'complete', is_active: false })
-          .eq('id', ctx.session.id);
 
         // Custom template for standalone bots
         let message: string;

@@ -169,8 +169,7 @@ describe('Payment Flow', () => {
 
       const messages = await step.prompt(ctx);
 
-      // Should deactivate session
-      expect(ctx.supabase.from).toHaveBeenCalledWith('bot_sessions');
+      // Executor now handles session deactivation after next() returns null
 
       // Should return a cancellation message
       expect(messages).toHaveLength(1);
