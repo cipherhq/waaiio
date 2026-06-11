@@ -117,7 +117,7 @@ export default async function DashboardLayout({
                 <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
                   <NotificationBell />
                 </div>
-                <div id="main-content" className="mx-auto max-w-6xl px-4 pt-16 pb-6 md:pt-6 md:pb-6 sm:px-6 lg:px-8 dark:text-gray-100">
+                <div id="main-content" className="mx-auto max-w-7xl px-4 pt-16 pb-6 md:pt-6 md:pb-6 sm:px-6 lg:px-8 dark:text-gray-100">
                   {children}
                 </div>
               </main>
@@ -206,7 +206,7 @@ export default async function DashboardLayout({
           <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
             <NotificationBell />
           </div>
-          <div id="main-content" className="mx-auto max-w-6xl px-4 pt-16 pb-6 md:pt-6 md:pb-6 sm:px-6 lg:px-8 dark:text-gray-100">
+          <div id="main-content" className="mx-auto max-w-7xl px-4 pt-16 pb-6 md:pt-6 md:pb-6 sm:px-6 lg:px-8 dark:text-gray-100">
             {children}
             <FloatingHelp />
           </div>
