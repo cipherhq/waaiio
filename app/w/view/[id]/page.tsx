@@ -1,6 +1,7 @@
 import { notFound } from 'next/navigation';
 import { createServiceClient } from '@/lib/supabase/service';
 import type { Metadata } from 'next';
+import { PrintButton } from './PrintButton';
 
 export const metadata: Metadata = {
   title: 'Signed Waiver',
@@ -18,22 +19,30 @@ export default async function SignedWaiverView({
   const { token } = await searchParams;
   const supabase = createServiceClient();
 
-  // Fetch signed waiver with template and business info — verify access_token
+  // Fetch signed waiver — verify access_token
   const { data: signed } = await supabase
     .from('signed_waivers')
-    .select('*, waiver_templates!inner(title, body, business_id, businesses!inner(name, logo_url))')
+    .select('*')
     .eq('id', id)
     .eq('access_token', token || '')
     .single();
 
   if (!signed) notFound();
 
-  const template = signed.waiver_templates as unknown as {
-    title: string;
-    body: string;
-    businesses: { name: string; logo_url: string | null };
-  };
-  const business = template.businesses;
+  // Fetch template + business separately (nested joins can fail with PostgREST)
+  const { data: template } = await supabase
+    .from('waiver_templates')
+    .select('title, body')
+    .eq('id', signed.template_id)
+    .single();
+
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('name, logo_url')
+    .eq('id', signed.business_id)
+    .single();
+
+  if (!template || !business) notFound();
   const meta = (signed.metadata || {}) as Record<string, string>;
   const signedDate = new Date(signed.signed_at).toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -52,12 +61,7 @@ export default async function SignedWaiverView({
       <div className="mx-auto max-w-2xl">
         {/* Print button */}
         <div className="mb-4 flex justify-end print:hidden">
-          <button
-            onClick={() => window.print()}
-            className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
-          >
-            Print / Save as PDF
-          </button>
+          <PrintButton />
         </div>
 
         {/* Document */}
