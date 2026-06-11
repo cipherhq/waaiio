@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -86,8 +87,9 @@ export default function WaiversPage() {
   // Signed count per template
   const [signedCounts, setSignedCounts] = useState<Record<string, number>>({});
 
-  // Copied link state
+  // Copied link + QR modal state
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [qrModal, setQrModal] = useState<WaiverTemplate | null>(null);
 
   const appUrl = typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com';
 
@@ -706,6 +708,13 @@ export default function WaiversPage() {
                     {/* Action buttons */}
                     <div className="flex items-center gap-2 shrink-0">
                       <button
+                        onClick={() => setQrModal(tpl)}
+                        className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700"
+                        title="QR Code"
+                      >
+                        QR
+                      </button>
+                      <button
                         onClick={() => copyLink(tpl.token)}
                         className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 transition hover:bg-gray-50 dark:hover:bg-gray-700"
                       >
@@ -969,6 +978,83 @@ export default function WaiversPage() {
       {toastMsg && (
         <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm text-white shadow-lg">
           {toastMsg}
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      {qrModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setQrModal(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl dark:bg-gray-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-center text-lg font-bold text-gray-900 dark:text-white">
+              {qrModal.title}
+            </h3>
+            <p className="mt-1 text-center text-sm text-brand font-medium">
+              Scan to Sign Waiver
+            </p>
+
+            <div className="mt-5 flex justify-center">
+              <div className="rounded-xl border border-gray-100 p-4 dark:border-gray-700">
+                <QRCodeCanvas
+                  value={`${appUrl}/w/${qrModal.token}`}
+                  size={220}
+                  level="H"
+                />
+              </div>
+            </div>
+
+            <p className="mt-3 text-center text-[10px] font-medium tracking-wider text-gray-300 dark:text-gray-600">
+              Powered by Waaiio
+            </p>
+
+            <p className="mt-2 break-all text-center font-mono text-xs text-gray-400">
+              {appUrl}/w/{qrModal.token}
+            </p>
+
+            <div className="mt-5 flex gap-2">
+              <button
+                onClick={() => copyLink(qrModal.token)}
+                className="flex-1 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300"
+              >
+                {copiedToken === qrModal.token ? 'Copied!' : 'Copy Link'}
+              </button>
+              <button
+                onClick={() => {
+                  const canvas = document.querySelector('#waiver-qr-download canvas') as HTMLCanvasElement;
+                  if (!canvas) return;
+                  const url = canvas.toDataURL('image/png');
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${qrModal.title.replace(/\s+/g, '-').toLowerCase()}-waiver-qr.png`;
+                  a.click();
+                }}
+                className="flex-1 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+              >
+                Download QR
+              </button>
+            </div>
+
+            {/* Hidden high-res QR for download */}
+            <div id="waiver-qr-download" className="hidden">
+              <QRCodeCanvas
+                value={`${appUrl}/w/${qrModal.token}`}
+                size={600}
+                level="H"
+              />
+            </div>
+
+            <button
+              onClick={() => setQrModal(null)}
+              className="mt-3 w-full text-center text-sm text-gray-400 hover:text-gray-600"
+            >
+              Close
+            </button>
+          </div>
         </div>
       )}
     </div>
