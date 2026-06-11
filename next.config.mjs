@@ -15,7 +15,6 @@ const nextConfig = {
       },
     ],
   },
-  serverExternalPackages: ['sharp'],
   experimental: {
     outputFileTracingIncludes: {
       '/api/webhook/meta-cloud': ['./node_modules/pdfkit/js/data/**/*', './node_modules/sharp/**/*'],

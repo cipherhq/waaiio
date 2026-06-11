@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import { generateTicketsPdf } from '@/lib/pdf/ticket-generator';
 import QRCode from 'qrcode';
+import sharp from 'sharp';
 import { logger } from '@/lib/logger';
 import { sendEmail } from '@/lib/email/client';
 import { ticketConfirmationEmail } from '@/lib/email/templates';
@@ -177,7 +178,6 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       const caption = `🎟️ *${eventName}*\n\n👤 ${guestName || 'Guest'}\n🎫 Ticket ${ticket.ticketNumber}/${ticket.totalTickets} — *${ticket.ticketCode}*\n📅 ${eventDate}${eventTime ? ' · ' + eventTime : ''}\n📍 ${venue}\n🔑 Ref: *${referenceCode}*\n\nShow this at the entrance\n🔗 ${verifyUrl}`;
 
       try {
-        const sharp = (await import('sharp')).default;
         const qrPng = await QRCode.toBuffer(verifyUrl, { type: 'png', width: 250, margin: 1, color: { dark: '#000000', light: '#FFFFFF' } });
 
         let composited: Buffer;
