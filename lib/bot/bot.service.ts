@@ -1842,10 +1842,9 @@ export class BotService {
                 .single();
               if (svcCheck?.service_type === 'giving') {
                 isGivingRebook = true;
-              } else if (!svcCheck?.service_type && GIVING_CATS.includes(business.category)) {
-                // For giving categories, if service_type is null, default to giving
-                isGivingRebook = true;
               }
+              // No fallback — only explicit service_type='giving' triggers giving rebook
+              // Churches can have both giving AND scheduling services
               const actionWord = isGivingRebook ? 'Give' : catLabels.actionVerb || 'Book';
               const promptText = isGivingRebook
                 ? `${rebookMsg}\n\nGive again?\n🙏 ${rebookServiceName}`
@@ -2356,9 +2355,37 @@ export class BotService {
         return this.handleMessage(from, 'Hi', messageType, destinationPhone, bizId);
       }
 
-      // ── "cancel" / "back" → let executor handle (go back one step) ──
+      // ── "cancel" / "back" → go back one step ──
       if (isCancelOrBack) {
-        // Fall through to the executor — it pops step history
+        // For free-text steps (enter_amount, collect_name, etc.), the executor
+        // won't intercept back/cancel. Handle it here instead.
+        const FREE_TEXT_STEPS = ['collect_name', 'collect_other_name', 'collect_email', 'special_requests', 'review_text', 'enter_amount', 'collect_address', 'collect_pickup_address', 'collect_dropoff_address', 'collect_package_description', 'collect_venue', 'enter_promo_code'];
+        if (FREE_TEXT_STEPS.includes(step)) {
+          const history = (session.session_data._step_history as string[]) || [];
+          if (history.length >= 2) {
+            history.pop();
+            const prevStep = history[history.length - 1];
+            session.session_data._step_history = history;
+            session.current_step = prevStep;
+            await this.supabase.from('bot_sessions').update({
+              current_step: prevStep,
+              session_data: session.session_data,
+            }).eq('id', session.id);
+            const biz = session.business_id
+              ? (await this.supabase.from('businesses').select('*').eq('id', session.business_id).single()).data
+              : null;
+            if (biz) {
+              await this.flowExecutor.execute(from, '', session as unknown as BotSession, biz);
+            }
+            return;
+          }
+          // No history — restart menu
+          if (session.business_id) {
+            await this.deactivateSession(session.id);
+            return this.handleMessage(from, 'Hi', messageType, destinationPhone, session.business_id);
+          }
+        }
+        // Non-free-text steps: fall through to executor (it handles back/cancel)
       }
 
       // ── "exit" / "quit" / "stop" → leave business ──
