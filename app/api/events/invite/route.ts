@@ -164,10 +164,7 @@ export async function POST(request: NextRequest) {
         inviteTarget.dress_code ? `👔 Dress code: ${inviteTarget.dress_code}` : '',
         inviteTarget.invite_message ? `\n${inviteTarget.invite_message}` : '',
         '',
-        `RSVP here 👇`,
-        inviteLink,
-        '',
-        `Or reply: *yes*, *no*, or *maybe*`,
+        `RSVP: ${inviteLink}`,
       ];
       const message = messageParts.filter(Boolean).join('\n');
 
@@ -182,9 +179,17 @@ export async function POST(request: NextRequest) {
             to: phone,
             templateName: 'event_invitation',
             templateParams: [inviteTarget.name, dateTimeLabel, venueLabel, inviteLink],
-            // If template isn't approved yet, fall back to direct text
+            // If template isn't approved yet, fall back to buttons
             followUpFn: async (s, to) => {
-              await s.sendText({ to, text: message });
+              await s.sendButtons({
+                to,
+                body: message,
+                buttons: [
+                  { id: `rsvp_yes_${invite.id}`, title: "Yes, I'll be there!" },
+                  { id: `rsvp_maybe_${invite.id}`, title: 'Maybe' },
+                  { id: `rsvp_no_${invite.id}`, title: "Can't make it" },
+                ],
+              });
             },
           });
 

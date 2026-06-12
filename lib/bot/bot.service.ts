@@ -203,6 +203,23 @@ export class BotService {
       return;
     }
 
+    // Handle RSVP button taps from invite messages
+    const rsvpButtonMatch = text.match(/^rsvp_(yes|maybe|no)_([a-f0-9-]+)$/i);
+    if (rsvpButtonMatch) {
+      const rsvpStatus = rsvpButtonMatch[1] === 'yes' ? 'accepted' : rsvpButtonMatch[1] === 'maybe' ? 'maybe' : 'declined';
+      const inviteId = rsvpButtonMatch[2];
+      const statusEmoji = { accepted: '✅', maybe: '🤔', declined: '❌' };
+      const statusLabel = { accepted: "You're coming!", maybe: "Noted as maybe!", declined: "Sorry you can't make it!" };
+
+      await this.supabase
+        .from('event_invites')
+        .update({ status: rsvpStatus, responded_at: new Date().toISOString() })
+        .eq('id', inviteId);
+
+      await this.sendText(from, `${statusEmoji[rsvpStatus]} ${statusLabel[rsvpStatus]}`);
+      return;
+    }
+
     // Handle RSVP keyword or token — check for pending invites
     const isRsvpKeyword = /^(rsvp|invite|yes\s*i'?m?\s*coming|i'?ll?\s*be\s*there)$/i.test(text);
     const rsvpTokenMatch = text.match(/^rsvp\s+([a-f0-9]{24})$/i);
