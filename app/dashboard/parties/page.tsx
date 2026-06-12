@@ -580,6 +580,89 @@ export default function PartiesPage() {
           </div>
         </div>
 
+        {/* Analytics */}
+        {invites.length > 0 && (
+          <div className="mt-6 rounded-xl border border-gray-100 bg-white p-5">
+            <h3 className="text-sm font-bold text-gray-900 mb-4">Invite Analytics</h3>
+            <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+              <div>
+                <p className="text-xs font-medium text-gray-500">Response Rate</p>
+                <p className="mt-1 text-xl font-bold text-gray-900">
+                  {Math.round(((accepted.length + maybe.length + declined.length) / invites.length) * 100)}%
+                </p>
+                <p className="text-xs text-gray-400">{accepted.length + maybe.length + declined.length} of {invites.length} responded</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500">Acceptance Rate</p>
+                <p className="mt-1 text-xl font-bold text-green-600">
+                  {(accepted.length + maybe.length + declined.length) > 0
+                    ? Math.round((accepted.length / (accepted.length + maybe.length + declined.length)) * 100)
+                    : 0}%
+                </p>
+                <p className="text-xs text-gray-400">{accepted.length} confirmed yes</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500">Total Headcount</p>
+                <p className="mt-1 text-xl font-bold text-brand">{totalComing}</p>
+                <p className="text-xs text-gray-400">{accepted.length} guests + {totalPlusOnes} plus-ones</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500">Awaiting Response</p>
+                <p className="mt-1 text-xl font-bold text-amber-600">{pending.length + maybe.length}</p>
+                <p className="text-xs text-gray-400">{pending.length} pending, {maybe.length} maybe</p>
+              </div>
+            </div>
+
+            {/* Response timeline */}
+            {(() => {
+              const responded = invites.filter(i => i.responded_at);
+              if (responded.length === 0) return null;
+
+              // Group by date
+              const byDate = new Map<string, { accepted: number; maybe: number; declined: number }>();
+              for (const inv of responded) {
+                const d = new Date(inv.responded_at!).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+                const entry = byDate.get(d) || { accepted: 0, maybe: 0, declined: 0 };
+                if (inv.status === 'accepted') entry.accepted++;
+                else if (inv.status === 'maybe') entry.maybe++;
+                else if (inv.status === 'declined') entry.declined++;
+                byDate.set(d, entry);
+              }
+
+              const dates = [...byDate.entries()];
+              const maxDay = Math.max(...dates.map(([, v]) => v.accepted + v.maybe + v.declined));
+
+              return (
+                <div className="mt-6">
+                  <p className="text-xs font-medium text-gray-500 mb-3">Response Timeline</p>
+                  <div className="space-y-2">
+                    {dates.map(([date, counts]) => {
+                      const total = counts.accepted + counts.maybe + counts.declined;
+                      const pct = maxDay > 0 ? (total / maxDay) * 100 : 0;
+                      return (
+                        <div key={date} className="flex items-center gap-3">
+                          <span className="w-16 shrink-0 text-xs text-gray-500">{date}</span>
+                          <div className="flex-1 flex h-5 rounded overflow-hidden bg-gray-50">
+                            {counts.accepted > 0 && <div className="bg-green-400 h-full" style={{ width: `${(counts.accepted / total) * pct}%` }} title={`${counts.accepted} accepted`} />}
+                            {counts.maybe > 0 && <div className="bg-amber-400 h-full" style={{ width: `${(counts.maybe / total) * pct}%` }} title={`${counts.maybe} maybe`} />}
+                            {counts.declined > 0 && <div className="bg-red-400 h-full" style={{ width: `${(counts.declined / total) * pct}%` }} title={`${counts.declined} declined`} />}
+                          </div>
+                          <span className="w-8 shrink-0 text-xs text-gray-500 text-right">{total}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 flex gap-4 text-xs text-gray-400">
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-400" /> Accepted</span>
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" /> Maybe</span>
+                    <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" /> Declined</span>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         {/* Guest list */}
         {loadingInvites ? (
           <div className="mt-8 flex justify-center">
@@ -632,9 +715,16 @@ export default function PartiesPage() {
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ partyId: selectedParty!.id, phones: [invite.guest_phone], businessId: business.id }),
                               });
-                              if (res.ok) setStatusMessage('Invite resent!');
-                              else setStatusMessage('Failed to resend');
-                              setTimeout(() => setStatusMessage(''), 3000);
+                              if (res.ok) {
+                                const data = await res.json();
+                                const r = data.results?.[0];
+                                if (r?.note) setStatusMessage(`Resent! (${r.note})`);
+                                else if (r?.status === 'resent') setStatusMessage('Invite resent!');
+                                else setStatusMessage('Invite sent!');
+                              } else {
+                                setStatusMessage('Failed to resend');
+                              }
+                              setTimeout(() => setStatusMessage(''), 4000);
                             }}
                             className="rounded px-2 py-1 text-xs font-medium text-brand hover:bg-brand/5"
                             title="Resend invite"

@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
     .single();
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-  const results: Array<{ phone: string; status: string; error?: string }> = [];
+  const results: Array<{ phone: string; status: string; error?: string; note?: string }> = [];
 
   // Resolve WhatsApp channel for this business
   const resolver = new ChannelResolver(service);
@@ -134,6 +134,8 @@ export async function POST(request: NextRequest) {
       const { data: existing } = await findQuery.maybeSingle();
 
       let invite = existing;
+      const isResend = !!existing;
+      const alreadyResponded = existing && existing.status !== 'pending';
 
       if (!invite) {
         // Insert new invite
@@ -195,7 +197,13 @@ export async function POST(request: NextRequest) {
           });
 
           if (sent) {
-            results.push({ phone, status: 'sent' });
+            if (alreadyResponded) {
+              results.push({ phone, status: 'resent', note: `Guest already responded: ${existing!.status}` });
+            } else if (isResend) {
+              results.push({ phone, status: 'resent' });
+            } else {
+              results.push({ phone, status: 'sent' });
+            }
           } else {
             results.push({ phone, status: 'created', error: 'Invite created but message could not be delivered' });
           }
