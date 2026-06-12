@@ -61,6 +61,7 @@ export default function PartiesPage() {
   // Invite sending
   const [showSendForm, setShowSendForm] = useState(false);
   const [invitePhone, setInvitePhone] = useState('');
+  const [inviteEmail, setInviteEmail] = useState('');
   const [showBulk, setShowBulk] = useState(false);
   const [bulkPhones, setBulkPhones] = useState('');
   const [sending, setSending] = useState(false);
@@ -221,6 +222,7 @@ export default function PartiesPage() {
         body: JSON.stringify({
           partyId: selectedParty.id,
           phones: [invitePhone.trim()],
+          emails: inviteEmail.trim() ? [inviteEmail.trim()] : [],
           businessId: business.id,
         }),
       });
@@ -237,6 +239,7 @@ export default function PartiesPage() {
           setStatusMessage('Invite sent!');
         }
         setInvitePhone('');
+        setInviteEmail('');
         setShowSendForm(false);
         loadInvites(selectedParty.id);
       } else {
@@ -517,16 +520,26 @@ export default function PartiesPage() {
           <div className="mt-4 rounded-xl border border-gray-100 bg-white p-5">
             <h3 className="text-sm font-semibold text-gray-900">Send Invite</h3>
             <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-gray-500">Phone Number *</label>
+              <label className="mb-1 block text-xs font-medium text-gray-500">Phone Number (WhatsApp) *</label>
               <PhoneInput
                 value={invitePhone}
                 onChange={setInvitePhone}
                 countryCode={(business.country_code || 'US') as CountryCode}
               />
             </div>
+            <div className="mt-3">
+              <label className="mb-1 block text-xs font-medium text-gray-500">Email <span className="text-gray-400">(optional — also sends email invite)</span></label>
+              <input
+                type="email"
+                value={inviteEmail}
+                onChange={e => setInviteEmail(e.target.value)}
+                placeholder="guest@example.com"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+              />
+            </div>
             <div className="mt-3 flex gap-2">
               <button onClick={handleSendInvite} disabled={sending || !invitePhone.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">{sending ? 'Sending...' : 'Send'}</button>
-              <button onClick={() => setShowSendForm(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={() => { setShowSendForm(false); setInviteEmail(''); }} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
             </div>
           </div>
         )}
@@ -585,8 +598,9 @@ export default function PartiesPage() {
                   <th scope="col" className="pb-3 pr-4">Phone</th>
                   <th scope="col" className="pb-3 pr-4">Status</th>
                   <th scope="col" className="pb-3 pr-4">Plus-ones</th>
-                  <th scope="col" className="pb-3 pr-4">Dietary</th>
-                  <th scope="col" className="pb-3">Responded</th>
+                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Dietary</th>
+                  <th scope="col" className="pb-3 pr-4 hidden md:table-cell">Responded</th>
+                  <th scope="col" className="pb-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -605,9 +619,41 @@ export default function PartiesPage() {
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[invite.status]}`}>{invite.status}</span>
                       </td>
                       <td className="py-3 pr-4 text-gray-600">{invite.status === 'accepted' ? invite.plus_ones : '-'}</td>
-                      <td className="py-3 pr-4 text-gray-600 text-xs max-w-[150px] truncate">{invite.dietary_notes || '-'}</td>
-                      <td className="py-3 text-gray-400 text-xs">
+                      <td className="py-3 pr-4 text-gray-600 text-xs max-w-[150px] truncate hidden md:table-cell">{invite.dietary_notes || '-'}</td>
+                      <td className="py-3 pr-4 text-gray-400 text-xs hidden md:table-cell">
                         {invite.responded_at ? new Date(invite.responded_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-'}
+                      </td>
+                      <td className="py-3">
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={async () => {
+                              const res = await fetch('/api/events/invite', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ partyId: selectedParty!.id, phones: [invite.guest_phone], businessId: business.id }),
+                              });
+                              if (res.ok) setStatusMessage('Invite resent!');
+                              else setStatusMessage('Failed to resend');
+                              setTimeout(() => setStatusMessage(''), 3000);
+                            }}
+                            className="rounded px-2 py-1 text-xs font-medium text-brand hover:bg-brand/5"
+                            title="Resend invite"
+                          >
+                            Resend
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (!confirm('Remove this guest?')) return;
+                              const supabase = createClient();
+                              await supabase.from('event_invites').delete().eq('id', invite.id);
+                              loadInvites(selectedParty!.id);
+                            }}
+                            className="rounded px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
+                            title="Remove guest"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

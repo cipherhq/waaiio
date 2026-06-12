@@ -22,10 +22,11 @@ function checkRateLimit(userId: string): boolean {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { eventId, partyId, phones, businessId } = body as {
+  const { eventId, partyId, phones, emails, businessId } = body as {
     eventId?: string;
     partyId?: string;
     phones: string[];
+    emails?: string[];
     businessId: string;
   };
 
@@ -208,6 +209,49 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       logger.error(`[INVITE] Error for ${phone}:`, err);
       results.push({ phone, status: 'error', error: 'Unexpected error' });
+    }
+  }
+
+  // Send email invites if provided
+  if (emails && emails.length > 0 && inviteTarget) {
+    try {
+      const { sendEmail } = await import('@/lib/email/client');
+      const dateStr = formatInviteDate(inviteTarget.date);
+      const timeStr = formatInviteTime(inviteTarget.time);
+
+      for (const email of emails.slice(0, 50)) {
+        if (!email || !email.includes('@')) continue;
+
+        // Find the invite for the first phone (link email to same invite)
+        const firstPhone = phones[0]?.replace(/\D/g, '') || '';
+        const findQ = service.from('event_invites').select('invite_token').eq('business_id', businessId).eq('guest_phone', firstPhone);
+        if (partyId) findQ.eq('party_id', partyId);
+        else findQ.eq('event_id', eventId!);
+        const { data: invForEmail } = await findQ.maybeSingle();
+
+        const rsvpLink = invForEmail ? `${appUrl}/rsvp/${invForEmail.invite_token}` : appUrl;
+
+        await sendEmail({
+          to: email,
+          subject: `You're invited: ${inviteTarget.name}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+              <h2 style="color: #6C2BD9;">You're Invited! 🎉</h2>
+              <h3>${inviteTarget.name}</h3>
+              <p>📅 ${dateStr}${timeStr ? ` at ${timeStr}` : ''}</p>
+              ${inviteTarget.venue ? `<p>📍 ${inviteTarget.venue}</p>` : ''}
+              ${(inviteTarget as any).dress_code ? `<p>👔 Dress code: ${(inviteTarget as any).dress_code}</p>` : ''}
+              ${inviteTarget.invite_message ? `<p>${inviteTarget.invite_message}</p>` : ''}
+              <div style="margin: 24px 0;">
+                <a href="${rsvpLink}" style="background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">RSVP Now</a>
+              </div>
+              <p style="color: #999; font-size: 12px;">From ${business?.name || 'Waaiio'} · Powered by Waaiio</p>
+            </div>
+          `,
+        }).catch(err => logger.error(`[INVITE] Email failed for ${email}:`, err));
+      }
+    } catch (err) {
+      logger.error('[INVITE] Email sending error:', err);
     }
   }
 
