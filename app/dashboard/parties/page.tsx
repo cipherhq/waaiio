@@ -433,7 +433,7 @@ export default function PartiesPage() {
             {form.allow_plus_ones && (
               <div className="rounded-lg border border-gray-100 bg-white p-3">
                 <label className="mb-1 block text-sm font-medium text-gray-800">Max Plus-Ones</label>
-                <input type="number" min={1} max={10} value={form.max_plus_ones} onFocus={e => e.target.select()} onChange={e => setForm({ ...form, max_plus_ones: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                <input type="number" min={1} max={10} value={form.max_plus_ones || ''} onFocus={e => e.target.select()} onChange={e => setForm({ ...form, max_plus_ones: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
               </div>
             )}
             <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
