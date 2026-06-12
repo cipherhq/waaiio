@@ -182,24 +182,30 @@ export async function POST(request: NextRequest) {
           const venueLabel = inviteTarget.venue ? ` at ${inviteTarget.venue}` : '';
           const eventDetails = `${inviteTarget.name} on ${dateTimeLabel}${venueLabel}`;
 
-          const { sent } = await sendWithTemplate({
-            sender: resolved.sender,
-            to: phone,
-            templateName: 'waaiio_event_invite',
-            templateParams: [eventDetails, inviteLink],
-            // If template isn't approved yet, fall back to buttons
-            followUpFn: async (s, to) => {
-              await s.sendButtons({
-                to,
-                body: message,
-                buttons: [
-                  { id: `rsvp_yes_${invite.id}`, title: "Yes, I'll be there!" },
-                  { id: `rsvp_maybe_${invite.id}`, title: 'Maybe' },
-                  { id: `rsvp_no_${invite.id}`, title: "Can't make it" },
-                ],
-              });
-            },
-          });
+          // Try buttons first (richer UX), fall back to template for new numbers
+          let sent = false;
+          try {
+            await resolved.sender.sendButtons({
+              to: phone,
+              body: message,
+              buttons: [
+                { id: `rsvp_yes_${invite.id}`, title: "Yes, I'll be there!" },
+                { id: `rsvp_maybe_${invite.id}`, title: 'Maybe' },
+                { id: `rsvp_no_${invite.id}`, title: "Can't make it" },
+              ],
+            });
+            sent = true;
+          } catch {
+            // Buttons failed (likely outside 24h window) — use template
+            const templateResult = await sendWithTemplate({
+              sender: resolved.sender,
+              to: phone,
+              templateName: 'waaiio_event_invite',
+              templateParams: [eventDetails, inviteLink],
+              templateOnly: true,
+            });
+            sent = templateResult.sent;
+          }
 
           if (sent) {
             if (alreadyResponded) {
