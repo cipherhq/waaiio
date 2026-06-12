@@ -87,11 +87,11 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
 export async function provisionTemplates(
   wabaId: string,
   accessToken: string,
-): Promise<{ created: number; skipped: number; failed: number; errors: Array<{ name: string; error: string }> }> {
+): Promise<{ created: number; skipped: number; failed: number; errors: Array<{ name: string; error: string; details?: unknown }> }> {
   let created = 0;
   let skipped = 0;
   let failed = 0;
-  const errors: Array<{ name: string; error: string }> = [];
+  const errors: Array<{ name: string; error: string; details?: unknown }> = [];
 
   for (const template of WAAIIO_TEMPLATES) {
     try {
