@@ -87,10 +87,11 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
 export async function provisionTemplates(
   wabaId: string,
   accessToken: string,
-): Promise<{ created: number; skipped: number; failed: number }> {
+): Promise<{ created: number; skipped: number; failed: number; errors: Array<{ name: string; error: string }> }> {
   let created = 0;
   let skipped = 0;
   let failed = 0;
+  const errors: Array<{ name: string; error: string }> = [];
 
   for (const template of WAAIIO_TEMPLATES) {
     try {
@@ -126,14 +127,16 @@ export async function provisionTemplates(
         logger.debug(`[TEMPLATES] Created ${template.name} on WABA ${wabaId}: ${createData.status}`);
       } else {
         failed++;
-        logger.error(`[TEMPLATES] Failed to create ${template.name}:`, createData.error?.message);
+        errors.push({ name: template.name, error: createData.error?.message || JSON.stringify(createData) });
+        logger.error(`[TEMPLATES] Failed to create ${template.name}:`, createData.error?.message || JSON.stringify(createData));
       }
     } catch (err) {
       failed++;
+      errors.push({ name: template.name, error: (err as Error).message });
       logger.error(`[TEMPLATES] Error creating ${template.name}:`, (err as Error).message);
     }
   }
 
   logger.debug(`[TEMPLATES] Provisioned on WABA ${wabaId}: ${created} created, ${skipped} skipped, ${failed} failed`);
-  return { created, skipped, failed };
+  return { created, skipped, failed, errors };
 }
