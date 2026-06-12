@@ -206,17 +206,39 @@ export class BotService {
     // Handle RSVP button taps from invite messages
     const rsvpButtonMatch = text.match(/^rsvp_(yes|maybe|no)_([a-f0-9-]+)$/i);
     if (rsvpButtonMatch) {
-      const rsvpStatus = rsvpButtonMatch[1] === 'yes' ? 'accepted' : rsvpButtonMatch[1] === 'maybe' ? 'maybe' : 'declined';
+      const rsvpChoice = rsvpButtonMatch[1] as 'yes' | 'maybe' | 'no';
+      const rsvpStatus = rsvpChoice === 'yes' ? 'accepted' : rsvpChoice === 'maybe' ? 'maybe' : 'declined';
       const inviteId = rsvpButtonMatch[2];
-      const statusEmoji = { accepted: '✅', maybe: '🤔', declined: '❌' };
-      const statusLabel = { accepted: "You're coming!", maybe: "Noted as maybe!", declined: "Sorry you can't make it!" };
+      const defaultEmoji: Record<string, string> = { accepted: '✅', maybe: '🤔', declined: '❌' };
+      const defaultLabel: Record<string, string> = { accepted: "You're coming!", maybe: "Noted as maybe!", declined: "Sorry you can't make it!" };
 
       await this.supabase
         .from('event_invites')
         .update({ status: rsvpStatus, responded_at: new Date().toISOString() })
         .eq('id', inviteId);
 
-      await this.sendText(from, `${statusEmoji[rsvpStatus]} ${statusLabel[rsvpStatus]}`);
+      // Check for custom response messages from the party
+      let responseMsg = `${defaultEmoji[rsvpStatus]} ${defaultLabel[rsvpStatus]}`;
+      try {
+        const { data: inv } = await this.supabase
+          .from('event_invites')
+          .select('party_id')
+          .eq('id', inviteId)
+          .single();
+        if (inv?.party_id) {
+          const { data: party } = await this.supabase
+            .from('parties')
+            .select('rsvp_yes_message, rsvp_maybe_message, rsvp_no_message')
+            .eq('id', inv.party_id)
+            .single();
+          const customMsg = rsvpChoice === 'yes' ? party?.rsvp_yes_message
+            : rsvpChoice === 'maybe' ? party?.rsvp_maybe_message
+            : party?.rsvp_no_message;
+          if (customMsg) responseMsg = customMsg;
+        }
+      } catch { /* use default */ }
+
+      await this.sendText(from, responseMsg);
       return;
     }
 

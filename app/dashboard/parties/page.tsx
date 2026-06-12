@@ -85,6 +85,11 @@ export default function PartiesPage() {
     max_plus_ones: 3,
     ask_dietary: false,
     invite_message: '',
+    rsvp_yes_message: '',
+    rsvp_maybe_message: '',
+    rsvp_no_message: '',
+    followup_message: '',
+    followup_days_before: 1,
     status: 'active' as PartyItem['status'],
   });
 
@@ -137,7 +142,8 @@ export default function PartiesPage() {
       id: '', name: '', description: '', date: '', time: '', end_time: '',
       venue: '', venue_address: '', dress_code: '', image_url: null,
       allow_plus_ones: true, max_plus_ones: 3, ask_dietary: false,
-      invite_message: '', status: 'active',
+      invite_message: '', rsvp_yes_message: '', rsvp_maybe_message: '', rsvp_no_message: '',
+      followup_message: '', followup_days_before: 1, status: 'active',
     });
     setView('add');
   }
@@ -158,6 +164,11 @@ export default function PartiesPage() {
       max_plus_ones: party.max_plus_ones || 3,
       ask_dietary: party.ask_dietary,
       invite_message: party.invite_message || '',
+      rsvp_yes_message: (party as any).rsvp_yes_message || '',
+      rsvp_maybe_message: (party as any).rsvp_maybe_message || '',
+      rsvp_no_message: (party as any).rsvp_no_message || '',
+      followup_message: (party as any).followup_message || '',
+      followup_days_before: (party as any).followup_days_before || 1,
       status: party.status,
     });
     setView('edit');
@@ -189,6 +200,11 @@ export default function PartiesPage() {
       max_plus_ones: form.max_plus_ones,
       ask_dietary: form.ask_dietary,
       invite_message: form.invite_message.trim() || null,
+      rsvp_yes_message: form.rsvp_yes_message.trim() || null,
+      rsvp_maybe_message: form.rsvp_maybe_message.trim() || null,
+      rsvp_no_message: form.rsvp_no_message.trim() || null,
+      followup_message: form.followup_message.trim() || null,
+      followup_days_before: form.followup_days_before || 1,
       status: form.status,
     };
 
@@ -379,6 +395,45 @@ export default function PartiesPage() {
               <label className="mb-1 block text-sm font-medium text-gray-700">Custom Invite Message</label>
               <textarea value={form.invite_message} onChange={e => setForm({ ...form, invite_message: e.target.value })} rows={2} placeholder="Personal message to include in invites" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
+
+            {/* Custom RSVP Responses (Growth+ only) */}
+            {(business.subscription_tier === 'growth' || business.subscription_tier === 'business') ? (
+              <div className="rounded-xl border border-brand/20 bg-brand/5 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold text-gray-900">Custom RSVP Responses</span>
+                  <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-bold text-brand uppercase">Pro</span>
+                </div>
+                <p className="text-xs text-gray-500">Customize the message guests see after they respond. Leave blank for defaults.</p>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-green-700">When guest says Yes</label>
+                  <input type="text" value={form.rsvp_yes_message} onChange={e => setForm({ ...form, rsvp_yes_message: e.target.value })} placeholder="Can't wait to see you! 🎉" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-amber-700">When guest says Maybe</label>
+                  <input type="text" value={form.rsvp_maybe_message} onChange={e => setForm({ ...form, rsvp_maybe_message: e.target.value })} placeholder="Hope to see you there! Let us know if anything changes." maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-red-700">When guest declines</label>
+                  <input type="text" value={form.rsvp_no_message} onChange={e => setForm({ ...form, rsvp_no_message: e.target.value })} placeholder="Sorry you can't make it. You'll be missed!" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                </div>
+                <div className="border-t border-brand/10 pt-3 mt-3">
+                  <label className="mb-1 block text-xs font-medium text-gray-700">Auto-Followup Message</label>
+                  <textarea value={form.followup_message} onChange={e => setForm({ ...form, followup_message: e.target.value })} rows={2} placeholder="Reminder: The party is tomorrow! See you there 🎊" maxLength={1000} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <div className="mt-2 flex items-center gap-2">
+                    <label className="text-xs text-gray-500">Send</label>
+                    <input type="number" min={1} max={14} value={form.followup_days_before || ''} onChange={e => setForm({ ...form, followup_days_before: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-center outline-none focus:border-brand" />
+                    <label className="text-xs text-gray-500">day(s) before the party</label>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+                <p className="text-xs text-gray-500">
+                  <span className="font-semibold text-brand">Growth plan</span> — Customize RSVP response messages and auto-followups.{' '}
+                  <a href="/dashboard/settings?tab=account" className="text-brand font-medium hover:underline">Upgrade →</a>
+                </p>
+              </div>
+            )}
 
             {/* Party Flyer / Image */}
             <div>
