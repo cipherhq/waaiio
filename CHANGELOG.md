@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-10
 
+### Admin panel OTP verification on login
+
+- `app/api/admin/otp/route.ts` — New API route for admin 2FA. Supports `send` (email via Resend or WhatsApp via Meta Cloud API) and `verify` (HMAC-signed token comparison with timingSafeEqual). Rate limited: 3 sends/10min, 5 verifies/10min per email. Brute force protection on both email and IP. Requires valid Supabase session before sending. Code expires in 5 minutes.
+- `admin/src/pages/Login.tsx` — Added 3-step login flow: credentials -> choose OTP method (email/WhatsApp) -> enter 6-digit code. Includes countdown timer, resend, change method, and back-to-login navigation. WhatsApp option disabled if no phone on profile.
+- Affects: admin panel login only. No impact on main app or bot flows.
+
 ### Post-completion "What's next?" menu after every successful transaction
 
 - `lib/bot/flows/executor.ts` — When `next()` returns null (flow complete) and it's NOT a cancellation, shows contextual buttons instead of silently ending. Buttons are based on capability: "Book Again" / "Give Again" / "Buy More Tickets" / "Order Again" + history view + "Done". Session stays alive on `post_completion` step with 10-min expiry.
