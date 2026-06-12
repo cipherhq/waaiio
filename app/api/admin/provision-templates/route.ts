@@ -9,15 +9,22 @@ import { createClient } from '@/lib/supabase/server';
  * Protected by cron auth OR admin session.
  */
 export async function GET(request: NextRequest) {
-  const cronAuth = verifyCronAuth(request);
-  if (cronAuth) {
-    // Cron auth failed — try admin session as fallback
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return cronAuth;
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-    const PLATFORM_OWNERS = ['19d95ac8-0f39-4c59-b0ca-18bf9dfba501', '51b56d99-8998-46a9-aebc-2afd47f698bd'];
-    if (!profile || (profile.role !== 'admin' && !PLATFORM_OWNERS.includes(user.id))) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  // Auth: cron secret OR admin session OR internal token query param
+  const internalToken = request.nextUrl.searchParams.get('token');
+  const validInternalToken = process.env.INTERNAL_API_TOKEN;
+  const hasInternalAuth = internalToken && validInternalToken && internalToken === validInternalToken;
+
+  if (!hasInternalAuth) {
+    const cronAuth = verifyCronAuth(request);
+    if (cronAuth) {
+      // Cron auth failed — try admin session as fallback
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return cronAuth;
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+      const PLATFORM_OWNERS = ['19d95ac8-0f39-4c59-b0ca-18bf9dfba501', '51b56d99-8998-46a9-aebc-2afd47f698bd'];
+      if (!profile || (profile.role !== 'admin' && !PLATFORM_OWNERS.includes(user.id))) return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
   }
 
   const wabaId = process.env.META_CLOUD_WABA_ID;
