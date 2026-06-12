@@ -63,6 +63,14 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
     ],
   },
   {
+    name: 'event_invitation',
+    category: 'UTILITY',
+    language: 'en_US',
+    components: [
+      { type: 'BODY', text: "You're invited! 🎉\n\n{{1}}\n📅 {{2}}\n📍 {{3}}\n\nRSVP here: {{4}}", example: { body_text: [['Boys Hang Out', 'July 31, 2026 at 11:00 AM', 'The Citadel', 'https://waaiio.com/rsvp/abc123']] } },
+    ],
+  },
+  {
     name: 'feedback_request',
     category: 'MARKETING',
     language: 'en_US',

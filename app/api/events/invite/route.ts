@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { logger } from '@/lib/logger';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
@@ -170,11 +171,28 @@ export async function POST(request: NextRequest) {
       ];
       const message = messageParts.filter(Boolean).join('\n');
 
-      // Send WhatsApp message
+      // Send WhatsApp message via template (works for numbers that never messaged before)
       if (resolved) {
         try {
-          await resolved.sender.sendText({ to: phone, text: message });
-          results.push({ phone, status: 'sent' });
+          const dateTimeLabel = `${dateStr}${timeStr ? ` at ${timeStr}` : ''}`;
+          const venueLabel = inviteTarget.venue || 'TBD';
+
+          const { sent } = await sendWithTemplate({
+            sender: resolved.sender,
+            to: phone,
+            templateName: 'event_invitation',
+            templateParams: [inviteTarget.name, dateTimeLabel, venueLabel, inviteLink],
+            // If template isn't approved yet, fall back to direct text
+            followUpFn: async (s, to) => {
+              await s.sendText({ to, text: message });
+            },
+          });
+
+          if (sent) {
+            results.push({ phone, status: 'sent' });
+          } else {
+            results.push({ phone, status: 'created', error: 'Invite created but message could not be delivered' });
+          }
         } catch (sendErr) {
           logger.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
           results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
