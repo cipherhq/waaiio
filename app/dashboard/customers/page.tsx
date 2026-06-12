@@ -170,6 +170,9 @@ export default function CustomersPage() {
 
   const isSharedNumber = !business.wa_method || business.wa_method === 'shared';
 
+  // Accurate total revenue (excludes cancelled)
+  const [accurateRevenue, setAccurateRevenue] = useState<number | null>(null);
+
   /* ---- Fetch customers ---- */
 
   const fetchCustomers = useCallback(async () => {
@@ -180,6 +183,17 @@ export default function CustomersPage() {
       .order('last_seen_at', { ascending: false });
     setCustomers((data as CustomerProfile[]) || []);
     setLoading(false);
+
+    // Compute accurate revenue from confirmed bookings + orders (excludes cancelled)
+    const [{ data: bkgSum }, { data: ordSum }] = await Promise.all([
+      supabase.from('bookings').select('total_amount').eq('business_id', business.id)
+        .in('status', ['confirmed', 'completed', 'in_progress']),
+      supabase.from('orders').select('total_amount').eq('business_id', business.id)
+        .in('status', ['confirmed', 'processing', 'ready', 'shipped', 'delivered']),
+    ]);
+    const bkgTotal = (bkgSum || []).reduce((s, b) => s + (b.total_amount || 0), 0);
+    const ordTotal = (ordSum || []).reduce((s, o) => s + (o.total_amount || 0), 0);
+    setAccurateRevenue(bkgTotal + ordTotal);
   }, [business.id]);
 
   useEffect(() => {
@@ -213,7 +227,7 @@ export default function CustomersPage() {
   const activeCustomers = customers.filter(
     (c) => c.last_seen_at && c.last_seen_at >= thirtyDaysAgo,
   ).length;
-  const totalRevenue = customers.reduce((s, c) => s + (c.total_spent || 0), 0);
+  const totalRevenue = accurateRevenue ?? customers.reduce((s, c) => s + (c.total_spent || 0), 0);
   const avgSpend = totalCustomers > 0 ? totalRevenue / totalCustomers : 0;
 
   /* ---- Select customer & load details ---- */
