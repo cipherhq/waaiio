@@ -179,13 +179,14 @@ export async function POST(request: NextRequest) {
       if (resolved) {
         try {
           const dateTimeLabel = `${dateStr}${timeStr ? ` at ${timeStr}` : ''}`;
-          const venueLabel = inviteTarget.venue || 'TBD';
+          const venueLabel = inviteTarget.venue ? ` at ${inviteTarget.venue}` : '';
+          const eventDetails = `${inviteTarget.name} on ${dateTimeLabel}${venueLabel}`;
 
           const { sent } = await sendWithTemplate({
             sender: resolved.sender,
             to: phone,
             templateName: 'waaiio_event_invite',
-            templateParams: [inviteTarget.name, dateTimeLabel, venueLabel, inviteLink],
+            templateParams: [eventDetails, inviteLink],
             // If template isn't approved yet, fall back to buttons
             followUpFn: async (s, to) => {
               await s.sendButtons({
