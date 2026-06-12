@@ -70,7 +70,10 @@ export default function EventsPage() {
     status: 'published' as EventItem['status'],
     self_checkin_enabled: false,
     image_url: '' as string | null,
+    refund_policy: 'refundable' as 'refundable' | 'no_refund',
   });
+  // Track the original date when editing (to detect past events)
+  const [originalDate, setOriginalDate] = useState('');
 
   const loadEvents = useCallback(async () => {
     const supabase = createClient();
@@ -137,7 +140,8 @@ export default function EventsPage() {
   }
 
   function openAdd() {
-    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false, image_url: null });
+    setForm({ id: '', name: '', description: '', date: '', time: '', venue: '', price: 0, total_tickets: 100, max_per_order: 0, status: 'published', self_checkin_enabled: false, image_url: null, refund_policy: 'refundable' });
+    setOriginalDate('');
     setView('add');
   }
 
@@ -155,9 +159,31 @@ export default function EventsPage() {
       status: event.status,
       self_checkin_enabled: event.self_checkin_enabled || false,
       image_url: event.image_url || null,
+      refund_policy: (event as any).refund_policy || 'refundable',
     });
+    setOriginalDate(event.date);
     setView('edit');
     loadTicketTypes(event.id);
+  }
+
+  function duplicateEvent(event: EventItem) {
+    setForm({
+      id: '', // New event
+      name: event.name,
+      description: event.description || '',
+      date: '', // Force new date
+      time: event.time || '',
+      venue: event.venue || '',
+      price: event.price,
+      total_tickets: event.total_tickets,
+      max_per_order: event.max_per_order || 0,
+      status: 'draft',
+      self_checkin_enabled: event.self_checkin_enabled || false,
+      image_url: event.image_url || null,
+      refund_policy: (event as any).refund_policy || 'refundable',
+    });
+    setOriginalDate('');
+    setView('add');
   }
 
   async function handleSave() {
@@ -206,6 +232,7 @@ export default function EventsPage() {
       status: form.status,
       self_checkin_enabled: form.self_checkin_enabled,
       image_url: form.image_url || null,
+      refund_policy: form.refund_policy,
     };
 
     if (view === 'add') {
@@ -275,11 +302,47 @@ export default function EventsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Date <span className="text-red-400">*</span></label>
-                <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                {view === 'edit' && originalDate && new Date(originalDate + 'T23:59:59') < new Date() ? (
+                  <div>
+                    <input type="date" value={form.date} disabled className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500 cursor-not-allowed" />
+                    <p className="mt-1 text-xs text-amber-600">Date locked — event has passed. Use &quot;Duplicate Event&quot; to reuse this template.</p>
+                  </div>
+                ) : (
+                  <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                )}
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Time <span className="text-red-400">*</span></label>
                 <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              </div>
+            </div>
+
+            {/* Refund Policy */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700">Refund Policy</label>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, refund_policy: 'refundable' })}
+                  className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition ${
+                    form.refund_policy === 'refundable'
+                      ? 'border-brand bg-brand/5 text-brand'
+                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  Refundable
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm({ ...form, refund_policy: 'no_refund' })}
+                  className={`flex-1 rounded-lg border px-4 py-2.5 text-sm font-medium transition ${
+                    form.refund_policy === 'no_refund'
+                      ? 'border-red-300 bg-red-50 text-red-700'
+                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  }`}
+                >
+                  No Refund
+                </button>
               </div>
             </div>
 
@@ -495,8 +558,18 @@ export default function EventsPage() {
           return (
             <>
               {isEventPast && view === 'edit' && (
-                <div className="mt-4 rounded-lg bg-gray-50 border border-gray-200 px-4 py-3">
-                  <p className="text-sm text-gray-500">This event has already passed. You can view details but editing is limited.</p>
+                <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 flex items-center justify-between">
+                  <p className="text-sm text-amber-700">This event has passed. Duplicate it to run again with a new date.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const event = events.find(e => e.id === form.id);
+                      if (event) duplicateEvent(event);
+                    }}
+                    className="ml-4 shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand-600"
+                  >
+                    Duplicate Event
+                  </button>
                 </div>
               )}
               <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
@@ -620,6 +693,16 @@ export default function EventsPage() {
                       className="shrink-0 text-xs font-medium text-brand hover:underline"
                     >
                       {copiedEventId === event.id ? 'Copied!' : 'Copy Link'}
+                    </button>
+                  </div>
+                )}
+                {isPast && (
+                  <div className="mt-3 border-t border-gray-50 pt-3" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => duplicateEvent(event)}
+                      className="w-full rounded-lg border border-brand/30 bg-brand/5 py-2 text-xs font-semibold text-brand hover:bg-brand/10 transition"
+                    >
+                      Duplicate Event
                     </button>
                   </div>
                 )}
