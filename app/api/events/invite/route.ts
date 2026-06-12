@@ -121,67 +121,31 @@ export async function POST(request: NextRequest) {
         upsertPayload.party_id = null;
       }
 
-      // Insert invite record (use insert + on conflict ignore for the new unique index)
-      const { data: invite, error: upsertError } = await service
+      // Check for existing invite first
+      const findQuery = service
         .from('event_invites')
-        .upsert(
-          upsertPayload,
-          { onConflict: partyId ? 'party_id,guest_phone' : 'event_id,guest_phone', ignoreDuplicates: false }
-        )
         .select('id, invite_token, status')
-        .single();
+        .eq('guest_phone', phone)
+        .eq('business_id', businessId);
+      if (partyId) findQuery.eq('party_id', partyId);
+      else findQuery.eq('event_id', eventId!);
+      const { data: existing } = await findQuery.maybeSingle();
 
-      if (upsertError || !invite) {
-        // Fallback: try to find existing invite
-        const findQuery = service
+      let invite = existing;
+
+      if (!invite) {
+        // Insert new invite
+        const { data: newInvite, error: insertError } = await service
           .from('event_invites')
+          .insert(upsertPayload)
           .select('id, invite_token, status')
-          .eq('guest_phone', phone)
-          .eq('business_id', businessId);
-        if (partyId) findQuery.eq('party_id', partyId);
-        else findQuery.eq('event_id', eventId!);
-        const { data: existing } = await findQuery.single();
+          .single();
 
-        if (!existing) {
-          results.push({ phone, status: 'error', error: upsertError?.message || 'Failed to create invite' });
+        if (insertError || !newInvite) {
+          results.push({ phone, status: 'error', error: insertError?.message || 'Failed to create invite' });
           continue;
         }
-        // Use existing invite
-        Object.assign(upsertPayload, existing);
-
-        // Format and send message using existing invite
-        const inviteLink = `${appUrl}/rsvp/${existing.invite_token}`;
-        const dateStr = formatInviteDate(inviteTarget.date);
-        const timeStr = formatInviteTime(inviteTarget.time);
-
-        const messageParts = [
-          `🎉 *You're Invited!*`,
-          '',
-          `*${inviteTarget.name}*`,
-          inviteTarget.date ? `📅 ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : '',
-          inviteTarget.venue ? `📍 ${inviteTarget.venue}` : '',
-          inviteTarget.dress_code ? `👔 Dress code: ${inviteTarget.dress_code}` : '',
-          inviteTarget.invite_message ? `\n${inviteTarget.invite_message}` : '',
-          '',
-          `RSVP here 👇`,
-          inviteLink,
-          '',
-          `Or reply: *yes*, *no*, or *maybe*`,
-        ];
-        const message = messageParts.filter(Boolean).join('\n');
-
-        if (resolved) {
-          try {
-            await resolved.sender.sendText({ to: phone, text: message });
-            results.push({ phone, status: 'sent' });
-          } catch (sendErr) {
-            logger.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
-            results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
-          }
-        } else {
-          results.push({ phone, status: 'created', error: 'No WhatsApp channel configured' });
-        }
-        continue;
+        invite = newInvite;
       }
 
       // Format the date
