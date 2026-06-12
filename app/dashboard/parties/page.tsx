@@ -60,6 +60,7 @@ export default function PartiesPage() {
 
   // Invite sending
   const [showSendForm, setShowSendForm] = useState(false);
+  const [inviteName, setInviteName] = useState('');
   const [invitePhone, setInvitePhone] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [showBulk, setShowBulk] = useState(false);
@@ -238,6 +239,7 @@ export default function PartiesPage() {
         body: JSON.stringify({
           partyId: selectedParty.id,
           phones: [invitePhone.trim()],
+          names: inviteName.trim() ? [inviteName.trim()] : [],
           emails: inviteEmail.trim() ? [inviteEmail.trim()] : [],
           businessId: business.id,
         }),
@@ -254,6 +256,7 @@ export default function PartiesPage() {
         } else {
           setStatusMessage('Invite sent!');
         }
+        setInviteName('');
         setInvitePhone('');
         setInviteEmail('');
         setShowSendForm(false);
@@ -574,6 +577,17 @@ export default function PartiesPage() {
         {showSendForm && (
           <div className="mt-4 rounded-xl border border-gray-100 bg-white p-5">
             <h3 className="text-sm font-semibold text-gray-900">Send Invite</h3>
+            <div className="mt-3">
+              <label className="mb-1 block text-xs font-medium text-gray-500">Guest Name <span className="text-gray-400">(optional)</span></label>
+              <input
+                type="text"
+                value={inviteName}
+                onChange={e => setInviteName(e.target.value)}
+                placeholder="e.g. John Smith"
+                maxLength={100}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+              />
+            </div>
             <div className="mt-3">
               <label className="mb-1 block text-xs font-medium text-gray-500">Phone Number (WhatsApp) *</label>
               <PhoneInput

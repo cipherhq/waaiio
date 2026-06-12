@@ -22,10 +22,11 @@ function checkRateLimit(userId: string): boolean {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { eventId, partyId, phones, emails, businessId } = body as {
+  const { eventId, partyId, phones, names, emails, businessId } = body as {
     eventId?: string;
     partyId?: string;
     phones: string[];
+    names?: string[];
     emails?: string[];
     businessId: string;
   };
@@ -102,18 +103,21 @@ export async function POST(request: NextRequest) {
   const resolver = new ChannelResolver(service);
   const resolved = await resolver.resolveByBusinessId(businessId);
 
-  for (const rawPhone of phones.slice(0, 50)) {
+  for (let i = 0; i < Math.min(phones.length, 50); i++) {
+    const rawPhone = phones[i];
     const phone = rawPhone.replace(/\D/g, '');
+    const guestName = names?.[i]?.trim() || null;
     if (!phone || phone.length < 7) {
       results.push({ phone: rawPhone, status: 'skipped', error: 'Invalid phone number' });
       continue;
     }
 
     try {
-      // Build upsert payload — either event_id or party_id
+      // Build insert payload — either event_id or party_id
       const upsertPayload: Record<string, unknown> = {
         business_id: businessId,
         guest_phone: phone,
+        ...(guestName ? { guest_name: guestName } : {}),
       };
       if (partyId) {
         upsertPayload.party_id = partyId;
