@@ -67,15 +67,10 @@ export async function POST(request: NextRequest) {
       ? `${appUrl}${callback}`
       : `${appUrl}/get-started?step=success&business_id=${business_id}`;
 
-    // Paystack path (NG, GH)
+    // Paystack path (NG, GH) — always use Transaction Initialize API
     if (gateway === 'paystack') {
       const paystackKey = process.env.PAYSTACK_SECRET_KEY;
       const pageSlug = PLAN_PAGE_SLUGS[plan];
-
-      if (pageSlug && !pageSlug.startsWith('PLN_')) {
-        const paymentPageUrl = `https://paystack.com/buy/${pageSlug}?email=${encodeURIComponent(email)}&callback_url=${encodeURIComponent(callbackUrl)}&metadata[business_id]=${business_id}&metadata[plan]=${plan}&metadata[type]=whatsapp_subscription&metadata[user_id]=${user.id}`;
-        return NextResponse.json({ authorization_url: paymentPageUrl, reference: null });
-      }
 
       if (!paystackKey) {
         return NextResponse.json({ message: 'Payment gateway not configured' }, { status: 500 });

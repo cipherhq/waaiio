@@ -43,6 +43,7 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
   const [downgraded, setDowngraded] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
+  const [upgradeError, setUpgradeError] = useState('');
   const [verifying, setVerifying] = useState(false);
 
   // Change Password state
@@ -126,9 +127,13 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
             setNewCapSelections([...newlyUnlocked]);
             setShowCapModal(true);
           }
+        } else {
+          setUpgradeError(data.message || 'Upgrade verification failed. Please contact support if you were charged.');
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        setUpgradeError('Failed to verify upgrade. Please contact support if you were charged.');
+      })
       .finally(() => {
         setVerifying(false);
         // Clean URL params
@@ -339,6 +344,13 @@ export function AccountTab({ business, capabilities, country, curr, saving, setS
                     Refresh the page to see your new features.
                   </p>
                 )}
+              </div>
+            )}
+
+            {upgradeError && (
+              <div className="mt-4 rounded-lg bg-red-50 border border-red-200 p-4">
+                <p className="text-sm font-medium text-red-700">{upgradeError}</p>
+                <p className="mt-1 text-xs text-red-600">If you were charged, your payment is safe. Please contact support@waaiio.com with your payment reference.</p>
               </div>
             )}
 
