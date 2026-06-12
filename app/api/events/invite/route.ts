@@ -184,7 +184,7 @@ export async function POST(request: NextRequest) {
           const { sent } = await sendWithTemplate({
             sender: resolved.sender,
             to: phone,
-            templateName: 'event_invitation',
+            templateName: 'waaiio_event_invite',
             templateParams: [inviteTarget.name, dateTimeLabel, venueLabel, inviteLink],
             // If template isn't approved yet, fall back to buttons
             followUpFn: async (s, to) => {

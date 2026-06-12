@@ -63,11 +63,11 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
     ],
   },
   {
-    name: 'event_invitation',
+    name: 'waaiio_event_invite',
     category: 'UTILITY',
     language: 'en',
     components: [
-      { type: 'BODY', text: "You're invited!\n\n{{1}}\nDate: {{2}}\nVenue: {{3}}\n\nRSVP here: {{4}}", example: { body_text: [['Boys Hang Out', 'July 31, 2026 at 11:00 AM', 'The Citadel', 'https://waaiio.com/rsvp/abc123']] } },
+      { type: 'BODY', text: "You are invited to {{1}}.\n\nDate: {{2}}\nVenue: {{3}}\n\nRSVP here: {{4}}", example: { body_text: [['Boys Hang Out', 'July 31 2026 at 11:00 AM', 'The Citadel', 'https://waaiio.com/rsvp/abc123']] } },
     ],
   },
   {
@@ -127,7 +127,7 @@ export async function provisionTemplates(
         logger.debug(`[TEMPLATES] Created ${template.name} on WABA ${wabaId}: ${createData.status}`);
       } else {
         failed++;
-        errors.push({ name: template.name, error: createData.error?.message || JSON.stringify(createData) });
+        errors.push({ name: template.name, error: createData.error?.message || 'Unknown', details: createData.error || createData });
         logger.error(`[TEMPLATES] Failed to create ${template.name}:`, createData.error?.message || JSON.stringify(createData));
       }
     } catch (err) {
