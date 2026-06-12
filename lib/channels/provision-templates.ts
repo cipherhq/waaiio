@@ -67,7 +67,7 @@ const WAAIIO_TEMPLATES: TemplateDefinition[] = [
     category: 'UTILITY',
     language: 'en',
     components: [
-      { type: 'BODY', text: "You are invited to {{1}}.\n\nDate: {{2}}\nVenue: {{3}}\n\nRSVP here: {{4}}", example: { body_text: [['Boys Hang Out', 'July 31 2026 at 11:00 AM', 'The Citadel', 'https://waaiio.com/rsvp/abc123']] } },
+      { type: 'BODY', text: "You have been invited to an event.\n\nEvent: {{1}}\nDate and Time: {{2}}\nVenue: {{3}}\n\nPlease confirm your attendance by visiting the link below.\n\nRSVP: {{4}}", example: { body_text: [['Boys Hang Out', 'July 31 2026 at 11:00 AM', 'The Citadel, Lagos', 'https://waaiio.com/rsvp/abc123']] } },
     ],
   },
   {
