@@ -49,7 +49,7 @@ const CAPABILITY_GROUPS: CapabilityGroup[] = [
   {
     label: 'Documents',
     icon: '\u{1F4DD}',
-    ids: ['whatsapp_sign'],
+    ids: ['whatsapp_sign', 'waiver'],
   },
 ];
 
@@ -166,9 +166,18 @@ export default function CapabilitiesPage() {
   function handleToggle(capId: CapabilityId) {
     if (!canToggle(capId)) return;
 
-    const next = enabled.includes(capId)
+    let next = enabled.includes(capId)
       ? enabled.filter(c => c !== capId)
       : [...enabled, capId];
+
+    // Bundle: membership requires loyalty (they share the points system)
+    if (capId === 'membership' && next.includes('membership') && !next.includes('loyalty')) {
+      next = [...next, 'loyalty'];
+    }
+    // If disabling loyalty, also disable membership (can't work without points)
+    if (capId === 'loyalty' && !next.includes('loyalty') && next.includes('membership')) {
+      next = next.filter(c => c !== 'membership');
+    }
 
     // Must have at least one capability
     if (next.length === 0) return;

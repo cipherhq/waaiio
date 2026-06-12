@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface MembershipTier {
   id: string;
@@ -203,6 +204,12 @@ export default function MembershipPage() {
 
   return (
     <div>
+      <PageHelp
+        pageKey="membership"
+        title="How Membership Tiers Work"
+        description="Tiers automatically upgrade customers based on their total spending. Each tier can offer discounts (e.g. 5% off) and a loyalty points multiplier (e.g. 2x points). Points are earned on every booking, order, or payment. Customers can redeem points for rewards via Loyalty. Start with the default tiers or create your own."
+      />
+
       <h1 className="text-2xl font-bold text-gray-900">Membership Tiers</h1>
       <p className="mt-1 text-sm text-gray-500">
         Reward your best customers with automatic tier upgrades based on spending
@@ -326,6 +333,7 @@ export default function MembershipPage() {
                       onChange={(e) => setForm((f) => ({ ...f, points_multiplier: parseFloat(e.target.value) || 1 }))}
                       className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
                     />
+                    <p className="mt-1 text-xs text-gray-400">How fast this tier earns loyalty points. 1x = normal, 2x = double points per transaction.</p>
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-500">
