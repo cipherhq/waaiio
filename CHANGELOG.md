@@ -5,6 +5,18 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-06-12
+
+### Fix: Event invites to cold numbers (never messaged before)
+
+- `lib/channels/provision-templates.ts` — Changed `waaiio_event_invite` template from `UTILITY` to `MARKETING` category (Meta requires MARKETING for unsolicited outreach). Changed language from `'en'` to `'en_US'` to match all other templates. Added FOOTER component.
+- `lib/channels/meta-cloud.ts` — Changed default template language code from `'en'` to `'en_US'`. Affects ALL template sends via MetaCloudSender.
+- `app/api/events/invite/route.ts` — Fixed PUT (reminder) endpoint: now falls back to `sendWithTemplate('waaiio_event_invite')` when `sendText()` fails (outside 24h window). Previously reminders only worked for numbers that had recently messaged.
+- `app/api/whatsapp/templates/check/route.ts` — New diagnostic endpoint. GET checks if `waaiio_event_invite` exists and is approved on shared WABA. `?fix=true` auto-creates or replaces it with correct MARKETING category. Admin/cron/internal-token auth.
+- Affects: all event/party invites, all reminders, all template sends (language code). Could break if an existing template was approved as `'en'` on Meta — the check endpoint will detect this.
+
+---
+
 ## 2026-06-10
 
 ### Admin panel OTP verification on login
