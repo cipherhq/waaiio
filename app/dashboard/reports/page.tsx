@@ -4,6 +4,7 @@ import { getLocale, getPhonePlaceholder, type CountryCode } from '@/lib/constant
 import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
+import { PhoneInput } from '@/components/auth/PhoneInput';
 
 interface Document {
   id: string;
@@ -203,9 +204,11 @@ export default function DocumentSharePage() {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600">Customer Phone (WhatsApp) *</label>
-            <input type="text" value={customerPhone} onChange={e => setCustomerPhone(e.target.value)}
-              placeholder={getPhonePlaceholder((business.country_code || 'NG') as CountryCode)}
-              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none" />
+            <PhoneInput
+              value={customerPhone}
+              onChange={setCustomerPhone}
+              countryCode={(business.country_code || 'NG') as CountryCode}
+            />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600">Customer Name</label>
