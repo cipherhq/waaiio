@@ -17,10 +17,14 @@ import { logger } from '@/lib/logger';
  *   ?token=xxx — internal API token auth
  */
 export async function GET(request: NextRequest) {
-  // Auth: internal token OR cron auth OR admin session
+  // Auth: internal token OR cron secret OR cron auth header OR admin session
   const internalToken = request.nextUrl.searchParams.get('token');
   const validInternalToken = process.env.INTERNAL_API_TOKEN;
-  const hasInternalAuth = internalToken && validInternalToken && internalToken === validInternalToken;
+  const cronSecret = process.env.CRON_SECRET;
+  const hasInternalAuth = internalToken && (
+    (validInternalToken && internalToken === validInternalToken) ||
+    (cronSecret && internalToken === cronSecret)
+  );
 
   if (!hasInternalAuth) {
     const cronAuth = verifyCronAuth(request);
