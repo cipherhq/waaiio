@@ -18,6 +18,8 @@ interface Campaign {
   donor_count: number;
   min_donation: number | null;
   max_donation: number | null;
+  allow_after_end_date: boolean;
+  allow_after_goal_met: boolean;
   created_at: string;
 }
 
@@ -57,6 +59,8 @@ export default function CampaignsPage() {
     donor_count: 0,
     min_donation: null as number | null,
     max_donation: null as number | null,
+    allow_after_end_date: true,
+    allow_after_goal_met: true,
   });
 
   useEffect(() => {
@@ -88,6 +92,8 @@ export default function CampaignsPage() {
       donor_count: 0,
       min_donation: null,
       max_donation: null,
+      allow_after_end_date: true,
+      allow_after_goal_met: true,
     });
     setView('add');
   }
@@ -118,6 +124,8 @@ export default function CampaignsPage() {
       donor_count: campaign.donor_count,
       min_donation: campaign.min_donation,
       max_donation: campaign.max_donation,
+      allow_after_end_date: campaign.allow_after_end_date ?? true,
+      allow_after_goal_met: campaign.allow_after_goal_met ?? true,
     });
     setView('edit');
     loadDonations(campaign.id);
@@ -147,6 +155,8 @@ export default function CampaignsPage() {
       status: form.status,
       min_donation: form.min_donation && form.min_donation > 0 ? form.min_donation : null,
       max_donation: form.max_donation && form.max_donation > 0 ? form.max_donation : null,
+      allow_after_end_date: form.allow_after_end_date,
+      allow_after_goal_met: form.allow_after_goal_met,
     };
 
     if (view === 'add') {
@@ -368,6 +378,20 @@ export default function CampaignsPage() {
               description="Campaign is visible and accepting donations"
               checked={form.status === 'active'}
               onChange={(v) => setForm({ ...form, status: v ? 'active' : 'paused' })}
+            />
+
+            <ToggleRow
+              label="Allow after end date"
+              description="Keep accepting donations after the end date"
+              checked={form.allow_after_end_date}
+              onChange={(v) => setForm({ ...form, allow_after_end_date: v })}
+            />
+
+            <ToggleRow
+              label="Allow after goal met"
+              description="Keep accepting donations after the goal is reached"
+              checked={form.allow_after_goal_met}
+              onChange={(v) => setForm({ ...form, allow_after_goal_met: v })}
             />
           </div>
         </div>

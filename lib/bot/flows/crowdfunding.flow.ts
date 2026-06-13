@@ -13,14 +13,21 @@ const selectCampaignStep: FlowStepConfig = {
     if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const today = new Date().toISOString().split('T')[0];
-    const { data: campaigns } = await ctx.supabase
+    const { data: allCampaigns } = await ctx.supabase
       .from('campaigns')
-      .select('id, title, description, goal_amount, raised_amount, donor_count, end_date')
+      .select('id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met')
       .eq('business_id', ctx.business.id)
       .eq('status', 'active')
-      .or(`end_date.is.null,end_date.gte.${sanitizeFilterValue(today)}`)
       .order('created_at', { ascending: false })
-      .limit(10);
+      .limit(20);
+
+    // Filter: exclude campaigns past end date (unless allow_after_end_date)
+    // and campaigns that met their goal (unless allow_after_goal_met)
+    const campaigns = (allCampaigns || []).filter(c => {
+      if (c.end_date && c.end_date < today && !c.allow_after_end_date) return false;
+      if (c.goal_amount > 0 && c.raised_amount >= c.goal_amount && !c.allow_after_goal_met) return false;
+      return true;
+    }).slice(0, 10);
 
     if (!campaigns || campaigns.length === 0) {
       return [{
@@ -72,6 +79,15 @@ const selectCampaignStep: FlowStepConfig = {
       return { valid: false, errorMessage: 'Campaign not found. Please tap one of the options above.' };
     }
 
+    // Re-check eligibility (campaign state may have changed)
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (campaign.end_date && campaign.end_date < todayStr && !campaign.allow_after_end_date) {
+      return { valid: false, errorMessage: 'This campaign has ended and is no longer accepting donations.' };
+    }
+    if (campaign.goal_amount > 0 && campaign.raised_amount >= campaign.goal_amount && !campaign.allow_after_goal_met) {
+      return { valid: false, errorMessage: 'This campaign has reached its goal and is no longer accepting donations. Thank you!' };
+    }
+
     return {
       valid: true,
       data: {
@@ -82,6 +98,7 @@ const selectCampaignStep: FlowStepConfig = {
         campaign_donors: campaign.donor_count,
         campaign_min_donation: campaign.min_donation ?? null,
         campaign_max_donation: campaign.max_donation ?? null,
+        campaign_allow_after_goal_met: campaign.allow_after_goal_met ?? true,
       },
     };
   },
@@ -181,6 +198,19 @@ const enterDonationAmountStep: FlowStepConfig = {
     if (maxDonation && amount > maxDonation) {
       return { valid: false, errorMessage: `Maximum donation for this campaign is ${formatCurrency(maxDonation, cc)}.` };
     }
+
+    // Re-check goal in case it was reached while user was typing
+    if (sd.campaign_allow_after_goal_met === false) {
+      const { data: fresh } = await ctx.supabase
+        .from('campaigns')
+        .select('raised_amount, goal_amount')
+        .eq('id', sd.campaign_id as string)
+        .single();
+      if (fresh && fresh.goal_amount > 0 && fresh.raised_amount >= fresh.goal_amount) {
+        return { valid: false, errorMessage: 'This campaign just reached its goal and is no longer accepting donations. Thank you!' };
+      }
+    }
+
     return { valid: true, data: { donation_amount: amount } };
   },
 
