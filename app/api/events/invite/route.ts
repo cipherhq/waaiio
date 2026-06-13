@@ -399,12 +399,31 @@ export async function PUT(request: NextRequest) {
 
     if (resolved) {
       try {
-        await resolved.sender.sendText({ to: invite.guest_phone, text: message });
-        await service
-          .from('event_invites')
-          .update({ reminder_sent: true })
-          .eq('id', invite.id);
-        sent++;
+        // Try direct text first (works within 24h window)
+        let messageSent = false;
+        try {
+          await resolved.sender.sendText({ to: invite.guest_phone, text: message });
+          messageSent = true;
+        } catch {
+          // Outside 24h window — fall back to template
+          const eventDetails = `${targetName}${dateStr ? ` on ${dateStr}` : ''}${targetVenue ? ` at ${targetVenue}` : ''}`;
+          const templateResult = await sendWithTemplate({
+            sender: resolved.sender,
+            to: invite.guest_phone,
+            templateName: 'waaiio_event_invite',
+            templateParams: [eventDetails, link],
+            templateOnly: true,
+          });
+          messageSent = templateResult.sent;
+        }
+
+        if (messageSent) {
+          await service
+            .from('event_invites')
+            .update({ reminder_sent: true })
+            .eq('id', invite.id);
+          sent++;
+        }
       } catch (err) {
         logger.error(`[INVITE] Reminder failed for ${invite.guest_phone}:`, err);
       }
