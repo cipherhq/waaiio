@@ -13,8 +13,9 @@ import { logger } from '@/lib/logger';
  * Protected by admin session, cron auth, or internal token.
  *
  * Query params:
- *   ?fix=true  — auto-create if missing, delete+recreate if wrong category
- *   ?token=xxx — internal API token auth
+ *   ?fix=true     — auto-create if missing, delete+recreate if wrong category
+ *   ?token=xxx    — internal API token or cron secret auth
+ *   ?test=PHONE   — send a test template message to this phone number
  */
 export async function GET(request: NextRequest) {
   // Auth: internal token OR cron secret OR cron auth header OR admin session
@@ -42,14 +43,16 @@ export async function GET(request: NextRequest) {
 
   const wabaId = process.env.META_CLOUD_WABA_ID;
   const accessToken = process.env.META_CLOUD_ACCESS_TOKEN;
+  const phoneNumberId = process.env.META_CLOUD_PHONE_NUMBER_ID;
 
   if (!wabaId || !accessToken) {
     return NextResponse.json({ error: 'META_CLOUD_WABA_ID or META_CLOUD_ACCESS_TOKEN not set' }, { status: 500 });
   }
 
   const shouldFix = request.nextUrl.searchParams.get('fix') === 'true';
+  const testPhone = request.nextUrl.searchParams.get('test');
 
-  const meta = new MetaCloudService({ accessToken, phoneNumberId: '', wabaId });
+  const meta = new MetaCloudService({ accessToken, phoneNumberId: phoneNumberId || '', wabaId });
 
   try {
     // Fetch all templates and find the event invite one
@@ -58,7 +61,8 @@ export async function GET(request: NextRequest) {
 
     const result: Record<string, unknown> = {
       template_name: 'waaiio_event_invite',
-      waba_id: wabaId,
+      waba_id: wabaId?.trim(),
+      phone_number_id: phoneNumberId?.trim(),
       total_templates: templates.length,
       all_template_names: templates.map((t) => `${t.name} (${t.status}, ${t.category}, ${t.language})`),
     };
@@ -68,7 +72,6 @@ export async function GET(request: NextRequest) {
       result.diagnosis = 'Template does not exist on this WABA. Cold invites will fail.';
 
       if (shouldFix) {
-        // Create as MARKETING (correct category for unsolicited invites)
         const created = await meta.createTemplate({
           name: 'waaiio_event_invite',
           language: 'en_US',
@@ -103,9 +106,6 @@ export async function GET(request: NextRequest) {
       if (eventInvite.category === 'UTILITY') {
         issues.push('Category is UTILITY — Meta may reject/suppress unsolicited invites. Should be MARKETING.');
       }
-      if (eventInvite.language !== 'en_US' && eventInvite.language !== 'en') {
-        issues.push(`Language is ${eventInvite.language} — may not match send request`);
-      }
 
       result.issues = issues;
       result.diagnosis = issues.length === 0
@@ -113,7 +113,6 @@ export async function GET(request: NextRequest) {
         : `Found ${issues.length} issue(s) that may prevent cold delivery.`;
 
       if (shouldFix && issues.length > 0) {
-        // Delete and recreate with correct settings
         try {
           await meta.deleteTemplate('waaiio_event_invite');
           result.fix_action = 'deleted_old';
@@ -139,6 +138,35 @@ export async function GET(request: NextRequest) {
         result.fix_result = created;
         logger.info(`[TEMPLATE-CHECK] Recreated waaiio_event_invite on WABA ${wabaId}:`, created);
       }
+    }
+
+    // Test send: try sending the template to a specific phone number
+    if (testPhone && phoneNumberId) {
+      const phone = testPhone.replace(/\D/g, '');
+      if (phone.length >= 7) {
+        try {
+          const lang = eventInvite?.language || 'en';
+          const sendResult = await meta.sendTemplate({
+            to: phone,
+            templateName: 'waaiio_event_invite',
+            languageCode: lang,
+            components: [{
+              type: 'body',
+              parameters: [
+                { type: 'text', text: 'Test Event on Friday at 7 PM at Test Venue' },
+                { type: 'text', text: 'https://waaiio.com/rsvp/test123' },
+              ],
+            }],
+          });
+          result.test_send = { success: true, phone, messageId: sendResult.messageId };
+        } catch (sendErr) {
+          result.test_send = { success: false, phone, error: (sendErr as Error).message };
+        }
+      } else {
+        result.test_send = { error: 'Invalid phone number — must be at least 7 digits' };
+      }
+    } else if (testPhone && !phoneNumberId) {
+      result.test_send = { error: 'META_CLOUD_PHONE_NUMBER_ID not set — cannot send' };
     }
 
     return NextResponse.json(result);

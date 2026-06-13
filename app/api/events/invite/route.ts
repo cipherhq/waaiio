@@ -195,8 +195,9 @@ export async function POST(request: NextRequest) {
               ],
             });
             sent = true;
-          } catch {
+          } catch (btnErr) {
             // Buttons failed (likely outside 24h window) — use template
+            logger.info(`[INVITE] Buttons failed for ${phone}, falling back to template:`, (btnErr as Error).message);
             const templateResult = await sendWithTemplate({
               sender: resolved.sender,
               to: phone,
@@ -205,6 +206,11 @@ export async function POST(request: NextRequest) {
               templateOnly: true,
             });
             sent = templateResult.sent;
+            if (!sent) {
+              logger.error(`[INVITE] Template also failed for ${phone} — message not delivered`);
+            } else {
+              logger.info(`[INVITE] Template sent successfully to ${phone}, messageId: ${templateResult.messageId}`);
+            }
           }
 
           if (sent) {

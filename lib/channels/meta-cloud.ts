@@ -108,9 +108,9 @@ export class MetaCloudService {
   private readonly baseUrl = `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}`;
 
   constructor(credentials?: MetaCloudCredentials) {
-    this.accessToken = credentials?.accessToken || process.env.META_CLOUD_ACCESS_TOKEN || '';
-    this.phoneNumberId = credentials?.phoneNumberId || process.env.META_CLOUD_PHONE_NUMBER_ID || '';
-    this.wabaId = credentials?.wabaId || process.env.META_CLOUD_WABA_ID || '';
+    this.accessToken = (credentials?.accessToken || process.env.META_CLOUD_ACCESS_TOKEN || '').trim();
+    this.phoneNumberId = (credentials?.phoneNumberId || process.env.META_CLOUD_PHONE_NUMBER_ID || '').trim();
+    this.wabaId = (credentials?.wabaId || process.env.META_CLOUD_WABA_ID || '').trim();
   }
 
   // ── Send Text Message ──
@@ -135,7 +135,7 @@ export class MetaCloudService {
       type: 'template',
       template: {
         name: message.templateName,
-        language: { code: message.languageCode || 'en_US' },
+        language: { code: message.languageCode || 'en' },
         components: message.components || [],
       },
     });
