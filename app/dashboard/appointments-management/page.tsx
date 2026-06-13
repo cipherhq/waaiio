@@ -252,8 +252,8 @@ export default function AppointmentsManagementPage() {
                   Buffer time (min)
                   <Tooltip text={FIELD_TOOLTIPS['service.buffer']} />
                 </label>
-                <input type="number" min={0} step={5} value={form.buffer_minutes === 0 ? '0' : form.buffer_minutes || ''}
-                  onChange={e => setForm({ ...form, buffer_minutes: Number(e.target.value) })}
+                <input type="number" min={0} step={5} value={form.buffer_minutes || ''}
+                  onChange={e => setForm({ ...form, buffer_minutes: e.target.value === '' ? 0 : Number(e.target.value) })}
                   placeholder="Enter amount"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
               </div>
