@@ -135,7 +135,7 @@ export class MetaCloudService {
       type: 'template',
       template: {
         name: message.templateName,
-        language: { code: message.languageCode || 'en' },
+        language: { code: message.languageCode || 'en_US' },
         components: message.components || [],
       },
     });

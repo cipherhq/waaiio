@@ -82,9 +82,7 @@ export async function GET(request: NextRequest) {
               text: "You have been invited to an event. Here are the details:\n\n{{1}}\n\nPlease confirm your attendance by tapping the link below.\n\n{{2}}\n\nWe look forward to seeing you there.",
               example: { body_text: [['Boys Hang Out on July 31 2026 at 11:00 AM at The Citadel Lagos', 'https://waaiio.com/rsvp/abc123']] },
             },
-            { type: 'FOOTER', text: 'Powered by Waaiio' },
           ],
-          allow_category_change: true,
         });
         result.fix_action = 'created';
         result.fix_result = created;
@@ -130,9 +128,7 @@ export async function GET(request: NextRequest) {
               text: "You have been invited to an event. Here are the details:\n\n{{1}}\n\nPlease confirm your attendance by tapping the link below.\n\n{{2}}\n\nWe look forward to seeing you there.",
               example: { body_text: [['Boys Hang Out on July 31 2026 at 11:00 AM at The Citadel Lagos', 'https://waaiio.com/rsvp/abc123']] },
             },
-            { type: 'FOOTER', text: 'Powered by Waaiio' },
           ],
-          allow_category_change: true,
         });
         result.fix_action = (result.fix_action === 'deleted_old') ? 'replaced' : 'created';
         result.fix_result = created;
