@@ -55,7 +55,7 @@ export default function LocationsPage() {
 
   const fetchLocations = useCallback(async () => {
     try {
-      const res = await fetch(`/api/locations?businessId=${business.id}`);
+      const res = await fetch(`/api/locations?businessId=${business.id}`, { cache: 'no-store' });
       const data = await res.json();
       setLocations(data.locations || []);
     } catch { /* silent */ }
@@ -115,7 +115,7 @@ export default function LocationsPage() {
       });
       if (!res.ok) { alert('Failed to save location. Please try again.'); return; }
       setView('list');
-      fetchLocations();
+      await fetchLocations();
     } catch { alert('Failed to save location. Please try again.'); } finally { setSaving(false); }
   }
 
@@ -131,10 +131,12 @@ export default function LocationsPage() {
 
   async function handleDelete(loc: Location) {
     if (!confirm(`Delete location "${loc.name}"?`)) return;
-    const res = await fetch(`/api/locations?id=${loc.id}&businessId=${business.id}`, { method: 'DELETE' });
-    if (!res.ok) alert('Failed to delete location.');
+    try {
+      const res = await fetch(`/api/locations?id=${loc.id}&businessId=${business.id}`, { method: 'DELETE' });
+      if (!res.ok) { alert('Failed to delete location.'); return; }
+    } catch { alert('Failed to delete location.'); return; }
     if (view !== 'list') setView('list');
-    fetchLocations();
+    await fetchLocations();
   }
 
   if (loading) {
