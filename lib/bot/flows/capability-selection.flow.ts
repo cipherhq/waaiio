@@ -473,11 +473,13 @@ const myAccountMenuStep: FlowStepConfig = {
         const { handleTransactionDocument } = await import('../handlers/transaction-docs');
         const sendText = async (to: string, text: string) => { await ctx.sender.sendText({ to, text: await ctx.t(text) }); };
         await handleTransactionDocument(ctx.supabase, ctx.sender, sendText, ctx.from, userId, 'receipt');
+        // Small delay so WhatsApp renders the receipt image before showing menu
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } else {
         await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No account found for this number. Send *Hi* to start over.') });
       }
-      ctx.session.session_data._my_account_route = 'select_capability';
-      return { valid: true, data: { _my_account_route: 'select_capability' } };
+      ctx.session.session_data._my_account_route = 'my_account_menu';
+      return { valid: true, data: { _my_account_route: 'my_account_menu' } };
     }
 
     // Handle switch business
