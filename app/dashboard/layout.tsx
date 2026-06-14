@@ -113,7 +113,7 @@ export default async function DashboardLayout({
               <AlertBanner />
               <Sidebar />
               <IdleTimeout />
-              <main className="flex-1 overflow-y-auto md:pl-64">
+              <main className="flex-1 overflow-y-auto md:ml-64">
                 <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
                   <NotificationBell />
                 </div>
@@ -202,7 +202,7 @@ export default async function DashboardLayout({
         <AlertBanner />
         <Sidebar />
         <IdleTimeout />
-        <main className="flex-1 overflow-y-auto md:pl-64">
+        <main className="flex-1 overflow-y-auto md:ml-64">
           <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
             <NotificationBell />
           </div>
