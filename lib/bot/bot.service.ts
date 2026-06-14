@@ -1593,6 +1593,10 @@ export class BotService {
           session.current_step = 'my_orders';
           await this.supabase.from('bot_sessions').update({ current_step: 'my_orders' }).eq('id', session.id);
           await this.handleMyOrders(session, from, '');
+        } else if (cap === 'giving' || cap === 'crowdfunding') {
+          // Show giving history inline then deactivate
+          await this.deactivateSession(session.id);
+          await this.handleMessage(from, 'my giving', messageType, destinationPhone);
         } else {
           session.current_step = 'my_bookings';
           await this.supabase.from('bot_sessions').update({ current_step: 'my_bookings' }).eq('id', session.id);
