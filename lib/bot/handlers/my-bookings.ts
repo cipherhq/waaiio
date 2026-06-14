@@ -108,7 +108,7 @@ export async function handleMyBookings(
 
     await messageSender.sendList({
       to: from,
-      title: 'Your Bookings & Tickets',
+      title: 'Bookings, Tickets & Stays',
       body: 'Select a booking, ticket, or stay to view:\n\nType *menu* to go back.',
       buttonLabel: 'View All',
       items,

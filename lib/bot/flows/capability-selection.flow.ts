@@ -408,7 +408,7 @@ const myAccountMenuStep: FlowStepConfig = {
     // Build menu items based on enabled capabilities
     const allItems = [
       // My Bookings — always show (covers scheduling, appointment, ticketing, reservation)
-      { title: 'My Bookings', description: 'Appointments, tickets, stays', postbackText: 'acct_bookings', show: true },
+      { title: 'My Bookings', description: 'Appointments, tickets, & stays', postbackText: 'acct_bookings', show: true },
       // My Orders — show if ordering capability enabled
       { title: 'My Orders', description: 'Track order status', postbackText: 'acct_orders', show: hasCapability('ordering') },
       // My Giving — show if giving or crowdfunding capability enabled
