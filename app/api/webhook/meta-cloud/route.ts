@@ -547,7 +547,7 @@ export async function POST(request: NextRequest) {
             try {
               await resolved.sender.sendText({
                 to: source,
-                text: "Please reply with a text message. I can't process images or files yet.",
+                text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
               });
             } catch { /* ignore send failure */ }
             continue;
