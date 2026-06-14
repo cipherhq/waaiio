@@ -433,10 +433,12 @@ const myAccountMenuStep: FlowStepConfig = {
       .filter(i => i.show)
       .map(({ title, description, postbackText }) => ({ title, description, postbackText }));
 
+    items.push({ title: '← Back', description: 'Return to main menu', postbackText: 'acct_back' });
+
     return [{
       type: 'list' as const,
       title: 'My Account',
-      body: 'Manage your bookings, orders, and more:\n\nWant to make a new booking or order? Type *Hi* to get started.',
+      body: 'Manage your bookings, orders, and more.\n\nType *cancel* to exit or *Hi* to start over.',
       buttonLabel: 'My Account',
       items,
     }];
@@ -449,6 +451,11 @@ const myAccountMenuStep: FlowStepConfig = {
     if (action === 'back_to_account') {
       ctx.session.session_data._my_account_route = 'my_account_menu';
       return { valid: true, data: { _my_account_route: 'my_account_menu' } };
+    }
+
+    // Handle back to main capability menu
+    if (action === 'acct_back') {
+      return { valid: true, data: { _my_account_route: 'back_to_capabilities' } };
     }
 
     // Map selections to built-in bot.service.ts handlers via session step
@@ -674,6 +681,8 @@ const myAccountMenuStep: FlowStepConfig = {
     const route = ctx.session.session_data._my_account_route as string;
     // If explicitly done, end the flow
     if (route === 'done') return null;
+    // Back to main capability selection menu
+    if (route === 'back_to_capabilities') return 'select_capability';
     // If handled inline (giving, contracts, quotes, receipt), return to My Account menu
     if (route === 'select_capability') return 'my_account_menu';
     // Otherwise route to the flow step
