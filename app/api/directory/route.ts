@@ -20,10 +20,11 @@ export async function GET(request: NextRequest) {
   let query = supabase
     .from('businesses')
     .select(`
-      id, name, category, country_code, city, address, wa_method, slug,
+      id, name, category, country_code, city, address, bot_code, wa_method, slug,
       services:services(id, name, price, duration_minutes)
     `)
     .eq('status', 'active')
+    .not('bot_code', 'is', null)
     .order('name', { ascending: true })
     .limit(100);
 
@@ -89,8 +90,24 @@ export async function GET(request: NextRequest) {
     eventMap.set(e.business_id, existing);
   }
 
+  // Fetch WhatsApp phone numbers for dedicated businesses
+  const dedicatedBizIds = sorted.filter(b => b.wa_method === 'dedicated' || b.wa_method === 'transfer' || b.wa_method === 'coexist').map(b => b.id);
+  const waPhoneMap = new Map<string, string>();
+  if (dedicatedBizIds.length > 0) {
+    const { data: channels } = await supabase
+      .from('whatsapp_channels')
+      .select('business_id, phone_number')
+      .in('business_id', dedicatedBizIds)
+      .eq('is_active', true);
+
+    for (const ch of (channels || [])) {
+      if (ch.phone_number) waPhoneMap.set(ch.business_id, ch.phone_number);
+    }
+  }
+
   const businesses = sorted.map(b => ({
     ...b,
+    wa_phone: waPhoneMap.get(b.id) || null,
     capabilities: capMap.get(b.id) || [],
     events: eventMap.get(b.id) || [],
     is_featured: featuredIds.includes(b.id),

@@ -27,6 +27,7 @@ interface Business {
   address: string;
   bot_code: string;
   wa_method: string;
+  wa_phone: string | null;
   slug: string;
   services: Service[];
   capabilities: string[];
@@ -197,10 +198,14 @@ export default function DirectoryClient() {
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {bizList.map((biz) => {
                     const isShared = biz.wa_method === 'shared';
-                    const waNumber = WHATSAPP_NUMBERS[biz.country_code] || WHATSAPP_NUMBERS.US;
+                    const sharedNumber = WHATSAPP_NUMBERS[biz.country_code] || WHATSAPP_NUMBERS.US;
+                    const dedicatedNumber = biz.wa_phone?.replace(/\D/g, '') || null;
                     const waLink = isShared
-                      ? `https://wa.me/${waNumber}?text=${encodeURIComponent(biz.bot_code)}`
-                      : `https://wa.me/${waNumber}`;
+                      ? `https://wa.me/${sharedNumber}?text=${encodeURIComponent(biz.bot_code || 'Hi')}`
+                      : dedicatedNumber
+                        ? `https://wa.me/${dedicatedNumber}?text=${encodeURIComponent('Hi')}`
+                        : `https://wa.me/${sharedNumber}?text=${encodeURIComponent(biz.bot_code || 'Hi')}`;
+                    const displayNumber = isShared ? sharedNumber : (dedicatedNumber || sharedNumber);
                     const isExpanded = expanded === biz.id;
 
                     return (
@@ -261,13 +266,15 @@ export default function DirectoryClient() {
                             <div>
                               <p className="text-[10px] text-gray-400 uppercase font-semibold">Shared WhatsApp Number</p>
                               <p className="mt-1 text-xs text-gray-600">
-                                Text <span className="font-mono font-bold text-brand">{biz.bot_code}</span> to <span className="font-medium text-gray-900">+{waNumber.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}</span>
+                                Text <span className="font-mono font-bold text-brand">{biz.bot_code}</span> to <span className="font-medium text-gray-900">+{sharedNumber.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}</span>
                               </p>
                             </div>
                           ) : (
                             <div>
-                              <p className="text-[10px] text-gray-400 uppercase font-semibold">Dedicated WhatsApp</p>
-                              <p className="mt-1 text-xs text-gray-600">Message them directly on their own number</p>
+                              <p className="text-[10px] text-gray-400 uppercase font-semibold">Dedicated WhatsApp Number</p>
+                              <p className="mt-1 text-xs text-gray-600">
+                                {dedicatedNumber ? <>Text to <span className="font-medium text-gray-900">+{displayNumber.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}</span></> : 'Message them directly on their own number'}
+                              </p>
                             </div>
                           )}
                           <div className="mt-2 flex gap-2">
