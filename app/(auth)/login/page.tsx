@@ -57,6 +57,9 @@ function LoginForm() {
 
       getPostHogClient()?.capture('login_success', { method: 'email' });
 
+      // Record session for security tracking (non-blocking)
+      fetch('/api/auth/session-bind', { method: 'POST' }).catch(() => {});
+
       // If user has no business yet, send them to onboarding
       if (signInData.user) {
         const { count } = await supabase

@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { fastHash, getCachedSession, setCachedSession, shouldTouch } from '@/lib/security/session-check';
 
 type CookieEntry = { name: string; value: string; options: CookieOptions };
 
@@ -215,6 +216,33 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  // ── Session Binding Check ──
+  // Compare current User-Agent against cached session to detect stolen tokens.
+  // Only checks in-memory cache — no DB queries in middleware hot path.
+  if (user && request.nextUrl.pathname.startsWith('/dashboard')) {
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const ua = request.headers.get('user-agent') || '';
+    const uaHash = fastHash(ua);
+    const sessionKey = `${user.id}-session`;
+
+    const cached = getCachedSession(sessionKey);
+    if (cached) {
+      // User-agent changed = different browser/device → force re-auth
+      if (cached.uaHash !== uaHash) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/login';
+        url.searchParams.set('reason', 'session_expired');
+        const response = NextResponse.redirect(url);
+        response.cookies.delete('sb-access-token');
+        response.cookies.delete('sb-refresh-token');
+        return applySecurityHeaders(response);
+      }
+    } else {
+      // First request or cache expired — cache current values
+      setCachedSession(sessionKey, ip, uaHash);
+    }
+  }
 
   // ── Maintenance Mode Check ──
   // Check if maintenance_mode is enabled (cached 30s to avoid DB hit per request)

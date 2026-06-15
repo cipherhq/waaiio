@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse } from '@/lib/rate-limit';
 import { verifyPhoneOtp, generatePhonePassword } from '@/lib/otp-phone-token';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
+import { bindSession } from '@/lib/security/session-bind';
+import { createSecurityEvent } from '@/lib/security/create-security-event';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,8 +48,19 @@ export async function POST(request: NextRequest) {
     const isValid = verifyPhoneOtp(phone, otp, pin_id);
     if (!isValid) {
       // Record brute force failure for both phone and IP
-      recordFailure(`otp-phone:${phone}`);
-      recordFailure(`ip:${ip}`);
+      const phoneLock = recordFailure(`otp-phone:${phone}`);
+      const ipLock = recordFailure(`ip:${ip}`);
+
+      // Create security alert on lockout
+      if (phoneLock.locked || ipLock.locked) {
+        createSecurityEvent({
+          eventType: 'security.brute_force',
+          severity: 'critical',
+          ip,
+          metadata: { phone, phone_locked: phoneLock.locked, ip_locked: ipLock.locked },
+        }).catch(() => {});
+      }
+
       return NextResponse.json(
         { message: 'Invalid or expired OTP' },
         { status: 401 },
@@ -163,6 +176,17 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
 
     const needsOnboarding = isNewUser || !profile?.first_name;
+
+    // Bind session for security tracking (non-blocking)
+    const ua = request.headers.get('user-agent') || 'unknown';
+    const country = request.headers.get('x-vercel-ip-country') || undefined;
+    bindSession({
+      userId,
+      sessionId: `otp-${userId}-${Date.now().toString(36)}`,
+      ip,
+      userAgent: ua,
+      country,
+    }).catch(() => {});
 
     return NextResponse.json({
       message: 'OTP verified successfully',
