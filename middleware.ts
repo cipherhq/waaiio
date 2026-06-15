@@ -122,6 +122,7 @@ export async function middleware(request: NextRequest) {
     '/api/payments/stripe-webhook', '/api/payments/square-webhook', '/api/payments/paypal-webhook',
     '/api/payments/byo-webhook', '/api/payments/webhook',
     '/api/integrations/external-booking',
+    '/api/partner/',
     '/api/whatsapp/flow-data',
     '/api/whatsapp/flow-callback',
     '/api/pay-link/pay',

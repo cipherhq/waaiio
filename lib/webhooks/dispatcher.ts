@@ -14,7 +14,13 @@ export type WebhookEventType =
   | 'customer.created'
   | 'feedback.received'
   | 'loyalty.points_earned'
-  | 'chat.escalated';
+  | 'chat.escalated'
+  | 'ticket.purchased'
+  | 'ticket.checked_in'
+  | 'event.created'
+  | 'event.updated'
+  | 'event.cancelled'
+  | 'event.sold_out';
 
 interface WebhookEndpoint {
   id: string;

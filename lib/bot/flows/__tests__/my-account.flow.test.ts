@@ -52,7 +52,7 @@ describe('My Account Menu', () => {
       expect(messages).toHaveLength(1);
       expect(messages[0].type).toBe('list');
       if (messages[0].type === 'list') {
-        expect(messages[0].items).toHaveLength(10);
+        expect(messages[0].items).toHaveLength(11);
       }
     });
 

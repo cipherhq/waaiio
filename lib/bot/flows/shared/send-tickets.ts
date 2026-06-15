@@ -6,6 +6,7 @@ import { sendEmail } from '@/lib/email/client';
 import { ticketConfirmationEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { dispatchWebhook } from '@/lib/webhooks/dispatcher';
 
 export interface SendTicketsOptions {
   supabase: SupabaseClient;
@@ -217,5 +218,32 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
     } catch (emailErr) {
       logger.error('[TICKETS] Email send error:', emailErr);
     }
+  }
+
+  // 9. Dispatch ticket.purchased webhook (non-blocking)
+  dispatchWebhook(supabase, businessId, 'ticket.purchased', {
+    event_id: eventId,
+    event_name: eventName,
+    booking_id: bookingId,
+    reference_code: referenceCode,
+    guest_name: guestName,
+    guest_phone: guestPhone,
+    quantity,
+    ticket_codes: tickets.map(t => t.ticketCode),
+  }).catch(err => logger.error('[TICKETS] Webhook dispatch error:', err));
+
+  // 10. Check if event is sold out → dispatch event.sold_out
+  const { data: evt } = await supabase
+    .from('events')
+    .select('total_tickets, tickets_sold')
+    .eq('id', eventId)
+    .single();
+
+  if (evt && evt.tickets_sold >= evt.total_tickets) {
+    dispatchWebhook(supabase, businessId, 'event.sold_out', {
+      event_id: eventId,
+      event_name: eventName,
+      total_tickets: evt.total_tickets,
+    }).catch(err => logger.error('[TICKETS] Sold-out webhook error:', err));
   }
 }
