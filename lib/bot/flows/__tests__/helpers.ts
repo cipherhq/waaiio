@@ -45,6 +45,7 @@ export function createMockContext(overrides: Partial<FlowContext> = {}): FlowCon
     } as any,
     standalone: {} as any,
     intelligence: {} as any,
+    t: vi.fn(async (text: string) => text),
     from: '+2341234567890',
     session: {
       id: 'test-session-id',

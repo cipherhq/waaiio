@@ -36,7 +36,7 @@ describe('Invoice Flow', () => {
 
       const messages = await step.prompt(ctx);
       expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('text');
+      expect(messages[0].type).toBe('buttons');
       expect(ctx.session.session_data._invoice_empty).toBe(true);
     });
 

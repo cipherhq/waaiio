@@ -33,7 +33,7 @@ describe('Loyalty Flow', () => {
     it('sends no-points message as prompt when no loyalty record', async () => {
       const messages = await step.prompt(ctx);
       expect(messages).toHaveLength(1);
-      expect(messages[0].type).toBe('text');
+      expect(messages[0].type).toBe('buttons');
       expect(ctx.session.session_data._loyalty_empty).toBe(true);
     });
 
@@ -61,7 +61,7 @@ describe('Loyalty Flow', () => {
       expect(messages.length).toBe(2);
       expect((messages[0] as any).text).toContain('450');
       expect((messages[0] as any).text).toContain('12');
-      expect((messages[1] as any).buttons).toHaveLength(2);
+      expect((messages[1] as any).buttons).toHaveLength(3);
     });
 
     it('validates view_history selection', async () => {

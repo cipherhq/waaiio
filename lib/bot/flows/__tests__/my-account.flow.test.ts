@@ -99,10 +99,9 @@ describe('My Account Menu', () => {
       const ctx = createMockContext();
       const result = await step.validate('acct_giving', ctx);
       expect(result.valid).toBe(true);
-      expect(result.data?._my_account_route).toBe('select_capability');
+      expect(result.data?._my_account_route).toBe('my_account_menu');
 
-      // Inline handlers now loop back to my_account_menu instead of killing session
-      ctx.session.session_data._my_account_route = 'select_capability';
+      ctx.session.session_data._my_account_route = 'my_account_menu';
       const next = await step.next(ctx);
       expect(next).toBe('my_account_menu');
     });
@@ -121,7 +120,7 @@ describe('My Account Menu', () => {
 
       const result = await step.validate('acct_receipt', ctx);
       expect(result.valid).toBe(true);
-      expect(result.data?._my_account_route).toBe('select_capability');
+      expect(result.data?._my_account_route).toBe('my_account_menu');
     });
 
     it('routes flow steps correctly via routeMap', async () => {
