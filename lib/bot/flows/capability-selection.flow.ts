@@ -778,13 +778,17 @@ const myOrdersStep: FlowStepConfig = {
       .order('created_at', { ascending: false }).limit(10);
 
     if (!orders || orders.length === 0) {
-      return [{ type: 'text' as const, text: "You don't have any active orders. Send *Hi* to place an order!" }];
+      return [{
+        type: 'buttons' as const,
+        body: "You don't have any active orders. Send *Hi* to place an order!",
+        buttons: [{ id: 'back_to_account', title: '← Back' }],
+      }];
     }
 
     const statusLabel: Record<string, string> = { pending: 'Pending', confirmed: 'Confirmed', processing: 'Processing', ready: 'Ready', shipped: 'Shipped' };
     const statusEmoji: Record<string, string> = { pending: '🕐', confirmed: '✅', processing: '🔧', ready: '📦', shipped: '🚚' };
 
-    if (orders.length <= 3) {
+    if (orders.length <= 2) {
       const lines = orders.map((o) => {
         const b = o.businesses as unknown as { name: string; country_code?: string } | null;
         const cc = (b?.country_code as CountryCode) || 'NG';
@@ -793,24 +797,27 @@ const myOrdersStep: FlowStepConfig = {
       });
       return [
         { type: 'text' as const, text: `📦 *Your Orders*\n\n${lines.join('\n\n')}` },
-        { type: 'buttons' as const, body: 'Select an order to view details:', buttons: orders.slice(0, 3).map((o) => ({ id: `order_${o.id}`, title: truncTitle(`${o.reference_code}`) })) },
+        { type: 'buttons' as const, body: 'Select an order or go back:', buttons: [...orders.slice(0, 2).map((o) => ({ id: `order_${o.id}`, title: truncTitle(`${o.reference_code}`) })), { id: 'back_to_account', title: '← Back' }] },
       ];
     }
+
+    const items = orders.map((o) => {
+      const b = o.businesses as unknown as { name: string; country_code?: string } | null;
+      const cc = (b?.country_code as CountryCode) || 'NG';
+      return {
+        title: truncTitle(`${o.reference_code}`, 24),
+        description: `${statusLabel[o.status] || o.status} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, cc)}`.slice(0, 72),
+        postbackText: `order_${o.id}`,
+      };
+    });
+    items.push({ title: '← Back to Menu', description: 'Return to account menu', postbackText: 'back_to_account' });
 
     return [{
       type: 'list' as const,
       title: 'Your Orders',
-      body: '📦 Select an order to view details:',
+      body: '📦 Select an order to view details:\n\nType *menu* to go back.',
       buttonLabel: 'View Orders',
-      items: orders.map((o) => {
-        const b = o.businesses as unknown as { name: string; country_code?: string } | null;
-        const cc = (b?.country_code as CountryCode) || 'NG';
-        return {
-          title: truncTitle(`${o.reference_code}`, 24),
-          description: `${statusLabel[o.status] || o.status} • ${b?.name || 'Order'} • ${formatCurrency(o.total_amount || 0, cc)}`.slice(0, 72),
-          postbackText: `order_${o.id}`,
-        };
-      }),
+      items,
     }];
   },
 

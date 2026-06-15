@@ -48,24 +48,29 @@ export const ticketingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'No upcoming events right now. Check back soon! 🎟️' }];
         }
 
+        const items = availableEvents.map(e => {
+          const available = e.total_tickets - e.tickets_sold;
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString(getLocale(cc), { day: 'numeric', month: 'short' });
+          return {
+            title: truncTitle(e.name, 24),
+            description: `${dateLabel} • ${formatCurrency(e.price, cc)} • ${available} left`,
+            postbackText: e.id,
+          };
+        });
+        items.push({ title: '← Back', description: 'Return to menu', postbackText: 'go_back' });
+
         return [{
           type: 'list',
           title: 'Upcoming Events',
-          body: `🎟️ Events at ${ctx.business.name}:`,
+          body: `🎟️ Events at ${ctx.business.name}:\n\nType *cancel* to exit.`,
           buttonLabel: 'View Events',
-          items: availableEvents.map(e => {
-            const available = e.total_tickets - e.tickets_sold;
-            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
-            const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString(getLocale(cc), { day: 'numeric', month: 'short' });
-            return {
-              title: truncTitle(e.name, 24),
-              description: `${dateLabel} • ${formatCurrency(e.price, cc)} • ${available} left`,
-              postbackText: e.id,
-            };
-          }),
+          items,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'go_back') return { valid: true, data: { _action: 'back' } };
+
         const { data: event } = await ctx.supabase
           .from('events')
           .select('id, name, date, time, venue, price, total_tickets, tickets_sold, max_per_order, image_url')
@@ -95,7 +100,13 @@ export const ticketingFlow: FlowDefinition = {
           },
         };
       },
-      async next() { return 'select_ticket_type'; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._action === 'back') {
+          delete ctx.session.session_data._action;
+          return 'select_capability';
+        }
+        return 'select_ticket_type';
+      },
     },
 
     // ── Select Ticket Type (skipped if no types exist) ──
@@ -258,10 +269,14 @@ export const ticketingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        if (input === 'go_back' || input.toLowerCase() === 'back') {
+          return { valid: true, data: { _action: 'back_to_events' } };
+        }
+
         const qty = parseInt(input, 10);
 
         if (isNaN(qty) || qty < 1) {
-          return { valid: false, errorMessage: 'Please enter a valid number.' };
+          return { valid: false, errorMessage: 'Please enter a valid number. Type *back* to go back.' };
         }
 
         // Re-query fresh availability to avoid stale session data
@@ -305,7 +320,13 @@ export const ticketingFlow: FlowDefinition = {
         const total = qty * (ctx.session.session_data.event_price as number);
         return { valid: true, data: { ticket_quantity: qty, total_amount: total } };
       },
-      async next() { return 'ticket_confirmation'; },
+      async next(ctx: FlowContext) {
+        if (ctx.session.session_data._action === 'back_to_events') {
+          delete ctx.session.session_data._action;
+          return 'select_event';
+        }
+        return 'ticket_confirmation';
+      },
     },
 
     // ── Confirmation ──
