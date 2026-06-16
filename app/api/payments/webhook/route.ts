@@ -355,6 +355,25 @@ export async function POST(request: NextRequest) {
             } catch (confirmErr) {
               logger.error('[PAYSTACK RECURRING] Confirmation error:', confirmErr);
             }
+
+            // Send receipt image to customer (non-blocking)
+            if (booking?.reference_code && sub.customer_phone) {
+              try {
+                const resolver = new (await import('@/lib/channels/channel-resolver')).ChannelResolver(supabase);
+                const resolved = await resolver.resolveByBusinessId(sub.business_id);
+                if (resolved) {
+                  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+                  const phone = sub.customer_phone.startsWith('+') ? sub.customer_phone.slice(1) : sub.customer_phone;
+                  await resolved.sender.sendImage({
+                    to: phone,
+                    imageUrl: `${appUrl}/api/receipts/image?ref=${booking.reference_code}`,
+                    caption: `🧾 Receipt — ${booking.reference_code}`,
+                  });
+                }
+              } catch (receiptErr) {
+                logger.error('[PAYSTACK RECURRING] Receipt image error:', receiptErr);
+              }
+            }
           }
         }
       }

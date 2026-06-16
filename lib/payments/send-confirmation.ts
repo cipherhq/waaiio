@@ -56,12 +56,15 @@ export async function sendProactiveConfirmation(
   let bookingTime: string | undefined;
   let bookingAddress: string | undefined;
   let bookingDuration: number | undefined;
+  let balanceRemaining = 0;
+  let balanceBookingId: string | null = null;
+  let balanceReservationId: string | null = null;
 
   // ── 1. Resolve customer + business from booking ──
   if (payment.booking_id) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('guest_phone, reference_code, business_id, date, time, flow_type, businesses(name, country_code, address), services(name, duration)')
+      .select('guest_phone, reference_code, business_id, date, time, flow_type, total_amount, deposit_amount, businesses(name, country_code, address, payment_gateway), services(name, duration)')
       .eq('id', payment.booking_id)
       .single();
 
@@ -69,17 +72,23 @@ export async function sendProactiveConfirmation(
       customerPhone = booking.guest_phone;
       businessId = booking.business_id;
       referenceCode = booking.reference_code || '';
-      const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string } | null;
+      const biz = booking.businesses as unknown as { name: string; country_code?: string; address?: string; payment_gateway?: string } | null;
       const svc = booking.services as unknown as { name: string; duration?: number } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       if (svc?.name) serviceName = svc.name;
-      // Store booking date/time for calendar links (only for scheduling/appointment bookings)
       if (booking.date && booking.time && booking.flow_type !== 'ordering') {
         bookingDate = booking.date;
         bookingTime = booking.time;
         bookingAddress = biz?.address || undefined;
         bookingDuration = svc?.duration || undefined;
+      }
+      // Check for remaining balance (deposit scenario)
+      const total = Number(booking.total_amount || 0);
+      const deposit = Number(booking.deposit_amount || 0);
+      if (total > 0 && deposit > 0 && total > deposit) {
+        balanceRemaining = total - deposit;
+        balanceBookingId = payment.booking_id!;
       }
     }
   }
@@ -88,7 +97,7 @@ export async function sendProactiveConfirmation(
   if (!customerPhone && payment.reservation_id) {
     const { data: reservation } = await supabase
       .from('reservations')
-      .select('guest_phone, reference_code, business_id, guest_name, check_in, check_out, businesses:business_id(name, country_code)')
+      .select('guest_phone, reference_code, business_id, guest_name, check_in, check_out, total_amount, deposit_amount, businesses:business_id(name, country_code, payment_gateway)')
       .eq('id', payment.reservation_id)
       .single();
 
@@ -96,12 +105,19 @@ export async function sendProactiveConfirmation(
       customerPhone = reservation.guest_phone;
       businessId = reservation.business_id;
       referenceCode = reservation.reference_code || '';
-      const biz = reservation.businesses as unknown as { name: string; country_code?: string } | null;
+      const biz = reservation.businesses as unknown as { name: string; country_code?: string; payment_gateway?: string } | null;
       if (biz?.name) businessName = biz.name;
       if (biz?.country_code) countryCode = biz.country_code as CountryCode;
       const checkIn = new Date(reservation.check_in + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
       const checkOut = new Date(reservation.check_out + 'T00:00').toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
       serviceName = `Reservation ${checkIn} - ${checkOut}`;
+      // Check for remaining balance
+      const total = Number(reservation.total_amount || 0);
+      const deposit = Number(reservation.deposit_amount || 0);
+      if (total > 0 && deposit > 0 && total > deposit) {
+        balanceRemaining = total - deposit;
+        balanceReservationId = payment.reservation_id!;
+      }
     }
   }
 
@@ -197,10 +213,48 @@ export async function sendProactiveConfirmation(
     referenceCode ? `🔑 Ref: *${referenceCode}*` : '',
     '',
     'Thank you for your payment! 🙏',
-    '',
-    'Type *receipt* to get your receipt',
-    'Type *my bookings* to view your bookings',
   ].filter(Boolean);
+
+  // Add balance info if deposit was partial
+  if (balanceRemaining > 0) {
+    lines.push('', `💳 Remaining balance: *${formatCurrency(balanceRemaining, countryCode)}*`);
+
+    // Generate payment link for the balance (non-blocking, best-effort)
+    try {
+      // Find user profile for payment initialization
+      const phoneForLookup = customerPhone || '';
+      const phoneP = phoneForLookup.startsWith('+') ? phoneForLookup : `+${phoneForLookup}`;
+      const phoneN = phoneForLookup.startsWith('+') ? phoneForLookup.slice(1) : phoneForLookup;
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('id')
+        .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+        .limit(1)
+        .maybeSingle();
+
+      if (profile && businessId) {
+        const { initializePayment } = await import('@/lib/bot/flows/shared/payment');
+        const result = await initializePayment(supabase, {
+          bookingId: balanceBookingId || undefined,
+          reservationId: balanceReservationId || undefined,
+          userId: profile.id,
+          amount: balanceRemaining,
+          referenceCode,
+          businessName,
+          phone: phoneForLookup,
+          countryCode,
+          businessId,
+        });
+        if (result?.url) {
+          lines.push(`💰 Pay now: ${result.url}`);
+        }
+      }
+    } catch {
+      // Non-critical — balance info still shown without link
+    }
+  }
+
+  lines.push('', 'Type *receipt* to get your receipt', 'Type *my bookings* to view your bookings');
 
   // Add calendar links for bookings with specific date+time (not orders, invoices, donations)
   if (bookingDate && bookingTime && referenceCode) {

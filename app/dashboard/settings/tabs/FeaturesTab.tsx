@@ -57,6 +57,8 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
   const [notifWhatsAppEnabled, setNotifWhatsAppEnabled] = useState(false);
   const [notifWhatsAppPhone, setNotifWhatsAppPhone] = useState('');
   const [notifMonthlyCount, setNotifMonthlyCount] = useState(0);
+  const [balanceReminders, setBalanceReminders] = useState(true);
+  const [includePayLinks, setIncludePayLinks] = useState(true);
   const [notifSaving, setNotifSaving] = useState(false);
   const [notifSaved, setNotifSaved] = useState(false);
 
@@ -101,7 +103,7 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
       const supabase = createClient();
       const { data } = await supabase
         .from('whatsapp_config')
-        .select('notify_email_enabled, notify_sound_enabled, notify_whatsapp_enabled, notify_whatsapp_phone, notify_monthly_count')
+        .select('notify_email_enabled, notify_sound_enabled, notify_whatsapp_enabled, notify_whatsapp_phone, notify_monthly_count, send_balance_reminders, include_payment_links')
         .eq('business_id', business.id)
         .maybeSingle();
       if (data) {
@@ -110,6 +112,8 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
         setNotifWhatsAppEnabled(data.notify_whatsapp_enabled ?? false);
         setNotifWhatsAppPhone(data.notify_whatsapp_phone || '');
         setNotifMonthlyCount(data.notify_monthly_count || 0);
+        setBalanceReminders(data.send_balance_reminders !== false);
+        setIncludePayLinks(data.include_payment_links !== false);
       }
     }
     loadNotifPrefs();
@@ -729,6 +733,36 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                 </button>
               </div>
 
+              {/* Balance Reminders */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Balance payment reminders</p>
+                  <p className="text-xs text-gray-500">Automatically remind customers about outstanding balances before their appointment or check-in.</p>
+                </div>
+                <button
+                  onClick={() => setBalanceReminders(!balanceReminders)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${balanceReminders ? 'bg-brand' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${balanceReminders ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {/* Payment Links in Reminders */}
+              {balanceReminders && (
+                <div className="flex items-center justify-between pl-4 border-l-2 border-brand-100">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Include payment links</p>
+                    <p className="text-xs text-gray-500">Add a pay-now link in balance reminder messages so customers can pay instantly.</p>
+                  </div>
+                  <button
+                    onClick={() => setIncludePayLinks(!includePayLinks)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${includePayLinks ? 'bg-brand' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${includePayLinks ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+              )}
+
               {/* WhatsApp */}
               <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-700/30">
                 <div className="flex items-center justify-between">
@@ -783,6 +817,8 @@ export function FeaturesTab({ business, capabilities, country, curr, saving, set
                     notify_sound_enabled: notifSoundEnabled,
                     notify_whatsapp_enabled: notifWhatsAppEnabled,
                     notify_whatsapp_phone: notifWhatsAppPhone.trim() || null,
+                    send_balance_reminders: balanceReminders,
+                    include_payment_links: includePayLinks,
                   }, { onConflict: 'business_id' });
                   setNotifSaving(false);
                   setNotifSaved(true);

@@ -46,37 +46,48 @@ export async function GET(request: NextRequest) {
       const cc = (biz?.country_code || 'NG') as CountryCode;
 
       try {
+        // Check business notification preferences
+        const { data: config } = await supabase
+          .from('whatsapp_config')
+          .select('send_balance_reminders, include_payment_links')
+          .eq('business_id', r.business_id)
+          .maybeSingle();
+
+        if (config?.send_balance_reminders === false) continue;
+        const shouldIncludePayLink = config?.include_payment_links !== false;
+
         const resolver = new ChannelResolver(supabase);
         const resolved = await resolver.resolveByBusinessId(r.business_id);
         if (!resolved) continue;
 
-        // Generate payment link for the balance
+        // Generate payment link for the balance (if enabled)
         let payLink = '';
-        try {
-          // Find or create a user_id for this guest
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .or(`phone.eq.${r.guest_phone},phone.eq.+${r.guest_phone}`)
-            .limit(1)
-            .maybeSingle();
+        if (shouldIncludePayLink) {
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('id')
+              .or(`phone.eq.${r.guest_phone},phone.eq.+${r.guest_phone}`)
+              .limit(1)
+              .maybeSingle();
 
-          if (profile) {
-            const result = await initializePayment(supabase, {
-              reservationId: r.id,
-              userId: profile.id,
-              amount: balance,
-              referenceCode: r.reference_code,
-              businessName: biz?.name || 'Business',
-              phone: r.guest_phone,
-              countryCode: cc,
-              gatewayOverride: biz?.payment_gateway || null,
-              businessId: r.business_id,
-            });
-            if (result) payLink = result.url;
+            if (profile) {
+              const result = await initializePayment(supabase, {
+                reservationId: r.id,
+                userId: profile.id,
+                amount: balance,
+                referenceCode: r.reference_code,
+                businessName: biz?.name || 'Business',
+                phone: r.guest_phone,
+                countryCode: cc,
+                gatewayOverride: biz?.payment_gateway || null,
+                businessId: r.business_id,
+              });
+              if (result) payLink = result.url;
+            }
+          } catch (payErr) {
+            logger.error('[BALANCE-REMINDER] Payment link error:', payErr);
           }
-        } catch (payErr) {
-          logger.error('[BALANCE-REMINDER] Payment link error:', payErr);
         }
 
         const phone = r.guest_phone.startsWith('+') ? r.guest_phone.slice(1) : r.guest_phone;
@@ -118,36 +129,48 @@ export async function GET(request: NextRequest) {
       const cc = (biz?.country_code || 'NG') as CountryCode;
 
       try {
+        // Check business notification preferences
+        const { data: bConfig } = await supabase
+          .from('whatsapp_config')
+          .select('send_balance_reminders, include_payment_links')
+          .eq('business_id', b.business_id)
+          .maybeSingle();
+
+        if (bConfig?.send_balance_reminders === false) continue;
+        const bShouldIncludePayLink = bConfig?.include_payment_links !== false;
+
         const resolver = new ChannelResolver(supabase);
         const resolved = await resolver.resolveByBusinessId(b.business_id);
         if (!resolved) continue;
 
-        // Generate payment link for the balance
+        // Generate payment link for the balance (if enabled)
         let payLink = '';
-        try {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('id')
-            .or(`phone.eq.${b.guest_phone},phone.eq.+${b.guest_phone}`)
-            .limit(1)
-            .maybeSingle();
+        if (bShouldIncludePayLink) {
+          try {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('id')
+              .or(`phone.eq.${b.guest_phone},phone.eq.+${b.guest_phone}`)
+              .limit(1)
+              .maybeSingle();
 
-          if (profile) {
-            const result = await initializePayment(supabase, {
-              bookingId: b.id,
-              userId: profile.id,
-              amount: balance,
-              referenceCode: b.reference_code,
-              businessName: biz?.name || 'Business',
-              phone: b.guest_phone,
-              countryCode: cc,
-              gatewayOverride: biz?.payment_gateway || null,
-              businessId: b.business_id,
-            });
-            if (result) payLink = result.url;
+            if (profile) {
+              const result = await initializePayment(supabase, {
+                bookingId: b.id,
+                userId: profile.id,
+                amount: balance,
+                referenceCode: b.reference_code,
+                businessName: biz?.name || 'Business',
+                phone: b.guest_phone,
+                countryCode: cc,
+                gatewayOverride: biz?.payment_gateway || null,
+                businessId: b.business_id,
+              });
+              if (result) payLink = result.url;
+            }
+          } catch (payErr) {
+            logger.error('[BALANCE-REMINDER] Payment link error:', payErr);
           }
-        } catch (payErr) {
-          logger.error('[BALANCE-REMINDER] Payment link error:', payErr);
         }
 
         const phone = b.guest_phone.startsWith('+') ? b.guest_phone.slice(1) : b.guest_phone;
