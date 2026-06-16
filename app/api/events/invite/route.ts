@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
+import { checkOptInBatch } from '@/lib/security/check-optin';
 import { logger } from '@/lib/logger';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
@@ -116,6 +117,14 @@ export async function POST(request: NextRequest) {
   const resolver = new ChannelResolver(service);
   const resolved = await resolver.resolveByBusinessId(businessId);
 
+  // Batch check which numbers have opted in (previously interacted with business)
+  const cleanPhones = phones.slice(0, 50).map(p => p.replace(/\D/g, '')).filter(p => p.length >= 7);
+  const optInMap = await checkOptInBatch(service, cleanPhones, businessId);
+
+  // Build public invite URL for numbers that need opt-in
+  const eventOrPartyId = partyId || eventId;
+  const publicInviteUrl = `${appUrl}/join-event/${eventOrPartyId}`;
+
   for (let i = 0; i < Math.min(phones.length, 50); i++) {
     const rawPhone = phones[i];
     const phone = rawPhone.replace(/\D/g, '');
@@ -189,15 +198,17 @@ export async function POST(request: NextRequest) {
       ];
       const message = messageParts.filter(Boolean).join('\n');
 
-      // Send WhatsApp message via template (works for numbers that never messaged before)
-      if (resolved) {
+      // Check opt-in status — only send directly to numbers that have interacted before
+      const isOptedIn = optInMap.get(rawPhone) || optInMap.get(phone) || false;
+
+      if (resolved && isOptedIn) {
+        // Opted in — send directly via WhatsApp
         try {
           const dateTimeLabel = `${dateStr}${timeStr ? ` at ${timeStr}` : ''}`;
           const venueLabel = inviteTarget.venue ? ` at ${inviteTarget.venue}` : '';
           const hostPrefix = hostName ? `${hostName} invites you to ` : '';
           const eventDetails = `${hostPrefix}${inviteTarget.name} on ${dateTimeLabel}${venueLabel}`;
 
-          // Try buttons first (richer UX), fall back to template for new numbers
           let sent = false;
           try {
             await resolved.sender.sendButtons({
@@ -211,7 +222,6 @@ export async function POST(request: NextRequest) {
             });
             sent = true;
           } catch (btnErr) {
-            // Buttons failed (likely outside 24h window) — use template
             logger.info(`[INVITE] Buttons failed for ${phone}, falling back to template:`, (btnErr as Error).message);
             const templateResult = await sendWithTemplate({
               sender: resolved.sender,
@@ -221,11 +231,6 @@ export async function POST(request: NextRequest) {
               templateOnly: true,
             });
             sent = templateResult.sent;
-            if (!sent) {
-              logger.error(`[INVITE] Template also failed for ${phone} — message not delivered`);
-            } else {
-              logger.info(`[INVITE] Template sent successfully to ${phone}, messageId: ${templateResult.messageId}`);
-            }
           }
 
           if (sent) {
@@ -243,6 +248,14 @@ export async function POST(request: NextRequest) {
           logger.error(`[INVITE] Failed to send to ${phone}:`, sendErr);
           results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
         }
+      } else if (!isOptedIn) {
+        // Not opted in — invite created but needs to opt in via link
+        results.push({
+          phone,
+          status: 'needs_optin',
+          note: 'Guest has not interacted with your business on WhatsApp yet. Share the invite link instead.',
+          error: inviteLink,
+        });
       } else {
         results.push({ phone, status: 'created', error: 'No WhatsApp channel configured' });
       }
@@ -295,7 +308,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json({ success: true, results });
+  const needsOptinCount = results.filter(r => r.status === 'needs_optin').length;
+  return NextResponse.json({
+    success: true,
+    results,
+    ...(needsOptinCount > 0 ? { public_invite_url: publicInviteUrl, needs_optin_count: needsOptinCount } : {}),
+  });
 }
 
 function formatInviteDate(dateStr: string | null): string {
