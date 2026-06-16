@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client';
 import { CONTRACT_TEMPLATES, COMMON_QUESTIONS, fillTemplatePlaceholders, generateContractFromAnswers } from '@/lib/contract-templates';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { COUNTRIES, type CountryCode } from '@/lib/constants';
+import { QRCodeSVG } from 'qrcode.react';
 
 /** Detect country code from an E.164 phone number by matching dialing code prefixes */
 function detectCountryFromPhone(phone: string): CountryCode | null {
@@ -705,6 +706,65 @@ export default function ContractsPage() {
                 </button>
               </div>
             </div>
+
+            {/* Share Signing Link */}
+            {(selectedContract.status === 'pending' || selectedContract.status === 'expired') && (() => {
+              const signerToken = selectedContract.contract_signers?.[0]?.token;
+              const signUrl = signerToken ? `${window.location.origin}/sign/${signerToken}` : '';
+              if (!signUrl) return null;
+              return (
+                <div className="mb-4 rounded-xl border border-brand-100 bg-brand-50/50 p-4">
+                  <p className="text-xs font-semibold text-brand-700 uppercase tracking-wide">Share Signing Link</p>
+                  <p className="mt-1 text-xs text-gray-500">Share this link with the signer. They can review and sign from any device.</p>
+
+                  <div className="mt-3 flex items-start gap-4">
+                    {/* QR Code */}
+                    <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm">
+                      <QRCodeSVG value={signUrl} size={100} level="M" />
+                    </div>
+
+                    {/* Link + Actions */}
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          readOnly
+                          value={signUrl}
+                          className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-700 outline-none"
+                          onClick={e => (e.target as HTMLInputElement).select()}
+                        />
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(signUrl); setToastMsg('Link copied!'); setTimeout(() => setToastMsg(''), 2000); }}
+                          className="shrink-0 rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white hover:bg-brand-600"
+                        >
+                          Copy
+                        </button>
+                      </div>
+
+                      <div className="flex gap-2">
+                        {/* WhatsApp Share */}
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(`Please review and sign this document: ${selectedContract.title}\n\n${signUrl}`)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-whatsapp px-3 py-2 text-xs font-medium text-white hover:bg-whatsapp/85"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+                          WhatsApp
+                        </a>
+                        {/* Email Share */}
+                        <a
+                          href={`mailto:?subject=${encodeURIComponent(`Please sign: ${selectedContract.title}`)}&body=${encodeURIComponent(`Please review and sign this document:\n\n${selectedContract.title}\n\nSign here: ${signUrl}`)}`}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-gray-100 px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                        >
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                          Email
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Uploaded Document */}
             {selectedContract.template_url && (
