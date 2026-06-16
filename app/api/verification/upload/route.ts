@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { validateFileSignature } from '@/lib/security/validate-file';
+import { sanitizeImage } from '@/lib/security/sanitize-image';
 
 export async function POST(request: NextRequest) {
   const limit = rateLimitResponse(getRateLimitKey(request, 'upload-verification'), 10, 60_000);
@@ -67,13 +68,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'File content does not match its type. Upload rejected.' }, { status: 400 });
   }
 
+  // Re-encode images through Sharp — strips metadata/payloads, validates it's a real image
+  // PDFs pass through unchanged (only images are sanitized)
+  let uploadBuffer: Buffer = buffer;
+  let uploadContentType: string = file.type;
+  let uploadExt: string = ext;
+  if (file.type !== 'application/pdf') {
+    try {
+      const sanitized = await sanitizeImage(buffer);
+      uploadBuffer = sanitized.buffer;
+      uploadContentType = sanitized.contentType;
+      uploadExt = sanitized.format === 'png' ? 'png' : sanitized.format === 'webp' ? 'webp' : 'jpg';
+    } catch {
+      return NextResponse.json({ error: 'File is not a valid image. Upload rejected.' }, { status: 400 });
+    }
+  }
+
   // Upload to Supabase Storage
-  const path = `verification/${businessId}/${docType}-${Date.now()}.${ext}`;
+  const path = `verification/${businessId}/${docType}-${Date.now()}.${uploadExt}`;
 
   const { error: uploadError } = await supabase.storage
     .from('business-documents')
-    .upload(path, buffer, {
-      contentType: file.type,
+    .upload(path, uploadBuffer, {
+      contentType: uploadContentType,
       upsert: false,
     });
 

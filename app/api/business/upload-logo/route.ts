@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { validateFileSignature } from '@/lib/security/validate-file';
+import { sanitizeImage } from '@/lib/security/sanitize-image';
 
 export async function POST(request: NextRequest) {
   const limit = rateLimitResponse(getRateLimitKey(request, 'upload-logo'), 10, 60_000);
@@ -54,18 +55,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'File content does not match its type. Upload rejected.' }, { status: 400 });
   }
 
-  // Sanitize filename: strip path separators, limit to safe chars, truncate
-  const safeName = file.name
-    .replace(/[\/\\\.\.]+/g, '_')
-    .replace(/[^a-zA-Z0-9.\-_]/g, '_')
-    .slice(0, 100) || 'file';
-  const ext = safeName.split('.').pop() || 'jpg';
-  const path = `logos/${businessId}/${Date.now()}.${ext}`;
+  // Re-encode through Sharp — strips metadata/payloads, validates it's a real image
+  let cleanBuffer: Buffer;
+  let cleanContentType: string;
+  let cleanExt: string;
+  try {
+    const sanitized = await sanitizeImage(buffer);
+    cleanBuffer = sanitized.buffer;
+    cleanContentType = sanitized.contentType;
+    cleanExt = sanitized.format === 'png' ? 'png' : sanitized.format === 'webp' ? 'webp' : 'jpg';
+  } catch {
+    return NextResponse.json({ error: 'File is not a valid image. Upload rejected.' }, { status: 400 });
+  }
+
+  const path = `logos/${businessId}/${Date.now()}.${cleanExt}`;
 
   const { error: uploadError } = await supabase.storage
     .from('business-documents')
-    .upload(path, buffer, {
-      contentType: file.type,
+    .upload(path, cleanBuffer, {
+      contentType: cleanContentType,
       upsert: false,
     });
 

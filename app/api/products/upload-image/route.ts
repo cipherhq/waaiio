@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { validateFileSignature } from '@/lib/security/validate-file';
+import { sanitizeImage } from '@/lib/security/sanitize-image';
 
 export async function POST(request: NextRequest) {
   const limit = rateLimitResponse(getRateLimitKey(request, 'upload-products'), 15, 60_000);
@@ -55,21 +56,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'File content does not match its type. Upload rejected.' }, { status: 400 });
   }
 
-  // Sanitize filename: strip path separators, limit to safe chars, truncate
-  const safeName = file.name
-    .replace(/[\/\\\.\.]+/g, '_')
-    .replace(/[^a-zA-Z0-9.\-_]/g, '_')
-    .slice(0, 100) || 'file';
-  const ext = safeName.split('.').pop() || 'jpg';
+  // Re-encode through Sharp — strips metadata/payloads, validates it's a real image
+  let cleanBuffer: Buffer;
+  let cleanContentType: string;
+  let cleanExt: string;
+  try {
+    const sanitized = await sanitizeImage(buffer);
+    cleanBuffer = sanitized.buffer;
+    cleanContentType = sanitized.contentType;
+    cleanExt = sanitized.format === 'png' ? 'png' : sanitized.format === 'webp' ? 'webp' : 'jpg';
+  } catch {
+    return NextResponse.json({ error: 'File is not a valid image. Upload rejected.' }, { status: 400 });
+  }
+
   // Path must start with business_id — storage RLS checks (foldername(name))[1] = business_id
-  const path = `${businessId}/products/${Date.now()}.${ext}`;
+  const path = `${businessId}/products/${Date.now()}.${cleanExt}`;
 
   // Use service client for storage upload (bypasses storage RLS — ownership already verified above)
   const serviceClient = createServiceClient();
   const { error: uploadError } = await serviceClient.storage
     .from('business-documents')
-    .upload(path, buffer, {
-      contentType: file.type,
+    .upload(path, cleanBuffer, {
+      contentType: cleanContentType,
       upsert: false,
     });
 
