@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { validateFileSignature } from '@/lib/security/validate-file';
 
 export async function POST(request: NextRequest) {
   const limit = rateLimitResponse(getRateLimitKey(request, 'upload-contracts'), 10, 60_000);
@@ -62,6 +63,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Upload limit reached' }, { status: 400 });
   }
 
+  // Validate magic bytes — reject files whose content doesn't match claimed type
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const detected = validateFileSignature(buffer, file.type);
+  if (!detected) {
+    return NextResponse.json({ error: 'File content does not match its type. Upload rejected.' }, { status: 400 });
+  }
+
   // Sanitize filename: strip path separators, limit to safe chars, truncate
   const sanitizedName = file.name
     .replace(/[/\\]/g, '')       // strip path separators
@@ -71,7 +79,6 @@ export async function POST(request: NextRequest) {
 
   // Upload to Supabase Storage
   const path = `${businessId}/uploads/${Date.now()}-${sanitizedName}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadError } = await supabase.storage
     .from('contracts')

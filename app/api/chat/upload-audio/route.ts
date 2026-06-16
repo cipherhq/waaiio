@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { validateFileSignature } from '@/lib/security/validate-file';
 
 export async function POST(request: NextRequest) {
   const limit = rateLimitResponse(getRateLimitKey(request, 'upload-audio'), 20, 60_000);
@@ -53,7 +54,13 @@ export async function POST(request: NextRequest) {
     .slice(0, 100) || 'file';
   const ext = file.type.includes('webm') ? 'webm' : file.type.includes('ogg') ? 'ogg' : file.type.includes('mp4') ? 'mp4' : 'mp3';
   const path = `chat-audio/${businessId}/${Date.now()}-${safeName}.${ext}`;
+
+  // Validate magic bytes — reject files whose content doesn't match claimed type
   const buffer = Buffer.from(await file.arrayBuffer());
+  const detected = validateFileSignature(buffer, file.type);
+  if (!detected) {
+    return NextResponse.json({ error: 'File content does not match its type. Upload rejected.' }, { status: 400 });
+  }
 
   const { error: uploadError } = await supabase.storage
     .from('business-documents')

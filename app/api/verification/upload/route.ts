@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { validateFileSignature } from '@/lib/security/validate-file';
 
 export async function POST(request: NextRequest) {
   const limit = rateLimitResponse(getRateLimitKey(request, 'upload-verification'), 10, 60_000);
@@ -59,9 +60,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'File too large. Maximum 10MB' }, { status: 400 });
   }
 
+  // Validate magic bytes — reject files whose content doesn't match claimed type
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const detected = validateFileSignature(buffer, file.type);
+  if (!detected) {
+    return NextResponse.json({ error: 'File content does not match its type. Upload rejected.' }, { status: 400 });
+  }
+
   // Upload to Supabase Storage
   const path = `verification/${businessId}/${docType}-${Date.now()}.${ext}`;
-  const buffer = Buffer.from(await file.arrayBuffer());
 
   const { error: uploadError } = await supabase.storage
     .from('business-documents')
