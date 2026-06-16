@@ -75,26 +75,19 @@ export default function RecurringDashboardPage() {
 
   async function handleAction(subId: string, action: 'pause' | 'resume' | 'cancel') {
     setActionLoading(subId);
-    const supabase = createClient();
-    const now = new Date().toISOString();
-
-    if (action === 'cancel') {
-      await supabase
-        .from('customer_subscriptions')
-        .update({ status: 'cancelled', cancelled_at: now })
-        .eq('id', subId);
-    } else if (action === 'pause') {
-      await supabase
-        .from('customer_subscriptions')
-        .update({ status: 'paused', paused_at: now })
-        .eq('id', subId);
-    } else if (action === 'resume') {
-      await supabase
-        .from('customer_subscriptions')
-        .update({ status: 'active', paused_at: null })
-        .eq('id', subId);
+    try {
+      const res = await fetch('/api/recurring/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscriptionId: subId, action }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Failed to update subscription');
+      }
+    } catch {
+      alert('Failed to update subscription. Please try again.');
     }
-
     setActionLoading(null);
     loadData();
   }

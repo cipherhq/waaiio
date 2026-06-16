@@ -69,6 +69,41 @@ export async function POST(request: NextRequest) {
       await processPaystackChargeFailed(data, reference, supabase);
     }
 
+    // ── Capture authorization code for customer recurring subscriptions ──
+    // When a first payment succeeds, capture the card auth for future auto-charges.
+    // This fixes web-initiated subscriptions where auth code wasn't captured at setup.
+    if (event === 'charge.success') {
+      const chargeAuth = data.authorization as Record<string, string> | undefined;
+      const chargeCustomer = data.customer as Record<string, string> | undefined;
+      if (chargeAuth?.authorization_code) {
+        const custPhone = chargeCustomer?.phone || '';
+        const custEmail = chargeCustomer?.email || '';
+        // Find subscriptions missing authorization_code for this customer
+        const phoneVariants = custPhone ? [custPhone, custPhone.startsWith('+') ? custPhone.slice(1) : `+${custPhone}`] : [];
+        let subQuery = supabase
+          .from('customer_subscriptions')
+          .update({
+            authorization_code: chargeAuth.authorization_code,
+            card_last_four: chargeAuth.last4 || null,
+            card_brand: chargeAuth.brand || null,
+            gateway_customer_code: chargeCustomer?.customer_code || null,
+          })
+          .is('authorization_code', null)
+          .in('status', ['active', 'pending']);
+
+        if (phoneVariants.length > 0) {
+          subQuery = subQuery.or(phoneVariants.map(p => `customer_phone.eq.${p}`).join(','));
+        } else if (custEmail) {
+          subQuery = subQuery.eq('customer_email', custEmail);
+        }
+
+        const { data: updated } = await subQuery.select('id');
+        if (updated && updated.length > 0) {
+          logger.info(`[PAYSTACK WEBHOOK] Captured auth code for ${updated.length} subscription(s)`);
+        }
+      }
+    }
+
     // ── Subscription events (WhatsApp bot plans) ──
     const metadata = data.metadata as Record<string, string> | undefined;
     const isWhatsAppSub = metadata?.type === 'whatsapp_subscription';

@@ -162,3 +162,56 @@ export async function getAuthorization(reference: string): Promise<{
     email: customer?.email || '',
   };
 }
+
+/**
+ * Re-enable a previously disabled Paystack subscription.
+ */
+export async function enableSubscription(
+  subscriptionCode: string,
+  emailToken: string,
+): Promise<boolean> {
+  if (!paystackSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Paystack secret key');
+    }
+    return true;
+  }
+
+  const data = await paystackRequest('/subscription/enable', 'POST', {
+    code: subscriptionCode,
+    token: emailToken,
+  });
+
+  return data.status === true;
+}
+
+/**
+ * Charge an authorization (for retrying failed recurring charges).
+ * Amount is in kobo (multiply by 100 before calling).
+ */
+export async function chargeAuthorization(
+  authorizationCode: string,
+  amountKobo: number,
+  email: string,
+  reference: string,
+): Promise<{ success: boolean; reference?: string }> {
+  if (!paystackSecretKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Payment gateway not configured: missing Paystack secret key');
+    }
+    return { success: true, reference: `mock_${Date.now()}` };
+  }
+
+  const data = await paystackRequest('/transaction/charge_authorization', 'POST', {
+    authorization_code: authorizationCode,
+    amount: amountKobo,
+    email,
+    reference,
+  });
+
+  const txData = data.data as Record<string, unknown> | undefined;
+  return {
+    success: data.status === true && txData?.status === 'success',
+    reference: (txData?.reference as string) || reference,
+  };
+}

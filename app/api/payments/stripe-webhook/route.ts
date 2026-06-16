@@ -314,6 +314,146 @@ export async function POST(request: NextRequest) {
           }
 
           logger.info(`[STRIPE WEBHOOK] Platform subscription renewed: ${subscriptionId} for business ${platformSub.business_id}`);
+        } else {
+          // Not a platform subscription — check if it's a customer recurring subscription
+          const { data: customerSub } = await supabase
+            .from('customer_subscriptions')
+            .select('*')
+            .eq('gateway_subscription_code', subscriptionId)
+            .eq('gateway', 'stripe')
+            .in('status', ['active', 'past_due'])
+            .maybeSingle();
+
+          if (customerSub) {
+            const chargeAmount = (data.amount_paid as number) / 100;
+            const now = new Date().toISOString();
+
+            // Create booking record for the recurring charge
+            const { data: booking } = await supabase
+              .from('bookings')
+              .insert({
+                business_id: customerSub.business_id,
+                user_id: customerSub.user_id,
+                service_id: customerSub.service_id,
+                date: new Date().toISOString().split('T')[0],
+                time: new Date().toTimeString().split(' ')[0].slice(0, 5),
+                party_size: 1,
+                flow_type: 'payment',
+                channel: 'recurring',
+                deposit_amount: chargeAmount,
+                deposit_status: 'paid',
+                status: 'confirmed',
+                total_amount: chargeAmount,
+                quantity: 1,
+                guest_name: customerSub.customer_name || '',
+                guest_phone: customerSub.customer_phone || '',
+                confirmed_at: now,
+                notes: `Recurring ${customerSub.frequency} charge (Stripe)`,
+              })
+              .select('id, reference_code')
+              .single();
+
+            // Create payment record
+            const { data: stripePayment } = await supabase
+              .from('payments')
+              .insert({
+                business_id: customerSub.business_id,
+                user_id: customerSub.user_id,
+                booking_id: booking?.id || null,
+                amount: chargeAmount,
+                currency: customerSub.currency || 'USD',
+                gateway: 'stripe',
+                gateway_reference: (data.payment_intent as string) || (data.id as string),
+                status: 'success',
+                gateway_status: 'success',
+                payment_method: 'card',
+                card_last_four: customerSub.card_last_four,
+                card_brand: customerSub.card_brand,
+                paid_at: now,
+                metadata: { recurring: true, subscription_id: customerSub.id },
+              })
+              .select('id')
+              .single();
+
+            // Log the charge
+            await supabase.from('subscription_charges').insert({
+              subscription_id: customerSub.id,
+              business_id: customerSub.business_id,
+              user_id: customerSub.user_id,
+              amount: chargeAmount,
+              currency: customerSub.currency || 'USD',
+              status: 'success',
+              gateway: 'stripe',
+              gateway_reference: (data.payment_intent as string) || (data.id as string),
+              payment_id: stripePayment?.id || null,
+              booking_id: booking?.id || null,
+              charged_at: now,
+            });
+
+            // Record platform fee
+            if (booking?.id) {
+              const { data: recBiz } = await supabase
+                .from('businesses')
+                .select('subscription_tier, trial_ends_at, payout_mode')
+                .eq('id', customerSub.business_id)
+                .single();
+
+              if (recBiz && recBiz.payout_mode !== 'direct_split') {
+                const recIsInTrial = new Date(recBiz.trial_ends_at) > new Date();
+                const recTier = (recBiz.subscription_tier || 'free') as SubscriptionTier;
+                const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(chargeAmount, recTier, recIsInTrial);
+
+                await supabase.from('platform_fees').insert({
+                  business_id: customerSub.business_id,
+                  booking_id: booking.id,
+                  transaction_amount: chargeAmount,
+                  fee_percentage: feePercentage,
+                  fee_flat: feeFlat,
+                  fee_total: feeTotal,
+                  tier: recTier,
+                });
+              }
+            }
+
+            // Update subscription stats
+            const nextCharge = new Date();
+            if (customerSub.frequency === 'weekly') {
+              nextCharge.setDate(nextCharge.getDate() + 7);
+            } else {
+              nextCharge.setMonth(nextCharge.getMonth() + 1);
+            }
+
+            await supabase
+              .from('customer_subscriptions')
+              .update({
+                charge_count: (customerSub.charge_count || 0) + 1,
+                total_charged: parseFloat(customerSub.total_charged || '0') + chargeAmount,
+                last_charged_at: now,
+                next_charge_at: nextCharge.toISOString(),
+                failure_count: 0,
+                status: 'active',
+              })
+              .eq('id', customerSub.id);
+
+            // Send confirmation
+            if (stripePayment) {
+              try {
+                await sendProactiveConfirmation(supabase, {
+                  id: stripePayment.id,
+                  amount: chargeAmount,
+                  booking_id: booking?.id || null,
+                  invoice_id: null,
+                  campaign_id: null,
+                  reservation_id: null,
+                  order_id: null,
+                }, '[STRIPE RECURRING]');
+              } catch (confirmErr) {
+                logger.error('[STRIPE RECURRING] Confirmation error:', confirmErr);
+              }
+            }
+
+            logger.info(`[STRIPE WEBHOOK] Customer recurring charge processed: ${subscriptionId}, amount: ${chargeAmount}`);
+          }
         }
       }
     }
