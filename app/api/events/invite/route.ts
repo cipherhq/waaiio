@@ -89,12 +89,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Event or party not found' }, { status: 404 });
   }
 
-  // Get business details for the message
+  // Get business details + owner name for the message
   const { data: business } = await service
     .from('businesses')
-    .select('name, country_code')
+    .select('name, country_code, owner_id')
     .eq('id', businessId)
     .single();
+
+  // Get host name (business owner's name)
+  let hostName = business?.name || '';
+  if (business?.owner_id) {
+    const { data: owner } = await service
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('id', business.owner_id)
+      .single();
+    if (owner?.first_name) {
+      hostName = `${owner.first_name}${owner.last_name ? ` ${owner.last_name}` : ''}`;
+    }
+  }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const results: Array<{ phone: string; status: string; error?: string; note?: string }> = [];
@@ -165,6 +178,7 @@ export async function POST(request: NextRequest) {
       const messageParts = [
         `🎉 *You're Invited!*`,
         '',
+        hostName ? `*${hostName}* invites you to:` : '',
         `*${inviteTarget.name}*`,
         inviteTarget.date ? `📅 ${dateStr}${timeStr ? ` at ${timeStr}` : ''}` : '',
         inviteTarget.venue ? `📍 ${inviteTarget.venue}` : '',
@@ -180,7 +194,8 @@ export async function POST(request: NextRequest) {
         try {
           const dateTimeLabel = `${dateStr}${timeStr ? ` at ${timeStr}` : ''}`;
           const venueLabel = inviteTarget.venue ? ` at ${inviteTarget.venue}` : '';
-          const eventDetails = `${inviteTarget.name} on ${dateTimeLabel}${venueLabel}`;
+          const hostPrefix = hostName ? `${hostName} invites you to ` : '';
+          const eventDetails = `${hostPrefix}${inviteTarget.name} on ${dateTimeLabel}${venueLabel}`;
 
           // Try buttons first (richer UX), fall back to template for new numbers
           let sent = false;
@@ -353,6 +368,25 @@ export async function PUT(request: NextRequest) {
     targetVenue = event.venue || '';
   }
 
+  // Get host name for template
+  let reminderHostName = '';
+  const { data: reminderBiz } = await service
+    .from('businesses')
+    .select('name, owner_id')
+    .eq('id', businessId)
+    .single();
+  if (reminderBiz?.owner_id) {
+    const { data: reminderOwner } = await service
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('id', reminderBiz.owner_id)
+      .single();
+    if (reminderOwner?.first_name) {
+      reminderHostName = `${reminderOwner.first_name}${reminderOwner.last_name ? ` ${reminderOwner.last_name}` : ''}`;
+    }
+  }
+  if (!reminderHostName) reminderHostName = reminderBiz?.name || '';
+
   // Get pending + maybe invites
   const inviteQuery = service
     .from('event_invites')
@@ -412,7 +446,8 @@ export async function PUT(request: NextRequest) {
           messageSent = true;
         } catch {
           // Outside 24h window — fall back to template
-          const eventDetails = `${targetName}${dateStr ? ` on ${dateStr}` : ''}${targetVenue ? ` at ${targetVenue}` : ''}`;
+          const rHostPrefix = reminderHostName ? `${reminderHostName} invites you to ` : '';
+          const eventDetails = `${rHostPrefix}${targetName}${dateStr ? ` on ${dateStr}` : ''}${targetVenue ? ` at ${targetVenue}` : ''}`;
           const templateResult = await sendWithTemplate({
             sender: resolved.sender,
             to: invite.guest_phone,
