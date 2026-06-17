@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
 
 interface KeywordCampaign {
   id: string;
@@ -53,6 +54,8 @@ export default function KeywordCampaignsPage() {
   const [view, setView] = useState<ViewMode>('list');
   const [responses, setResponses] = useState<CampaignResponse[]>([]);
   const [responsesLoading, setResponsesLoading] = useState(false);
+  const [waPhone, setWaPhone] = useState('');
+  const [copiedId, setCopiedId] = useState('');
 
   // Form state
   const [form, setForm] = useState({
@@ -71,6 +74,32 @@ export default function KeywordCampaignsPage() {
 
   useEffect(() => {
     loadCampaigns();
+    // Load WhatsApp number for share links
+    async function loadWaPhone() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('whatsapp_channels')
+        .select('phone_number')
+        .eq('business_id', business.id)
+        .eq('is_active', true)
+        .limit(1)
+        .maybeSingle();
+      if (data?.phone_number) {
+        setWaPhone(data.phone_number);
+      } else {
+        // Try shared channel for country
+        const { data: shared } = await supabase
+          .from('whatsapp_channels')
+          .select('phone_number')
+          .eq('country_code', business.country_code || 'US')
+          .eq('channel_type', 'shared')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        if (shared?.phone_number) setWaPhone(shared.phone_number);
+      }
+    }
+    loadWaPhone();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business.id]);
 
@@ -154,6 +183,17 @@ export default function KeywordCampaignsPage() {
   }
 
   const isReservedKeyword = RESERVED_KEYWORDS.includes(form.keyword.toLowerCase().trim());
+
+  function getWaLink(keyword: string) {
+    if (!waPhone) return '';
+    return `https://wa.me/${waPhone.replace(/\D/g, '')}?text=${encodeURIComponent(keyword)}`;
+  }
+
+  function copyToClipboard(text: string, id: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(''), 2000);
+  }
 
   async function handleSave() {
     if (!form.name.trim() || !form.keyword.trim() || !form.response_text.trim()) return;
@@ -655,6 +695,25 @@ export default function KeywordCampaignsPage() {
         </button>
       </div>
 
+      {/* How it works */}
+      <div className="mt-6 rounded-xl border border-brand-100 dark:border-brand-900/30 bg-brand-50/50 dark:bg-brand-900/10 p-5">
+        <h3 className="text-sm font-bold text-brand-700 dark:text-brand-400">How Keyword Campaigns Work</h3>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs text-gray-600 dark:text-gray-400">
+          <div className="flex gap-2">
+            <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-brand text-white text-xs font-bold">1</span>
+            <div><strong className="text-gray-900 dark:text-gray-100">Create a keyword</strong><br/>Choose a word like "SALE", "VIP", or "PRAY" and set the auto-response.</div>
+          </div>
+          <div className="flex gap-2">
+            <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-brand text-white text-xs font-bold">2</span>
+            <div><strong className="text-gray-900 dark:text-gray-100">Share it everywhere</strong><br/>Put it on flyers, social media, or tell customers: &quot;Text {'{KEYWORD}'} to our WhatsApp&quot;.</div>
+          </div>
+          <div className="flex gap-2">
+            <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-brand text-white text-xs font-bold">3</span>
+            <div><strong className="text-gray-900 dark:text-gray-100">Collect &amp; broadcast</strong><br/>Every customer who texts is logged. Send broadcasts to all respondents later.</div>
+          </div>
+        </div>
+      </div>
+
       {campaigns.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 dark:border-gray-700 p-12 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-gray-50 dark:bg-gray-800">
@@ -664,7 +723,7 @@ export default function KeywordCampaignsPage() {
           </div>
           <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">Create your first keyword campaign</p>
           <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            Set up a keyword like "PROMO" and customers who text it will get an instant auto-response
+            Set up a keyword like &quot;PROMO&quot; and customers who text it will get an instant auto-response
           </p>
           <button
             onClick={openAdd}
@@ -719,6 +778,38 @@ export default function KeywordCampaignsPage() {
                   </span>
                 )}
               </div>
+
+              {/* Share tools */}
+              {waPhone && campaign.is_active && (
+                <div className="mt-3 flex items-center gap-3 rounded-lg bg-gray-50 dark:bg-gray-700/30 p-3">
+                  <div className="shrink-0 rounded bg-white p-1">
+                    <QRCodeSVG value={getWaLink(campaign.keyword)} size={56} level="M" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase">Share this campaign</p>
+                    <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-300 truncate">
+                      Text <strong>{campaign.keyword}</strong> to +{waPhone.replace(/(\d{1})(\d{3})(\d{3})(\d{4})/, '$1-$2-$3-$4')}
+                    </p>
+                    <div className="mt-1.5 flex gap-1.5">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(getWaLink(campaign.keyword), campaign.id); }}
+                        className="rounded bg-white dark:bg-gray-600 px-2 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-500 hover:bg-gray-100 dark:hover:bg-gray-500"
+                      >
+                        {copiedId === campaign.id ? 'Copied!' : 'Copy Link'}
+                      </button>
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(`Text ${campaign.keyword} to +${waPhone} on WhatsApp to ${campaign.description || campaign.name}`)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="rounded bg-whatsapp px-2 py-1 text-[10px] font-medium text-white hover:bg-whatsapp/85"
+                      >
+                        Share
+                      </a>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
