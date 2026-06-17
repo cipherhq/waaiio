@@ -112,11 +112,23 @@ export default function InvitesPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setStatusMessage('Invite sent!');
         setInvitePhone('');
         setInviteName('');
         setShowSendForm(false);
-        loadInvites();
+        await loadInvites();
+        // Show result details
+        const results = data.results || [];
+        const sentCount = results.filter((r: { status: string }) => r.status === 'sent' || r.status === 'resent').length;
+        const emailCount = results.filter((r: { status: string }) => r.status === 'email_sent').length;
+        const optinCount = results.filter((r: { status: string }) => r.status === 'needs_optin').length;
+        const parts = [];
+        if (sentCount) parts.push(`${sentCount} sent via WhatsApp`);
+        if (emailCount) parts.push(`${emailCount} sent via email`);
+        if (optinCount) parts.push(`${optinCount} need opt-in (share the invite link)`);
+        setStatusMessage(parts.join(', ') || 'Invite created!');
+        if (data.public_invite_url && optinCount > 0) {
+          setStatusMessage(prev => prev + ` — Share link: ${data.public_invite_url}`);
+        }
       } else {
         setStatusMessage(data.error || 'Failed to send invite');
       }
@@ -154,11 +166,20 @@ export default function InvitesPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        const sentCount = data.results?.filter((r: { status: string }) => r.status === 'sent').length || 0;
-        setStatusMessage(`${sentCount} of ${phones.length} invites sent!`);
+        const results = data.results || [];
+        const sentCount = results.filter((r: { status: string }) => r.status === 'sent' || r.status === 'resent').length;
+        const emailCount = results.filter((r: { status: string }) => r.status === 'email_sent').length;
+        const optinCount = results.filter((r: { status: string }) => r.status === 'needs_optin').length;
+        const parts = [`${sentCount} of ${phones.length} sent via WhatsApp`];
+        if (emailCount) parts.push(`${emailCount} via email`);
+        if (optinCount) parts.push(`${optinCount} need opt-in`);
+        setStatusMessage(parts.join(', '));
+        if (data.public_invite_url && optinCount > 0) {
+          setStatusMessage(prev => prev + ` — Share: ${data.public_invite_url}`);
+        }
         setBulkPhones('');
         setShowBulk(false);
-        loadInvites();
+        await loadInvites();
       } else {
         setStatusMessage(data.error || 'Failed to send invites');
       }
