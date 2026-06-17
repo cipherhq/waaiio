@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { QRCodeSVG } from 'qrcode.react';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -556,18 +557,49 @@ export default function PartiesPage() {
               {sendingReminder ? 'Sending...' : `Send Reminders (${pending.length + maybe.length})`}
             </button>
           )}
-          <button
-            onClick={() => {
-              const firstInvite = invites[0];
-              const link = firstInvite ? `${appUrl}/rsvp/${firstInvite.invite_token}` : `${appUrl}/dashboard/parties`;
-              navigator.clipboard.writeText(link);
-              setStatusMessage('Invite link copied!');
-            }}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
-          >
-            Copy Invite Link
-          </button>
         </div>
+
+        {/* Share section */}
+        {selectedParty && (
+          <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/30 p-4">
+            <div className="flex items-start gap-4">
+              <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm">
+                <QRCodeSVG value={`${appUrl}/join-event/${selectedParty.id}`} size={80} level="M" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-brand-700 uppercase">Share this party</p>
+                <p className="mt-1 text-xs text-gray-600">Guests can scan the QR code or use the link to RSVP.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${appUrl}/join-event/${selectedParty.id}`);
+                      setStatusMessage('Invite link copied!');
+                    }}
+                    className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600"
+                  >
+                    Copy Link
+                  </button>
+                  <a
+                    href={`https://wa.me/?text=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here: ${appUrl}/join-event/${selectedParty.id}`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-lg bg-whatsapp px-3 py-1.5 text-xs font-medium text-white hover:bg-whatsapp/85"
+                  >
+                    Share on WhatsApp
+                  </a>
+                  {typeof navigator !== 'undefined' && navigator.share && (
+                    <button
+                      onClick={() => navigator.share({ title: selectedParty.name, text: `You're invited to ${selectedParty.name}!`, url: `${appUrl}/join-event/${selectedParty.id}` }).catch(() => {})}
+                      className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                    >
+                      More...
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {statusMessage && (
           <div className="mt-4 rounded-lg bg-blue-50 px-4 py-3 text-sm text-blue-700">{statusMessage}</div>

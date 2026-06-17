@@ -6,6 +6,7 @@ import Image from 'next/image';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { QRCodeSVG } from 'qrcode.react';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import PlacesAutocomplete from '@/components/ui/PlacesAutocomplete';
@@ -529,27 +530,52 @@ export default function EventsPage() {
                 </p>
               </div>
             )}
-            {view === 'edit' && form.status === 'published' && events.find(e => e.id === form.id)?.slug && (
-              <div className="rounded-lg border border-brand/20 bg-brand-50/30 p-3">
-                <p className="text-xs font-medium text-brand">Share Event</p>
-                <p className="mt-1.5 break-all text-xs text-gray-600">
-                  {typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/e/{events.find(e => e.id === form.id)?.slug}
-                </p>
-                <button
-                  onClick={() => {
-                    const slug = events.find(e => e.id === form.id)?.slug;
-                    if (slug) {
-                      navigator.clipboard.writeText(`${window.location.origin}/e/${slug}`);
-                      setCopiedEventId(form.id);
-                      setTimeout(() => setCopiedEventId(null), 2000);
-                    }
-                  }}
-                  className="mt-2 w-full rounded-lg bg-brand px-3 py-2 text-xs font-semibold text-white hover:bg-brand-600 transition"
-                >
-                  {copiedEventId === form.id ? 'Copied!' : 'Copy Link'}
-                </button>
-              </div>
-            )}
+            {view === 'edit' && form.status === 'published' && events.find(e => e.id === form.id)?.slug && (() => {
+              const slug = events.find(e => e.id === form.id)?.slug;
+              const eventUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/e/${slug}`;
+              const inviteUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/join-event/${form.id}`;
+              return (
+                <div className="rounded-lg border border-brand/20 bg-brand-50/30 p-3 space-y-3">
+                  <p className="text-xs font-semibold text-brand uppercase">Share Event</p>
+                  <div className="flex items-start gap-3">
+                    <div className="shrink-0 rounded bg-white p-1.5 shadow-sm">
+                      <QRCodeSVG value={eventUrl} size={64} level="M" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-gray-600 break-all">{eventUrl}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(eventUrl);
+                            setCopiedEventId(form.id);
+                            setTimeout(() => setCopiedEventId(null), 2000);
+                          }}
+                          className="rounded bg-brand px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-brand-600"
+                        >
+                          {copiedEventId === form.id ? 'Copied!' : 'Copy Link'}
+                        </button>
+                        <a
+                          href={`https://wa.me/?text=${encodeURIComponent(`Check out ${form.name}! Get your tickets: ${eventUrl}`)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded bg-whatsapp px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-whatsapp/85"
+                        >
+                          WhatsApp
+                        </a>
+                        {typeof navigator !== 'undefined' && navigator.share && (
+                          <button
+                            onClick={() => navigator.share({ title: form.name, text: `Get your tickets for ${form.name}!`, url: eventUrl }).catch(() => {})}
+                            className="rounded border border-gray-200 px-2.5 py-1.5 text-[11px] font-medium text-gray-600 hover:bg-gray-50"
+                          >
+                            More
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
 
