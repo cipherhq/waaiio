@@ -47,7 +47,7 @@ export function StepCategory({
     <div>
       {/* Country selection */}
       <div>
-        <label className="mb-2 block text-sm font-medium text-gray-700">Which country is your business in?</label>
+        <label className="mb-2 block text-sm font-medium text-gray-700">Which country are you in?</label>
         <div className="flex flex-wrap gap-2">
           {countryList.map(c => (
             <button key={c.code} type="button" onClick={() => { setSelectedCountry(c.code); setCity(''); }}
@@ -61,9 +61,23 @@ export function StepCategory({
       {!selectedGroup ? (
         /* ── Phase 1: Show group buttons ── */
         <div className="mt-8">
-          <h2 className="text-2xl font-bold text-gray-900">What type of business do you run?</h2>
+          <h2 className="text-2xl font-bold text-gray-900">What best describes you?</h2>
           <p className="mt-1 text-sm text-gray-500">30-day free trial. All features included.</p>
           <div className="mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {/* Personal / Individual option first */}
+            <button
+              type="button"
+              onClick={() => {
+                setCategory('events' as BusinessCategoryKey);
+                setSelectedCapabilities(CATEGORY_DEFAULT_CAPABILITIES['events'] || []);
+                setStep('details');
+              }}
+              className="flex flex-col items-center gap-2 rounded-xl border-2 border-brand-200 bg-brand-50/30 px-3 py-4 text-center transition hover:border-brand hover:bg-brand-50"
+            >
+              <span className="text-2xl">🎉</span>
+              <span className="text-sm font-medium text-brand-700">Personal / Individual</span>
+              <span className="text-[10px] text-gray-500">Parties, events, invites</span>
+            </button>
             {getCategoryGroups().map(g => (
               <button
                 key={g.group}

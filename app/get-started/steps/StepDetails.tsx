@@ -76,9 +76,9 @@ export function StepDetails({
           </div>
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700">{categoryInfo?.label || 'Business'} Name *</label>
+          <label className="mb-1.5 block text-sm font-medium text-gray-700">{categoryInfo?.label || 'Name or Brand'} *</label>
           <input type="text" value={name} onChange={(e) => handleNameChange(e.target.value)}
-            placeholder={category === 'restaurant' ? 'e.g. Bukka Hut & Grill' : category === 'barber' ? "e.g. King's Cuts" : 'e.g. Your Business Name'}
+            placeholder={category === 'events' ? 'e.g. Your Name or Brand' : category === 'restaurant' ? 'e.g. Bukka Hut & Grill' : category === 'barber' ? "e.g. King's Cuts" : 'e.g. Your Business Name'}
             className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-100" required />
           {nameCheckStatus === 'checking' && (
             <p className="mt-1.5 flex items-center gap-1.5 text-xs text-gray-500">
@@ -100,9 +100,9 @@ export function StepDetails({
           )}
         </div>
         <div>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700">Your WhatsApp Business Name *</label>
+          <label className="mb-1.5 block text-sm font-medium text-gray-700">Your WhatsApp Name *</label>
           <p className="mb-2 text-xs text-gray-500">
-            This is the name customers will text to the Waaiio WhatsApp number to find and interact with your business.
+            This is the name people will text to the Waaiio WhatsApp number to find and interact with you.
             It also appears in your WhatsApp link. Pick something short, memorable, and easy to spell.
           </p>
           <input
