@@ -147,6 +147,71 @@ export async function GET(request: NextRequest) {
   }
 
   // ── OVERDUE INVOICE REMINDERS ──
+  // ── Party followup reminders ──
+  // Send followup_message to confirmed guests X days before party date
+  const { data: parties } = await supabase
+    .from('parties')
+    .select('id, name, date, time, venue, followup_message, followup_days_before, business_id')
+    .not('followup_message', 'is', null)
+    .gte('date', new Date().toISOString().split('T')[0]);
+
+  for (const party of parties || []) {
+    if (!party.followup_message) continue;
+    const daysBefore = party.followup_days_before ?? 1;
+    const partyDate = new Date(party.date + 'T00:00');
+    const reminderDate = new Date(partyDate);
+    reminderDate.setDate(reminderDate.getDate() - daysBefore);
+    const today = new Date().toISOString().split('T')[0];
+
+    if (reminderDate.toISOString().split('T')[0] !== today) continue;
+
+    // Get confirmed guests
+    const { data: guests } = await supabase
+      .from('event_invites')
+      .select('guest_phone, guest_name')
+      .eq('party_id', party.id)
+      .eq('business_id', party.business_id)
+      .in('status', ['accepted', 'maybe'])
+      .eq('reminder_sent', false);
+
+    for (const guest of guests || []) {
+      if (!guest.guest_phone) continue;
+
+      const dateLabel = partyDate.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+      let timeLabel = '';
+      if (party.time) {
+        try {
+          const [h, m] = party.time.split(':');
+          const dt = new Date();
+          dt.setHours(parseInt(h, 10), parseInt(m, 10));
+          timeLabel = ` at ${dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' })}`;
+        } catch { timeLabel = ` at ${party.time}`; }
+      }
+
+      const message = [
+        `⏰ *Reminder*`,
+        '',
+        `${guest.guest_name ? `Hi ${guest.guest_name}! ` : ''}${party.followup_message}`,
+        '',
+        `📅 ${party.name}`,
+        `${dateLabel}${timeLabel}`,
+        party.venue ? `📍 ${party.venue}` : '',
+      ].filter(Boolean).join('\n');
+
+      const sent = await sendWhatsApp(party.business_id, guest.guest_phone, message);
+      if (sent) {
+        whatsappSent++;
+        // Mark reminder sent
+        await supabase
+          .from('event_invites')
+          .update({ reminder_sent: true })
+          .eq('party_id', party.id)
+          .eq('guest_phone', guest.guest_phone);
+      }
+    }
+  }
+
+  // ── Overdue invoice reminders ──
   const { data: overdueInvoices } = await supabase
     .from('invoices')
     .select('id, customer_email, customer_name, total_amount, due_date, business_id, businesses!inner(name)')
