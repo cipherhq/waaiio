@@ -209,8 +209,12 @@ export class BotService {
       const rsvpChoice = rsvpButtonMatch[1] as 'yes' | 'maybe' | 'no';
       const rsvpStatus = rsvpChoice === 'yes' ? 'accepted' : rsvpChoice === 'maybe' ? 'maybe' : 'declined';
       const inviteId = rsvpButtonMatch[2];
-      const defaultEmoji: Record<string, string> = { accepted: '✅', maybe: '🤔', declined: '❌' };
-      const defaultLabel: Record<string, string> = { accepted: "You're coming!", maybe: "Noted as maybe!", declined: "Sorry you can't make it!" };
+      const defaultEmoji: Record<string, string> = { accepted: '🎉', maybe: '🤔', declined: '🙏' };
+      const defaultLabel: Record<string, string> = {
+        accepted: "You're in! Can't wait to see you there! 🥳🔥",
+        maybe: "No pressure! We'll keep a spot warm for you 😊",
+        declined: "We'll miss you! Maybe next time 💛",
+      };
 
       await this.supabase
         .from('event_invites')
@@ -238,7 +242,7 @@ export class BotService {
         }
       } catch { /* use default */ }
 
-      await this.sendText(from, responseMsg);
+      await this.sendText(from, `${responseMsg}\n\n_Powered by Waaiio_`);
       return;
     }
 
