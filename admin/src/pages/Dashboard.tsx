@@ -188,13 +188,13 @@ export default function Dashboard() {
 
         setStats([
           {
-            label: 'Total Businesses',
+            label: 'Total Accounts',
             value: String(bizRes.count || 0),
             icon: Building2,
             color: 'blue',
           },
           {
-            label: 'New Businesses (this month)',
+            label: 'New Accounts (this month)',
             value: String(newBizCount),
             icon: Zap,
             color: 'green',
@@ -250,7 +250,7 @@ export default function Dashboard() {
           },
           {
             label: 'Capability Overrides',
-            value: `${new Set((overridesRes.data || []).map(r => r.business_id)).size} businesses`,
+            value: `${new Set((overridesRes.data || []).map(r => r.business_id)).size} accounts`,
             icon: Zap,
             color: 'purple',
           },
@@ -283,7 +283,7 @@ export default function Dashboard() {
         if (unverifiedCount > 0) {
           alertList.push({
             icon: AlertTriangle,
-            label: 'Unverified active businesses',
+            label: 'Unverified active accounts',
             count: unverifiedCount,
             color: 'yellow',
             path: '/businesses',
@@ -519,7 +519,7 @@ export default function Dashboard() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">Platform Revenue</h2>
-            <p className="mt-0.5 text-xs text-gray-400">Fees earned from business transactions</p>
+            <p className="mt-0.5 text-xs text-gray-400">Fees earned from account transactions</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -729,7 +729,7 @@ export default function Dashboard() {
         {/* Feature Adoption */}
         <div className="rounded-xl border border-gray-200 bg-white p-5">
           <h3 className="text-sm font-semibold text-gray-900">Feature Adoption</h3>
-          <p className="mt-0.5 text-xs text-gray-400">Which capabilities businesses enable</p>
+          <p className="mt-0.5 text-xs text-gray-400">Which capabilities accounts enable</p>
           <div className="mt-4 space-y-2">
             {featureAdoption.slice(0, 10).map(f => {
               const total = featureAdoption[0]?.count || 1;
@@ -750,7 +750,7 @@ export default function Dashboard() {
 
         {/* Top Businesses */}
         <div className="rounded-xl border border-gray-200 bg-white p-5">
-          <h3 className="text-sm font-semibold text-gray-900">Top Businesses</h3>
+          <h3 className="text-sm font-semibold text-gray-900">Top Accounts</h3>
           <p className="mt-0.5 text-xs text-gray-400">Most active this month</p>
           <div className="mt-4 space-y-3">
             {topBusinesses.map((b, i) => (
@@ -770,7 +770,7 @@ export default function Dashboard() {
         {/* Customer Insights */}
         <div className="rounded-xl border border-gray-200 bg-white p-5">
           <h3 className="text-sm font-semibold text-gray-900">Customer Insights</h3>
-          <p className="mt-0.5 text-xs text-gray-400">Across all businesses</p>
+          <p className="mt-0.5 text-xs text-gray-400">Across all accounts</p>
           <div className="mt-4 space-y-4">
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-600">Total Customers</span>
@@ -807,14 +807,14 @@ export default function Dashboard() {
       {/* Category Breakdown */}
       {categoryBreakdown.length > 0 && (
         <div className="mt-8">
-          <h2 className="text-lg font-semibold text-gray-900">By Business Category</h2>
-          <p className="mt-0.5 text-sm text-gray-500">Active businesses, bookings this month, and total revenue per category</p>
+          <h2 className="text-lg font-semibold text-gray-900">By Category</h2>
+          <p className="mt-0.5 text-sm text-gray-500">Active accounts, bookings this month, and total revenue per category</p>
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left font-medium text-gray-500">Category</th>
-                  <th className="px-4 py-3 text-right font-medium text-gray-500">Businesses</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-500">Accounts</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Bookings</th>
                   <th className="px-4 py-3 text-right font-medium text-gray-500">Revenue</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-500 w-40">Activity</th>
@@ -861,7 +861,7 @@ export default function Dashboard() {
           />
           <QuickAction
             title="Verification Reviews"
-            description="Review business verification requests"
+            description="Review account verification requests"
             onClick={() => navigate('/verification')}
           />
           <QuickAction

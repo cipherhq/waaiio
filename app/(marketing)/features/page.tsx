@@ -56,7 +56,7 @@ export default function FeaturesPage() {
           </span>
 
           <h1 className="mx-auto mt-8 max-w-4xl text-balance text-4xl font-extrabold leading-tight text-white sm:text-5xl lg:text-6xl">
-            Everything you need to run your business on WhatsApp
+            Everything you need to get things done on WhatsApp
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-brand-200">
             20+ built-in capabilities across automation, commerce, engagement, and analytics — all working together on the platform 2 billion people already use.

@@ -17,6 +17,7 @@ import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
+import type { CapabilityId } from '@/lib/capabilities/types';
 
 interface Stats {
   totalBookings: number;
@@ -600,37 +601,8 @@ export default function DashboardOverview() {
             </Link>
           )}
 
-          {/* Quick Actions */}
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Link
-              href="/dashboard/whatsapp"
-              className="flex items-center gap-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 transition hover:border-brand/20 hover:shadow-sm"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50">
-                <svg aria-hidden="true" className="h-4 w-4 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">WhatsApp Setup</p>
-                <p className="text-xs text-gray-400 dark:text-gray-500">Customize replies</p>
-              </div>
-            </Link>
-            <Link
-              href="/dashboard/broadcasts"
-              className="flex items-center gap-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 transition hover:border-brand/20 hover:shadow-sm"
-            >
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-50">
-                <svg aria-hidden="true" className="h-4 w-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Broadcasts</p>
-                <p className="text-xs text-gray-400 dark:text-gray-500">Message customers</p>
-              </div>
-            </Link>
-          </div>
+          {/* Quick Actions — dynamic based on capabilities */}
+          <QuickActions business={business} hasCapability={hasCapability} />
         </div>
 
         {/* Quick Stats Sidebar (when checklist is done) */}
@@ -834,6 +806,121 @@ export default function DashboardOverview() {
             </table>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+interface QuickAction {
+  title: string;
+  description: string;
+  href: string;
+  icon: string;
+  bgColor: string;
+  iconColor: string;
+}
+
+function QuickActions({
+  business,
+  hasCapability,
+}: {
+  business: { category: string; capabilities: CapabilityId[] };
+  hasCapability: (cap: CapabilityId) => boolean;
+}) {
+  const actions: QuickAction[] = [];
+
+  if (hasCapability('ticketing')) {
+    actions.push({
+      title: 'Create Event',
+      description: 'Set up a new event with tickets',
+      href: '/dashboard/events',
+      icon: 'M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z',
+      bgColor: 'bg-brand-50 dark:bg-brand-950/30',
+      iconColor: 'text-brand',
+    });
+  }
+
+  if (business.category === 'events' || business.capabilities.includes('ticketing')) {
+    actions.push({
+      title: 'Create Party',
+      description: 'Plan and manage a party',
+      href: '/dashboard/parties',
+      icon: 'M21 15.546c-.523 0-1.046.151-1.5.454a2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0A1.75 1.75 0 003 15.546V12a9 9 0 0118 0v3.546zM12 3v2m6.364 1.636l-1.414 1.414M21 12h-2M5 12H3m3.05-4.95L4.636 5.636',
+      bgColor: 'bg-pink-50 dark:bg-pink-950/30',
+      iconColor: 'text-pink-600',
+    });
+  }
+
+  if (hasCapability('giving') || hasCapability('crowdfunding')) {
+    actions.push({
+      title: 'Set Up Giving',
+      description: hasCapability('crowdfunding') ? 'Launch a campaign' : 'Configure donation options',
+      href: hasCapability('crowdfunding') ? '/dashboard/campaigns' : '/dashboard/giving',
+      icon: 'M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z',
+      bgColor: 'bg-red-50 dark:bg-red-950/30',
+      iconColor: 'text-red-500',
+    });
+  }
+
+  if (hasCapability('broadcast')) {
+    actions.push({
+      title: 'Send Broadcast',
+      description: 'Message your customers at once',
+      href: '/dashboard/broadcasts',
+      icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z',
+      bgColor: 'bg-blue-50 dark:bg-blue-950/30',
+      iconColor: 'text-blue-600',
+    });
+  }
+
+  if (hasCapability('ordering')) {
+    actions.push({
+      title: 'Add Products',
+      description: 'List items for customers to order',
+      href: '/dashboard/products',
+      icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z',
+      bgColor: 'bg-amber-50 dark:bg-amber-950/30',
+      iconColor: 'text-amber-600',
+    });
+  }
+
+  if (hasCapability('scheduling') || hasCapability('appointment')) {
+    actions.push({
+      title: 'Add Services',
+      description: 'Define what you offer and availability',
+      href: '/dashboard/services',
+      icon: 'M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z',
+      bgColor: 'bg-green-50 dark:bg-green-950/30',
+      iconColor: 'text-green-600',
+    });
+  }
+
+  // Max 6 cards
+  const visibleActions = actions.slice(0, 6);
+
+  if (visibleActions.length === 0) return null;
+
+  return (
+    <div className="mt-6">
+      <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Quick Actions</h3>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {visibleActions.map((action) => (
+          <Link
+            key={action.href}
+            href={action.href}
+            className="flex items-center gap-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 transition hover:border-brand/20 hover:shadow-sm"
+          >
+            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${action.bgColor}`}>
+              <svg aria-hidden="true" className={`h-4 w-4 ${action.iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={action.icon} />
+              </svg>
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{action.title}</p>
+              <p className="text-xs text-gray-400 dark:text-gray-500 truncate">{action.description}</p>
+            </div>
+          </Link>
+        ))}
       </div>
     </div>
   );

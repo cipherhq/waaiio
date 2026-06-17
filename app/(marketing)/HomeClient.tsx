@@ -19,8 +19,8 @@ const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 
 const FAQ_DATA = [
   {
-    question: 'What types of businesses can use Waaiio?',
-    answer: `Any business or organisation that wants WhatsApp automation — salons, barbers, spas, churches, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ categories.`,
+    question: 'Who can use Waaiio?',
+    answer: `Anyone — businesses, churches, event organisers, individuals, and anyone who wants WhatsApp automation. Salons, barbers, spas, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ use cases.`,
   },
   {
     question: 'Is there really a free plan?',
@@ -111,7 +111,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
               </motion.span>
 
               <h1 className="mt-6 text-balance text-4xl font-extrabold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-[3.5rem]">
-                {'Customers Book & Pay'.split(' ').map((word, i) => (
+                {'People Book & Pay'.split(' ').map((word, i) => (
                   <motion.span
                     key={i}
                     initial={{ opacity: 0, y: 30 }}
@@ -158,7 +158,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                 transition={{ delay: 0.9, duration: 0.6 }}
                 className="mx-auto mt-5 max-w-lg text-lg leading-relaxed text-brand-200 lg:mx-0"
               >
-                Your customers type &ldquo;book me for Friday at 2pm&rdquo; and it just works. Bookings, payments, orders, tickets &mdash; all on WhatsApp, all automatic.
+                People type &ldquo;book me for Friday at 2pm&rdquo; and it just works. Bookings, payments, orders, tickets &mdash; all on WhatsApp, all automatic.
               </motion.p>
 
               <motion.div
@@ -185,7 +185,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                 </motion.div>
                 <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }}>
                   <a
-                    href="https://wa.me/12029226251?text=I%20want%20to%20register%20my%20business"
+                    href="https://wa.me/12029226251?text=I%20want%20to%20get%20started"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 rounded-2xl bg-whatsapp/90 px-7 py-3.5 text-sm font-semibold text-white transition hover:bg-whatsapp"
@@ -224,7 +224,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
                       </svg>
                     ))}
                   </div>
-                  <p className="text-xs text-brand-200">Trusted by businesses across <strong className="text-white">5 countries</strong></p>
+                  <p className="text-xs text-brand-200">Trusted by users across <strong className="text-white">5 countries</strong></p>
                 </div>
               </motion.div>
 
@@ -282,7 +282,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
       <section className="border-b border-gray-100 bg-white py-8">
         <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-center gap-8 px-4 sm:gap-14">
           {[
-            { value: '89+', label: 'Business Types Supported' },
+            { value: '89+', label: 'Use Cases Supported' },
             { value: '5', label: 'Countries Live' },
             { value: '30', label: 'Capabilities Built In' },
             { value: '24/7', label: 'Always On' },
@@ -328,7 +328,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
               See the bot in action
             </h2>
             <p className="mx-auto mt-3 max-w-xl text-gray-600">
-              Type a message below and watch the AI respond instantly. This is exactly what your customers experience.
+              Type a message below and watch the AI respond instantly. This is exactly what people experience when they message you.
             </p>
           </AnimatedSection>
           <AnimatedSection className="mt-12">
@@ -356,8 +356,8 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
             {[
               {
                 step: '1',
-                title: 'Tell us about your business',
-                desc: 'Add your services, prices, and hours. We set up the bot to match your industry — salon, church, restaurant, clinic, or any of 40+ categories.',
+                title: 'Tell us what you do',
+                desc: 'Add your services, prices, and hours. We set up the bot to match your industry — salon, church, restaurant, clinic, party planning, fundraising, or any of 40+ categories.',
                 icon: '&#x1F4DD;',
               },
               {
@@ -368,7 +368,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
               },
               {
                 step: '3',
-                title: 'Customers start messaging',
+                title: 'People start messaging',
                 desc: 'They type naturally — "book me for Friday" or "I wan order food" — and the bot handles it. You just watch the bookings roll in.',
                 icon: '&#x1F680;',
               },
@@ -410,7 +410,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand-300">No menus. No buttons. Just talk.</p>
             <h2 className="mt-3 text-3xl font-bold text-white sm:text-4xl">
-              Your customers already know how to use it
+              People already know how to use it
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-gray-400">
               They just type what they want — in their own words, their own language. The bot figures out the rest.
@@ -448,12 +448,12 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
       <section className="bg-gray-50/60 py-24">
         <div className="mx-auto max-w-6xl px-4 text-center">
           <AnimatedSection>
-            <p className="text-xs font-bold uppercase tracking-widest text-brand">What your bot can do</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-brand">What your assistant can do</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Customers just talk. It just works.
+              People just talk. It just works.
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-gray-600">
-              No menus to learn. No apps to download. Your customers message in their own words &mdash; in English, Pidgin, Yoruba, or any of 7 languages &mdash; and the bot understands what they need.
+              No menus to learn. No apps to download. People message you in their own words &mdash; in English, Pidgin, Yoruba, or any of 7 languages &mdash; and the bot understands what they need.
             </p>
           </AnimatedSection>
 
@@ -493,10 +493,10 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-red-500">The problem</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              Your business is losing money right now
+              You're losing time and money right now
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-gray-600">
-              Every missed call, ignored DM, and forgotten follow-up is revenue walking out the door.
+              Every missed call, ignored DM, and forgotten follow-up is an opportunity lost.
             </p>
           </AnimatedSection>
 
@@ -546,7 +546,7 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
             {[
               { number: '01', title: 'Auto-Book, Auto-Pay, Auto-Receipt', desc: 'Customer messages "I wan barb tomorrow 3pm" → bot books the slot, collects payment, sends a receipt. No staff needed. WhatsApp Business can\'t do this.', color: 'brand' },
               { number: '02', title: 'Knows Your Customers', desc: '"Welcome back, Chioma! Last time you had Full Grooming. Want the same?" Your bot remembers every customer, suggests repeat bookings, and flags who\'s about to churn.', color: 'accent' },
-              { number: '03', title: 'Grows Your Revenue', desc: '"23 customers haven\'t returned in 30 days — send a win-back offer?" AI-powered recommendations tell you exactly what to do to earn more. One-click actions from your dashboard.', color: 'whatsapp' },
+              { number: '03', title: 'Grows What You Earn', desc: '"23 customers haven\'t returned in 30 days — send a win-back offer?" AI-powered recommendations tell you exactly what to do to earn more. One-click actions from your dashboard.', color: 'whatsapp' },
             ].map((card, i) => (
               <AnimatedSection key={card.number} delay={i * 0.1}>
                 <WhyCard {...card} />
@@ -672,9 +672,9 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
           <AnimatedSection className="text-center">
             <p className="text-xs font-bold uppercase tracking-widest text-brand">Customer Feedback</p>
             <h2 className="mt-3 text-3xl font-bold text-gray-900 sm:text-4xl">
-              What business owners say
+              What our users say
             </h2>
-            <p className="mt-2 text-gray-600">Real results from real businesses</p>
+            <p className="mt-2 text-gray-600">Real results from real people</p>
           </AnimatedSection>
 
           <div className="mt-12 flex gap-6 overflow-x-auto pb-4 lg:grid lg:grid-cols-3 lg:overflow-visible lg:pb-0">
@@ -797,10 +797,10 @@ export default function HomeClient({ stats }: { stats?: { businesses: string; pa
               </div>
               <div className="relative z-10">
                 <h2 className="text-3xl font-bold text-white lg:text-4xl">
-                  Ready to automate your business on WhatsApp?
+                  Ready to automate on WhatsApp?
                 </h2>
                 <p className="mx-auto mt-4 max-w-xl text-lg text-brand-200">
-                  Join businesses across 5 countries already saving time and growing revenue
+                  Join thousands across 5 countries already saving time and growing revenue
                   with Waaiio.
                 </p>
                 <div className="mt-8 flex flex-wrap justify-center gap-3">

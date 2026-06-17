@@ -169,7 +169,7 @@ export default function Tickets() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Tickets</h1>
-      <p className="mt-1 text-sm text-gray-500">Manage all event tickets across businesses</p>
+      <p className="mt-1 text-sm text-gray-500">Manage all event tickets across accounts</p>
 
       {/* Filters */}
       <div className="mt-6 flex flex-wrap items-center gap-3">

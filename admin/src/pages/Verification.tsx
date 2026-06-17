@@ -277,7 +277,7 @@ export default function Verification() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Verification</h1>
-      <p className="mt-1 text-sm text-gray-500">Review business verification requests and documents</p>
+      <p className="mt-1 text-sm text-gray-500">Review account verification requests and documents</p>
 
       {/* Summary Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-3">

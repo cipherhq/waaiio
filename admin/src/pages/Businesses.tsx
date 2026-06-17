@@ -437,8 +437,8 @@ export default function Businesses() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Businesses</h1>
-      <p className="mt-1 text-sm text-gray-500">Manage all registered businesses</p>
+      <h1 className="text-2xl font-bold text-gray-900">Accounts</h1>
+      <p className="mt-1 text-sm text-gray-500">Manage all registered accounts (business and personal)</p>
 
       {/* Summary Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -515,7 +515,7 @@ export default function Businesses() {
       {/* Table */}
       <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 bg-white">
         {pageItems.length === 0 ? (
-          <div className="py-16 text-center text-sm text-gray-500">No businesses found</div>
+          <div className="py-16 text-center text-sm text-gray-500">No accounts found</div>
         ) : (
           <table className="w-full text-sm">
             <thead className="border-b border-gray-100 bg-gray-50">
@@ -591,7 +591,7 @@ export default function Businesses() {
             <DetailRow label="ID" value={selected.id} />
             <DetailRow label="Bot Code" value={selected.bot_code} />
             <DetailRow label="Slug" value={selected.slug} />
-            <DetailRow label="Type" value={isDemo(selected) ? 'Demo' : 'Registered'} />
+            <DetailRow label="Account Type" value={isDemo(selected) ? 'Demo' : (selected.category === 'personal' ? 'Personal' : 'Business')} />
 
             {/* Editable fields */}
             {(['name', 'category', 'city'] as const).map(field => (

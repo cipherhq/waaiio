@@ -95,7 +95,7 @@ export default function UserManagement() {
       .eq('customer_id', selected.id)
       .then(({ count }) => setPaymentCount(count ?? 0));
 
-    // Linked business (for business_owner)
+    // Linked account (for business_owner / account_owner)
     if (selected.role === 'business_owner') {
       adminDb
         .from('businesses')
@@ -298,9 +298,10 @@ export default function UserManagement() {
                   <td className="px-4 py-3 text-gray-600">{user.email}</td>
                   <td className="px-4 py-3 text-gray-600">{maskPhone(user.phone)}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={user.role} colorMap={{
+                    <StatusBadge status={user.role === 'business_owner' ? 'account owner' : user.role} colorMap={{
                       customer: 'bg-blue-100 text-blue-700',
                       provider: 'bg-green-100 text-green-700',
+                      'account owner': 'bg-purple-100 text-purple-700',
                       business_owner: 'bg-purple-100 text-purple-700',
                       admin: 'bg-indigo-100 text-indigo-700',
                     }} />
@@ -341,13 +342,13 @@ export default function UserManagement() {
               {paymentCount !== null && <DetailRow label="Payments" value={paymentCount} />}
             </div>
 
-            {/* Linked Business */}
+            {/* Linked Account */}
             {linkedBusiness && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
-                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Linked Business</p>
+                <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Linked Account</p>
                 <div className="space-y-2 text-sm">
-                  <DetailRow label="Business Name" value={linkedBusiness.name} />
-                  <DetailRow label="Business ID" value={linkedBusiness.id} />
+                  <DetailRow label="Account Name" value={linkedBusiness.name} />
+                  <DetailRow label="Account ID" value={linkedBusiness.id} />
                 </div>
               </div>
             )}

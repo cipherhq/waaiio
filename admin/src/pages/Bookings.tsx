@@ -161,7 +161,7 @@ export default function Bookings() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Bookings</h1>
-      <p className="mt-1 text-sm text-gray-500">Manage all customer bookings across businesses</p>
+      <p className="mt-1 text-sm text-gray-500">Manage all customer bookings across accounts</p>
 
       {/* Filters */}
       <div className="mt-6 flex flex-wrap items-center gap-3">

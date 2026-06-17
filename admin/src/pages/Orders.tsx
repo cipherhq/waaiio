@@ -154,7 +154,7 @@ export default function Orders() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
-      <p className="mt-1 text-sm text-gray-500">Manage all customer orders across businesses</p>
+      <p className="mt-1 text-sm text-gray-500">Manage all customer orders across accounts</p>
 
       {/* Filters */}
       <div className="mt-6 flex flex-wrap items-center gap-3">

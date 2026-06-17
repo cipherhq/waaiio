@@ -414,6 +414,8 @@ export function Sidebar() {
   const { labels: catLabels } = useCategoryConfig(business.category);
   const categoryLabel = catLabels?.entityName || 'business';
 
+  const isEventsCategory = business.category === 'events';
+
   // Filter nav items based on capabilities and category
   const visibleItems = navItems.filter(item => {
     // If item has required capabilities, check if any are enabled
@@ -427,10 +429,14 @@ export function Sidebar() {
     return true;
   });
 
-  // Group by section
+  // Group by section — for events category, promote Parties to 'main'
   const sections = new Map<string, typeof navItems>();
   for (const item of visibleItems) {
-    const section = item.section || 'main';
+    let section = item.section || 'main';
+    // Events businesses see Parties in 'main' (after Overview and Ace AI Setup)
+    if (isEventsCategory && item.href === '/dashboard/parties') {
+      section = 'main';
+    }
     if (!sections.has(section)) sections.set(section, []);
     sections.get(section)!.push(item);
   }
@@ -596,7 +602,7 @@ export function Sidebar() {
           <div key={section}>
             {section !== 'main' && (
               <p className={`${idx > 0 ? 'mt-5' : ''} mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400`}>
-                {sectionLabels[section] || section}
+                {section === 'manage' && isEventsCategory ? 'Your Events' : (sectionLabels[section] || section)}
               </p>
             )}
             <div className="space-y-0.5">

@@ -9,11 +9,11 @@ const CATEGORY_COUNT = getCategoryList().filter(c => c.key !== 'other').length;
 const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
 export const metadata: Metadata = {
-  title: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
+  title: 'Waaiio — AI-Powered WhatsApp Automation for Everyone',
   description:
     'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries — churches, salons, clinics, restaurants, schools, shops, and more.',
   openGraph: {
-    title: 'Waaiio — AI-Powered WhatsApp Automation for Every Business',
+    title: 'Waaiio — AI-Powered WhatsApp Automation for Everyone',
     description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries.',
     url: baseUrl,
     siteName: 'Waaiio',
@@ -22,7 +22,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Waaiio — WhatsApp Automation for Every Business',
+    title: 'Waaiio — WhatsApp Automation for Everyone',
     description: 'Automate bookings, payments, orders & more on WhatsApp.',
     images: [`${baseUrl}/logo.png`],
   },
@@ -37,7 +37,7 @@ const JSON_LD_ORG = {
   name: 'Waaiio',
   url: baseUrl,
   logo: { '@type': 'ImageObject', url: `${baseUrl}/logo.png`, width: 512, height: 512 },
-  description: 'AI-Powered WhatsApp Automation for Every Business',
+  description: 'AI-Powered WhatsApp Automation for Everyone',
   foundingDate: '2026',
   award: 'Meta Verified Tech Provider',
   memberOf: {
@@ -89,7 +89,7 @@ const JSON_LD_APP = {
 };
 
 const FAQ_DATA = [
-  { question: 'What types of businesses can use Waaiio?', answer: `Any business or organisation that wants WhatsApp automation — salons, barbers, spas, churches, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ categories.` },
+  { question: 'Who can use Waaiio?', answer: `Anyone — businesses, churches, event organisers, individuals, and anyone who wants WhatsApp automation. Salons, barbers, spas, mosques, schools, NGOs, clinics, shops, event companies, hotels, restaurants, pharmacies, and much more. We support ${CATEGORY_COUNT}+ use cases.` },
   { question: 'Is there really a free plan?', answer: 'Yes! Start with our Starter plan — 30-day free trial with zero fees, then a small per-transaction fee. No monthly subscription required. No credit card needed.' },
   { question: 'How do payments work?', answer: 'When a customer needs to pay, they receive a secure payment link in the chat. We support Paystack (Nigeria, Ghana), Stripe (US, UK, Canada), Square (US), Flutterwave (Africa), and PayPal (US, UK, Canada). Funds go directly to your account.' },
   { question: 'Do I need a developer to set this up?', answer: 'No. Sign up, add your services, and connect your WhatsApp — your bot is live in under 5 minutes. Everything is managed from a simple dashboard.' },
@@ -116,7 +116,7 @@ const JSON_LD_WEBSITE = {
   '@type': 'WebSite',
   name: 'Waaiio',
   url: baseUrl,
-  description: 'AI-Powered WhatsApp Automation for Every Business',
+  description: 'AI-Powered WhatsApp Automation for Everyone',
   potentialAction: {
     '@type': 'SearchAction',
     target: { '@type': 'EntryPoint', urlTemplate: `${baseUrl}/directory?search={search_term_string}` },

@@ -306,7 +306,7 @@ export default function PricingPage() {
               Calculate your ROI
             </h2>
             <p className="mt-2 text-center text-gray-600">
-              See how much Waaiio can earn for your business
+              See how much Waaiio can earn for you
             </p>
             <RoiCalculator country={country} />
           </div>
@@ -318,7 +318,7 @@ export default function PricingPage() {
         <AnimatedSection>
           <div className="mx-auto max-w-6xl px-4">
             <h2 className="text-center text-2xl font-bold text-gray-900">
-              Best for every business
+              Best for everyone
             </h2>
             <p className="mt-2 text-center text-gray-600">
               Features that make Waaiio the go-to WhatsApp automation platform
@@ -425,7 +425,7 @@ export default function PricingPage() {
           <div className="mx-auto max-w-4xl px-4 text-center">
             <div className="rounded-3xl bg-gradient-to-br from-brand-900 via-brand to-brand-700 p-10 lg:p-14">
               <h2 className="text-2xl font-bold text-white lg:text-3xl">
-                Start automating your business today
+                Start automating today
               </h2>
               <p className="mx-auto mt-3 max-w-lg text-brand-200">
                 30-day free trial. No credit card. No setup fees. No risk.

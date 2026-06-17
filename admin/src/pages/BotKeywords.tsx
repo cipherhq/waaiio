@@ -494,7 +494,7 @@ export default function BotKeywords() {
                 <option value="category">Category</option>
               </select>
               <p className="mt-1 text-xs text-gray-400">
-                Business-scoped keywords are managed by business owners
+                Account-scoped keywords are managed by account owners
               </p>
             </div>
 

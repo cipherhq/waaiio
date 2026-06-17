@@ -70,9 +70,9 @@ const navSections: { label: string; items: NavItem[] }[] = [
     ],
   },
   {
-    label: 'Businesses',
+    label: 'Accounts',
     items: [
-      { icon: Building2, label: 'Businesses', path: '/businesses', roles: ['admin', 'support', 'operations'] },
+      { icon: Building2, label: 'Accounts', path: '/businesses', roles: ['admin', 'support', 'operations'] },
       { icon: BadgeCheck, label: 'Verification', path: '/verification', roles: ['admin', 'operations'] },
       { icon: Layers, label: 'Category Templates', path: '/category-templates', roles: ['admin'] },
       { icon: UserCog, label: 'Impersonation', path: '/impersonation', roles: ['admin'] },
