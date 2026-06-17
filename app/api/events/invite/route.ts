@@ -23,13 +23,14 @@ function checkRateLimit(userId: string): boolean {
 
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { eventId, partyId, phones, names, emails, businessId } = body as {
+  const { eventId, partyId, phones, names, emails, businessId, host_name: customHostName } = body as {
     eventId?: string;
     partyId?: string;
     phones: string[];
     names?: string[];
     emails?: string[];
     businessId: string;
+    host_name?: string;
   };
 
   if ((!eventId && !partyId) || !phones?.length || !businessId) {
@@ -97,18 +98,8 @@ export async function POST(request: NextRequest) {
     .eq('id', businessId)
     .single();
 
-  // Get host name (business owner's name)
-  let hostName = business?.name || '';
-  if (business?.owner_id) {
-    const { data: owner } = await service
-      .from('profiles')
-      .select('first_name, last_name')
-      .eq('id', business.owner_id)
-      .single();
-    if (owner?.first_name) {
-      hostName = `${owner.first_name}${owner.last_name ? ` ${owner.last_name}` : ''}`;
-    }
-  }
+  // Host name: custom override > business name (default)
+  const hostName = customHostName?.trim() || business?.name || '';
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
   const results: Array<{ phone: string; status: string; error?: string; note?: string }> = [];

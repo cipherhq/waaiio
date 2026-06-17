@@ -41,6 +41,7 @@ export default function InvitesPage() {
   const [showSendForm, setShowSendForm] = useState(false);
   const [invitePhone, setInvitePhone] = useState('');
   const [inviteName, setInviteName] = useState('');
+  const [hostName, setHostName] = useState(business.name || '');
   const [sending, setSending] = useState(false);
 
   // Bulk invite
@@ -108,6 +109,7 @@ export default function InvitesPage() {
           eventId: selectedEventId,
           phones: [invitePhone.trim()],
           businessId: business.id,
+          host_name: hostName.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -162,6 +164,7 @@ export default function InvitesPage() {
           eventId: selectedEventId,
           phones,
           businessId: business.id,
+          host_name: hostName.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -273,8 +276,20 @@ export default function InvitesPage() {
         description="Send event invitations via WhatsApp. Guests can RSVP directly from the invite link or by replying in WhatsApp. Track who's coming, plus-ones, and dietary needs."
       />
 
-      {/* Event selector */}
-      <div className="mt-6">
+      {/* Host name + Event selector */}
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 max-w-2xl">
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Host Name</label>
+          <input
+            type="text"
+            value={hostName}
+            onChange={e => setHostName(e.target.value)}
+            placeholder={business.name || 'Your name or business name'}
+            className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+          />
+          <p className="mt-1 text-xs text-gray-400">Shows as &quot;{hostName || business.name} invites you to...&quot;</p>
+        </div>
+        <div>
         <label className="mb-1 block text-sm font-medium text-gray-700">Select Event</label>
         <select
           value={selectedEventId}
@@ -287,6 +302,7 @@ export default function InvitesPage() {
             </option>
           ))}
         </select>
+        </div>
       </div>
 
       {/* Status message */}
