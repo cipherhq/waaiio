@@ -26,6 +26,8 @@ interface PartyItem {
   max_plus_ones: number | null;
   ask_dietary: boolean;
   invite_message: string | null;
+  max_guests: number | null;
+  party_type: string | null;
   status: 'draft' | 'active' | 'completed' | 'cancelled';
   created_at: string;
 }
@@ -87,6 +89,8 @@ export default function PartiesPage() {
     max_plus_ones: 3,
     ask_dietary: false,
     invite_message: '',
+    max_guests: null as number | null,
+    party_type: '',
     rsvp_yes_message: '',
     rsvp_maybe_message: '',
     rsvp_no_message: '',
@@ -144,7 +148,8 @@ export default function PartiesPage() {
       id: '', name: '', description: '', date: '', time: '', end_time: '',
       venue: '', venue_address: '', dress_code: '', image_url: null,
       allow_plus_ones: true, max_plus_ones: 3, ask_dietary: false,
-      invite_message: '', rsvp_yes_message: '', rsvp_maybe_message: '', rsvp_no_message: '',
+      invite_message: '', max_guests: null, party_type: '',
+      rsvp_yes_message: '', rsvp_maybe_message: '', rsvp_no_message: '',
       followup_message: '', followup_days_before: 1, status: 'active',
     });
     setView('add');
@@ -166,6 +171,8 @@ export default function PartiesPage() {
       max_plus_ones: party.max_plus_ones || 3,
       ask_dietary: party.ask_dietary,
       invite_message: party.invite_message || '',
+      max_guests: party.max_guests ?? null,
+      party_type: party.party_type || '',
       rsvp_yes_message: (party as any).rsvp_yes_message || '',
       rsvp_maybe_message: (party as any).rsvp_maybe_message || '',
       rsvp_no_message: (party as any).rsvp_no_message || '',
@@ -202,6 +209,8 @@ export default function PartiesPage() {
       max_plus_ones: form.max_plus_ones,
       ask_dietary: form.ask_dietary,
       invite_message: form.invite_message.trim() || null,
+      max_guests: form.max_guests || null,
+      party_type: form.party_type.trim() || null,
       rsvp_yes_message: form.rsvp_yes_message.trim() || null,
       rsvp_maybe_message: form.rsvp_maybe_message.trim() || null,
       rsvp_no_message: form.rsvp_no_message.trim() || null,
@@ -395,6 +404,29 @@ export default function PartiesPage() {
               <input type="text" value={form.dress_code} onChange={e => setForm({ ...form, dress_code: e.target.value })} placeholder="e.g. All White, Smart Casual" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
             </div>
 
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Party Type</label>
+                <select value={form.party_type} onChange={e => setForm({ ...form, party_type: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand">
+                  <option value="">Select type...</option>
+                  <option value="Birthday">Birthday</option>
+                  <option value="Wedding">Wedding</option>
+                  <option value="Baby Shower">Baby Shower</option>
+                  <option value="BBQ">BBQ</option>
+                  <option value="Game Night">Game Night</option>
+                  <option value="Corporate">Corporate</option>
+                  <option value="Brunch">Brunch</option>
+                  <option value="Dinner Party">Dinner Party</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Guest Capacity</label>
+                <input type="number" min={1} value={form.max_guests ?? ''} onChange={e => setForm({ ...form, max_guests: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Unlimited" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <p className="mt-1 text-xs text-gray-400">Leave blank for unlimited</p>
+              </div>
+            </div>
+
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Custom Invite Message</label>
               <textarea value={form.invite_message} onChange={e => setForm({ ...form, invite_message: e.target.value })} rows={2} placeholder="Personal message to include in invites" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
@@ -552,6 +584,32 @@ export default function PartiesPage() {
         <div className="mt-5 flex flex-wrap gap-2">
           <button onClick={() => { setShowBulk(false); setShowSendForm(!showSendForm); }} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">+ Send Invite</button>
           <button onClick={() => { setShowSendForm(false); setShowBulk(!showBulk); }} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">Bulk Invite</button>
+          {invites.length > 0 && (
+            <button
+              onClick={() => {
+                const headers = ['Name', 'Phone', 'Status', 'Plus Ones', 'Dietary Notes', 'Responded At'];
+                const rows = invites.map(inv => [
+                  inv.guest_name || '',
+                  inv.guest_phone,
+                  inv.status,
+                  inv.status === 'accepted' ? String(inv.plus_ones) : '0',
+                  inv.dietary_notes || '',
+                  inv.responded_at ? new Date(inv.responded_at).toLocaleString('en-GB') : '',
+                ]);
+                const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(',')).join('\n');
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${selectedParty!.name.replace(/[^a-zA-Z0-9]/g, '-')}-guest-list.csv`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Export Guest List
+            </button>
+          )}
           {(pending.length > 0 || maybe.length > 0) && (
             <button onClick={handleSendReminders} disabled={sendingReminder} className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50">
               {sendingReminder ? 'Sending...' : `Send Reminders (${pending.length + maybe.length})`}
@@ -702,6 +760,25 @@ export default function PartiesPage() {
             <p className="mt-1 text-2xl font-bold text-gray-700">{pending.length}</p>
           </div>
         </div>
+
+        {/* Capacity bar */}
+        {selectedParty.max_guests && selectedParty.max_guests > 0 && (
+          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-medium text-gray-700">Guest Capacity</p>
+              <p className="text-sm font-semibold text-gray-900">{accepted.length} / {selectedParty.max_guests} spots filled</p>
+            </div>
+            <div className="h-3 w-full rounded-full bg-gray-100 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${accepted.length >= selectedParty.max_guests ? 'bg-red-500' : accepted.length >= selectedParty.max_guests * 0.8 ? 'bg-amber-500' : 'bg-green-500'}`}
+                style={{ width: `${Math.min(100, (accepted.length / selectedParty.max_guests) * 100)}%` }}
+              />
+            </div>
+            {accepted.length >= selectedParty.max_guests && (
+              <p className="mt-2 text-xs font-medium text-red-600">This party is at full capacity!</p>
+            )}
+          </div>
+        )}
 
         {/* Analytics */}
         {invites.length > 0 && (
@@ -934,6 +1011,11 @@ export default function PartiesPage() {
                       {party.status}
                     </span>
                   </div>
+                  {party.party_type && (
+                    <span className="mt-1.5 inline-block rounded-full bg-brand/10 px-2.5 py-0.5 text-[11px] font-medium text-brand">
+                      {party.party_type}
+                    </span>
+                  )}
                   <p className="mt-1 text-xs text-gray-500">
                     {party.date} {party.time ? `at ${party.time}` : ''} {party.venue ? `\u2022 ${party.venue}` : ''}
                   </p>

@@ -305,7 +305,6 @@ const navItems: NavItem[] = [
     href: '/dashboard/parties',
     label: 'Parties',
     icon: 'M21 15.546c-.523 0-1.046.151-1.5.454a2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0A1.75 1.75 0 003 15.546V12a9 9 0 0118 0v3.546zM12 3v2m6.364 1.636l-1.414 1.414M21 12h-2M5 12H3m3.05-4.95L4.636 5.636',
-    capabilities: ['ticketing'],
     section: 'engage',
   },
   {

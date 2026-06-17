@@ -105,6 +105,94 @@ export default function RSVPPage() {
     }
   }
 
+  // Build Google Calendar URL
+  function buildGoogleCalendarUrl(ev: EventOrPartyDetails) {
+    const formatCalDate = (dateStr: string, timeStr: string | null) => {
+      // Format as YYYYMMDDTHHMMSS (no dashes/colons)
+      const d = dateStr.replace(/-/g, '');
+      if (timeStr) {
+        const t = timeStr.replace(/:/g, '').padEnd(6, '0'); // HH:MM -> HHMMSS
+        return `${d}T${t}`;
+      }
+      return d;
+    };
+
+    const start = formatCalDate(ev.date, ev.time);
+    // End time: use end_time if available (from party), otherwise 2 hours after start, otherwise next day
+    const endTime = ('end_time' in ev && (ev as any).end_time) ? (ev as any).end_time : null;
+    let end: string;
+    if (endTime) {
+      end = formatCalDate(ev.date, endTime);
+    } else if (ev.time) {
+      // Default to 2 hours after start
+      const [h, m] = ev.time.split(':').map(Number);
+      const endH = String((h + 2) % 24).padStart(2, '0');
+      const endM = String(m).padStart(2, '0');
+      end = formatCalDate(ev.date, `${endH}:${endM}`);
+    } else {
+      // All-day event: next day
+      const dt = new Date(ev.date + 'T00:00');
+      dt.setDate(dt.getDate() + 1);
+      end = dt.toISOString().slice(0, 10).replace(/-/g, '');
+    }
+
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: ev.name,
+      dates: `${start}/${end}`,
+    });
+    if (ev.venue) params.set('location', ev.venue);
+    if (ev.description) params.set('details', ev.description);
+
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  }
+
+  // Build .ics data URI for Apple Calendar
+  function buildIcsDataUri(ev: EventOrPartyDetails) {
+    const formatIcsDate = (dateStr: string, timeStr: string | null) => {
+      const d = dateStr.replace(/-/g, '');
+      if (timeStr) {
+        const t = timeStr.replace(/:/g, '').padEnd(6, '0');
+        return `${d}T${t}`;
+      }
+      return d;
+    };
+
+    const start = formatIcsDate(ev.date, ev.time);
+    const endTime = ('end_time' in ev && (ev as any).end_time) ? (ev as any).end_time : null;
+    let end: string;
+    if (endTime) {
+      end = formatIcsDate(ev.date, endTime);
+    } else if (ev.time) {
+      const [h, m] = ev.time.split(':').map(Number);
+      const endH = String((h + 2) % 24).padStart(2, '0');
+      const endM = String(m).padStart(2, '0');
+      end = formatIcsDate(ev.date, `${endH}:${endM}`);
+    } else {
+      const dt = new Date(ev.date + 'T00:00');
+      dt.setDate(dt.getDate() + 1);
+      end = dt.toISOString().slice(0, 10).replace(/-/g, '');
+    }
+
+    const escapeIcs = (s: string) => s.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
+
+    const lines = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Waaiio//Party//EN',
+      'BEGIN:VEVENT',
+      `DTSTART:${start}`,
+      `DTEND:${end}`,
+      `SUMMARY:${escapeIcs(ev.name)}`,
+      ev.venue ? `LOCATION:${escapeIcs(ev.venue)}` : '',
+      ev.description ? `DESCRIPTION:${escapeIcs(ev.description)}` : '',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].filter(Boolean).join('\r\n');
+
+    return `data:text/calendar;charset=utf-8,${encodeURIComponent(lines)}`;
+  }
+
   // Format date/time
   function formatDate(dateStr: string, timeStr: string | null) {
     let date = dateStr;
@@ -183,11 +271,43 @@ export default function RSVPPage() {
             )}
           </div>
 
+          {/* Calendar & Map links */}
+          <div className="mt-6 flex flex-wrap justify-center gap-2">
+            <a
+              href={buildGoogleCalendarUrl(event)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+              Google Calendar
+            </a>
+            <a
+              href={buildIcsDataUri(event)}
+              download={`${event.name.replace(/[^a-zA-Z0-9]/g, '-')}.ics`}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+              Apple Calendar
+            </a>
+            {event.venue && (
+              <a
+                href={`https://maps.google.com/?q=${encodeURIComponent(event.venue)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                View Map
+              </a>
+            )}
+          </div>
+
           <a
             href={`https://wa.me/?text=${encodeURIComponent(`I'm going to ${event.name}! 🎉`)}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
+            className="mt-4 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
           >
             <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
               <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
@@ -231,13 +351,47 @@ export default function RSVPPage() {
             </div>
           )}
 
+          {/* Calendar & Map links */}
+          {isAccepted && (
+            <div className="mt-6 flex flex-wrap justify-center gap-2">
+              <a
+                href={buildGoogleCalendarUrl(event)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                Google Calendar
+              </a>
+              <a
+                href={buildIcsDataUri(event)}
+                download={`${event.name.replace(/[^a-zA-Z0-9]/g, '-')}.ics`}
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                Apple Calendar
+              </a>
+              {event.venue && (
+                <a
+                  href={`https://maps.google.com/?q=${encodeURIComponent(event.venue)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                  View Map
+                </a>
+              )}
+            </div>
+          )}
+
           {/* WhatsApp deep link to business bot */}
           {businessSlug && (
             <a
               href={`https://wa.me/?text=${encodeURIComponent(`rsvp ${token}`)}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-whatsapp px-6 py-3 text-sm font-semibold text-white hover:bg-whatsapp/85"
             >
               <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
