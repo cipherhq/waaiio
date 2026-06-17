@@ -249,13 +249,53 @@ export async function POST(request: NextRequest) {
           results.push({ phone, status: 'created', error: 'Invite created but message failed to send' });
         }
       } else if (!isOptedIn) {
-        // Not opted in — invite created but needs to opt in via link
-        results.push({
-          phone,
-          status: 'needs_optin',
-          note: 'Guest has not interacted with your business on WhatsApp yet. Share the invite link instead.',
-          error: inviteLink,
-        });
+        // Not opted in — try email fallback, otherwise return share link
+        const guestEmail = emails?.[i]?.trim();
+        if (guestEmail && guestEmail.includes('@')) {
+          // Send email invite with RSVP + WhatsApp opt-in link
+          try {
+            const { sendEmail } = await import('@/lib/email/client');
+            const eDateStr = formatInviteDate(inviteTarget.date);
+            const eTimeStr = formatInviteTime(inviteTarget.time);
+
+            await sendEmail({
+              to: guestEmail,
+              subject: `${hostName || business?.name || 'You\'re'} invited: ${inviteTarget.name}`,
+              html: `
+                <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+                  <h2 style="color: #6C2BD9;">You're Invited! 🎉</h2>
+                  ${hostName ? `<p style="color: #555;"><strong>${hostName}</strong> invites you to:</p>` : ''}
+                  <h3>${inviteTarget.name}</h3>
+                  <p>📅 ${eDateStr}${eTimeStr ? ` at ${eTimeStr}` : ''}</p>
+                  ${inviteTarget.venue ? `<p>📍 ${inviteTarget.venue}</p>` : ''}
+                  ${(inviteTarget as any).dress_code ? `<p>👔 Dress code: ${(inviteTarget as any).dress_code}</p>` : ''}
+                  ${inviteTarget.invite_message ? `<p style="color: #666; font-style: italic;">"${inviteTarget.invite_message}"</p>` : ''}
+                  <div style="margin: 24px 0;">
+                    <a href="${inviteLink}" style="background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">RSVP Now</a>
+                  </div>
+                  <div style="margin: 16px 0; padding: 16px; background: #f0fdf4; border-radius: 8px;">
+                    <p style="margin: 0; font-size: 14px; color: #166534;"><strong>Get updates on WhatsApp</strong></p>
+                    <p style="margin: 4px 0 12px; font-size: 12px; color: #555;">Receive reminders and updates for this event on WhatsApp.</p>
+                    <a href="${publicInviteUrl}" style="background: #25D366; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 13px;">Get WhatsApp Invite</a>
+                  </div>
+                  <p style="color: #999; font-size: 12px;">From ${business?.name || 'Waaiio'} · Powered by Waaiio</p>
+                </div>
+              `,
+            });
+            results.push({ phone, status: 'email_sent', note: 'Guest not on WhatsApp — invite sent via email with opt-in link' });
+          } catch (emailErr) {
+            logger.error(`[INVITE] Email fallback failed for ${guestEmail}:`, emailErr);
+            results.push({ phone, status: 'needs_optin', note: 'Share the invite link with this guest.', error: inviteLink });
+          }
+        } else {
+          // No email, no WhatsApp opt-in — host must share link
+          results.push({
+            phone,
+            status: 'needs_optin',
+            note: 'Guest has not interacted on WhatsApp. Share the invite link with them.',
+            error: inviteLink,
+          });
+        }
       } else {
         results.push({ phone, status: 'created', error: 'No WhatsApp channel configured' });
       }
