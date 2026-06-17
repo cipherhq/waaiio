@@ -45,6 +45,10 @@
       "schedule": "15 9 * * *"
     },
     {
+      "path": "/api/cron/retry-failed-charges",
+      "schedule": "45 9 * * *"
+    },
+    {
       "path": "/api/cron/business-health",
       "schedule": "0 10 * * *"
     },
