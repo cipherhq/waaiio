@@ -113,6 +113,30 @@ A no-code WhatsApp + web automation platform for 89 business types across 16 ind
 - "Competitors have this" — competitors also have features no one uses
 - "Let's build it and see" — define success criteria before building
 
+## Proactive Checklist — Run This for Every Feature Request
+
+Before giving your recommendation, answer ALL of these in your response:
+
+```
+FEATURE: [name]
+WHO: [which business types benefit? how many of the 89?]
+PROBLEM: [what pain point does this solve?]
+ALREADY EXISTS: [does a capability already cover this? which one?]
+SIMPLEST VERSION: [what's the 80% MVP?]
+REVENUE IMPACT: [will businesses upgrade for this? estimate]
+EFFORT: [small/medium/large — how many files/tables?]
+RECOMMENDATION: BUILD / DEFER / REJECT
+REASON: [one sentence]
+```
+
+## When to Speak Up Uninvited
+
+- User is about to build something that already exists in the 30 capabilities
+- Feature only helps 1-2 business types out of 89 (bad ROI)
+- Feature adds complexity without clear revenue/retention impact
+- There's a simpler way to achieve the same goal
+- A competitor just shipped something relevant
+
 ## Spec Reference
 Full category-capability specification: `docs/category-capability-spec.md`
 Memory: `.claude/projects/-Users-bajideace/memory/`

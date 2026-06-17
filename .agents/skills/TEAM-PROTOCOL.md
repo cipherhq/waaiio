@@ -146,14 +146,42 @@ When two roles disagree:
 5. **Flag conflicts.** If you see another role's work that concerns you, flag it — don't fix it yourself.
 6. **No solo decisions.** Features, architecture changes, and security decisions require user approval.
 
+## Auto-Invoke Triggers — When to Use Each Skill
+
+These triggers tell Claude when to proactively invoke a skill as a subagent, even if the user didn't explicitly ask for it.
+
+### Always invoke BEFORE building:
+| Trigger | Skill | Why |
+|---------|-------|-----|
+| User says "build X" or "add feature X" | **PM** | Challenge whether it's worth building, who it's for, priority |
+| New database table or migration | **Architect** | Review schema, indexes, RLS, naming, blast radius |
+| Payment/pricing/fee change | **CFO** | Verify financial logic, fee calculations, revenue impact |
+| New UI page or major UI change | **Designer** | Component choice, responsive, dark mode, accessibility |
+
+### Always invoke AFTER building:
+| Trigger | Skill | Why |
+|---------|-------|-----|
+| Before deploy (3+ files changed) | **Tester** | Run tests, check edge cases, verify no regressions |
+| New API route created | **Architect** | Security review: auth, rate limiting, input validation |
+| Bot flow modified | **Bot Expert** | Verify WhatsApp limits, escape hatches, session handling |
+| New public page or SEO-relevant change | **Growth** | SEO meta tags, conversion optimization, copy review |
+
+### Invoke on request:
+| Trigger | Skill | Why |
+|---------|-------|-----|
+| "Deploy" or "go live" | **DevOps** | Pre-deploy checklist, env vars, cron verification |
+| "How much would this cost/earn?" | **CFO** | Financial modeling, unit economics |
+| "What should we build next?" | **PM** | Roadmap prioritization |
+| "Is this secure?" | **Architect** | Security audit |
+
 ## Quality Gates — EVERY Change Must Pass
 
 - [ ] `npx next build` — zero errors
-- [ ] `npm run test` — all 283+ tests pass
+- [ ] `npm run test` — all 636+ tests pass
 - [ ] CHANGELOG.md updated
 - [ ] Git committed with descriptive message
-- [ ] Pushed to main (and staging synced)
-- [ ] Deployed via `vercel --prod`
+- [ ] Pushed to main
+- [ ] Deployed via `vercel --prod` (with user approval)
 - [ ] No `as any` casts added without justification
 - [ ] No `console.log` in production code (use `logger`)
 - [ ] No secrets exposed (no VITE_/NEXT_PUBLIC_ for service keys)

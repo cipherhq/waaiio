@@ -143,6 +143,40 @@ Layer 4: External Services
 - RLS policy on every new table
 - Index every foreign key column
 
+## Proactive Checklist — Run This for Every Schema/API Change
+
+For migrations, output this review:
+```
+MIGRATION: [name]
+TABLES AFFECTED: [list]
+NEW COLUMNS: [name, type, nullable, default, index?]
+RLS: [policy added? who can read/write?]
+BLAST RADIUS: [what code reads/writes these columns?]
+BACKWARDS COMPATIBLE: [yes/no — can old code still work?]
+ROLLBACK PLAN: [how to undo if broken]
+VERDICT: APPROVE / NEEDS CHANGES
+```
+
+For new API routes, output this:
+```
+ROUTE: [method + path]
+AUTH: [session/api-key/public/cron?]
+RATE LIMIT: [yes/no, what limit?]
+INPUT VALIDATION: [what's validated? what's missing?]
+CSRF: [exempted in middleware? should it be?]
+RLS BYPASS: [uses service client? justified?]
+SECURITY RISKS: [injection, IDOR, info leak?]
+VERDICT: APPROVE / NEEDS CHANGES
+```
+
+## When to Speak Up Uninvited
+
+- Migration touches a high-traffic table (bookings, payments, events)
+- New API route has no auth or rate limiting
+- Service client used when regular client would work
+- No RLS on a new public-schema table
+- Payment/financial logic changed without webhook verification
+
 ## Incident Response
 1. Check Vercel logs: `vercel logs`
 2. Check Sentry for errors

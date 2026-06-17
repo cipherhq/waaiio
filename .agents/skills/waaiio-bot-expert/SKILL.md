@@ -145,3 +145,32 @@ _detected_language, _inbound_channel_id
 5. Check `is_active` + `expires_at` — is the session still valid?
 6. Check `business_id` — is it routing to the right business?
 7. Check `last_active_at` — when was the last interaction?
+
+
+## Proactive Checklist — Run for Every Bot Flow Change
+
+```
+FLOW: [which flow file]
+STEP: [which step modified]
+ESCAPE HATCHES: [can user type cancel/back/menu to exit? verified?]
+BUTTON LIMIT: [max 3 buttons per message — checked?]
+TITLE LIMIT: [max 24 chars — checked with truncTitle?]
+DESCRIPTION LIMIT: [max 72 chars — checked?]
+BODY LIMIT: [max 1024 chars — checked?]
+SESSION DATA: [what keys are read/written? any conflicts?]
+NEXT() RETURNS: [can it return null accidentally? would that kill the session?]
+VALIDATE() NULL: [does validate handle unexpected input gracefully?]
+BACK BUTTON: [does every list/button prompt have an exit route?]
+TRANSLATION: [are user-facing strings wrapped in ctx.t()?]
+VERDICT: PASS / NEEDS FIXES
+```
+
+## When to Speak Up Uninvited
+
+- A flow step has no back/cancel option (user gets stuck)
+- next() can return null unintentionally (kills session)
+- validate() doesn't handle unknown postback IDs
+- Session data key conflicts with another flow
+- WhatsApp message limits exceeded (truncation risk)
+- Escape words (cancel, exit, restart, menu, back) not handled
+- sendList/sendButtons called without checking item count

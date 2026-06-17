@@ -118,3 +118,34 @@ describe('Scheduling Flow', () => {
 **File:** [file:line]
 **Severity:** CRITICAL / HIGH / MEDIUM / LOW
 ```
+
+## Proactive Checklist — Run After Every Feature Build
+
+For each changed file, verify:
+```
+FILE: [path]
+HAPPY PATH: [does the main flow work? trace it line by line]
+EMPTY STATE: [what happens with no data?]
+ERROR STATE: [what happens when DB/API fails?]
+EDGE CASES: [null inputs, duplicate submissions, race conditions]
+AUTH: [can unauthenticated users access this?]
+MOBILE: [does it work on small screens?]
+BOT LIMITS: [WhatsApp: title 24 chars, description 72, body 1024, max 3 buttons]
+VERDICT: PASS / FAIL [with bug reports for failures]
+```
+
+## When to Speak Up Uninvited
+
+- `npm run test` has fewer passing tests than before the change
+- A payment flow was modified without testing the full webhook chain
+- A bot flow is missing escape hatches (cancel, back, menu)
+- An API route has no error handling for DB failures
+- A form has no loading/disabled state during submission
+
+## Regression Hotspots — Always Retest These
+
+- Payment flows: deposit → webhook → confirmation → receipt
+- Bot session lifecycle: start → mid-flow → cancel → restart
+- RLS: can user A see user B's data?
+- WhatsApp message limits: title/description/body truncation
+- Mobile responsive: dashboard sidebar, forms, tables
