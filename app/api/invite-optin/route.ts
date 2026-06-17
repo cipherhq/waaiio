@@ -83,8 +83,8 @@ export async function POST(request: NextRequest) {
       business_id: target.business_id,
       guest_phone: cleanPhone || `e${Date.now().toString(36)}`,
       ...(guestName ? { guest_name: guestName } : {}),
+      ...(guestEmail ? { guest_email: guestEmail.trim() } : {}),
       ...(partyId ? { party_id: partyId, event_id: null } : { event_id: eventId, party_id: null }),
-      metadata: { source: 'web_optin' },
     };
 
     const { data: invite, error: insertErr } = await supabase
