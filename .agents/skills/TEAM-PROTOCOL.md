@@ -153,7 +153,8 @@ These triggers tell Claude when to proactively invoke a skill as a subagent, eve
 ### Always invoke BEFORE building:
 | Trigger | Skill | Why |
 |---------|-------|-----|
-| User says "build X" or "add feature X" | **PM** | Challenge whether it's worth building, who it's for, priority |
+| User says "build X", "add X", or "update X" | **PM** | Challenge whether it's worth building/changing, who it's for, priority |
+| User modifies, improves, or extends a feature | **PM** | Evaluate impact on existing users, scope creep, simpler alternatives |
 | New database table or migration | **Architect** | Review schema, indexes, RLS, naming, blast radius |
 | Payment/pricing/fee change | **CFO** | Verify financial logic, fee calculations, revenue impact |
 | New UI page or major UI change | **Designer** | Component choice, responsive, dark mode, accessibility |

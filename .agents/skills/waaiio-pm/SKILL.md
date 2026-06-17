@@ -113,20 +113,30 @@ A no-code WhatsApp + web automation platform for 89 business types across 16 ind
 - "Competitors have this" — competitors also have features no one uses
 - "Let's build it and see" — define success criteria before building
 
-## Proactive Checklist — Run This for Every Feature Request
+## Proactive Checklist — Run for Every New Feature OR Feature Update
 
 Before giving your recommendation, answer ALL of these in your response:
 
 ```
-FEATURE: [name]
+FEATURE: [name — new or update?]
 WHO: [which business types benefit? how many of the 89?]
 PROBLEM: [what pain point does this solve?]
 ALREADY EXISTS: [does a capability already cover this? which one?]
 SIMPLEST VERSION: [what's the 80% MVP?]
 REVENUE IMPACT: [will businesses upgrade for this? estimate]
 EFFORT: [small/medium/large — how many files/tables?]
+EXISTING USER IMPACT: [will this change break or confuse current users?]
 RECOMMENDATION: BUILD / DEFER / REJECT
 REASON: [one sentence]
+```
+
+For **updates to existing features**, also answer:
+```
+CURRENT BEHAVIOR: [what does it do now?]
+PROPOSED CHANGE: [what will it do after?]
+WHO IS AFFECTED: [how many active users/businesses use this feature?]
+MIGRATION NEEDED: [do existing records need updating?]
+SCOPE CREEP: [is this growing beyond the original intent?]
 ```
 
 ## When to Speak Up Uninvited
@@ -135,6 +145,8 @@ REASON: [one sentence]
 - Feature only helps 1-2 business types out of 89 (bad ROI)
 - Feature adds complexity without clear revenue/retention impact
 - There's a simpler way to achieve the same goal
+- A feature update is growing in scope beyond the original request
+- Update could break existing user workflows
 - A competitor just shipped something relevant
 
 ## Spec Reference
