@@ -5,6 +5,7 @@ import { getLocale, type CountryCode } from '@/lib/constants';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface BroadcastContact {
@@ -41,6 +42,8 @@ interface BroadcastUsage {
 export default function BroadcastsPage() {
   const business = useBusiness();
   const capReady = useRequireCapability('broadcast');
+  const searchParams = useSearchParams();
+  const campaignId = searchParams.get('campaign_id');
   const [contacts, setContacts] = useState<BroadcastContact[]>([]);
   const [history, setHistory] = useState<BroadcastHistory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,6 +72,7 @@ export default function BroadcastsPage() {
   const [importMode, setImportMode] = useState<'csv' | 'paste'>('paste');
   const [pasteInput, setPasteInput] = useState('');
   const [importCount, setImportCount] = useState<number | null>(null);
+  const [campaignBanner, setCampaignBanner] = useState<{ name: string; count: number } | null>(null);
 
   const tier = business.subscription_tier || 'free';
   const isFreeTier = tier === 'free';
@@ -165,6 +169,33 @@ export default function BroadcastsPage() {
     }
     load();
   }, [business.id, isFreeTier]);
+
+  // Pre-populate recipients from keyword campaign if campaign_id is present
+  useEffect(() => {
+    if (!campaignId || isFreeTier) return;
+    async function loadCampaignRespondents() {
+      try {
+        const res = await fetch(`/api/keyword-campaigns/${campaignId}/responses?business_id=${business.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          const campaignName = data.campaign_name || 'Unknown Campaign';
+          const respondents: BroadcastContact[] = (data.responses || []).map((r: { phone: string; customer_name: string | null }) => ({
+            phone: r.phone,
+            first_name: r.customer_name?.split(/\s+/)[0] || null,
+            last_name: r.customer_name?.split(/\s+/).slice(1).join(' ') || null,
+            last_interaction: '',
+          }));
+          if (respondents.length > 0) {
+            setContacts(respondents);
+            setCampaignBanner({ name: campaignName, count: respondents.length });
+          }
+        }
+      } catch {
+        // Non-critical — fall back to normal contact loading
+      }
+    }
+    loadCampaignRespondents();
+  }, [campaignId, business.id, isFreeTier]);
 
   // Load filtered contacts based on audience filters
   async function loadFilteredContacts(f: AudienceFilters): Promise<BroadcastContact[]> {
@@ -573,7 +604,27 @@ export default function BroadcastsPage() {
       </div>
 
       {activeTab === 'compose' ? (
-        <div className="mt-6 grid gap-6 lg:grid-cols-5">
+        <div className="mt-6">
+          {/* Keyword campaign banner */}
+          {campaignBanner && (
+            <div className="mb-4 flex items-center gap-3 rounded-lg border border-brand/20 bg-brand/5 dark:bg-brand/10 px-4 py-3">
+              <svg aria-hidden="true" className="h-5 w-5 shrink-0 text-brand" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+              </svg>
+              <p className="text-sm text-gray-700 dark:text-gray-300">
+                Sending to <span className="font-semibold">{campaignBanner.count}</span> respondent{campaignBanner.count !== 1 ? 's' : ''} from campaign: <span className="font-semibold">{campaignBanner.name}</span>
+              </p>
+              <button
+                onClick={() => setCampaignBanner(null)}
+                className="ml-auto shrink-0 rounded p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+          <div className="grid gap-6 lg:grid-cols-5">
           {/* Compose Area */}
           <div className="lg:col-span-3 space-y-4">
             {/* Audience Segmentation */}
@@ -1025,6 +1076,7 @@ export default function BroadcastsPage() {
                 </div>
               </div>
             </div>
+          </div>
           </div>
         </div>
       ) : activeTab === 'scheduled' ? (

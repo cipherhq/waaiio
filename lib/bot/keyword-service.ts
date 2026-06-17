@@ -10,7 +10,7 @@ interface QuickReply {
 
 type KeywordScope = 'system' | 'category' | 'business';
 type MatchType = 'exact' | 'contains' | 'starts_with' | 'regex';
-type ActionType = 'reply' | 'start_flow' | 'start_capability' | 'url' | 'navigate_step' | 'acknowledge' | 'show_menu';
+type ActionType = 'reply' | 'start_flow' | 'start_capability' | 'url' | 'navigate_step' | 'acknowledge' | 'show_menu' | 'campaign_reply';
 
 interface UnifiedKeyword {
   id: string;
@@ -22,6 +22,7 @@ interface UnifiedKeyword {
   scope: KeywordScope;
   category: string | null;
   business_id: string | null;
+  campaign_id: string | null;
   description: string | null;
 }
 
@@ -100,7 +101,7 @@ async function loadSystemKeywords(supabase: SupabaseClient): Promise<UnifiedKeyw
 
   const { data } = await supabase
     .from('bot_keywords')
-    .select('id, keyword, match_type, action_type, payload, priority, scope, category, business_id, description')
+    .select('id, keyword, match_type, action_type, payload, priority, scope, category, business_id, campaign_id, description')
     .eq('scope', 'system')
     .eq('is_active', true)
     .order('priority', { ascending: false });
@@ -120,7 +121,7 @@ async function loadCategoryKeywords(supabase: SupabaseClient, category: string):
 
   const { data } = await supabase
     .from('bot_keywords')
-    .select('id, keyword, match_type, action_type, payload, priority, scope, category, business_id, description')
+    .select('id, keyword, match_type, action_type, payload, priority, scope, category, business_id, campaign_id, description')
     .eq('scope', 'category')
     .eq('category', category)
     .eq('is_active', true)
@@ -141,7 +142,7 @@ async function loadBusinessKeywords(supabase: SupabaseClient, businessId: string
 
   const { data } = await supabase
     .from('bot_keywords')
-    .select('id, keyword, match_type, action_type, payload, priority, scope, category, business_id, description')
+    .select('id, keyword, match_type, action_type, payload, priority, scope, category, business_id, campaign_id, description')
     .eq('scope', 'business')
     .eq('business_id', businessId)
     .eq('is_active', true)

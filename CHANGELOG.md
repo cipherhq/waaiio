@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-12
 
+### Feature: Keyword Campaigns backend
+
+- `supabase/migrations/203_keyword_campaigns.sql` — New `keyword_campaigns` and `keyword_campaign_responses` tables with RLS. Extended `bot_keywords.action_type` CHECK to include `campaign_reply`. Added `campaign_id` FK column to `bot_keywords`.
+- `lib/bot/campaign-blacklist.ts` — New file. Exports `CAMPAIGN_BLACKLISTED_KEYWORDS` (42 words) and `isCampaignKeywordBlacklisted()` validator to prevent campaigns from overriding system intents.
+- `lib/bot/keyword-service.ts` — Added `campaign_reply` to `ActionType` union, `campaign_id` to `UnifiedKeyword` interface, and `campaign_id` to all keyword SELECT queries (system, category, business).
+- `lib/bot/handlers/keyword-actions.ts` — New `campaign_reply` case in `executeKeywordAction` switch. Loads campaign, checks active/date range, sends response (text/image/link/buttons), upserts response record, upserts customer_profiles opt-in, sends follow-up.
+- `app/api/keyword-campaigns/route.ts` — GET (list with response counts) + POST (create campaign + auto-create bot_keywords row). Validates blacklist + ownership.
+- `app/api/keyword-campaigns/[id]/route.ts` — GET (detail) + PATCH (update with blacklist re-validation + bot_keywords sync) + DELETE (cascade).
+- `app/api/keyword-campaigns/[id]/responses/route.ts` — GET paginated responses + CSV export (`?format=csv`).
+- Affects: bot keyword matching (new action_type), bot_keywords table schema (new column + constraint), customer_profiles (opt-in upsert). Does NOT affect existing keyword actions.
+
 ### Fix: Event invites to cold numbers (never messaged before)
 
 - `lib/channels/provision-templates.ts` — Changed `waaiio_event_invite` template from `UTILITY` to `MARKETING` category (Meta requires MARKETING for unsolicited outreach). Changed language from `'en'` to `'en_US'` to match all other templates. Added FOOTER component.

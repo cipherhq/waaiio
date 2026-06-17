@@ -229,6 +229,93 @@ export async function executeKeywordAction(
         return false;
       }
 
+      case 'campaign_reply': {
+        if (!kw.campaign_id) return false;
+
+        // Load campaign
+        const { data: campaign } = await supabase
+          .from('keyword_campaigns')
+          .select('*')
+          .eq('id', kw.campaign_id)
+          .single();
+
+        if (!campaign || !campaign.is_active) return false;
+
+        // Check date range (if set)
+        const now = new Date();
+        if (campaign.starts_at && new Date(campaign.starts_at) > now) return false;
+        if (campaign.ends_at && new Date(campaign.ends_at) < now) return false;
+
+        // Send response based on type
+        switch (campaign.response_type) {
+          case 'image':
+            if (campaign.response_media_url) {
+              await messageSender.sendImage({
+                to: from,
+                imageUrl: campaign.response_media_url,
+                caption: campaign.response_text,
+              });
+            } else {
+              await sendText(from, campaign.response_text);
+            }
+            break;
+
+          case 'buttons': {
+            // Parse buttons from payload: expects { buttons: [{ id, title }], body? }
+            const btnPayload = parseKeywordPayload(kw.payload);
+            const buttons = (btnPayload.buttons as Array<{ id: string; title: string }>) || [];
+            if (buttons.length > 0) {
+              await messageSender.sendButtons({
+                to: from,
+                body: campaign.response_text,
+                buttons: buttons.slice(0, 3), // WhatsApp max 3 buttons
+              });
+            } else {
+              await sendText(from, campaign.response_text);
+            }
+            break;
+          }
+
+          case 'text':
+          case 'link':
+          default:
+            await sendText(from, campaign.response_text);
+            break;
+        }
+
+        // Record response (upsert — ignore if already responded)
+        await supabase
+          .from('keyword_campaign_responses')
+          .upsert(
+            {
+              campaign_id: kw.campaign_id,
+              business_id: campaign.business_id,
+              phone: from,
+              responded_at: new Date().toISOString(),
+            },
+            { onConflict: 'campaign_id,phone', ignoreDuplicates: true },
+          );
+
+        // Upsert customer_profiles: opt-in for notifications
+        await supabase
+          .from('customer_profiles')
+          .upsert(
+            {
+              phone: from,
+              business_id: campaign.business_id,
+              notification_opt_in: true,
+            },
+            { onConflict: 'phone,business_id', ignoreDuplicates: false },
+          );
+
+        // Send opt-in follow-up if configured
+        if (campaign.opt_in_message) {
+          await sendText(from, campaign.opt_in_message);
+        }
+
+        return true;
+      }
+
       default:
         return false;
     }
