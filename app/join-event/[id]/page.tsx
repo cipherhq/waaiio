@@ -157,9 +157,9 @@ export default function PublicInvitePage() {
       <div className="w-full max-w-md">
         <div className="rounded-2xl bg-white shadow-xl overflow-hidden">
           {event.image_url && (
-            <div className="h-48 bg-gray-200 overflow-hidden">
+            <div className="bg-gray-200">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={event.image_url} alt={event.name} className="h-full w-full object-cover" />
+              <img src={event.image_url} alt={event.name} className="w-full" />
             </div>
           )}
 

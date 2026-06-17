@@ -258,14 +258,14 @@ export default function RSVPPage() {
       <div className="w-full max-w-md">
         {/* Event card */}
         <div className="rounded-2xl bg-white shadow-xl overflow-hidden">
-          {/* Cover image */}
+          {/* Event flyer — full image */}
           {event.image_url && (
-            <div className="h-48 bg-gray-200 overflow-hidden">
+            <div className="bg-gray-200">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={event.image_url}
                 alt={event.name}
-                className="h-full w-full object-cover"
+                className="w-full"
               />
             </div>
           )}

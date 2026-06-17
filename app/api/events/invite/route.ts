@@ -59,12 +59,13 @@ export async function POST(request: NextRequest) {
     max_plus_ones: number | null;
     ask_dietary: boolean;
     dress_code?: string | null;
+    image_url?: string | null;
   } | null = null;
 
   if (partyId) {
     const { data: party, error: partyError } = await service
       .from('parties')
-      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code')
+      .select('id, name, date, time, venue, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, dress_code, image_url')
       .eq('id', partyId)
       .eq('business_id', businessId)
       .single();
@@ -76,7 +77,7 @@ export async function POST(request: NextRequest) {
   } else if (eventId) {
     const { data: event, error: eventError } = await service
       .from('events')
-      .select('id, name, date, time, venue, description, invite_message, allow_plus_ones, max_plus_ones, ask_dietary')
+      .select('id, name, date, time, venue, description, invite_message, allow_plus_ones, max_plus_ones, ask_dietary, image_url')
       .eq('id', eventId)
       .eq('business_id', businessId)
       .single();
@@ -202,6 +203,24 @@ export async function POST(request: NextRequest) {
 
           let sent = false;
           try {
+            // Send flyer image first if available
+            if (inviteTarget.image_url) {
+              try {
+                let imgUrl = inviteTarget.image_url;
+                if (imgUrl.toLowerCase().endsWith('.webp')) {
+                  const appUrlForImg = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+                  imgUrl = `${appUrlForImg}/api/images/convert?url=${encodeURIComponent(imgUrl)}`;
+                }
+                await resolved.sender.sendImage({
+                  to: phone,
+                  imageUrl: imgUrl,
+                  caption: `${hostName ? `${hostName} invites you to ` : ''}${inviteTarget.name}`,
+                });
+              } catch (imgErr) {
+                logger.warn(`[INVITE] Flyer image failed for ${phone}:`, imgErr);
+              }
+            }
+
             await resolved.sender.sendButtons({
               to: phone,
               body: message,
