@@ -264,7 +264,7 @@ export class ChannelResolver {
       .eq('channel_type', 'shared')
       .eq('is_active', true)
       .limit(1)
-      .single();
+      .maybeSingle();
 
     const record = data as ChannelRecord | null;
     this.cacheSet(cacheKey, record);
