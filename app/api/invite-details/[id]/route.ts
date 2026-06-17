@@ -13,13 +13,13 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   // Try events first
   const { data: event } = await supabase
     .from('events')
-    .select('id, name, date, time, venue, description, image_url, invite_message, business_id, businesses(name, owner_id)')
+    .select('id, name, date, time, venue, description, image_url, invite_message, business_id, businesses(name, owner_id, country_code)')
     .eq('id', id)
     .eq('status', 'published')
     .single();
 
   if (event) {
-    const biz = event.businesses as unknown as { name: string; owner_id?: string } | null;
+    const biz = event.businesses as unknown as { name: string; owner_id?: string; country_code?: string } | null;
     let hostName = biz?.name || '';
     if (biz?.owner_id) {
       const { data: owner } = await supabase
@@ -45,6 +45,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         type: 'event',
         host_name: hostName,
         business_name: biz?.name || '',
+        business_country: biz?.country_code || 'US',
       },
     });
   }
@@ -52,12 +53,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   // Try parties
   const { data: party } = await supabase
     .from('parties')
-    .select('id, name, date, time, venue, description, image_url, invite_message, dress_code, business_id, businesses(name, owner_id)')
+    .select('id, name, date, time, venue, description, image_url, invite_message, dress_code, business_id, businesses(name, owner_id, country_code)')
     .eq('id', id)
     .single();
 
   if (party) {
-    const biz = party.businesses as unknown as { name: string; owner_id?: string } | null;
+    const biz = party.businesses as unknown as { name: string; owner_id?: string; country_code?: string } | null;
     let hostName = biz?.name || '';
     if (biz?.owner_id) {
       const { data: owner } = await supabase
@@ -84,6 +85,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         type: 'party',
         host_name: hostName,
         business_name: biz?.name || '',
+        business_country: biz?.country_code || 'US',
       },
     });
   }

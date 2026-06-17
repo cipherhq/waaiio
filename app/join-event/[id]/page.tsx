@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import { PhoneInput } from '@/components/auth/PhoneInput';
+import { type CountryCode } from '@/lib/constants';
 
 interface EventDetails {
   id: string;
@@ -16,6 +18,7 @@ interface EventDetails {
   type: 'event' | 'party';
   host_name: string;
   business_name: string;
+  business_country: string;
 }
 
 type PageState = 'loading' | 'not_found' | 'form' | 'sending' | 'sent';
@@ -220,12 +223,10 @@ export default function PublicInvitePage() {
                 className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
 
-              <input
-                type="tel"
+              <PhoneInput
                 value={phone}
-                onChange={e => setPhone(e.target.value)}
-                placeholder="WhatsApp number (e.g. +1234567890)"
-                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                onChange={setPhone}
+                countryCode={(event?.business_country || 'US') as CountryCode}
               />
 
               <input

@@ -21,8 +21,11 @@ export async function POST(request: NextRequest) {
     }
 
     const cleanPhone = phone ? String(phone).replace(/\D/g, '') : '';
-    if (phone && cleanPhone.length < 7) {
+    if (cleanPhone && cleanPhone.length < 7) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+    }
+    if (!cleanPhone && !guestEmail) {
+      return NextResponse.json({ error: 'Please provide a phone number or email' }, { status: 400 });
     }
 
     const guestName = typeof name === 'string' ? name.trim().slice(0, 200) : null;
@@ -52,31 +55,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Event not found' }, { status: 404 });
     }
 
-    // Check if already invited
-    const findQuery = supabase
-      .from('event_invites')
-      .select('id, invite_token, status')
-      .eq('guest_phone', cleanPhone)
-      .eq('business_id', target.business_id);
+    // Check if already invited (only if we have a phone)
+    if (cleanPhone) {
+      const findQuery = supabase
+        .from('event_invites')
+        .select('id, invite_token, status')
+        .eq('guest_phone', cleanPhone)
+        .eq('business_id', target.business_id);
 
-    if (partyId) findQuery.eq('party_id', partyId);
-    else findQuery.eq('event_id', eventId);
+      if (partyId) findQuery.eq('party_id', partyId);
+      else findQuery.eq('event_id', eventId);
 
-    const { data: existing } = await findQuery.maybeSingle();
+      const { data: existing } = await findQuery.maybeSingle();
 
-    if (existing) {
-      return NextResponse.json({
-        success: true,
-        already_invited: true,
-        status: existing.status,
-        rsvp_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/rsvp/${existing.invite_token}`,
-      });
+      if (existing) {
+        return NextResponse.json({
+          success: true,
+          already_invited: true,
+          status: existing.status,
+          rsvp_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/rsvp/${existing.invite_token}`,
+        });
+      }
     }
 
     // Create invite
     const insertPayload: Record<string, unknown> = {
       business_id: target.business_id,
-      guest_phone: cleanPhone || `email-${Date.now()}`,
+      guest_phone: cleanPhone || `e${Date.now().toString(36)}`,
       ...(guestName ? { guest_name: guestName } : {}),
       ...(partyId ? { party_id: partyId, event_id: null } : { event_id: eventId, party_id: null }),
       metadata: { source: 'web_optin' },
