@@ -26,6 +26,7 @@ export default function PublicInvitePage() {
   const [event, setEvent] = useState<EventDetails | null>(null);
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
   const [error, setError] = useState('');
   const [result, setResult] = useState<{ whatsapp_sent: boolean; rsvp_url: string; already_invited?: boolean } | null>(null);
 
@@ -44,14 +45,15 @@ export default function PublicInvitePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!phone.trim()) { setError('Please enter your WhatsApp number'); return; }
+    if (!phone.trim() && !email.trim()) { setError('Please enter your WhatsApp number or email'); return; }
     setError('');
     setState('sending');
 
     try {
       const body: Record<string, string> = {
-        phone: phone.replace(/\D/g, ''),
+        ...(phone.trim() ? { phone: phone.replace(/\D/g, '') } : {}),
         ...(name.trim() ? { name: name.trim() } : {}),
+        ...(email.trim() ? { email: email.trim() } : {}),
       };
       if (event?.type === 'party') body.partyId = event.id;
       else body.eventId = event!.id;
@@ -121,14 +123,14 @@ export default function PublicInvitePage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4 py-8">
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
-          <div className="text-5xl mb-4">{result.whatsapp_sent ? '✅' : '📱'}</div>
+          <div className="text-5xl mb-4">{result.whatsapp_sent ? '🎉' : '✉️'}</div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {result.already_invited ? "You're already invited!" : result.whatsapp_sent ? 'Invite sent!' : 'You\'re on the list!'}
+            {result.already_invited ? "You're already invited!" : 'Invite on its way!'}
           </h1>
           <p className="mt-2 text-gray-600">
             {result.whatsapp_sent
-              ? 'Check your WhatsApp for the full invite with RSVP buttons.'
-              : 'You can RSVP using the link below.'}
+              ? 'Check your WhatsApp for the full invite with RSVP options.'
+              : 'Check your email for the invite with RSVP link. You can also RSVP below.'}
           </p>
 
           <div className="mt-6 rounded-xl bg-gray-50 p-4 text-left">
@@ -165,10 +167,16 @@ export default function PublicInvitePage() {
 
           <div className="p-6">
             <div className="text-center">
-              <p className="text-sm font-medium text-brand-600">You&apos;re Invited!</p>
-              <h1 className="mt-2 text-2xl font-bold text-gray-900">{event.name}</h1>
-              {event.host_name && (
-                <p className="mt-1 text-sm text-gray-500">Hosted by {event.host_name}</p>
+              {event.host_name ? (
+                <>
+                  <p className="text-sm font-medium text-brand-600">{event.host_name} wants to send you an invite</p>
+                  <h1 className="mt-2 text-2xl font-bold text-gray-900">{event.name}</h1>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-brand-600">You&apos;re Invited!</p>
+                  <h1 className="mt-2 text-2xl font-bold text-gray-900">{event.name}</h1>
+                </>
               )}
             </div>
 
@@ -199,9 +207,10 @@ export default function PublicInvitePage() {
               <p className="mt-3 text-sm italic text-gray-500">&ldquo;{event.invite_message}&rdquo;</p>
             )}
 
-            {/* Opt-in form */}
+            {/* Accept invite form */}
             <form onSubmit={handleSubmit} className="mt-6 space-y-3">
-              <p className="text-sm font-semibold text-gray-900">Get your invite on WhatsApp</p>
+              <p className="text-sm font-semibold text-gray-900">Accept this invite</p>
+              <p className="text-xs text-gray-500">Enter your details to receive the full invitation with RSVP options.</p>
 
               <input
                 type="text"
@@ -216,7 +225,14 @@ export default function PublicInvitePage() {
                 value={phone}
                 onChange={e => setPhone(e.target.value)}
                 placeholder="WhatsApp number (e.g. +1234567890)"
-                required
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+              />
+
+              <input
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="Email address (optional)"
                 className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
 
@@ -224,17 +240,14 @@ export default function PublicInvitePage() {
 
               <button
                 type="submit"
-                disabled={state === 'sending'}
-                className="w-full rounded-xl bg-whatsapp py-3 text-sm font-semibold text-white shadow-lg hover:bg-whatsapp/85 disabled:opacity-50 flex items-center justify-center gap-2"
+                disabled={state === 'sending' || (!phone.trim() && !email.trim())}
+                className="w-full rounded-xl bg-brand py-3 text-sm font-semibold text-white shadow-lg hover:bg-brand-600 disabled:opacity-50"
               >
-                <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12c0 1.89.525 3.66 1.438 5.168L2 22l4.832-1.438A9.955 9.955 0 0012 22c5.523 0 10-4.477 10-10S17.523 2 12 2z"/>
-                </svg>
-                {state === 'sending' ? 'Sending...' : 'Send me the invite on WhatsApp'}
+                {state === 'sending' ? 'Sending invite...' : 'Send Me the Invite'}
               </button>
 
               <p className="text-center text-[11px] text-gray-400">
-                By submitting, you agree to receive this event invite on WhatsApp.
+                We&apos;ll send the invite to your WhatsApp and/or email.
               </p>
             </form>
           </div>

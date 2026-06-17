@@ -14,14 +14,14 @@ export async function POST(request: NextRequest) {
   if (rateLimit) return rateLimit;
 
   try {
-    const { eventId, partyId, name, phone } = await request.json();
+    const { eventId, partyId, name, phone, email: guestEmail } = await request.json();
 
-    if ((!eventId && !partyId) || !phone) {
-      return NextResponse.json({ error: 'eventId or partyId, and phone are required' }, { status: 400 });
+    if ((!eventId && !partyId) || (!phone && !guestEmail)) {
+      return NextResponse.json({ error: 'eventId or partyId, and phone or email are required' }, { status: 400 });
     }
 
-    const cleanPhone = String(phone).replace(/\D/g, '');
-    if (cleanPhone.length < 7) {
+    const cleanPhone = phone ? String(phone).replace(/\D/g, '') : '';
+    if (phone && cleanPhone.length < 7) {
       return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
     }
 
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     // Create invite
     const insertPayload: Record<string, unknown> = {
       business_id: target.business_id,
-      guest_phone: cleanPhone,
+      guest_phone: cleanPhone || `email-${Date.now()}`,
       ...(guestName ? { guest_name: guestName } : {}),
       ...(partyId ? { party_id: partyId, event_id: null } : { event_id: eventId, party_id: null }),
       metadata: { source: 'web_optin' },
@@ -169,9 +169,40 @@ export async function POST(request: NextRequest) {
       logger.error('[INVITE-OPTIN] WhatsApp send error:', err);
     }
 
+    // Send email invite if email provided
+    let emailSent = false;
+    if (guestEmail && typeof guestEmail === 'string' && guestEmail.includes('@')) {
+      try {
+        const { sendEmail } = await import('@/lib/email/client');
+        await sendEmail({
+          to: guestEmail.trim(),
+          subject: `${hostName || 'You\'re'} invited: ${target.name}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+              <h2 style="color: #6C2BD9;">You're Invited! 🎉</h2>
+              ${hostName ? `<p style="color: #555;"><strong>${hostName}</strong> invites you to:</p>` : ''}
+              <h3>${target.name}</h3>
+              <p>📅 ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}</p>
+              ${target.venue ? `<p>📍 ${target.venue}</p>` : ''}
+              ${target.dress_code ? `<p>👔 Dress code: ${target.dress_code}</p>` : ''}
+              ${target.invite_message ? `<p style="color: #666; font-style: italic;">"${target.invite_message}"</p>` : ''}
+              <div style="margin: 24px 0;">
+                <a href="${inviteLink}" style="background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">RSVP Now</a>
+              </div>
+              <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>
+            </div>
+          `,
+        });
+        emailSent = true;
+      } catch (emailErr) {
+        logger.error('[INVITE-OPTIN] Email error:', emailErr);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       whatsapp_sent: whatsappSent,
+      email_sent: emailSent,
       rsvp_url: inviteLink,
     });
   } catch (error) {
