@@ -17,14 +17,14 @@ const queueStartStep: FlowStepConfig = {
   id: 'queue_start',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+    if (!ctx.business) return [{ type: 'text', text: await ctx.t('Something went wrong on our end. Send *Hi* to start over.') }];
 
     // Check if queue is paused
     const { paused, avgMinutes } = await getQueueConfig(ctx);
     if (paused) {
       return [{
         type: 'buttons',
-        body: 'The queue is currently closed. Would you like to be notified when it reopens?',
+        body: await ctx.t('The queue is currently closed. Would you like to be notified when it reopens?'),
         buttons: [
           { id: 'notify_reopen', title: 'Notify Me' },
           { id: 'no_thanks', title: 'No Thanks' },
@@ -51,7 +51,7 @@ const queueStartStep: FlowStepConfig = {
       if (existingEntry.status === 'serving') {
         return [{
           type: 'text',
-          text: "You're already in the queue and it's your turn! Please proceed to the counter.",
+          text: await ctx.t("You're already in the queue and it's your turn! Please proceed to the counter."),
         }];
       }
 
@@ -75,7 +75,7 @@ const queueStartStep: FlowStepConfig = {
 
       return [{
         type: 'buttons',
-        body: `You're already in the queue! You're *#${existingEntry.queue_number}*.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. ${waitText}\n\nWe'll message you when it's your turn!`,
+        body: await ctx.t(`You're already in the queue! You're *#${existingEntry.queue_number}*.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. ${waitText}\n\nWe'll message you when it's your turn!`),
         buttons: [
           { id: 'leave_queue', title: 'Leave Queue' },
         ],
@@ -84,7 +84,7 @@ const queueStartStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `Welcome to ${ctx.business.name}! Would you like to join the queue or check your position?`,
+      body: await ctx.t(`📋 Welcome to ${ctx.business.name}! Would you like to join the queue or check your position?`),
       buttons: [
         { id: 'queue_checkin', title: 'Join Queue' },
         { id: 'queue_status', title: 'My Position' },
@@ -192,8 +192,8 @@ const queueCollectNameStep: FlowStepConfig = {
     return false;
   },
 
-  async prompt(): Promise<PromptMessage[]> {
-    return [{ type: 'text', text: 'What name should we use for your queue entry?' }];
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    return [{ type: 'text', text: await ctx.t('What name should we use for your queue entry?') }];
   },
 
   async validate(input: string) {
@@ -213,7 +213,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
   id: 'queue_confirm_checkin',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+    if (!ctx.business) return [{ type: 'text', text: await ctx.t('Something went wrong on our end. Send *Hi* to start over.') }];
 
     const customerName = ctx.session.session_data.queue_customer_name as string;
     const { avgMinutes } = await getQueueConfig(ctx);
@@ -245,7 +245,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `Ready to join the queue, ${customerName}?\n\nYou'll be *#${queueNumber}* in line. ${waitText}`,
+      body: await ctx.t(`Ready to join the queue, ${customerName}?\n\nYou'll be *#${queueNumber}* in line. ${waitText}`),
       buttons: [
         { id: 'confirm_checkin', title: 'Join Queue ✓' },
         { id: 'cancel_checkin', title: 'Cancel' },
@@ -353,7 +353,7 @@ const queueCheckStatusStep: FlowStepConfig = {
   id: 'queue_check_status',
 
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
-    if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+    if (!ctx.business) return [{ type: 'text', text: await ctx.t('Something went wrong on our end. Send *Hi* to start over.') }];
 
     const today = new Date().toISOString().split('T')[0];
     const { avgMinutes } = await getQueueConfig(ctx);
@@ -374,13 +374,13 @@ const queueCheckStatusStep: FlowStepConfig = {
     if (!entry) {
       return [{
         type: 'buttons',
-        body: "You don't have an active queue entry for today. Would you like to join the queue?",
+        body: await ctx.t("You don't have an active queue entry for today. Would you like to join the queue?"),
         buttons: [{ id: 'queue_checkin', title: 'Join Queue' }],
       }];
     }
 
     if (entry.status === 'serving') {
-      return [{ type: 'text', text: "It's your turn! Please proceed to the counter." }];
+      return [{ type: 'text', text: await ctx.t("It's your turn! Please proceed to the counter.") }];
     }
 
     // Count how many are ahead
@@ -397,7 +397,7 @@ const queueCheckStatusStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `You're *#${entry.queue_number}* in the queue.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. Estimated wait: ~${estimatedWait} minutes.`,
+      body: await ctx.t(`You're *#${entry.queue_number}* in the queue.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. Estimated wait: ~${estimatedWait} minutes.`),
       buttons: [
         { id: 'leave_queue', title: 'Leave Queue' },
       ],

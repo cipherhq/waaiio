@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
 ) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(_request, 'events-public'), 60, 60_000);
+  if (rateLimit) return rateLimit;
+
   const { slug } = await params;
 
   if (!slug || slug.length > 200) {

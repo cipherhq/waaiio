@@ -32,7 +32,7 @@ const surveyIntroStep: FlowStepConfig = {
     const description = (d.survey_description as string) || '';
     const questions = (d.survey_questions as SurveyQuestion[]) || [];
 
-    let body = `*${title}*`;
+    let body = `📊 *${title}*`;
     if (description) body += `\n${description}`;
     body += `\n\n${questions.length} question${questions.length === 1 ? '' : 's'} — takes about a minute.`;
 
@@ -295,7 +295,7 @@ const surveyCompleteStep: FlowStepConfig = {
     }
 
     const messages: PromptMessage[] = [
-      { type: 'text', text: 'Thank you for completing the survey! Your feedback helps us improve.' },
+      { type: 'text', text: '✅ Thank you for completing the survey! Your feedback helps us improve.' },
     ];
 
     // Show capability buttons so user can continue

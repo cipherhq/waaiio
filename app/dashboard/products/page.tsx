@@ -36,6 +36,7 @@ export default function ProductsPage() {
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [scrollToProductId, setScrollToProductId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -91,48 +92,53 @@ export default function ProductsPage() {
   const [showSyncHistory, setShowSyncHistory] = useState(false);
 
   const fetchProducts = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('products')
-      .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
-      .eq('business_id', business.id)
-      .is('deleted_at', null)
-      .order('sort_order', { ascending: true });
+    try {
+      setError(false);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('products')
+        .select('id, name, description, price, image_url, category, stock_quantity, is_active, sort_order, track_inventory, low_stock_threshold, refundable, allow_promo, has_variants, shipping_cost, min_order_qty, variant_options, catalog_synced_at')
+        .eq('business_id', business.id)
+        .is('deleted_at', null)
+        .order('sort_order', { ascending: true });
 
-    const productList = (data as Product[]) || [];
+      const productList = (data as Product[]) || [];
 
-    // Fetch variant price ranges for products with variants
-    const variantProductIds = productList.filter(p => p.has_variants).map(p => p.id);
-    if (variantProductIds.length > 0) {
-      const { data: variantData } = await supabase
-        .from('product_variants')
-        .select('product_id, price')
-        .in('product_id', variantProductIds)
-        .eq('is_active', true);
+      // Fetch variant price ranges for products with variants
+      const variantProductIds = productList.filter(p => p.has_variants).map(p => p.id);
+      if (variantProductIds.length > 0) {
+        const { data: variantData } = await supabase
+          .from('product_variants')
+          .select('product_id, price')
+          .in('product_id', variantProductIds)
+          .eq('is_active', true);
 
-      if (variantData) {
-        const priceMap: Record<string, { min: number; max: number; count: number }> = {};
-        for (const v of variantData) {
-          if (!priceMap[v.product_id]) {
-            priceMap[v.product_id] = { min: v.price, max: v.price, count: 1 };
-          } else {
-            priceMap[v.product_id].min = Math.min(priceMap[v.product_id].min, v.price);
-            priceMap[v.product_id].max = Math.max(priceMap[v.product_id].max, v.price);
-            priceMap[v.product_id].count++;
+        if (variantData) {
+          const priceMap: Record<string, { min: number; max: number; count: number }> = {};
+          for (const v of variantData) {
+            if (!priceMap[v.product_id]) {
+              priceMap[v.product_id] = { min: v.price, max: v.price, count: 1 };
+            } else {
+              priceMap[v.product_id].min = Math.min(priceMap[v.product_id].min, v.price);
+              priceMap[v.product_id].max = Math.max(priceMap[v.product_id].max, v.price);
+              priceMap[v.product_id].count++;
+            }
           }
-        }
-        for (const p of productList) {
-          if (priceMap[p.id]) {
-            const ext = p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number };
-            ext._price_min = priceMap[p.id].min;
-            ext._price_max = priceMap[p.id].max;
-            ext._variant_count = priceMap[p.id].count;
+          for (const p of productList) {
+            if (priceMap[p.id]) {
+              const ext = p as Product & { _price_min?: number; _price_max?: number; _variant_count?: number };
+              ext._price_min = priceMap[p.id].min;
+              ext._price_max = priceMap[p.id].max;
+              ext._variant_count = priceMap[p.id].count;
+            }
           }
         }
       }
-    }
 
-    setProducts(productList);
+      setProducts(productList);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }, [business.id]);
 
@@ -789,6 +795,12 @@ export default function ProductsPage() {
   // PRODUCT LIST
   // ═══════════════════════════════════════════
   return (
+    <>
+    {error && (
+      <div className="mb-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+        Something went wrong loading data. <button onClick={() => { setError(false); fetchProducts(); }} className="font-medium underline hover:no-underline">Try again</button>
+      </div>
+    )}
     <ProductList
       products={products}
       filtered={filtered}
@@ -814,5 +826,6 @@ export default function ProductsPage() {
       setShowSyncHistory={setShowSyncHistory}
       orderStats={orderStats}
     />
+    </>
   );
 }

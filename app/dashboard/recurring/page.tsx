@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Sub {
   id: string;
@@ -42,31 +43,37 @@ export default function RecurringDashboardPage() {
 
   const [subs, setSubs] = useState<Sub[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
   const [frequencyFilter, setFrequencyFilter] = useState('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const supabase = createClient();
+    try {
+      setError(false);
+      const supabase = createClient();
 
-    const { data } = await supabase
-      .from('customer_subscriptions')
-      .select('*')
-      .eq('business_id', business.id)
-      .order('created_at', { ascending: false });
+      const { data } = await supabase
+        .from('customer_subscriptions')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('created_at', { ascending: false });
 
-    if (data) {
-      // Enrich with service names
-      const svcIds = [...new Set(data.map(s => s.service_id).filter(Boolean))];
-      let serviceMap = new Map<string, string>();
+      if (data) {
+        // Enrich with service names
+        const svcIds = [...new Set(data.map(s => s.service_id).filter(Boolean))];
+        let serviceMap = new Map<string, string>();
 
-      if (svcIds.length > 0) {
-        const { data: services } = await supabase.from('services').select('id, name').in('id', svcIds);
-        serviceMap = new Map((services || []).map(s => [s.id, s.name]));
+        if (svcIds.length > 0) {
+          const { data: services } = await supabase.from('services').select('id, name').in('id', svcIds);
+          serviceMap = new Map((services || []).map(s => [s.id, s.name]));
+        }
+
+        setSubs(data.map(s => ({ ...s, service_name: serviceMap.get(s.service_id) || 'Payment' })));
       }
-
-      setSubs(data.map(s => ({ ...s, service_name: serviceMap.get(s.service_id) || 'Payment' })));
+    } catch {
+      setError(true);
     }
     setLoading(false);
   }, [business.id]);
@@ -128,6 +135,18 @@ export default function RecurringDashboardPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Recurring Payments</h1>
       <p className="mt-1 text-sm text-gray-500">Manage automatic recurring customer payments</p>
+
+      <PageHelp
+        pageKey="recurring"
+        title="Subscriptions"
+        description="View and manage recurring payments. Pause, resume, or cancel subscriber auto-charges."
+      />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadData(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="mt-6 grid gap-4 sm:grid-cols-4">

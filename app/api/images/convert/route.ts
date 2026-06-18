@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/images/convert?url=<supabase-storage-url>
@@ -7,6 +8,8 @@ import sharp from 'sharp';
  * Used by the WhatsApp bot since Meta doesn't support WebP in image messages.
  */
 export async function GET(request: NextRequest) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'images-convert'), 30, 60_000);
+  if (rateLimit) return rateLimit;
   const url = request.nextUrl.searchParams.get('url');
   if (!url) {
     return NextResponse.json({ error: 'Missing url parameter' }, { status: 400 });

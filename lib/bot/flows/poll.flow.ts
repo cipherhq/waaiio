@@ -38,7 +38,7 @@ const pollQuestionStep: FlowStepConfig = {
     // Check if poll has expired
     const closesAt = d.poll_closes_at as string | undefined;
     if (closesAt && new Date(closesAt) < new Date()) {
-      return [{ type: 'text', text: 'This poll has closed. Thank you for your interest!' }];
+      return [{ type: 'text', text: await ctx.t('This poll has closed. Thank you for your interest!') }];
     }
 
     // Check if already voted
@@ -46,7 +46,7 @@ const pollQuestionStep: FlowStepConfig = {
       const optionIndex = d._poll_voted_index as number;
       const votedFor = options[optionIndex] || 'Unknown';
 
-      let msg = `You already voted for *${votedFor}*!`;
+      let msg = await ctx.t(`You already voted for *${votedFor}*!`);
 
       if (showResults === 'always' || showResults === 'after_vote') {
         const pollId = d.poll_id as string;
@@ -67,7 +67,7 @@ const pollQuestionStep: FlowStepConfig = {
     }
 
     // Show poll question with options
-    const body = `📊 *${question}*\n\nTap your choice:`;
+    const body = await ctx.t(`📊 *${question}*\n\nTap your choice:`);
 
     if (options.length <= 3) {
       return [{
@@ -232,8 +232,8 @@ const pollResultsStep: FlowStepConfig = {
 
     const votedFor = options[votedIndex] || 'Unknown';
     let msg = changed
-      ? `Vote changed to *${votedFor}*! ✅`
-      : `Thanks for voting for *${votedFor}*! ✅`;
+      ? await ctx.t(`Vote changed to *${votedFor}*! ✅`)
+      : await ctx.t(`Thanks for voting for *${votedFor}*! ✅`);
 
     if (showResults === 'after_vote' || showResults === 'always') {
       const { data: allVotes } = await ctx.supabase
@@ -247,9 +247,9 @@ const pollResultsStep: FlowStepConfig = {
       }
       const total = (allVotes || []).length;
 
-      msg += '\n\n📊 *Results so far:*\n\n' + formatResults(options, voteCounts, total);
+      msg += '\n\n📊 *' + await ctx.t('Results so far:') + '*\n\n' + formatResults(options, voteCounts, total);
     } else if (showResults === 'after_close') {
-      msg += '\n\nResults will be shared when the poll closes.';
+      msg += '\n\n' + await ctx.t('Results will be shared when the poll closes.');
     }
 
     const messages: PromptMessage[] = [{ type: 'text', text: msg }];
@@ -279,7 +279,7 @@ const pollResultsStep: FlowStepConfig = {
 
           messages.push({
             type: 'buttons',
-            body: 'Anything else?',
+            body: await ctx.t('Anything else?'),
             buttons,
           });
           return messages;

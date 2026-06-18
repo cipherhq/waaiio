@@ -24,7 +24,7 @@ const loyaltyMenuStep: FlowStepConfig = {
       ctx.session.session_data._loyalty_empty = true;
       return [{
         type: 'buttons',
-        body: "You don't have any loyalty points yet. Start using our services to earn rewards!",
+        body: await ctx.t("You don't have any loyalty points yet. Start using our services to earn rewards!"),
         buttons: [{ id: 'back_to_account', title: '← Back' }],
       }];
     }
@@ -40,7 +40,7 @@ const loyaltyMenuStep: FlowStepConfig = {
       ctx.session.session_data._loyalty_empty = true;
       return [{
         type: 'buttons',
-        body: "You don't have any loyalty points yet. Start using our services to earn rewards!",
+        body: await ctx.t("You don't have any loyalty points yet. Start using our services to earn rewards!"),
         buttons: [{ id: 'back_to_account', title: '← Back' }],
       }];
     }
@@ -59,17 +59,17 @@ const loyaltyMenuStep: FlowStepConfig = {
     return [
       {
         type: 'text',
-        text: [
+        text: await ctx.t([
           `⭐ *Your Loyalty Status*`,
           '',
           `💰 Points: *${loyalty.points_balance}*`,
           `🏆 Visits: *${loyalty.visit_count || 0}*`,
           `🎁 Reward at: *${threshold} points*`,
-        ].join('\n'),
+        ].join('\n')),
       },
       {
         type: 'buttons',
-        body: 'What would you like to do?',
+        body: await ctx.t('What would you like to do?'),
         buttons: [
           { id: 'view_history', title: 'View History' },
           { id: 'redeem', title: 'Redeem Reward' },
@@ -104,7 +104,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     const loyaltyId = ctx.session.session_data.loyalty_id as string;
     if (!loyaltyId) {
-      return [{ type: 'text', text: 'No loyalty record found. Send *Hi* to start over.' }];
+      return [{ type: 'text', text: await ctx.t('No loyalty record found. Send *Hi* to start over.') }];
     }
 
     const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -118,7 +118,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
 
     if (!transactions || transactions.length === 0) {
       return [
-        { type: 'text', text: 'No points activity yet. You\'ll see your points history here as you earn and redeem!' },
+        { type: 'text', text: await ctx.t('No points activity yet. You\'ll see your points history here as you earn and redeem!') },
         {
           type: 'buttons',
           body: 'Anything else?',
@@ -138,7 +138,7 @@ const loyaltyHistoryStep: FlowStepConfig = {
     return [
       {
         type: 'text',
-        text: `📋 *Recent Points Activity*\n\n${lines.join('\n')}`,
+        text: await ctx.t(`📋 *Recent Points Activity*\n\n${lines.join('\n')}`),
       },
       {
         type: 'buttons',
@@ -176,7 +176,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
       return [
         {
           type: 'text',
-          text: `You need *${needed}* more points to redeem. Keep earning!`,
+          text: await ctx.t(`You need *${needed}* more points to redeem. Keep earning!`),
         },
         {
           type: 'buttons',
@@ -188,7 +188,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
 
     return [{
       type: 'buttons',
-      body: `You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`,
+      body: await ctx.t(`You have enough points to redeem: *${rewardDesc}*\n\nThis will use ${threshold} points from your balance of ${balance}.`),
       buttons: [
         { id: 'confirm_redeem', title: 'Redeem Now' },
         { id: 'skip_redeem', title: 'Not Now' },

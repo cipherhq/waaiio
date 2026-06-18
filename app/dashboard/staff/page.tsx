@@ -6,6 +6,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface StaffMember {
   id: string;
@@ -135,6 +136,7 @@ export default function StaffPage() {
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [businessServices, setBusinessServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
 
@@ -154,13 +156,18 @@ export default function StaffPage() {
   const roleInputRef = useRef<HTMLDivElement>(null);
 
   const fetchStaff = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('business_staff')
-      .select('*')
-      .eq('business_id', business.id)
-      .order('name', { ascending: true });
-    setStaff((data as StaffMember[]) || []);
+    try {
+      setError(false);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('business_staff')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('name', { ascending: true });
+      setStaff((data as StaffMember[]) || []);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }, [business.id]);
 
@@ -751,6 +758,18 @@ export default function StaffPage() {
           + Add Staff
         </button>
       </div>
+
+      <PageHelp
+        pageKey="staff"
+        title="Staff"
+        description="Add team members, assign them to services, and set work schedules. Staff get WhatsApp notifications for their assignments."
+      />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchStaff(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {staff.length === 0 ? (
         <div className="mt-12 text-center">

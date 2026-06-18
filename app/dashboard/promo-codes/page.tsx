@@ -49,6 +49,7 @@ export default function PromoCodesPage() {
   const currSymbol = formatCurrency(0, country).replace(/[\d.,\s]/g, '').trim() || '$';
   const [codes, setCodes] = useState<PromoCode[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -57,6 +58,7 @@ export default function PromoCodesPage() {
 
   const fetchCodes = useCallback(async () => {
     try {
+      setError(false);
       const { createClient } = await import('@/lib/supabase/client');
       const supabase = createClient();
       const [res, { data: prods }] = await Promise.all([
@@ -66,7 +68,10 @@ export default function PromoCodesPage() {
       const data = await res.json();
       setCodes(data.error ? [] : (data.codes || []) as PromoCode[]);
       setProducts((prods || []) as ProductOption[]);
-    } catch { setCodes([]); }
+    } catch {
+      setError(true);
+      setCodes([]);
+    }
     finally { setLoading(false); }
   }, [business.id]);
 
@@ -316,6 +321,12 @@ export default function PromoCodesPage() {
         title="Promo Codes"
         description="Create discount codes your customers can use when booking or ordering. Set percentage or fixed discounts, usage limits, and expiry dates."
       />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchCodes(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* Metrics */}
       <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">

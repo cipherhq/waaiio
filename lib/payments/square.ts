@@ -247,10 +247,72 @@ export class SquareGateway implements PaymentGateway {
     }
   }
 
-  async refundPayment(_opts: RefundPaymentOpts): Promise<RefundResult> {
-    return {
-      success: false,
-      errorMessage: 'Square refunds not yet supported',
-    };
+  async refundPayment(opts: RefundPaymentOpts): Promise<RefundResult> {
+    // Mock mode
+    if (!squareAccessToken || opts.gatewayReference.startsWith('mock_')) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Payment gateway not configured: missing Square access token');
+      }
+      return {
+        success: true,
+        gatewayRefundReference: `mock_refund_square_${Date.now()}`,
+        gatewayResponse: { mock: true },
+      };
+    }
+
+    try {
+      // Square payment links use order IDs — we need to find the payment_id from the order
+      // The gateway_reference for Square is the payment link ID; the order ID is in metadata.
+      // First, try to retrieve the order to find associated payment IDs.
+      const orderResult = await squareGet(`/v2/orders/${encodeURIComponent(opts.gatewayReference)}`);
+      let paymentId: string | undefined;
+
+      const order = orderResult.order as Record<string, unknown> | undefined;
+      if (order) {
+        // Extract payment ID from order tenders
+        const tenders = (order.tenders || []) as Array<{ id?: string; payment_id?: string }>;
+        paymentId = tenders[0]?.payment_id || tenders[0]?.id;
+      }
+
+      // If the reference is already a payment ID (starts with a known pattern or order lookup failed)
+      if (!paymentId) {
+        // Assume the gateway_reference might be a payment ID directly
+        paymentId = opts.gatewayReference;
+      }
+
+      const refundBody: Record<string, unknown> = {
+        idempotency_key: randomUUID(),
+        payment_id: paymentId,
+        reason: opts.reason || 'Refund requested',
+      };
+
+      // Amount is optional — omit for full refund
+      if (opts.amount != null) {
+        refundBody.amount_money = {
+          amount: Math.round(opts.amount * 100), // convert to cents
+          currency: (opts.currency || 'USD').toUpperCase(),
+        };
+      }
+
+      const result = await squareRequest('/v2/refunds', refundBody);
+
+      const refund = result.refund as Record<string, unknown> | undefined;
+      if (refund?.id) {
+        return {
+          success: true,
+          gatewayRefundReference: refund.id as string,
+          gatewayResponse: result,
+        };
+      }
+
+      // Check for errors in the response
+      const errors = result.errors as Array<{ detail?: string }> | undefined;
+      const errorMsg = errors?.[0]?.detail || 'Square refund failed';
+      logger.error('[SQUARE] Refund failed:', JSON.stringify(result).slice(0, 500));
+      return { success: false, errorMessage: errorMsg, gatewayResponse: result };
+    } catch (error) {
+      logger.error('[SQUARE] Refund error:', (error as Error).message);
+      return { success: false, errorMessage: (error as Error).message };
+    }
   }
 }

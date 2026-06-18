@@ -52,6 +52,7 @@ export default function PartiesPage() {
   const business = useBusiness();
   const [parties, setParties] = useState<PartyItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -101,13 +102,18 @@ export default function PartiesPage() {
   });
 
   const loadParties = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('parties')
-      .select('*')
-      .eq('business_id', business.id)
-      .order('date', { ascending: false });
-    setParties((data || []) as PartyItem[]);
+    try {
+      setError(false);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('parties')
+        .select('*')
+        .eq('business_id', business.id)
+        .order('date', { ascending: false });
+      setParties((data || []) as PartyItem[]);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }, [business.id]);
 
@@ -740,7 +746,7 @@ export default function PartiesPage() {
           <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Bulk Invite</h3>
             <p className="mt-1 text-xs text-gray-500">Paste phone numbers, one per line</p>
-            <textarea value={bulkPhones} onChange={e => setBulkPhones(e.target.value)} rows={5} placeholder={"2348012345678\n2349087654321"} className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand font-mono" />
+            <textarea value={bulkPhones} onChange={e => setBulkPhones(e.target.value)} rows={5} placeholder={"2348012345678\n2349087654321"} className="mt-3 w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand font-mono" />
             <div className="mt-3 flex gap-2">
               <button onClick={handleBulkInvite} disabled={sending || !bulkPhones.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
                 {sending ? 'Sending...' : `Send ${bulkPhones.split(/[\n,;]+/).filter(p => p.trim()).length} Invites`}
@@ -899,10 +905,10 @@ export default function PartiesPage() {
               <tbody>
                 {invites.map(invite => {
                   const statusColors: Record<string, string> = {
-                    accepted: 'bg-green-100 text-green-700',
-                    maybe: 'bg-amber-100 text-amber-700',
-                    declined: 'bg-red-100 text-red-700',
-                    pending: 'bg-gray-100 text-gray-600',
+                    accepted: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+                    maybe: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+                    declined: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
+                    pending: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400',
                   };
                   return (
                     <tr key={invite.id} className="border-b border-gray-50 dark:border-gray-700">
@@ -983,6 +989,12 @@ export default function PartiesPage() {
         description="Create parties and track who's coming. Send invitations via WhatsApp and guests can RSVP instantly."
       />
 
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadParties(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
+
       {parties.length === 0 ? (
         <EmptyState
           icon="🎉"
@@ -995,10 +1007,10 @@ export default function PartiesPage() {
         <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {parties.map(party => {
             const statusColors: Record<string, string> = {
-              active: 'bg-green-100 text-green-700',
-              draft: 'bg-gray-100 text-gray-600',
-              cancelled: 'bg-red-100 text-red-700',
-              completed: 'bg-blue-100 text-blue-700',
+              active: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+              draft: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400',
+              cancelled: 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400',
+              completed: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
             };
 
             return (
@@ -1017,7 +1029,7 @@ export default function PartiesPage() {
                 <div className="p-5">
                   <div className="flex items-center justify-between">
                     <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{party.name}</h3>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[party.status] || 'bg-gray-100 text-gray-600'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[party.status] || 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'}`}>
                       {party.status}
                     </span>
                   </div>

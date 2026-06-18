@@ -19,7 +19,7 @@ const invoiceListStep: FlowStepConfig = {
       ctx.session.session_data._invoice_empty = true;
       return [{
         type: 'buttons',
-        body: 'You\'re all caught up — no outstanding invoices! ✅',
+        body: await ctx.t('You\'re all caught up — no outstanding invoices! ✅'),
         buttons: [{ id: 'back_to_account', title: '← Back' }],
       }];
     }
@@ -37,7 +37,7 @@ const invoiceListStep: FlowStepConfig = {
       ctx.session.session_data._invoice_empty = true;
       return [{
         type: 'buttons',
-        body: 'You\'re all caught up — no outstanding invoices! ✅',
+        body: await ctx.t('You\'re all caught up — no outstanding invoices! ✅'),
         buttons: [{ id: 'back_to_account', title: '← Back' }],
       }];
     }
@@ -64,7 +64,7 @@ const invoiceListStep: FlowStepConfig = {
     return [
       {
         type: 'text',
-        text: `📄 *Your Invoices*\n\n${lines.join('\n')}\n\nReply with a number to view or pay.`,
+        text: await ctx.t(`📄 *Your Invoices*\n\n${lines.join('\n')}\n\nReply with a number to view or pay.`),
       },
       {
         type: 'buttons',
@@ -116,7 +116,7 @@ const invoiceDetailStep: FlowStepConfig = {
       .single();
 
     if (!invoice) {
-      return [{ type: 'text', text: 'Invoice not found. Reply *my invoices* to refresh the list.' }];
+      return [{ type: 'text', text: await ctx.t('Invoice not found. Reply *my invoices* to refresh the list.') }];
     }
 
     const { data: items } = await ctx.supabase
@@ -154,10 +154,10 @@ const invoiceDetailStep: FlowStepConfig = {
     ];
 
     return [
-      { type: 'text', text: summary.join('\n') },
+      { type: 'text', text: await ctx.t(summary.join('\n')) },
       {
         type: 'buttons',
-        body: 'Ready to pay, or go back?',
+        body: await ctx.t('Ready to pay, or go back?'),
         buttons: [
           { id: 'pay', title: 'Pay Now' },
           { id: 'back', title: 'Back to List' },
@@ -193,7 +193,7 @@ const invoicePayStep: FlowStepConfig = {
       .single();
 
     if (!invoice) {
-      return [{ type: 'text', text: 'Invoice not found. Reply *my invoices* to refresh the list.' }];
+      return [{ type: 'text', text: await ctx.t('Invoice not found. Reply *my invoices* to refresh the list.') }];
     }
 
     const biz = invoice.businesses as unknown as { name: string; country_code: string; payment_gateway: string | null; subscription_tier: string };
@@ -217,7 +217,7 @@ const invoicePayStep: FlowStepConfig = {
       ctx.session.session_data._invoice_no_user = true;
       return [{
         type: 'buttons',
-        body: "We couldn't match your number to an account. Please contact the business directly for help.",
+        body: await ctx.t("We couldn't match your number to an account. Please contact the business directly for help."),
         buttons: [
           { id: 'done', title: 'OK' },
         ],
@@ -238,7 +238,7 @@ const invoicePayStep: FlowStepConfig = {
       });
 
       if (!result) {
-        return [{ type: 'buttons', body: 'We couldn\'t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+        return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
       }
 
       // Update invoice status to viewed
@@ -288,11 +288,11 @@ const invoicePayStep: FlowStepConfig = {
 
       return [{
         type: 'text',
-        text: `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt\n\n_Powered by Waaiio_`,
+        text: await ctx.t(`💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt\n\n_Powered by Waaiio_`),
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);
-      return [{ type: 'buttons', body: 'We couldn\'t generate a payment link right now.', buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+      return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
     }
   },
 

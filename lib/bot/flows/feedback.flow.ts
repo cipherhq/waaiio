@@ -9,7 +9,7 @@ const feedbackRatingStep: FlowStepConfig = {
     const businessName = ctx.business?.name || 'us';
     return [{
       type: 'buttons',
-      body: `How was your experience at ${businessName}? Rate us:`,
+      body: await ctx.t(`How was your experience at ${businessName}? Rate us:`),
       buttons: [
         { id: 'rate_5', title: '5 - Excellent' },
         { id: 'rate_4', title: '4 - Good' },
@@ -17,7 +17,7 @@ const feedbackRatingStep: FlowStepConfig = {
       ],
     }, {
       type: 'buttons',
-      body: 'Or:',
+      body: await ctx.t('Or:'),
       buttons: [
         { id: 'rate_2', title: '2 - Poor' },
         { id: 'rate_1', title: '1 - Terrible' },
@@ -62,10 +62,10 @@ const feedbackRatingStep: FlowStepConfig = {
 const feedbackCommentStep: FlowStepConfig = {
   id: 'feedback_comment',
 
-  async prompt(): Promise<PromptMessage[]> {
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     return [{
       type: 'text',
-      text: "We're sorry to hear that. What could we improve? Type your feedback or send *skip* to skip:",
+      text: await ctx.t("We're sorry to hear that. What could we improve? Type your feedback or send *skip* to skip:"),
     }];
   },
 
@@ -136,8 +136,8 @@ const feedbackThanksStep: FlowStepConfig = {
 
     const stars = '⭐'.repeat(rating);
     const thanks = rating >= 4
-      ? `Thank you for the ${stars} rating! We appreciate your feedback.\n\n_Powered by Waaiio_`
-      : `Thank you for your feedback ${stars}. We'll work to improve your experience.\n\n_Powered by Waaiio_`;
+      ? await ctx.t(`Thank you for the ${stars} rating! We appreciate your feedback.\n\n_Powered by Waaiio_`)
+      : await ctx.t(`Thank you for your feedback ${stars}. We'll work to improve your experience.\n\n_Powered by Waaiio_`);
 
     const messages: PromptMessage[] = [{ type: 'text', text: thanks }];
 
@@ -153,7 +153,7 @@ const feedbackThanksStep: FlowStepConfig = {
         const reviewUrl = `https://search.google.com/local/writereview?placeid=${biz.google_place_id}`;
         messages.push({
           type: 'text',
-          text: `We'd love it if you could share your experience on Google too! It really helps us grow.\n\n${reviewUrl}`,
+          text: await ctx.t(`We'd love it if you could share your experience on Google too! It really helps us grow.\n\n${reviewUrl}`),
         });
       }
     }
@@ -184,7 +184,7 @@ const feedbackThanksStep: FlowStepConfig = {
 
           messages.push({
             type: 'buttons',
-            body: 'Is there anything else I can help with?',
+            body: await ctx.t('Is there anything else I can help with?'),
             buttons,
           });
 

@@ -88,6 +88,7 @@ export default function ServicesPage() {
 
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [filterTab, setFilterTab] = useState<'all' | 'services' | 'classes'>('all');
@@ -141,15 +142,20 @@ export default function ServicesPage() {
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
   async function fetchServices() {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('services')
-      .select('*')
-      .eq('business_id', business.id)
-      .neq('service_type', 'giving')
-      .is('deleted_at', null)
-      .order('sort_order', { ascending: true });
-    setServices((data as Service[]) || []);
+    try {
+      setError(false);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('services')
+        .select('*')
+        .eq('business_id', business.id)
+        .neq('service_type', 'giving')
+        .is('deleted_at', null)
+        .order('sort_order', { ascending: true });
+      setServices((data as Service[]) || []);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }
 
@@ -1088,6 +1094,12 @@ export default function ServicesPage() {
         title="Your Services"
         description="These are the services your customers can request through WhatsApp. Add your prices, descriptions, and any deposit requirements. The bot will show these options to customers automatically."
       />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchServices(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* Filter tabs — only show if there are both services and classes */}
       {services.length > 0 && services.some(s => s.is_class) && (

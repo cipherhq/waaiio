@@ -31,6 +31,7 @@ export default function TicketsPage() {
   const business = useBusiness();
   const [tickets, setTickets] = useState<TicketRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [eventFilter, setEventFilter] = useState('all');
@@ -38,13 +39,18 @@ export default function TicketsPage() {
   const [updating, setUpdating] = useState(false);
 
   const loadTickets = useCallback(async () => {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('event_tickets')
-      .select('*, event:events!event_id(name, date, venue)')
-      .eq('business_id', business.id)
-      .order('created_at', { ascending: false });
-    setTickets((data || []) as TicketRow[]);
+    try {
+      setError(false);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('event_tickets')
+        .select('*, event:events!event_id(name, date, venue)')
+        .eq('business_id', business.id)
+        .order('created_at', { ascending: false });
+      setTickets((data || []) as TicketRow[]);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }, [business.id]);
 
@@ -148,6 +154,12 @@ export default function TicketsPage() {
           Export CSV
         </button>
       </div>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadTickets(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="mt-6 grid grid-cols-1 sm:grid-cols-3 gap-4">

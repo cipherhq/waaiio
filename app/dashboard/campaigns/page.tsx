@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Campaign {
   id: string;
@@ -41,6 +42,7 @@ export default function CampaignsPage() {
   const country = (business.country_code || 'NG') as CountryCode;
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [donations, setDonations] = useState<Donation[]>([]);
@@ -68,14 +70,19 @@ export default function CampaignsPage() {
   }, [business.id]);
 
   async function loadCampaigns() {
-    const supabase = createClient();
-    const { data } = await supabase
-      .from('campaigns')
-      .select('*')
-      .eq('business_id', business.id)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false });
-    setCampaigns((data || []) as Campaign[]);
+    try {
+      setError(false);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('campaigns')
+        .select('*')
+        .eq('business_id', business.id)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+      setCampaigns((data || []) as Campaign[]);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }
 
@@ -444,6 +451,18 @@ export default function CampaignsPage() {
           + New Campaign
         </button>
       </div>
+
+      <PageHelp
+        pageKey="campaigns"
+        title="Campaigns"
+        description="Run fundraising campaigns with goals and progress tracking. Set donation limits, track donors, and manage your fundraising efforts."
+      />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadCampaigns(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {campaigns.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-gray-200 p-12 text-center">

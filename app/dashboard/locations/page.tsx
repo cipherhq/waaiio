@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { type CountryCode } from '@/lib/constants';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Location {
   id: string;
@@ -37,6 +38,7 @@ export default function LocationsPage() {
   const business = useBusiness();
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
 
@@ -55,10 +57,13 @@ export default function LocationsPage() {
 
   const fetchLocations = useCallback(async () => {
     try {
+      setError(false);
       const res = await fetch(`/api/locations?businessId=${business.id}`, { cache: 'no-store' });
       const data = await res.json();
       setLocations(data.locations || []);
-    } catch { /* silent */ }
+    } catch {
+      setError(true);
+    }
     finally { setLoading(false); }
   }, [business.id]);
 
@@ -263,6 +268,18 @@ export default function LocationsPage() {
         </div>
         <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">+ Add Location</button>
       </div>
+
+      <PageHelp
+        pageKey="locations"
+        title="Locations"
+        description="Manage multiple branches. Users choose their preferred location when booking."
+      />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchLocations(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {locations.length === 0 ? (
         <div className="mt-12 text-center">

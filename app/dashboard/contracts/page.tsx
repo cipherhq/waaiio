@@ -7,6 +7,7 @@ import { CONTRACT_TEMPLATES, COMMON_QUESTIONS, fillTemplatePlaceholders, generat
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { COUNTRIES, type CountryCode } from '@/lib/constants';
 import { QRCodeSVG } from 'qrcode.react';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 /** Detect country code from an E.164 phone number by matching dialing code prefixes */
 function detectCountryFromPhone(phone: string): CountryCode | null {
@@ -60,6 +61,7 @@ export default function ContractsPage() {
   const business = useBusiness();
   const [contracts, setContracts] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [sending, setSending] = useState(false);
   const [resendingId, setResendingId] = useState<string | null>(null);
@@ -117,13 +119,18 @@ export default function ContractsPage() {
   const supabase = createClient();
 
   const loadContracts = useCallback(async () => {
-    const { data } = await supabase
-      .from('contracts')
-      .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, reference_code, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
-      .eq('business_id', business.id)
-      .order('created_at', { ascending: false });
+    try {
+      setError(false);
+      const { data } = await supabase
+        .from('contracts')
+        .select('id, title, signer_name, signer_phone, signer_email, status, signed_at, created_at, token_expires_at, document_content, signed_url, audit_trail, signature_data, template_url, decline_reason, declined_at, require_otp, signing_mode, wa_delivery_status, reference_code, contract_signers(id, signer_name, signer_phone, status, signed_at, wa_delivery_status, token)')
+        .eq('business_id', business.id)
+        .order('created_at', { ascending: false });
 
-    setContracts(data || []);
+      setContracts(data || []);
+    } catch {
+      setError(true);
+    }
     setLoading(false);
   }, [business.id, supabase]);
 
@@ -508,6 +515,18 @@ export default function ContractsPage() {
           Send for Signature
         </button>
       </div>
+
+      <PageHelp
+        pageKey="contracts"
+        title="E-Signatures"
+        description="Send contracts for digital signature via WhatsApp. Signers review and sign from their phone. Track status and download signed copies."
+      />
+
+      {error && (
+        <div className="mt-4 mb-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadContracts(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* Stats Cards */}
       {!loading && contracts.length > 0 && (() => {

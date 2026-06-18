@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface KeywordCampaign {
   id: string;
@@ -50,6 +51,7 @@ export default function KeywordCampaignsPage() {
   const router = useRouter();
   const [campaigns, setCampaigns] = useState<KeywordCampaign[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<ViewMode>('list');
   const [responses, setResponses] = useState<CampaignResponse[]>([]);
@@ -105,13 +107,14 @@ export default function KeywordCampaignsPage() {
 
   async function loadCampaigns() {
     try {
+      setError(false);
       const res = await fetch(`/api/keyword-campaigns?business_id=${business.id}`);
       if (res.ok) {
         const data = await res.json();
         setCampaigns(data.campaigns || []);
       }
     } catch {
-      // Non-critical
+      setError(true);
     }
     setLoading(false);
   }
@@ -697,6 +700,18 @@ export default function KeywordCampaignsPage() {
           + New Campaign
         </button>
       </div>
+
+      <PageHelp
+        pageKey="keyword-campaigns"
+        title="Keyword Campaigns"
+        description="Create auto-response keywords. When users text a keyword to your WhatsApp, they get an instant reply and are added to your contact list for broadcasts."
+      />
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); loadCampaigns(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* How it works */}
       <div className="mt-6 rounded-xl border border-brand-100 dark:border-brand-900/30 bg-brand-50/50 dark:bg-brand-900/10 p-5">

@@ -14,7 +14,7 @@ export const chatFlow: FlowDefinition = {
         const businessName = ctx.business?.name || 'us';
         return [{
           type: 'text',
-          text: `You're now chatting with *${businessName}*. Type your message and a team member will respond shortly.\n\nSend *restart* anytime to go back to the menu.`,
+          text: `💬 You're now chatting with *${businessName}*. Type your message and a team member will respond shortly.\n\nSend *restart* anytime to go back to the menu.`,
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {

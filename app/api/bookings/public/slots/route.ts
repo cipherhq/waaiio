@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { generateTimeSlots } from '@/lib/constants';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/bookings/public/slots?businessId=X&serviceId=Y&date=YYYY-MM-DD
  * Returns available time slots for a given business, service, and date.
  */
 export async function GET(request: NextRequest) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'bookings-public-slots'), 60, 60_000);
+  if (rateLimit) return rateLimit;
+
   try {
     const { searchParams } = request.nextUrl;
     const businessId = searchParams.get('businessId');

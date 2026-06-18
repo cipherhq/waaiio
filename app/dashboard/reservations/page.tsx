@@ -122,6 +122,7 @@ export default function BookingsPage() {
   const statuses = allStatuses.filter(s => !labels.hiddenStatuses.includes(s));
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [filter, setFilter] = useState('all');
   const [bookingType, setBookingType] = useState<'all' | 'reservations' | 'bookings'>('all');
   const [dateFrom, setDateFrom] = useState('');
@@ -339,100 +340,105 @@ export default function BookingsPage() {
   const nextActions = showReservations ? reservationActions : schedulingActions;
 
   const fetchBookings = useCallback(async () => {
-    const supabase = createClient();
+    try {
+      setError(false);
+      const supabase = createClient();
 
-    let allBookings: Booking[] = [];
+      let allBookings: Booking[] = [];
 
-    // Query reservations table if business has reservation capability
-    if (showReservations) {
-      let rQuery = supabase
-        .from('reservations')
-        .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, nightly_rate, created_at, confirmed_at, checked_in_at, checked_out_at, cancelled_at, payment_id, service_id, property_id, property:properties!property_id(name)')
-        .eq('business_id', business.id)
-        .order('check_in', { ascending: false })
-        .limit(100);
+      // Query reservations table if business has reservation capability
+      if (showReservations) {
+        let rQuery = supabase
+          .from('reservations')
+          .select('id, reference_code, check_in, check_out, nights, guests, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, nightly_rate, created_at, confirmed_at, checked_in_at, checked_out_at, cancelled_at, payment_id, service_id, property_id, property:properties!property_id(name)')
+          .eq('business_id', business.id)
+          .order('check_in', { ascending: false })
+          .limit(100);
 
-      if (filter !== 'all') {
-        // Map dashboard filter values to reservation-specific statuses
-        if (filter === 'in_progress') {
-          rQuery = rQuery.in('status', ['checked_in', 'in_progress']);
-        } else if (filter === 'completed') {
-          rQuery = rQuery.in('status', ['checked_out', 'completed']);
-        } else {
-          rQuery = rQuery.eq('status', filter);
+        if (filter !== 'all') {
+          // Map dashboard filter values to reservation-specific statuses
+          if (filter === 'in_progress') {
+            rQuery = rQuery.in('status', ['checked_in', 'in_progress']);
+          } else if (filter === 'completed') {
+            rQuery = rQuery.in('status', ['checked_out', 'completed']);
+          } else {
+            rQuery = rQuery.eq('status', filter);
+          }
+        }
+        if (dateFrom) rQuery = rQuery.gte('check_in', dateFrom);
+        if (dateTo) rQuery = rQuery.lte('check_in', dateTo);
+
+        const { data, error: rError } = await rQuery;
+        if (rError) {
+          console.error('[RESERVATIONS] Reservations query failed:', rError.message, rError.code);
+        }
+        const mapped = (data || []).map(r => {
+          const prop = r.property as unknown as { name: string } | null;
+          return {
+            ...r,
+            date: r.check_in,
+            time: r.check_out ? `${r.nights || '?'} night${r.nights !== 1 ? 's' : ''}` : '',
+            party_size: r.guests || 1,
+            staff_id: null,
+            staff_name: prop?.name || null,
+            notes: `🏠 ${prop?.name || 'Property'}`,
+            refund_amount: null,
+            guest_list: null,
+            rescheduled_at: null,
+            original_date: null,
+            original_time: null,
+            seated_at: r.checked_in_at,
+            completed_at: r.checked_out_at,
+            _isReservation: true,
+          };
+        }) as Booking[];
+        allBookings.push(...mapped);
+
+        // If ONLY reservation type (no scheduling), skip bookings query
+        if (isReservationType) {
+          setBookings(allBookings);
+          setLoading(false);
+          return;
         }
       }
-      if (dateFrom) rQuery = rQuery.gte('check_in', dateFrom);
-      if (dateTo) rQuery = rQuery.lte('check_in', dateTo);
 
-      const { data, error: rError } = await rQuery;
-      if (rError) {
-        console.error('[RESERVATIONS] Reservations query failed:', rError.message, rError.code);
+      // Query bookings table (appointments + on-demand services)
+      let query = supabase
+        .from('bookings')
+        .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list')
+        .eq('business_id', business.id)
+        .neq('flow_type', 'payment')
+        .order('date', { ascending: false })
+        .order('time', { ascending: false })
+        .limit(100);
+
+      if (filter !== 'all') query = query.eq('status', filter);
+      if (dateFrom) query = query.gte('date', dateFrom);
+      if (dateTo) query = query.lte('date', dateTo);
+
+      const { data, error: bookingsError } = await query;
+      if (bookingsError) {
+        console.error('[RESERVATIONS] Bookings query failed:', bookingsError.message, bookingsError.code);
       }
-      const mapped = (data || []).map(r => {
-        const prop = r.property as unknown as { name: string } | null;
-        return {
-          ...r,
-          date: r.check_in,
-          time: r.check_out ? `${r.nights || '?'} night${r.nights !== 1 ? 's' : ''}` : '',
-          party_size: r.guests || 1,
-          staff_id: null,
-          staff_name: prop?.name || null,
-          notes: `🏠 ${prop?.name || 'Property'}`,
-          refund_amount: null,
-          guest_list: null,
-          rescheduled_at: null,
-          original_date: null,
-          original_time: null,
-          seated_at: r.checked_in_at,
-          completed_at: r.checked_out_at,
-          _isReservation: true,
-        };
-      }) as Booking[];
-      allBookings.push(...mapped);
+      let results = data || [];
 
-      // If ONLY reservation type (no scheduling), skip bookings query
-      if (isReservationType) {
-        setBookings(allBookings);
-        setLoading(false);
-        return;
+      if (search) {
+        const q = search.toLowerCase();
+        results = results.filter(
+          (r) =>
+            r.guest_name?.toLowerCase().includes(q) ||
+            r.guest_phone?.includes(q) ||
+            r.reference_code?.toLowerCase().includes(q),
+        );
       }
+
+      // Merge with reservations (if any) and sort by date descending
+      allBookings.push(...(results as Booking[]));
+      allBookings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      setBookings(allBookings);
+    } catch {
+      setError(true);
     }
-
-    // Query bookings table (appointments + on-demand services)
-    let query = supabase
-      .from('bookings')
-      .select('id, reference_code, date, time, party_size, status, guest_name, guest_phone, guest_email, channel, special_requests, deposit_amount, deposit_status, total_amount, notes, created_at, confirmed_at, seated_at, completed_at, cancelled_at, payment_id, rescheduled_at, original_date, original_time, staff_id, staff_name, service_id, guest_list')
-      .eq('business_id', business.id)
-      .neq('flow_type', 'payment')
-      .order('date', { ascending: false })
-      .order('time', { ascending: false })
-      .limit(100);
-
-    if (filter !== 'all') query = query.eq('status', filter);
-    if (dateFrom) query = query.gte('date', dateFrom);
-    if (dateTo) query = query.lte('date', dateTo);
-
-    const { data, error: bookingsError } = await query;
-    if (bookingsError) {
-      console.error('[RESERVATIONS] Bookings query failed:', bookingsError.message, bookingsError.code);
-    }
-    let results = data || [];
-
-    if (search) {
-      const q = search.toLowerCase();
-      results = results.filter(
-        (r) =>
-          r.guest_name?.toLowerCase().includes(q) ||
-          r.guest_phone?.includes(q) ||
-          r.reference_code?.toLowerCase().includes(q),
-      );
-    }
-
-    // Merge with reservations (if any) and sort by date descending
-    allBookings.push(...(results as Booking[]));
-    allBookings.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    setBookings(allBookings);
     setLoading(false);
   }, [business.id, filter, dateFrom, dateTo, search, showReservations, isReservationType]);
 
@@ -726,6 +732,12 @@ export default function BookingsPage() {
           </button>
         )}
       </div>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/20 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
+          Something went wrong loading data. <button onClick={() => { setError(false); fetchBookings(); }} className="font-medium underline hover:no-underline">Try again</button>
+        </div>
+      )}
 
       {/* Table */}
       {loading ? (
