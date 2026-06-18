@@ -329,11 +329,19 @@ export default function WaiversPage() {
     });
   }
 
-  function getSignatureDisplayUrl(signatureUrl: string | null) {
-    if (!signatureUrl) return null;
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    return `${supabaseUrl}/storage/v1/object/public/contracts/${signatureUrl}`;
-  }
+  const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
+
+  // Load signed URL when a signed waiver is selected
+  useEffect(() => {
+    if (selectedSigned?.signature_url) {
+      const supabase = createClient();
+      supabase.storage.from('contracts').createSignedUrl(selectedSigned.signature_url, 3600)
+        .then(({ data }) => setSignatureUrl(data?.signedUrl || null))
+        .catch(() => setSignatureUrl(null));
+    } else {
+      setSignatureUrl(null);
+    }
+  }, [selectedSigned?.signature_url]);
 
   // Sort templates: active first, then inactive
   const sortedTemplates = [...templates].sort((a, b) => {
@@ -929,12 +937,16 @@ export default function WaiversPage() {
                 <div>
                   <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Signature</p>
                   <div className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white p-2">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={getSignatureDisplayUrl(selectedSigned.signature_url) || ''}
-                      alt="Signature"
-                      className="max-h-32 mx-auto"
-                    />
+                    {signatureUrl ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img
+                        src={signatureUrl}
+                        alt="Signature"
+                        className="max-h-32 mx-auto"
+                      />
+                    ) : (
+                      <p className="text-xs text-gray-400 text-center py-4">Loading signature...</p>
+                    )}
                   </div>
                 </div>
               )}
