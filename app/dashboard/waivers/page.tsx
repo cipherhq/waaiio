@@ -1037,9 +1037,47 @@ export default function WaiversPage() {
               </button>
               <button
                 onClick={() => {
-                  const canvas = document.querySelector('#waiver-qr-download canvas') as HTMLCanvasElement;
-                  if (!canvas) return;
-                  const url = canvas.toDataURL('image/png');
+                  const qrCanvas = document.querySelector('#waiver-qr-download canvas') as HTMLCanvasElement;
+                  if (!qrCanvas) return;
+
+                  // Create branded image with title + QR + footer
+                  const pad = 60;
+                  const qrSize = 600;
+                  const headerH = 80;
+                  const subH = 50;
+                  const footerH = 60;
+                  const totalW = qrSize + pad * 2;
+                  const totalH = headerH + subH + qrSize + pad + footerH + pad;
+
+                  const c = document.createElement('canvas');
+                  c.width = totalW;
+                  c.height = totalH;
+                  const ctx2d = c.getContext('2d')!;
+
+                  // White background
+                  ctx2d.fillStyle = '#ffffff';
+                  ctx2d.fillRect(0, 0, totalW, totalH);
+
+                  // Title
+                  ctx2d.fillStyle = '#1a1a1a';
+                  ctx2d.font = 'bold 32px system-ui, -apple-system, sans-serif';
+                  ctx2d.textAlign = 'center';
+                  ctx2d.fillText(qrModal.title, totalW / 2, pad + 36);
+
+                  // "Scan to sign waiver"
+                  ctx2d.fillStyle = '#6C2BD9';
+                  ctx2d.font = '600 22px system-ui, -apple-system, sans-serif';
+                  ctx2d.fillText('Scan to sign waiver', totalW / 2, pad + headerH + 10);
+
+                  // QR code
+                  ctx2d.drawImage(qrCanvas, pad, pad + headerH + subH, qrSize, qrSize);
+
+                  // Footer
+                  ctx2d.fillStyle = '#999999';
+                  ctx2d.font = '16px system-ui, -apple-system, sans-serif';
+                  ctx2d.fillText('Powered by waaiio.com', totalW / 2, pad + headerH + subH + qrSize + 40);
+
+                  const url = c.toDataURL('image/png');
                   const a = document.createElement('a');
                   a.href = url;
                   a.download = `${qrModal.title.replace(/\s+/g, '-').toLowerCase()}-waiver-qr.png`;
