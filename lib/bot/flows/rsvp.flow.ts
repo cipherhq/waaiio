@@ -178,14 +178,14 @@ export const rsvpFlow: FlowDefinition = {
         if (response === 'declined') {
           return [{
             type: 'text',
-            text: `Sorry to miss you! Maybe next time 🙏\n\nIf you change your mind, just send *rsvp* again.\n\n💡 *What you can do:*\n• Type *Hi* to explore more`,
+            text: `🙏 We'll miss you! Maybe next time 💛\n\nIf you change your mind, just send *rsvp* again.\n\n_Powered by Waaiio_`,
           }];
         }
 
         if (response === 'maybe') {
           return [{
             type: 'text',
-            text: `Got it! We'll check back with you closer to the date.\n\nIf you decide, just send *yes* or *no* anytime.\n\n💡 *What you can do:*\n• Type *Hi* to explore more`,
+            text: `🤔 No pressure! We'll keep a spot warm for you 😊\n\nIf you decide, just send *yes* or *no* anytime.\n\n_Powered by Waaiio_`,
           }];
         }
 
@@ -213,17 +213,19 @@ export const rsvpFlow: FlowDefinition = {
         const guestLabel = plusOnes > 0 ? `${totalGuests} guests (you + ${plusOnes})` : '1 guest (just you)';
 
         const lines = [
-          `✅ You're confirmed for *${eventName}*!`,
+          `🎉 *You're in! Can't wait to see you at ${eventName}!* 🥳🔥`,
           '',
           eventDate ? `📅 ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}` : '',
           eventVenue ? `📍 ${eventVenue}` : '',
           `👥 ${guestLabel}`,
           dietaryNotes ? `🍽️ Dietary: ${dietaryNotes}` : '',
           '',
-          `We'll send you a reminder before the event. See you there!`,
+          `We'll send you a reminder before the event. See you there! 💃🕺`,
+          '',
+          `_Powered by Waaiio_`,
         ].filter(Boolean);
 
-        return [{ type: 'text', text: lines.join('\n') + `\n\n💡 *What you can do:*\n• Type *Hi* to explore more` }];
+        return [{ type: 'text', text: lines.join('\n') }];
       },
       async validate(): Promise<ValidationResult> {
         return { valid: true };
