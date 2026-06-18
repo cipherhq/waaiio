@@ -68,12 +68,70 @@ export async function POST(request: NextRequest) {
 
       const { data: existing } = await findQuery.maybeSingle();
 
-      if (existing) {
+      if (existing && existing.status !== 'pending') {
+        // Already responded — don't re-send
         return NextResponse.json({
           success: true,
           already_invited: true,
           status: existing.status,
           rsvp_url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/rsvp/${existing.invite_token}`,
+        });
+      }
+      if (existing && existing.status === 'pending') {
+        // Pending — WhatsApp probably didn't send last time. Use existing invite but continue to send.
+        // Skip creating a new invite, use the existing one
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+        const inviteLink = `${appUrl}/rsvp/${existing.invite_token}`;
+
+        // Try to send WhatsApp now
+        let whatsappSent = false;
+        try {
+          const resolver = new ChannelResolver(supabase);
+          const resolved = await resolver.resolveByBusinessId(target.business_id);
+          if (resolved) {
+            // Get host name
+            const { data: biz } = await supabase.from('businesses').select('name, owner_id').eq('id', target.business_id).single();
+            let hostName = biz?.name || '';
+            if (biz?.owner_id) {
+              const { data: owner } = await supabase.from('profiles').select('first_name, last_name').eq('id', biz.owner_id).single();
+              if (owner?.first_name) hostName = `${owner.first_name}${owner.last_name ? ` ${owner.last_name}` : ''}`;
+            }
+
+            let dateLabel = target.date;
+            try { dateLabel = new Date(target.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); } catch {}
+            let timeLabel = '';
+            if (target.time) { try { const [h, m] = target.time.split(':'); const dt = new Date(); dt.setHours(parseInt(h, 10), parseInt(m, 10)); timeLabel = dt.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit' }); } catch { timeLabel = target.time; } }
+
+            const message = [
+              `🎉 *You're Invited!*`, '',
+              hostName ? `*${hostName}* invites you to:` : '',
+              `*${target.name}*`,
+              `📅 ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}`,
+              target.venue ? `📍 ${target.venue}` : '',
+              '', `RSVP: ${inviteLink}`,
+            ].filter(Boolean).join('\n');
+
+            await resolved.sender.sendButtons({
+              to: cleanPhone,
+              body: message,
+              buttons: [
+                { id: `rsvp_yes_${existing.id}`, title: "Yes, I'll be there!" },
+                { id: `rsvp_maybe_${existing.id}`, title: 'Maybe' },
+                { id: `rsvp_no_${existing.id}`, title: "Can't make it" },
+              ],
+            });
+            whatsappSent = true;
+          }
+        } catch (err) {
+          logger.error('[INVITE-OPTIN] Re-send WhatsApp error:', err);
+        }
+
+        return NextResponse.json({
+          success: true,
+          already_invited: true,
+          whatsapp_sent: whatsappSent,
+          status: existing.status,
+          rsvp_url: inviteLink,
         });
       }
     }
