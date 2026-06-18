@@ -28,7 +28,7 @@ export function OnboardingChecklist() {
       return {
         key: 'setup',
         label: 'Add your appointments',
-        description: 'Add the services people can book with date, time, and staff.',
+        description: 'Add the services users can book with date, time, and staff.',
         href: '/dashboard/appointments-management',
         check: async () => {
           const supabase = createClient();
@@ -41,7 +41,7 @@ export function OnboardingChecklist() {
       return {
         key: 'setup',
         label: 'Add your products',
-        description: 'Add products or menu items for people to browse and order.',
+        description: 'Add products or menu items for users to browse and order.',
         href: '/dashboard/products',
         check: async () => {
           const supabase = createClient();
@@ -67,7 +67,7 @@ export function OnboardingChecklist() {
       return {
         key: 'setup',
         label: 'Create your first event',
-        description: 'Add an event so people can buy tickets.',
+        description: 'Add an event so users can buy tickets.',
         href: '/dashboard/events',
         check: async () => {
           const supabase = createClient();
@@ -93,7 +93,7 @@ export function OnboardingChecklist() {
     return {
       key: 'setup',
       label: 'Add your services',
-      description: 'Add the services you offer with prices so people can get started.',
+      description: 'Add the services you offer with prices so users can get started.',
       href: '/dashboard/services',
       check: async () => {
         const supabase = createClient();
@@ -108,7 +108,7 @@ export function OnboardingChecklist() {
     {
       key: 'whatsapp',
       label: 'Connect your WhatsApp number',
-      description: 'Get your own dedicated number so people can message you directly.',
+      description: 'Get your own dedicated number so users can message you directly.',
       href: '/dashboard/whatsapp/connect',
       check: async () => {
         const supabase = createClient();
