@@ -558,6 +558,50 @@ export async function sendProactiveConfirmation(
       }
     }
 
+    // ── 8c. Send email receipt for campaign donations ──
+    if (payment.campaign_id) {
+      try {
+        const { data: donation } = await supabase
+          .from('campaign_donations')
+          .select('donor_name, donor_phone, reference_code, campaigns(title)')
+          .eq('campaign_id', payment.campaign_id)
+          .eq('status', 'success')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (donation?.donor_phone) {
+          // Look up donor email from profiles via phone
+          const phoneP = donation.donor_phone.startsWith('+') ? donation.donor_phone : `+${donation.donor_phone}`;
+          const phoneN = donation.donor_phone.startsWith('+') ? donation.donor_phone.slice(1) : donation.donor_phone;
+          const { data: donorProfile } = await supabase
+            .from('profiles')
+            .select('email')
+            .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+            .limit(1)
+            .maybeSingle();
+
+          const donorEmail = donorProfile?.email || null;
+          if (donorEmail) {
+            const campaignTitle = (donation.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+            const { sendEmail } = await import('@/lib/email/client');
+            const { donationReceiptEmail } = await import('@/lib/email/templates');
+            const emailContent = donationReceiptEmail({
+              donorName: donation.donor_name || 'Donor',
+              businessName,
+              campaignTitle,
+              formattedAmount: formatCurrency(payment.amount, countryCode),
+              referenceCode: donation.reference_code || referenceCode,
+            });
+            await sendEmail({ to: donorEmail, ...emailContent });
+            logger.info(`${logPrefix} Donation receipt email sent to ${donorEmail}`);
+          }
+        }
+      } catch (donationEmailErr) {
+        logger.error(`${logPrefix} Donation receipt email error:`, donationEmailErr);
+      }
+    }
+
     // ── 9. Deactivate the payment-waiting session (webhook confirmed — user doesn't need to tap "I've Paid") ──
     if (customerPhone) {
       await supabase

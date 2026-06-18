@@ -85,7 +85,7 @@ Waaiio is a no-code platform that automates bookings, payments, orders, donation
 
 ## Pricing
 
-- **Starter (Free)**: 30-day free trial with all features, then 2% per transaction
+- **Starter (Free)**: 30-day free trial with all features, then 2.5% per transaction
 - **Pro**: Monthly subscription + 1.5% per transaction. Annual billing saves 20%.
 - **Premium**: Monthly subscription + 1% per transaction. Annual billing saves 20%.
 

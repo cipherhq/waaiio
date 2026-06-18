@@ -310,7 +310,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     if (error) {
       console.error('[QUEUE] Insert error:', error);
-      return { valid: false, errorMessage: 'Sorry, there was an error joining the queue. Please try again.' };
+      return { valid: false, errorMessage: 'Something went wrong on our end. Send *Hi* to start over.' };
     }
 
     // Notify owner: email + WhatsApp

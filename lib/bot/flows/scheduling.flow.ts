@@ -1986,7 +1986,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (rescheduleError) {
             console.error('Failed to reschedule booking', rescheduleError);
-            return [{ type: 'text', text: 'Sorry, something went wrong rescheduling. Send *my bookings* to try again.' }];
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
@@ -2161,7 +2161,7 @@ export const schedulingFlow: FlowDefinition = {
 
           if (slotError || !slotResult) {
             console.error('Failed to create booking', slotError);
-            return [{ type: 'text', text: 'Sorry, something went wrong. Send *Hi* to start over.' }];
+            return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
           }
 
           if (!slotResult.slot_available) {

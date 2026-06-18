@@ -351,50 +351,50 @@ export default function PartiesPage() {
     return (
       <div>
         <div className="flex items-center gap-3">
-          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300">
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-xl font-bold text-gray-900">{view === 'add' ? 'Create Party' : 'Edit Party'}</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{view === 'add' ? 'Create Party' : 'Edit Party'}</h1>
         </div>
 
         <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Party Name <span className="text-red-400">*</span></label>
-              <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Summer BBQ Party" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" autoFocus />
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Party Name <span className="text-red-400">*</span></label>
+              <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Summer BBQ Party" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" autoFocus />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
-              <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={2} placeholder="What's this party about?" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-              <p className="mt-1 text-xs text-gray-400">Tell guests what to expect — food, activities, vibe</p>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+              <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={2} placeholder="What's this party about?" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Tell guests what to expect — food, activities, vibe</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Date <span className="text-red-400">*</span></label>
-                <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Date <span className="text-red-400">*</span></label>
+                <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Start Time</label>
-                <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Start Time</label>
+                <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">End Time</label>
-                <input type="time" value={form.end_time} onChange={e => setForm({ ...form, end_time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">End Time</label>
+                <input type="time" value={form.end_time} onChange={e => setForm({ ...form, end_time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
               </div>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Venue</label>
-              <input type="text" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} placeholder="e.g. Eko Hotel, Victoria Island" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-              <p className="mt-1 text-xs text-gray-400">Guests will see this address and can tap to open in maps</p>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Venue</label>
+              <input type="text" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} placeholder="e.g. Eko Hotel, Victoria Island" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Guests will see this address and can tap to open in maps</p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Venue Address</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Venue Address</label>
               <PlacesAutocomplete
                 value={form.venue_address}
                 onChange={(value) => setForm({ ...form, venue_address: value })}
@@ -403,15 +403,15 @@ export default function PartiesPage() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Dress Code</label>
-              <input type="text" value={form.dress_code} onChange={e => setForm({ ...form, dress_code: e.target.value })} placeholder="e.g. All White, Smart Casual" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-              <p className="mt-1 text-xs text-gray-400">Leave blank if casual — only add if it matters</p>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Dress Code</label>
+              <input type="text" value={form.dress_code} onChange={e => setForm({ ...form, dress_code: e.target.value })} placeholder="e.g. All White, Smart Casual" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Leave blank if casual — only add if it matters</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Party Type</label>
-                <select value={form.party_type} onChange={e => setForm({ ...form, party_type: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand">
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Party Type</label>
+                <select value={form.party_type} onChange={e => setForm({ ...form, party_type: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100">
                   <option value="">Select type...</option>
                   <option value="Birthday">Birthday</option>
                   <option value="Wedding">Wedding</option>
@@ -425,54 +425,54 @@ export default function PartiesPage() {
                 </select>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Guest Capacity</label>
-                <input type="number" min={1} value={form.max_guests ?? ''} onChange={e => setForm({ ...form, max_guests: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Unlimited" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-                <p className="mt-1 text-xs text-gray-400">We&apos;ll stop accepting RSVPs when capacity is reached</p>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Guest Capacity</label>
+                <input type="number" min={1} value={form.max_guests ?? ''} onChange={e => setForm({ ...form, max_guests: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Unlimited" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">We&apos;ll stop accepting RSVPs when capacity is reached</p>
               </div>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Custom Invite Message</label>
-              <textarea value={form.invite_message} onChange={e => setForm({ ...form, invite_message: e.target.value })} rows={2} placeholder="Personal message to include in invites" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-              <p className="mt-1 text-xs text-gray-400">This personal note appears in every invite you send</p>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Invite Message</label>
+              <textarea value={form.invite_message} onChange={e => setForm({ ...form, invite_message: e.target.value })} rows={2} placeholder="Personal message to include in invites" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">This personal note appears in every invite you send</p>
             </div>
 
             {/* Custom RSVP Responses (Growth+ only) */}
             {(business.subscription_tier === 'growth' || business.subscription_tier === 'business') ? (
               <div className="rounded-xl border border-brand/20 bg-brand/5 p-4 space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-gray-900">Custom RSVP Responses</span>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">Custom RSVP Responses</span>
                   <span className="rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-bold text-brand uppercase">Pro</span>
                 </div>
                 <p className="text-xs text-gray-500">Customize the message guests see after they respond. Leave blank for defaults.</p>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-green-700">When guest says Yes</label>
-                  <input type="text" value={form.rsvp_yes_message} onChange={e => setForm({ ...form, rsvp_yes_message: e.target.value })} placeholder="Can't wait to see you! 🎉" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                  <p className="mt-1 text-xs text-gray-400">Guests see this after they respond on WhatsApp</p>
+                  <input type="text" value={form.rsvp_yes_message} onChange={e => setForm({ ...form, rsvp_yes_message: e.target.value })} placeholder="Can't wait to see you! 🎉" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                  <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Guests see this after they respond on WhatsApp</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-amber-700">When guest says Maybe</label>
-                  <input type="text" value={form.rsvp_maybe_message} onChange={e => setForm({ ...form, rsvp_maybe_message: e.target.value })} placeholder="Hope to see you there! Let us know if anything changes." maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                  <p className="mt-1 text-xs text-gray-400">Guests see this after they respond on WhatsApp</p>
+                  <input type="text" value={form.rsvp_maybe_message} onChange={e => setForm({ ...form, rsvp_maybe_message: e.target.value })} placeholder="Hope to see you there! Let us know if anything changes." maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                  <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Guests see this after they respond on WhatsApp</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-red-700">When guest declines</label>
-                  <input type="text" value={form.rsvp_no_message} onChange={e => setForm({ ...form, rsvp_no_message: e.target.value })} placeholder="Sorry you can't make it. You'll be missed!" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                  <p className="mt-1 text-xs text-gray-400">Guests see this after they respond on WhatsApp</p>
+                  <input type="text" value={form.rsvp_no_message} onChange={e => setForm({ ...form, rsvp_no_message: e.target.value })} placeholder="Sorry you can't make it. You'll be missed!" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                  <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Guests see this after they respond on WhatsApp</p>
                 </div>
                 <div className="border-t border-brand/10 pt-3 mt-3">
-                  <label className="mb-1 block text-xs font-medium text-gray-700">Auto-Followup Message</label>
-                  <textarea value={form.followup_message} onChange={e => setForm({ ...form, followup_message: e.target.value })} rows={2} placeholder="Reminder: The party is tomorrow! See you there 🎊" maxLength={1000} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                  <p className="mt-1 text-xs text-gray-400">Sent automatically to confirmed guests before the party</p>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">Auto-Followup Message</label>
+                  <textarea value={form.followup_message} onChange={e => setForm({ ...form, followup_message: e.target.value })} rows={2} placeholder="Reminder: The party is tomorrow! See you there 🎊" maxLength={1000} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                  <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Sent automatically to confirmed guests before the party</p>
                   <div className="mt-2 flex items-center gap-2">
                     <label className="text-xs text-gray-500">Send</label>
-                    <input type="number" min={1} max={14} value={form.followup_days_before || ''} onChange={e => setForm({ ...form, followup_days_before: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-center outline-none focus:border-brand" />
+                    <input type="number" min={1} max={14} value={form.followup_days_before || ''} onChange={e => setForm({ ...form, followup_days_before: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-center outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                     <label className="text-xs text-gray-500">day(s) before the party</label>
                   </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+              <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
                 <p className="text-xs text-gray-500">
                   <span className="font-semibold text-brand">Growth plan</span> — Customize RSVP response messages and auto-followups.{' '}
                   <a href="/dashboard/settings?tab=account" className="text-brand font-medium hover:underline">Upgrade →</a>
@@ -482,7 +482,7 @@ export default function PartiesPage() {
 
             {/* Party Flyer / Image */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Party Flyer</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Party Flyer</label>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -508,26 +508,26 @@ export default function PartiesPage() {
                   )}
                 </button>
               )}
-              <p className="mt-1 text-xs text-gray-400">Upload a flyer or photo — it shows in the invite and RSVP page</p>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Upload a flyer or photo — it shows in the invite and RSVP page</p>
             </div>
           </div>
 
           {/* Right: Settings */}
           <div className="space-y-3">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Settings</p>
-            <div className="rounded-lg border border-gray-100 bg-white p-3">
-              <label className="mb-1 block text-sm font-medium text-gray-800">Status</label>
-              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as PartyItem['status'] })} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand">
+            <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+              <label className="mb-1 block text-sm font-medium text-gray-800 dark:text-gray-200">Status</label>
+              <select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as PartyItem['status'] })} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100">
                 <option value="active">Active</option>
                 <option value="draft">Draft</option>
                 <option value="cancelled">Cancelled</option>
                 <option value="completed">Completed</option>
               </select>
             </div>
-            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
               <div className="mr-3">
-                <p className="text-sm font-medium text-gray-800">Allow Plus-Ones</p>
-                <p className="text-xs text-gray-400">Guests can bring extra people</p>
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Allow Plus-Ones</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">Guests can bring extra people</p>
               </div>
               <button type="button" onClick={() => setForm({ ...form, allow_plus_ones: !form.allow_plus_ones })}
                 className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.allow_plus_ones ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -535,15 +535,15 @@ export default function PartiesPage() {
               </button>
             </div>
             {form.allow_plus_ones && (
-              <div className="rounded-lg border border-gray-100 bg-white p-3">
-                <label className="mb-1 block text-sm font-medium text-gray-800">Max Plus-Ones</label>
-                <input type="number" min={1} max={10} value={form.max_plus_ones || ''} onFocus={e => e.target.select()} onChange={e => setForm({ ...form, max_plus_ones: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+              <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                <label className="mb-1 block text-sm font-medium text-gray-800 dark:text-gray-200">Max Plus-Ones</label>
+                <input type="number" min={1} max={10} value={form.max_plus_ones || ''} onFocus={e => e.target.select()} onChange={e => setForm({ ...form, max_plus_ones: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
               </div>
             )}
-            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
               <div className="mr-3">
-                <p className="text-sm font-medium text-gray-800">Ask Dietary</p>
-                <p className="text-xs text-gray-400">Ask guests about food needs</p>
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Ask Dietary</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">Ask guests about food needs</p>
               </div>
               <button type="button" onClick={() => setForm({ ...form, ask_dietary: !form.ask_dietary })}
                 className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.ask_dietary ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -553,13 +553,13 @@ export default function PartiesPage() {
           </div>
         </div>
 
-        <div className="mt-6 flex gap-3 border-t border-gray-100 pt-4">
+        <div className="mt-6 flex gap-3 border-t border-gray-100 dark:border-gray-700 pt-4">
           <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.date} className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
             {saving ? 'Saving...' : view === 'add' ? 'Create Party' : 'Save Changes'}
           </button>
-          <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">Cancel</button>
+          <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
           {view === 'edit' && form.id && (
-            <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">Delete</button>
+            <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
           )}
         </div>
       </div>
@@ -578,22 +578,22 @@ export default function PartiesPage() {
     return (
       <div>
         <div className="flex items-center gap-3">
-          <button onClick={() => { setView('list'); setSelectedParty(null); }} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+          <button onClick={() => { setView('list'); setSelectedParty(null); }} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300">
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
           <div className="flex-1">
-            <h1 className="text-xl font-bold text-gray-900">{selectedParty.name}</h1>
-            <p className="text-sm text-gray-500">{selectedParty.date} {selectedParty.time ? `at ${selectedParty.time}` : ''} {selectedParty.venue ? `- ${selectedParty.venue}` : ''}</p>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{selectedParty.name}</h1>
+            <p className="text-sm text-gray-500 dark:text-gray-400">{selectedParty.date} {selectedParty.time ? `at ${selectedParty.time}` : ''} {selectedParty.venue ? `- ${selectedParty.venue}` : ''}</p>
           </div>
-          <button onClick={() => openEdit(selectedParty)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50">Edit</button>
+          <button onClick={() => openEdit(selectedParty)} className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">Edit</button>
         </div>
 
         {/* Actions */}
         <div className="mt-5 flex flex-wrap gap-2">
           <button onClick={() => { setShowBulk(false); setShowSendForm(!showSendForm); }} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">+ Send Invite</button>
-          <button onClick={() => { setShowSendForm(false); setShowBulk(!showBulk); }} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50">Bulk Invite</button>
+          <button onClick={() => { setShowSendForm(false); setShowBulk(!showBulk); }} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700">Bulk Invite</button>
           {invites.length > 0 && (
             <button
               onClick={() => {
@@ -615,7 +615,7 @@ export default function PartiesPage() {
                 a.click();
                 URL.revokeObjectURL(url);
               }}
-              className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
               Export Guest List
             </button>
@@ -697,21 +697,21 @@ export default function PartiesPage() {
 
         {/* Send invite form */}
         {showSendForm && (
-          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-5">
-            <h3 className="text-sm font-semibold text-gray-900">Send Invite</h3>
+          <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Send Invite</h3>
             <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-gray-500">Guest Name <span className="text-gray-400">(optional)</span></label>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Guest Name <span className="text-gray-400">(optional)</span></label>
               <input
                 type="text"
                 value={inviteName}
                 onChange={e => setInviteName(e.target.value)}
                 placeholder="e.g. John Smith"
                 maxLength={100}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               />
             </div>
             <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-gray-500">Phone Number (WhatsApp) *</label>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Phone Number (WhatsApp) *</label>
               <PhoneInput
                 value={invitePhone}
                 onChange={setInvitePhone}
@@ -719,66 +719,66 @@ export default function PartiesPage() {
               />
             </div>
             <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-gray-500">Email <span className="text-gray-400">(optional — also sends email invite)</span></label>
+              <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">Email <span className="text-gray-400">(optional — also sends email invite)</span></label>
               <input
                 type="email"
                 value={inviteEmail}
                 onChange={e => setInviteEmail(e.target.value)}
                 placeholder="guest@example.com"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               />
             </div>
             <div className="mt-3 flex gap-2">
               <button onClick={handleSendInvite} disabled={sending || !invitePhone.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">{sending ? 'Sending...' : 'Send'}</button>
-              <button onClick={() => { setShowSendForm(false); setInviteEmail(''); }} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={() => { setShowSendForm(false); setInviteEmail(''); }} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
             </div>
           </div>
         )}
 
         {/* Bulk invite form */}
         {showBulk && (
-          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-5">
-            <h3 className="text-sm font-semibold text-gray-900">Bulk Invite</h3>
+          <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Bulk Invite</h3>
             <p className="mt-1 text-xs text-gray-500">Paste phone numbers, one per line</p>
             <textarea value={bulkPhones} onChange={e => setBulkPhones(e.target.value)} rows={5} placeholder={"2348012345678\n2349087654321"} className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand font-mono" />
             <div className="mt-3 flex gap-2">
               <button onClick={handleBulkInvite} disabled={sending || !bulkPhones.trim()} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:opacity-50">
                 {sending ? 'Sending...' : `Send ${bulkPhones.split(/[\n,;]+/).filter(p => p.trim()).length} Invites`}
               </button>
-              <button onClick={() => setShowBulk(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
+              <button onClick={() => setShowBulk(false)} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">Cancel</button>
             </div>
           </div>
         )}
 
         {/* RSVP Summary */}
         <div className="mt-6 grid gap-3 grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+          <div className="rounded-xl border border-green-100 dark:border-green-800 bg-green-50 dark:bg-green-900/30 p-4">
             <p className="text-xs font-medium text-green-600">Coming</p>
             <p className="mt-1 text-2xl font-bold text-green-700">{accepted.length}</p>
             {totalPlusOnes > 0 && <p className="text-xs text-green-600">+ {totalPlusOnes} plus-ones = {totalComing} total</p>}
           </div>
-          <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
+          <div className="rounded-xl border border-amber-100 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 p-4">
             <p className="text-xs font-medium text-amber-600">Maybe</p>
             <p className="mt-1 text-2xl font-bold text-amber-700">{maybe.length}</p>
           </div>
-          <div className="rounded-xl border border-red-100 bg-red-50 p-4">
+          <div className="rounded-xl border border-red-100 dark:border-red-800 bg-red-50 dark:bg-red-900/30 p-4">
             <p className="text-xs font-medium text-red-600">Declined</p>
             <p className="mt-1 text-2xl font-bold text-red-700">{declined.length}</p>
           </div>
-          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4">
-            <p className="text-xs font-medium text-gray-500">Pending</p>
+          <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Pending</p>
             <p className="mt-1 text-2xl font-bold text-gray-700">{pending.length}</p>
           </div>
         </div>
 
         {/* Capacity bar */}
         {selectedParty.max_guests && selectedParty.max_guests > 0 && (
-          <div className="mt-4 rounded-xl border border-gray-100 bg-white p-4">
+          <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm font-medium text-gray-700">Guest Capacity</p>
-              <p className="text-sm font-semibold text-gray-900">{accepted.length} / {selectedParty.max_guests} spots filled</p>
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Guest Capacity</p>
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{accepted.length} / {selectedParty.max_guests} spots filled</p>
             </div>
-            <div className="h-3 w-full rounded-full bg-gray-100 overflow-hidden">
+            <div className="h-3 w-full rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${accepted.length >= selectedParty.max_guests ? 'bg-red-500' : accepted.length >= selectedParty.max_guests * 0.8 ? 'bg-amber-500' : 'bg-green-500'}`}
                 style={{ width: `${Math.min(100, (accepted.length / selectedParty.max_guests) * 100)}%` }}
@@ -792,34 +792,34 @@ export default function PartiesPage() {
 
         {/* Analytics */}
         {invites.length > 0 && (
-          <div className="mt-6 rounded-xl border border-gray-100 bg-white p-5">
-            <h3 className="text-sm font-bold text-gray-900 mb-4">Invite Analytics</h3>
+          <div className="mt-6 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
+            <h3 className="text-sm font-bold text-gray-900 dark:text-gray-100 mb-4">Invite Analytics</h3>
             <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
               <div>
-                <p className="text-xs font-medium text-gray-500">Response Rate</p>
-                <p className="mt-1 text-xl font-bold text-gray-900">
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Response Rate</p>
+                <p className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">
                   {Math.round(((accepted.length + maybe.length + declined.length) / invites.length) * 100)}%
                 </p>
-                <p className="text-xs text-gray-400">{accepted.length + maybe.length + declined.length} of {invites.length} responded</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{accepted.length + maybe.length + declined.length} of {invites.length} responded</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-gray-500">Acceptance Rate</p>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Acceptance Rate</p>
                 <p className="mt-1 text-xl font-bold text-green-600">
                   {(accepted.length + maybe.length + declined.length) > 0
                     ? Math.round((accepted.length / (accepted.length + maybe.length + declined.length)) * 100)
                     : 0}%
                 </p>
-                <p className="text-xs text-gray-400">{accepted.length} confirmed yes</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{accepted.length} confirmed yes</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-gray-500">Total Headcount</p>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Headcount</p>
                 <p className="mt-1 text-xl font-bold text-brand">{totalComing}</p>
-                <p className="text-xs text-gray-400">{accepted.length} guests + {totalPlusOnes} plus-ones</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{accepted.length} guests + {totalPlusOnes} plus-ones</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-gray-500">Awaiting Response</p>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Awaiting Response</p>
                 <p className="mt-1 text-xl font-bold text-amber-600">{pending.length + maybe.length}</p>
-                <p className="text-xs text-gray-400">{pending.length} pending, {maybe.length} maybe</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">{pending.length} pending, {maybe.length} maybe</p>
               </div>
             </div>
 
@@ -862,7 +862,7 @@ export default function PartiesPage() {
                       );
                     })}
                   </div>
-                  <div className="mt-2 flex gap-4 text-xs text-gray-400">
+                  <div className="mt-2 flex gap-4 text-xs text-gray-400 dark:text-gray-500">
                     <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-green-400" /> Accepted</span>
                     <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" /> Maybe</span>
                     <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" /> Declined</span>
@@ -886,7 +886,7 @@ export default function PartiesPage() {
           <div className="mt-6 overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-gray-100 text-xs font-medium uppercase tracking-wider text-gray-400">
+                <tr className="border-b border-gray-100 dark:border-gray-700 text-xs font-medium uppercase tracking-wider text-gray-400">
                   <th scope="col" className="pb-3 pr-4">Guest</th>
                   <th scope="col" className="pb-3 pr-4">Phone</th>
                   <th scope="col" className="pb-3 pr-4">Status</th>
@@ -905,9 +905,9 @@ export default function PartiesPage() {
                     pending: 'bg-gray-100 text-gray-600',
                   };
                   return (
-                    <tr key={invite.id} className="border-b border-gray-50">
-                      <td className="py-3 pr-4 font-medium text-gray-900">{invite.guest_name || '-'}</td>
-                      <td className="py-3 pr-4 text-gray-600 font-mono text-xs">{invite.guest_phone}</td>
+                    <tr key={invite.id} className="border-b border-gray-50 dark:border-gray-700">
+                      <td className="py-3 pr-4 font-medium text-gray-900 dark:text-gray-100">{invite.guest_name || '-'}</td>
+                      <td className="py-3 pr-4 text-gray-600 dark:text-gray-400 font-mono text-xs">{invite.guest_phone}</td>
                       <td className="py-3 pr-4">
                         <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[invite.status]}`}>{invite.status}</span>
                       </td>
@@ -971,8 +971,8 @@ export default function PartiesPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Parties</h1>
-          <p className="mt-1 text-sm text-gray-500">Create parties and track guest RSVPs</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Parties</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Create parties and track guest RSVPs</p>
         </div>
         <button onClick={openAdd} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-semibold text-white hover:bg-brand-600">+ New Party</button>
       </div>
@@ -1005,18 +1005,18 @@ export default function PartiesPage() {
               <div
                 key={party.id}
                 onClick={() => openDetail(party)}
-                className="cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm"
+                className="cursor-pointer overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 transition hover:border-gray-200 dark:hover:border-gray-600 hover:shadow-sm"
               >
                 {party.image_url ? (
                   <div className="relative h-32 w-full">
                     <Image src={party.image_url} alt={party.name} fill className="object-cover" sizes="(max-width: 768px) 100vw, 33vw" />
                   </div>
                 ) : (
-                  <div className="flex h-32 w-full items-center justify-center bg-gray-50 text-3xl text-gray-300">🎉</div>
+                  <div className="flex h-32 w-full items-center justify-center bg-gray-50 dark:bg-gray-900 text-3xl text-gray-300 dark:text-gray-600">🎉</div>
                 )}
                 <div className="p-5">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-gray-900">{party.name}</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{party.name}</h3>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[party.status] || 'bg-gray-100 text-gray-600'}`}>
                       {party.status}
                     </span>
@@ -1026,11 +1026,11 @@ export default function PartiesPage() {
                       {party.party_type}
                     </span>
                   )}
-                  <p className="mt-1 text-xs text-gray-500">
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                     {party.date} {party.time ? `at ${party.time}` : ''} {party.venue ? `\u2022 ${party.venue}` : ''}
                   </p>
                   {party.dress_code && (
-                    <p className="mt-1 text-xs text-gray-400">Dress code: {party.dress_code}</p>
+                    <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Dress code: {party.dress_code}</p>
                   )}
                 </div>
               </div>

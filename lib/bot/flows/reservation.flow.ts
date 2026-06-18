@@ -692,7 +692,7 @@ export const reservationFlow: FlowDefinition = {
 
         if (insertError || !reservation) {
           console.error('Failed to create reservation', insertError);
-          return [{ type: 'text', text: 'Sorry, something went wrong. Send *Hi* to start over.' }];
+          return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
         }
 
         d.reservation_id = reservation.id;

@@ -100,6 +100,6 @@ export async function handleTicketCheckin(
     ].join('\n'));
   } catch (err) {
     logger.error('[BOT] Ticket check-in error:', err);
-    await sendText(from, 'Sorry, something went wrong verifying your ticket. Please try again or check in at the entrance.');
+    await sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
   }
 }

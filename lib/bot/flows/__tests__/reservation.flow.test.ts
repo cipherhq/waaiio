@@ -243,7 +243,7 @@ describe('Reservation Flow', () => {
   describe('error message conventions', () => {
     it('create_reservation insert error uses friendly language', async () => {
       // When reservation insert fails, the message should NOT contain "Something went wrong"
-      // The actual code uses "Sorry, something went wrong" which is the legacy pattern.
+      // The actual code uses the standard error message: "Something went wrong on our end."
       // At minimum, verify that user-facing error messages exist and are not empty.
       const step = getStep(reservationFlow, 'create_reservation');
 

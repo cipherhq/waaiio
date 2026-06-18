@@ -390,13 +390,13 @@ export default function ServicesPage() {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setView('list')}
-            className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300"
           >
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-xl font-bold text-gray-900">
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">
             {view === 'add' ? `Add ${labels.serviceName || 'Service'}` : `Edit ${labels.serviceName || 'Service'}`}
           </h1>
         </div>
@@ -406,7 +406,7 @@ export default function ServicesPage() {
           <div className="space-y-4">
             {/* Image upload */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Image</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Image</label>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -445,7 +445,7 @@ export default function ServicesPage() {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Name <span className="text-red-400">*</span>
               </label>
               <input
@@ -453,29 +453,29 @@ export default function ServicesPage() {
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder={labels.namePlaceholder}
-                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                 autoFocus
               />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
               <textarea
                 value={form.description || ''}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 rows={2}
                 placeholder="Brief description (optional)"
-                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               />
             </div>
 
             {/* Toggles for categories that don't require pricing (churches, mosques, etc.) */}
             {!labels.defaultHasPrice && (
               <div className="space-y-3">
-                <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 px-4 py-3">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Set a fixed amount</p>
-                    <p className="text-xs text-gray-400">Enable if this {(labels.serviceName || 'service').toLowerCase()} has a set price</p>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Set a fixed amount</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Enable if this {(labels.serviceName || 'service').toLowerCase()} has a set price</p>
                   </div>
                   <button
                     type="button"
@@ -490,10 +490,10 @@ export default function ServicesPage() {
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 px-4 py-3">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Recurring</p>
-                    <p className="text-xs text-gray-400">Members can give on a regular schedule</p>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Recurring</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Members can give on a regular schedule</p>
                   </div>
                   <button
                     type="button"
@@ -513,11 +513,11 @@ export default function ServicesPage() {
 
                 {form.billing_type === 'recurring' && (
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">How often?</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">How often?</label>
                     <select
                       value={form.recurring_interval || 'monthly'}
                       onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     >
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
@@ -531,7 +531,7 @@ export default function ServicesPage() {
             {showPrice && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Price ({curr})
                   </label>
                   <input
@@ -540,11 +540,11 @@ export default function ServicesPage() {
                     value={form.price || ''}
                     onChange={(e) => setForm({ ...form, price: Math.round(Number(e.target.value)) })}
                     placeholder="Enter price"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
                     Deposit ({curr}) <Tooltip text={FIELD_TOOLTIPS['service.deposit']} />
                   </label>
                   <input
@@ -554,9 +554,9 @@ export default function ServicesPage() {
                     value={form.deposit_amount || ''}
                     onChange={(e) => setForm({ ...form, deposit_amount: Math.round(Number(e.target.value)) })}
                     placeholder="Enter deposit"
-                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                   />
-                  <p className="mt-0.5 text-xs text-gray-400">0 = no deposit required</p>
+                  <p className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">0 = no deposit required</p>
                 </div>
               </div>
             )}
@@ -565,7 +565,7 @@ export default function ServicesPage() {
             {showPrice && !isScheduling && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Billing Type</label>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Billing Type</label>
                   <select
                     value={form.billing_type}
                     onChange={(e) => {
@@ -576,7 +576,7 @@ export default function ServicesPage() {
                         recurring_interval: val === 'recurring' ? (form.recurring_interval || 'monthly') : null,
                       });
                     }}
-                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                   >
                     <option value="one_time">One-time</option>
                     <option value="recurring">Recurring</option>
@@ -584,11 +584,11 @@ export default function ServicesPage() {
                 </div>
                 {form.billing_type === 'recurring' && (
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Recurring Interval</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Recurring Interval</label>
                     <select
                       value={form.recurring_interval || 'monthly'}
                       onChange={(e) => setForm({ ...form, recurring_interval: e.target.value as 'weekly' | 'monthly' })}
-                      className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     >
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
@@ -599,14 +599,14 @@ export default function ServicesPage() {
             )}
 
             {/* ── Optional Sections (toggle to reveal) ── */}
-            <div className="space-y-2 rounded-lg border border-gray-100 bg-gray-50 p-4">
+            <div className="space-y-2 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-2">Additional Options</p>
 
               {/* Service Type */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Drop-off Service <Tooltip text="A drop-off service is when customers bring in an item and leave it with you for processing — like wig revamps, laundry, phone repairs, or tailoring. There's no appointment time needed. The customer pays upfront, drops off their item, and picks it up when it's ready (based on the turnaround time you set)." /></p>
-                  <p className="text-xs text-gray-400">Customer drops off an item for processing — no appointment needed</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Drop-off Service <Tooltip text="A drop-off service is when customers bring in an item and leave it with you for processing — like wig revamps, laundry, phone repairs, or tailoring. There's no appointment time needed. The customer pays upfront, drops off their item, and picks it up when it's ready (based on the turnaround time you set)." /></p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Customer drops off an item for processing — no appointment needed</p>
                 </div>
                 <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, is_dropoff: !(form.metadata?.is_dropoff as boolean) } })}
                   className={`relative h-6 w-11 shrink-0 rounded-full transition ${(form.metadata?.is_dropoff as boolean) ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -617,16 +617,16 @@ export default function ServicesPage() {
                 <div className="ml-1 pb-2">
                   <p className="text-xs text-gray-500 mb-1">Turnaround time (days)</p>
                   <input type="number" min={1} step={1} value={((form.metadata?.turnaround_days ?? '') as number) || ''} onChange={(e) => setForm({ ...form, metadata: { ...form.metadata, turnaround_days: Number(e.target.value) || null } })}
-                    placeholder="e.g. 3" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                  <span className="ml-2 text-xs text-gray-400">days until ready</span>
+                    placeholder="e.g. 3" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                  <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">days until ready</span>
                 </div>
               )}
 
               {/* Group Class toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Group Class <Tooltip text="Mark this as a group class with capacity limits. Customers sign up for available slots. Set max students below." /></p>
-                  <p className="text-xs text-gray-400">Multiple students can book the same time slot</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Group Class <Tooltip text="Mark this as a group class with capacity limits. Customers sign up for available slots. Set max students below." /></p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Multiple students can book the same time slot</p>
                 </div>
                 <button type="button" onClick={() => {
                   const next = !form.is_class;
@@ -648,14 +648,14 @@ export default function ServicesPage() {
                           const updated = [...form.class_schedule];
                           updated[i] = { ...updated[i], day: e.target.value };
                           setForm({ ...form, class_schedule: updated });
-                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand">
+                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100">
                           {WEEKDAYS.map(d => <option key={d.key} value={d.key}>{d.short}</option>)}
                         </select>
                         <input type="time" value={entry.time} onChange={(e) => {
                           const updated = [...form.class_schedule];
                           updated[i] = { ...updated[i], time: e.target.value };
                           setForm({ ...form, class_schedule: updated });
-                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                        }} className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                         <button type="button" onClick={() => {
                           setForm({ ...form, class_schedule: form.class_schedule.filter((_, j) => j !== i) });
                         }} className="text-red-400 hover:text-red-600 text-sm">&times;</button>
@@ -669,10 +669,10 @@ export default function ServicesPage() {
                   </div>
                   {/* Max Students */}
                   <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Max Students per Class</label>
+                    <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max Students per Class</label>
                     <input type="number" min={2} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
                       onChange={(e) => setForm({ ...form, ...{ max_capacity: Number(e.target.value) || null } } as Service)}
-                      placeholder="e.g. 20" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                      placeholder="e.g. 20" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                   </div>
                   {/* Class Roster (edit mode only) */}
                   {view === 'edit' && form.id && classRoster.length > 0 && (
@@ -683,8 +683,8 @@ export default function ServicesPage() {
                       <div className="space-y-1 max-h-40 overflow-y-auto">
                         {classRoster.map((student, i) => (
                           <div key={i} className="flex items-center justify-between rounded-lg bg-white border border-gray-100 px-3 py-1.5">
-                            <span className="text-sm text-gray-800">{student.guest_name || 'Unknown'}</span>
-                            <span className="text-xs text-gray-400">{student.guest_phone}</span>
+                            <span className="text-sm text-gray-800 dark:text-gray-200">{student.guest_name || 'Unknown'}</span>
+                            <span className="text-xs text-gray-400 dark:text-gray-500">{student.guest_phone}</span>
                             <span className={`text-xs px-2 py-0.5 rounded-full ${student.status === 'confirmed' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'}`}>
                               {student.status}
                             </span>
@@ -694,7 +694,7 @@ export default function ServicesPage() {
                     </div>
                   )}
                   {view === 'edit' && form.id && classRoster.length === 0 && (
-                    <p className="text-xs text-gray-400">No students enrolled for upcoming classes yet.</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">No students enrolled for upcoming classes yet.</p>
                   )}
                 </div>
               )}
@@ -702,8 +702,8 @@ export default function ServicesPage() {
               {/* Skip quantity toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Skip quantity <Tooltip text="When on, the bot won't ask 'How many people?' — auto-sets to 1. Use for individual services like haircuts, consultations, or wig services." /></p>
-                  <p className="text-xs text-gray-400">Don't ask "How many people?"</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Skip quantity <Tooltip text="When on, the bot won't ask 'How many people?' — auto-sets to 1. Use for individual services like haircuts, consultations, or wig services." /></p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Don't ask "How many people?"</p>
                 </div>
                 <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, skip_quantity: !(form.metadata?.skip_quantity as boolean) } })}
                   className={`relative h-6 w-11 shrink-0 rounded-full transition ${(form.metadata?.skip_quantity as boolean) ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -714,8 +714,8 @@ export default function ServicesPage() {
               {/* Duration toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Duration <Tooltip text={FIELD_TOOLTIPS['service.duration']} /></p>
-                  <p className="text-xs text-gray-400">This service takes a specific amount of time</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Duration <Tooltip text={FIELD_TOOLTIPS['service.duration']} /></p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">This service takes a specific amount of time</p>
                 </div>
                 <button type="button" onClick={() => { setShowDuration(!showDuration); if (showDuration) setForm({ ...form, duration_minutes: null }); }}
                   className={`relative h-6 w-11 shrink-0 rounded-full transition ${showDuration ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -726,14 +726,14 @@ export default function ServicesPage() {
                 <div className="ml-1 pb-2 space-y-2">
                   <div>
                     <input type="number" min={5} step={5} value={form.duration_minutes || ''} onChange={(e) => setForm({ ...form, duration_minutes: Number(e.target.value) || null })}
-                      placeholder="e.g. 30" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                    <span className="ml-2 text-xs text-gray-400">minutes</span>
+                      placeholder="e.g. 30" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                    <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">minutes</span>
                   </div>
                   <div>
                     <p className="text-xs text-gray-500 mb-1">Buffer time <Tooltip text={FIELD_TOOLTIPS['service.buffer']} /></p>
                     <input type="number" min={0} step={5} value={form.buffer_minutes || ''} onChange={(e) => setForm({ ...form, buffer_minutes: Number(e.target.value) || 0 })}
-                      placeholder="e.g. 10" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
-                    <span className="ml-2 text-xs text-gray-400">min cleanup/prep</span>
+                      placeholder="e.g. 10" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                    <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">min cleanup/prep</span>
                   </div>
                 </div>
               )}
@@ -741,8 +741,8 @@ export default function ServicesPage() {
               {/* Schedule toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Availability Schedule</p>
-                  <p className="text-xs text-gray-400">Limit which days/hours this service is available</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Availability Schedule</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Limit which days/hours this service is available</p>
                 </div>
                 <button type="button" onClick={() => { setShowSchedule(!showSchedule); if (showSchedule) setForm({ ...form, available_days: [], available_from: null, available_to: null }); }}
                   className={`relative h-6 w-11 shrink-0 rounded-full transition ${showSchedule ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -752,7 +752,7 @@ export default function ServicesPage() {
               {showSchedule && (
                 <div className="ml-1 pb-2 space-y-3">
                   <div>
-                    <p className="mb-1.5 text-xs text-gray-500">Available Days</p>
+                    <p className="mb-1.5 text-xs text-gray-500 dark:text-gray-400">Available Days</p>
                     <div className="flex flex-wrap gap-2">
                       {WEEKDAYS.map(day => {
                         const active = form.available_days.includes(day.key);
@@ -768,10 +768,10 @@ export default function ServicesPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <input type="time" value={form.available_from || ''} onChange={(e) => setForm({ ...form, available_from: e.target.value || null })}
-                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                     <span className="text-sm text-gray-400">to</span>
                     <input type="time" value={form.available_to || ''} onChange={(e) => setForm({ ...form, available_to: e.target.value || null })}
-                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                   </div>
                 </div>
               )}
@@ -781,8 +781,8 @@ export default function ServicesPage() {
                 <>
                   <div className="flex items-center justify-between py-1">
                     <div>
-                      <p className="text-sm font-medium text-gray-700">Staff Assignment</p>
-                      <p className="text-xs text-gray-400">Assign specific staff to this service</p>
+                      <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Staff Assignment</p>
+                      <p className="text-xs text-gray-400 dark:text-gray-500">Assign specific staff to this service</p>
                     </div>
                     <button type="button" onClick={() => { setShowStaff(!showStaff); if (showStaff) setForm({ ...form, requires_staff: false, staff_ids: [], allow_staff_selection: false }); else setForm({ ...form, requires_staff: true }); }}
                       className={`relative h-6 w-11 shrink-0 rounded-full transition ${showStaff ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -804,7 +804,7 @@ export default function ServicesPage() {
                         })}
                       </div>
                       {form.staff_ids.length > 0 && (
-                        <label className="flex items-center gap-2 text-xs text-gray-500">
+                        <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                           <input type="checkbox" checked={form.allow_staff_selection} onChange={e => setForm({ ...form, allow_staff_selection: e.target.checked })} className="rounded" />
                           Let customers choose their staff
                         </label>
@@ -817,8 +817,8 @@ export default function ServicesPage() {
               {/* Gallery toggle */}
               <div className="flex items-center justify-between py-1">
                 <div>
-                  <p className="text-sm font-medium text-gray-700">Photos</p>
-                  <p className="text-xs text-gray-400">Add images for this service</p>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Photos</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">Add images for this service</p>
                 </div>
                 <button type="button" onClick={() => setShowGallery(!showGallery)}
                   className={`relative h-6 w-11 shrink-0 rounded-full transition ${showGallery ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -829,23 +829,23 @@ export default function ServicesPage() {
 
             {/* Cancellation Policy — hidden for free-giving categories */}
             {labels.defaultHasPrice && <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Cancellation Policy</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Cancellation Policy</label>
               <textarea
                 value={form.cancellation_policy || ''}
                 onChange={(e) => setForm({ ...form, cancellation_policy: e.target.value })}
                 rows={2}
                 placeholder="e.g. Full refund if cancelled 24 hours before (optional)"
-                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               />
             </div>}
 
             {/* ── Package Toggle ── */}
             {services.length > 1 && (
-              <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
+              <div className="space-y-3 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">This is a package</p>
-                    <p className="text-xs text-gray-400">Bundle multiple services at a package price</p>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">This is a package</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Bundle multiple services at a package price</p>
                   </div>
                   <button type="button" onClick={() => setForm({ ...form, is_package: !form.is_package, included_service_ids: [] })}
                     className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.is_package ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -854,7 +854,7 @@ export default function ServicesPage() {
                 </div>
                 {form.is_package && (
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700">Included Services</label>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">Included Services</label>
                     <div className="flex flex-wrap gap-2">
                       {services.filter(s => s.id !== form.id && !s.is_package).map(s => {
                         const active = form.included_service_ids.includes(s.id);
@@ -875,8 +875,8 @@ export default function ServicesPage() {
             {/* ── Gallery (max 3 images) ── */}
             {showGallery && (
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700">Portfolio Gallery</label>
-                <p className="mb-2 text-xs text-gray-400">Up to 3 images shown to customers before booking</p>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">Portfolio Gallery</label>
+                <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">Up to 3 images shown to customers before booking</p>
                 <input ref={galleryInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGalleryUpload(f); }} />
                 <div className="flex gap-2">
@@ -899,14 +899,14 @@ export default function ServicesPage() {
 
             {/* ── Add-ons (only on edit, after service exists) ── */}
             {view === 'edit' && form.id && (
-              <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Add-ons</p>
-                <p className="text-xs text-gray-400">Optional extras customers can add when booking</p>
+              <div className="space-y-3 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Add-ons</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">Optional extras customers can add when booking</p>
                 {addons.map(a => (
                   <div key={a.id} className="flex items-center justify-between rounded-lg bg-white border border-gray-100 px-3 py-2">
                     <div>
-                      <span className="text-sm font-medium text-gray-800">{a.name}</span>
-                      <span className="ml-2 text-xs text-gray-500">{formatCurrency(a.price, country)}</span>
+                      <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{a.name}</span>
+                      <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{formatCurrency(a.price, country)}</span>
                       {a.is_required && <span className="ml-2 text-xs text-amber-600">Required</span>}
                     </div>
                     <button onClick={() => deleteAddon(a.id, form.id)} className="text-xs text-red-400 hover:text-red-600">Remove</button>
@@ -914,13 +914,13 @@ export default function ServicesPage() {
                 ))}
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <input value={addonForm.name} onChange={e => setAddonForm({ ...addonForm, name: e.target.value })} placeholder="Add-on name"
-                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                   <input type="number" value={addonForm.price || ''} onChange={e => setAddonForm({ ...addonForm, price: Number(e.target.value) })} placeholder="Price"
-                    className="w-full sm:w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    className="w-full sm:w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                   <button onClick={() => saveAddon(form.id)} disabled={!addonForm.name.trim()}
                     className="rounded-lg bg-brand px-3 py-2 text-xs font-medium text-white disabled:opacity-50">Add</button>
                 </div>
-                <label className="flex items-center gap-2 text-xs text-gray-500">
+                <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                   <input type="checkbox" checked={addonForm.is_required} onChange={e => setAddonForm({ ...addonForm, is_required: e.target.checked })} className="rounded" />
                   Required (customer must select this)
                 </label>
@@ -929,13 +929,13 @@ export default function ServicesPage() {
 
             {/* ── Feature Toggles (venue, multi-day, quotes) ── */}
             {(
-              <div className="space-y-3 rounded-lg border border-gray-100 bg-gray-50 p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Options</p>
+              <div className="space-y-3 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Options</p>
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Collect address</p>
-                    <p className="text-xs text-gray-400">Ask customers for their address during booking</p>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Collect address</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Ask customers for their address during booking</p>
                   </div>
                   <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, collect_venue: !form.metadata?.collect_venue } })}
                     className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.collect_venue ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -945,8 +945,8 @@ export default function ServicesPage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Multi-day booking</p>
-                    <p className="text-xs text-gray-400">Allow bookings that span multiple days</p>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Multi-day booking</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Allow bookings that span multiple days</p>
                   </div>
                   <button type="button" onClick={() => setForm({ ...form, metadata: { ...form.metadata, multi_day: !form.metadata?.multi_day } })}
                     className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.metadata?.multi_day ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -956,8 +956,8 @@ export default function ServicesPage() {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Price request</p>
-                    <p className="text-xs text-gray-400">Customers request a price instead of booking at fixed price</p>
+                    <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Price request</p>
+                    <p className="text-xs text-gray-400 dark:text-gray-500">Customers request a price instead of booking at fixed price</p>
                   </div>
                   <button type="button" onClick={() => setForm({ ...form, quote_enabled: !form.quote_enabled })}
                     className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.quote_enabled ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -967,11 +967,11 @@ export default function ServicesPage() {
 
                 {/* Max capacity */}
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">Max bookings per time slot</label>
-                  <p className="mb-1 text-xs text-gray-400">0 = unlimited. Prevents overbooking.</p>
+                  <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max bookings per time slot</label>
+                  <p className="mb-1 text-xs text-gray-400 dark:text-gray-500">0 = unlimited. Prevents overbooking.</p>
                   <input type="number" min={0} value={(form as unknown as Record<string, unknown>).max_capacity as number || ''}
                     onChange={(e) => setForm({ ...form, ...{ max_capacity: Number(e.target.value) || null } } as Service)}
-                    placeholder="Unlimited" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                    placeholder="Unlimited" className="w-32 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                 </div>
               </div>
             )}
@@ -979,15 +979,15 @@ export default function ServicesPage() {
 
           {/* Right column: Settings */}
           <div className="space-y-3">
-            <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Settings</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">Settings</p>
 
             {/* Status dropdown */}
-            <div className="rounded-lg border border-gray-100 bg-white p-3">
-              <label className="mb-1 block text-sm font-medium text-gray-800">Status</label>
+            <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+              <label className="mb-1 block text-sm font-medium text-gray-800 dark:text-gray-200">Status</label>
               <select
                 value={form.status}
                 onChange={(e) => setForm({ ...form, status: e.target.value as 'active' | 'inactive' | 'archived' })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               >
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
@@ -1014,7 +1014,7 @@ export default function ServicesPage() {
         </div>
 
         {/* Save / Cancel / Delete footer */}
-        <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
+        <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 dark:border-gray-700 pt-4">
           <button
             onClick={handleSave}
             disabled={saving || !form.name.trim()}
@@ -1024,14 +1024,14 @@ export default function ServicesPage() {
           </button>
           <button
             onClick={() => setView('list')}
-            className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           >
             Cancel
           </button>
           {view === 'edit' && form.id && (
             <button
               onClick={handleDelete}
-              className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50"
+              className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30"
             >
               Delete {labels.serviceName || 'Service'}
             </button>
@@ -1040,11 +1040,11 @@ export default function ServicesPage() {
 
         {/* Pre-booking questions hint */}
         <div className="mt-6 rounded-xl border border-brand-100 bg-brand-50/30 p-4">
-          <p className="text-sm font-medium text-gray-900">Want to collect info before each booking?</p>
-          <p className="mt-1 text-xs text-gray-500">
+          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Want to collect info before each booking?</p>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Add pre-booking questions that customers answer before confirming. Great for:
           </p>
-          <ul className="mt-2 space-y-1 text-xs text-gray-500">
+          <ul className="mt-2 space-y-1 text-xs text-gray-500 dark:text-gray-400">
             <li>🅿️ Parking — <span className="text-gray-700">"What is your license plate number?"</span></li>
             <li>💇 Salon — <span className="text-gray-700">"Do you have any hair allergies?"</span></li>
             <li>🍽️ Restaurant — <span className="text-gray-700">"Any dietary requirements?"</span></li>
@@ -1070,8 +1070,8 @@ export default function ServicesPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{labels.serviceNamePlural || 'Services'}</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{labels.serviceNamePlural || 'Services'}</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Manage what your business offers
           </p>
         </div>
@@ -1091,13 +1091,13 @@ export default function ServicesPage() {
 
       {/* Filter tabs — only show if there are both services and classes */}
       {services.length > 0 && services.some(s => s.is_class) && (
-        <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 p-1 w-fit">
+        <div className="mt-4 flex gap-1 rounded-lg bg-gray-100 dark:bg-gray-800 p-1 w-fit">
           {(['all', 'services', 'classes'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setFilterTab(tab)}
               className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
-                filterTab === tab ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                filterTab === tab ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
               }`}
             >
               {tab === 'all' ? 'All' : tab === 'services' ? 'Services' : 'Classes'}
@@ -1124,8 +1124,8 @@ export default function ServicesPage() {
             <div
               key={service.id}
               onClick={() => openEdit(service)}
-              className={`cursor-pointer rounded-xl border bg-white p-4 transition hover:shadow-sm ${
-                service.status === 'active' ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
+              className={`cursor-pointer rounded-xl border bg-white dark:bg-gray-800 p-4 transition hover:shadow-sm ${
+                service.status === 'active' ? 'border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600' : 'border-gray-100 dark:border-gray-700 opacity-60'
               }`}
             >
               <div className="flex items-center justify-between">
@@ -1140,7 +1140,7 @@ export default function ServicesPage() {
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900">{service.name}</h3>
+                      <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{service.name}</h3>
                       {service.is_featured && (
                         <span className="text-amber-400" title="Featured">&#9733;</span>
                       )}
@@ -1149,8 +1149,8 @@ export default function ServicesPage() {
                     {service.description && (
                       <p className="mt-0.5 text-xs text-gray-500 line-clamp-1">{service.description}</p>
                     )}
-                    <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-500">
-                      <span className="font-medium text-gray-900">
+                    <div className="mt-1.5 flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
                         {priceLabel(service)}
                       </span>
                       {service.duration_minutes && (
@@ -1193,8 +1193,8 @@ function StatusBadge({ status }: { status: string }) {
   if (status === 'active') return null; // active is the default, no badge needed
   const styles =
     status === 'inactive'
-      ? 'bg-gray-100 text-gray-500'
-      : 'bg-gray-50 text-gray-400'; // archived
+      ? 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+      : 'bg-gray-50 dark:bg-gray-800 text-gray-400 dark:text-gray-500'; // archived
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs capitalize ${styles}`}>
       {status}
@@ -1210,10 +1210,10 @@ function ToggleRow({ label, description, checked, onChange }: {
   onChange: (v: boolean) => void;
 }) {
   return (
-    <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+    <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
       <div className="mr-3">
-        <p className="text-sm font-medium text-gray-800">{label}</p>
-        <p className="text-xs text-gray-400">{description}</p>
+        <p className="text-sm font-medium text-gray-800 dark:text-gray-200">{label}</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">{description}</p>
       </div>
       <button
         type="button"

@@ -50,7 +50,7 @@ A no-code WhatsApp + web automation platform for 89 business types across 16 ind
 - **reservation** = customer books SPACE for multiple days (hotel, shortlet, car rental)
 
 ### Pricing
-- Starter (Free): 30-day trial with all features, then 2% per transaction
+- Starter (Free): 30-day trial with all features, then 2.5% per transaction
 - Pro: Monthly + 1.5% per transaction. Annual saves 20%.
 - Premium: Monthly + 1% per transaction. Annual saves 20%.
 

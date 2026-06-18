@@ -280,47 +280,47 @@ export default function EventsPage() {
     return (
       <div>
         <div className="flex items-center gap-3">
-          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+          <button aria-label="Go back" onClick={() => setView('list')} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-700 dark:hover:text-gray-300">
             <svg aria-hidden="true" className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-xl font-bold text-gray-900">{view === 'add' ? 'Create Event' : 'Edit Event'}</h1>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">{view === 'add' ? 'Create Event' : 'Edit Event'}</h1>
         </div>
 
         <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Event Name <span className="text-red-400">*</span></label>
-              <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Gospel Concert 2024" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" autoFocus />
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Event Name <span className="text-red-400">*</span></label>
+              <input type="text" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Gospel Concert 2024" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" autoFocus />
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
-              <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={2} placeholder="What's this event about?" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+              <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={2} placeholder="What's this event about?" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Date <span className="text-red-400">*</span></label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Date <span className="text-red-400">*</span></label>
                 {view === 'edit' && originalDate && new Date(originalDate + 'T23:59:59') < new Date() ? (
                   <div>
                     <input type="date" value={form.date} disabled className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-sm text-gray-500 cursor-not-allowed" />
                     <p className="mt-1 text-xs text-amber-600">Date locked — event has passed. Use &quot;Duplicate Event&quot; to reuse this template.</p>
                   </div>
                 ) : (
-                  <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                  <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                 )}
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Time <span className="text-red-400">*</span></label>
-                <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Time <span className="text-red-400">*</span></label>
+                <input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
               </div>
             </div>
 
             {/* Refund Policy */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Refund Policy</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Refund Policy</label>
               <div className="flex gap-3">
                 <button
                   type="button"
@@ -345,11 +345,11 @@ export default function EventsPage() {
                   No Refund
                 </button>
               </div>
-              <p className="mt-1 text-xs text-gray-400">Shown to buyers before purchase</p>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Shown to buyers before purchase</p>
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Venue</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Venue</label>
               <PlacesAutocomplete
                 value={form.venue}
                 onChange={(value) => setForm({ ...form, venue: value })}
@@ -359,7 +359,7 @@ export default function EventsPage() {
 
             {/* Event Flyer / Image */}
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Event Flyer</label>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Event Flyer</label>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -412,35 +412,35 @@ export default function EventsPage() {
                   )}
                 </button>
               )}
-              <p className="mt-1 text-xs text-gray-400">Appears on the ticket page and in WhatsApp messages</p>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Appears on the ticket page and in WhatsApp messages</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Ticket Price ({curr})</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Ticket Price ({curr})</label>
                 <div className="relative">
                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
-                  <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="0 = Free" className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand" />
+                  <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="0 = Free" className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
                 </div>
-                <p className="mt-1 text-xs text-gray-400">Price per ticket in your local currency. Set to 0 for free events.</p>
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Price per ticket in your local currency. Set to 0 for free events.</p>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Total Tickets</label>
-                <input type="number" min={1} value={form.total_tickets || ''} onChange={e => setForm({ ...form, total_tickets: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-                <p className="mt-1 text-xs text-gray-400">Maximum tickets available for sale</p>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Total Tickets</label>
+                <input type="number" min={1} value={form.total_tickets || ''} onChange={e => setForm({ ...form, total_tickets: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">Maximum tickets available for sale</p>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Max per Order</label>
-                <input type="number" min={1} value={form.max_per_order || ''} onChange={e => setForm({ ...form, max_per_order: Number(e.target.value) })} placeholder="Default" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-                <p className="mt-1 text-xs text-gray-400">How many tickets one person can buy at once</p>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Max per Order</label>
+                <input type="number" min={1} value={form.max_per_order || ''} onChange={e => setForm({ ...form, max_per_order: Number(e.target.value) })} placeholder="Default" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100" />
+                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">How many tickets one person can buy at once</p>
               </div>
             </div>
 
             {/* Ticket Types (edit only) */}
             {view === 'edit' && (
               <div>
-                <label className="mb-2 block text-sm font-medium text-gray-700">Ticket Types</label>
-                <p className="mb-3 text-xs text-gray-400">Add different ticket tiers (e.g. Regular, VIP). If none are added, the event price above is used.</p>
+                <label className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">Ticket Types</label>
+                <p className="mb-3 text-xs text-gray-400 dark:text-gray-500">Add different ticket tiers (e.g. Regular, VIP). If none are added, the event price above is used.</p>
 
                 {ticketTypes.length > 0 && (
                   <div className="mb-3 space-y-2">
@@ -448,8 +448,8 @@ export default function EventsPage() {
                       <div key={tt.id} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
                         <div>
                           <span className="text-sm font-medium text-gray-900">{tt.name}</span>
-                          <span className="ml-2 text-sm text-gray-500">{formatCurrency(tt.price, country)}</span>
-                          <span className="ml-2 text-xs text-gray-400">{tt.tickets_sold}/{tt.total_tickets} sold</span>
+                          <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">{formatCurrency(tt.price, country)}</span>
+                          <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">{tt.tickets_sold}/{tt.total_tickets} sold</span>
                         </div>
                         <button onClick={() => removeTicketType(tt.id)} className="text-xs text-red-500 hover:text-red-700">Remove</button>
                       </div>
@@ -464,7 +464,7 @@ export default function EventsPage() {
                       value={newTypeName}
                       onChange={e => setNewTypeName(e.target.value)}
                       placeholder="e.g. VIP"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     />
                   </div>
                   <div className="w-24">
@@ -474,7 +474,7 @@ export default function EventsPage() {
                       value={newTypePrice || ''}
                       onChange={e => setNewTypePrice(Number(e.target.value))}
                       placeholder="Price"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     />
                   </div>
                   <div className="w-20">
@@ -485,7 +485,7 @@ export default function EventsPage() {
                       onChange={e => setNewTypeTotal(Number(e.target.value))}
                       onFocus={e => e.target.select()}
                       placeholder="Qty"
-                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                      className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
                     />
                   </div>
                   <button
@@ -503,12 +503,12 @@ export default function EventsPage() {
           {/* Right: Settings */}
           <div className="space-y-3">
             <p className="text-xs font-medium uppercase tracking-wide text-gray-400">Settings</p>
-            <div className="rounded-lg border border-gray-100 bg-white p-3">
-              <label className="mb-1 block text-sm font-medium text-gray-800">Status</label>
+            <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+              <label className="mb-1 block text-sm font-medium text-gray-800 dark:text-gray-200">Status</label>
               <select
                 value={form.status}
                 onChange={e => setForm({ ...form, status: e.target.value as EventItem['status'] })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand dark:bg-gray-800 dark:border-gray-600 dark:text-gray-100"
               >
                 <option value="published">Published</option>
                 <option value="draft">Draft</option>
@@ -516,10 +516,10 @@ export default function EventsPage() {
                 <option value="completed">Completed</option>
               </select>
             </div>
-            <div className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3">
+            <div className="flex items-center justify-between rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
               <div className="mr-3">
-                <p className="text-sm font-medium text-gray-800">Self Check-in</p>
-                <p className="text-xs text-gray-400">Attendees can check in via QR code or WhatsApp</p>
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-200">Self Check-in</p>
+                <p className="text-xs text-gray-400 dark:text-gray-500">Attendees can check in via QR code or WhatsApp</p>
               </div>
               <button type="button" onClick={() => setForm({ ...form, self_checkin_enabled: !form.self_checkin_enabled })}
                 className={`relative h-6 w-11 shrink-0 rounded-full transition ${form.self_checkin_enabled ? 'bg-brand' : 'bg-gray-200'}`}>
@@ -527,11 +527,11 @@ export default function EventsPage() {
               </button>
             </div>
             {view === 'edit' && (
-              <div className="rounded-lg border border-gray-100 bg-white p-3">
-                <p className="text-xs font-medium text-gray-500">Tickets Sold</p>
-                <p className="mt-1 text-lg font-bold text-gray-900">
+              <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Tickets Sold</p>
+                <p className="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">
                   {events.find(e => e.id === form.id)?.tickets_sold || 0}
-                  <span className="text-sm font-normal text-gray-400"> / {form.total_tickets}</span>
+                  <span className="text-sm font-normal text-gray-400 dark:text-gray-500"> / {form.total_tickets}</span>
                 </p>
               </div>
             )}
@@ -547,7 +547,7 @@ export default function EventsPage() {
                       <QRCodeSVG value={eventUrl} size={64} level="M" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs text-gray-600 break-all">{eventUrl}</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-400 break-all">{eventUrl}</p>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         <button
                           onClick={() => {
@@ -612,15 +612,15 @@ export default function EventsPage() {
                   </button>
                 </div>
               )}
-              <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 pt-4">
+              <div className="mt-6 flex flex-wrap gap-3 border-t border-gray-100 dark:border-gray-700 pt-4">
                 {!isEventPast && (
                   <button onClick={handleSave} disabled={saving || !form.name.trim() || !form.date || !form.time} className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50">
                     {saving ? 'Saving...' : view === 'add' ? 'Create Event' : 'Save Changes'}
                   </button>
                 )}
-                <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50">{isEventPast ? 'Back' : 'Cancel'}</button>
+                <button onClick={() => setView('list')} className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700">{isEventPast ? 'Back' : 'Cancel'}</button>
                 {view === 'edit' && form.id && !isEventPast && (
-                  <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50">Delete</button>
+                  <button onClick={() => handleDelete(form.id)} className="ml-auto rounded-lg px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">Delete</button>
                 )}
               </div>
             </>
@@ -635,11 +635,11 @@ export default function EventsPage() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Events</h1>
-          <p className="mt-1 text-sm text-gray-500">Manage your events and ticket sales</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Events</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Manage your events and ticket sales</p>
         </div>
         <div className="flex gap-2">
-          <Link href="/dashboard/events/checkin" className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 inline-flex items-center gap-1.5">
+          <Link href="/dashboard/events/checkin" className="rounded-lg border border-gray-200 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 inline-flex items-center gap-1.5">
             <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg>
             <span className="hidden sm:inline">Check-in</span>
           </Link>
@@ -681,21 +681,21 @@ export default function EventsPage() {
               <div
                 key={event.id}
                 onClick={() => openEdit(event)}
-                className={`cursor-pointer overflow-hidden rounded-xl border border-gray-100 bg-white transition hover:border-gray-200 hover:shadow-sm ${isPast ? 'opacity-70' : ''}`}
+                className={`cursor-pointer overflow-hidden rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 transition hover:border-gray-200 dark:hover:border-gray-600 hover:shadow-sm ${isPast ? 'opacity-70' : ''}`}
               >
                 {event.image_url ? (
                   <div className="relative h-32 w-full">
                     <Image src={event.image_url} alt={event.name} fill className="object-cover" sizes="(max-width: 768px) 100vw, 33vw" />
                   </div>
                 ) : (
-                  <div className="flex h-32 w-full items-center justify-center bg-gray-50 text-3xl text-gray-300">🎪</div>
+                  <div className="flex h-32 w-full items-center justify-center bg-gray-50 dark:bg-gray-900 text-3xl text-gray-300 dark:text-gray-600">🎪</div>
                 )}
                 <div className="p-5">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-gray-900">{event.name}</h3>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{event.name}</h3>
                   <div className="flex items-center gap-1.5">
                     {isPast && (
-                      <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-500">Past</span>
+                      <span className="rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-500 dark:text-gray-400">Past</span>
                     )}
                     {event.status !== 'published' && (
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium capitalize ${statusColors[event.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -704,26 +704,26 @@ export default function EventsPage() {
                     )}
                   </div>
                 </div>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   {event.date} at {event.time || '--'} {event.venue ? `\u2022 ${event.venue}` : ''}
                 </p>
                 <div className="mt-3 flex items-center justify-between">
-                  <span className="text-sm font-bold text-gray-900">
+                  <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
                     {event.price > 0 ? formatCurrency(event.price, country) : 'Free'}
                   </span>
-                  <span className="text-xs text-gray-500">{sold}/{total} sold</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{sold}/{total} sold</span>
                 </div>
                 {total > 0 && (
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700">
                     <div className="h-full rounded-full bg-brand transition-all" style={{ width: `${progress}%` }} />
                   </div>
                 )}
                 {event.status === 'published' && event.slug && (
-                  <div className="mt-3 flex items-center gap-2 border-t border-gray-50 pt-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="mt-3 flex items-center gap-2 border-t border-gray-50 dark:border-gray-700 pt-3" onClick={(e) => e.stopPropagation()}>
                     <svg aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
                     </svg>
-                    <span className="truncate text-xs text-gray-500">waaiio.com/e/{event.slug}</span>
+                    <span className="truncate text-xs text-gray-500 dark:text-gray-400">waaiio.com/e/{event.slug}</span>
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(`${window.location.origin}/e/${event.slug}`);
@@ -737,7 +737,7 @@ export default function EventsPage() {
                   </div>
                 )}
                 {isPast && (
-                  <div className="mt-3 border-t border-gray-50 pt-3" onClick={(e) => e.stopPropagation()}>
+                  <div className="mt-3 border-t border-gray-50 dark:border-gray-700 pt-3" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => duplicateEvent(event)}
                       className="w-full rounded-lg border border-brand/30 bg-brand/5 py-2 text-xs font-semibold text-brand hover:bg-brand/10 transition"

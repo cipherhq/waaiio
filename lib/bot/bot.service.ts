@@ -882,7 +882,7 @@ export class BotService {
 
       if (sessionError || !newSession) {
         logger.error('[BOT] Session insert failed:', sessionError?.message, sessionError?.code, sessionError?.details);
-        await this.sendText(from, 'Sorry, something went wrong. Please try again.');
+        await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
         return;
       }
 
@@ -1734,7 +1734,7 @@ export class BotService {
       const errMsg = err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 300)}` : String(err);
       logger.error('[BOT] handleMessage CRASH:', errMsg);
       Sentry.captureException(err);
-      try { await this.sendText(from, 'Sorry, something went wrong. Please try again.'); } catch (_) { /* ignore */ }
+      try { await this.sendText(from, 'Something went wrong on our end. Send *Hi* to start over.'); } catch (_) { /* ignore */ }
     }
   }
 

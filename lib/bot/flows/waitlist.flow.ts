@@ -108,7 +108,7 @@ const waitlistConfirmStep: FlowStepConfig = {
 
     if (error) {
       console.error('[WAITLIST] Insert error:', error);
-      return [{ type: 'text', text: 'Sorry, there was an error joining the waitlist. Please try again.' }];
+      return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
     }
 
     return [{

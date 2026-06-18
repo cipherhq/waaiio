@@ -669,6 +669,33 @@ export function ticketConfirmationEmail(details: {
   };
 }
 
+export function donationReceiptEmail(details: {
+  donorName: string;
+  businessName: string;
+  campaignTitle: string;
+  formattedAmount: string;
+  referenceCode: string;
+}) {
+  const { donorName, businessName, campaignTitle, formattedAmount, referenceCode } = details;
+  const firstName = donorName.split(' ')[0] || 'there';
+
+  return {
+    subject: `Donation receipt — ${formattedAmount} to ${campaignTitle}`,
+    from: businessFrom(businessName),
+    html: wrap(`
+      ${h('Donation Received')}
+      ${p(`Hi ${esc(firstName)}, thank you for your generous donation to <strong>${esc(campaignTitle)}</strong>!`)}
+      ${table(
+        kv('Campaign', `<strong>${esc(campaignTitle)}</strong>`) +
+        kv('Organizer', esc(businessName)) +
+        kv('Amount', esc(formattedAmount)) +
+        kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
+      )}
+      ${p('Your support makes a difference. Thank you!')}
+    `, { businessName }),
+  };
+}
+
 export function accountDeletionConfirmationEmail(name: string, deletionDate: string, isGracePeriod: boolean) {
   const subject = isGracePeriod
     ? 'Your Waaiio account is scheduled for deletion'

@@ -26,44 +26,44 @@ export default function SalesAnalytics({ orderStats, products, country }: SalesA
     <div className="mt-5">
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+        <div className="rounded-xl border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 p-4">
           <p className="text-xs font-medium text-blue-600">Total Orders</p>
           <p className="mt-1 text-2xl font-bold text-blue-900">{orderStats.totalOrders}</p>
         </div>
-        <div className="rounded-xl border border-green-100 bg-green-50 p-4">
+        <div className="rounded-xl border border-green-100 dark:border-green-800 bg-green-50 dark:bg-green-900/30 p-4">
           <p className="text-xs font-medium text-green-600">Product Revenue</p>
           <p className="mt-1 text-2xl font-bold text-green-900">{formatCurrency(orderStats.totalRevenue, country)}</p>
         </div>
-        <div className="rounded-xl border border-orange-100 bg-orange-50 p-4">
+        <div className="rounded-xl border border-orange-100 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/30 p-4">
           <p className="text-xs font-medium text-orange-600">Avg Order Value</p>
           <p className="mt-1 text-2xl font-bold text-orange-900">{formatCurrency(Math.round(orderStats.avgOrderValue), country)}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-white p-4">
-          <p className="text-xs font-medium text-gray-500">Top Product</p>
-          <p className="mt-1 text-lg font-bold text-gray-900 truncate">{topProductName}</p>
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+          <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Top Product</p>
+          <p className="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100 truncate">{topProductName}</p>
         </div>
       </div>
 
       {/* Best Sellers */}
       {bestSellers.length > 0 && (
-        <div className="mt-4 rounded-xl border border-gray-100 bg-white">
-          <div className="border-b border-gray-100 px-4 py-3">
-            <p className="text-sm font-semibold text-gray-900">Best Sellers</p>
+        <div className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <div className="border-b border-gray-100 dark:border-gray-700 px-4 py-3">
+            <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">Best Sellers</p>
           </div>
-          <div className="divide-y divide-gray-50">
+          <div className="divide-y divide-gray-50 dark:divide-gray-700">
             {bestSellers.map((item, i) => (
               <div key={i} className="flex items-center gap-3 px-4 py-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand">{i + 1}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center justify-between">
-                    <p className="truncate text-sm font-medium text-gray-900">{item.name}</p>
-                    <p className="shrink-0 text-sm font-semibold text-gray-900">{formatCurrency(item.revenue, country)}</p>
+                    <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{item.name}</p>
+                    <p className="shrink-0 text-sm font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(item.revenue, country)}</p>
                   </div>
                   <div className="mt-1 flex items-center gap-2">
-                    <div className="h-1.5 flex-1 rounded-full bg-gray-100">
+                    <div className="h-1.5 flex-1 rounded-full bg-gray-100 dark:bg-gray-700">
                       <div className="h-1.5 rounded-full bg-brand" style={{ width: `${item.pct}%` }} />
                     </div>
-                    <span className="shrink-0 text-xs text-gray-500">{item.qty} sold ({item.pct}%)</span>
+                    <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">{item.qty} sold ({item.pct}%)</span>
                   </div>
                 </div>
               </div>

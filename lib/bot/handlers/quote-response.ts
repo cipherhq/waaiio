@@ -14,7 +14,7 @@ export async function handleQuoteResponse(
       || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
 
     if (!baseUrl) {
-      await sendText(from, 'Sorry, something went wrong. Please try again.');
+      await sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
       return;
     }
 
@@ -37,6 +37,6 @@ export async function handleQuoteResponse(
     // Accept case: payment link is sent by the API route itself
   } catch (err) {
     logger.error('[BOT] Quote response error:', err);
-    await sendText(from, 'Sorry, something went wrong. Please try again.');
+    await sendText(from, 'Something went wrong on our end. Send *Hi* to start over.');
   }
 }

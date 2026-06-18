@@ -71,8 +71,8 @@ export default function ProductList({
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Products</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Products</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             {products.length === 0
               ? `Add your products so ${labels.personLabelPlural.toLowerCase()} can browse and order via WhatsApp`
               : `${products.length} product${products.length !== 1 ? 's' : ''} in your catalog`}
@@ -90,7 +90,7 @@ export default function ProductList({
           )}
           <button
             onClick={() => setView('bulk')}
-            className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+            className="rounded-lg border border-gray-200 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           >
             Bulk Upload
           </button>
@@ -139,7 +139,7 @@ export default function ProductList({
               key={f}
               onClick={() => setFilter(f)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                filter === f ? 'bg-brand text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                filter === f ? 'bg-brand text-white' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
               {f.charAt(0).toUpperCase() + f.slice(1)}{f === 'all' ? ` (${products.length})` : ''}
@@ -170,8 +170,8 @@ export default function ProductList({
             <div
               key={product.id}
               data-product-id={product.id}
-              className={`group cursor-pointer rounded-xl border bg-white overflow-hidden transition hover:shadow-sm ${
-                product.is_active ? 'border-gray-100 hover:border-gray-200' : 'border-gray-100 opacity-60'
+              className={`group cursor-pointer rounded-xl border bg-white dark:bg-gray-800 overflow-hidden transition hover:shadow-sm ${
+                product.is_active ? 'border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600' : 'border-gray-100 dark:border-gray-700 opacity-60'
               }`}
               onClick={() => openEdit(product)}
             >
@@ -181,7 +181,7 @@ export default function ProductList({
                   <Image src={product.image_url} alt={product.name} fill className="object-contain p-2" sizes="(max-width: 768px) 50vw, 25vw" />
                 </div>
               ) : (
-                <div className="flex h-20 w-full items-center justify-center bg-gray-50">
+                <div className="flex h-20 w-full items-center justify-center bg-gray-50 dark:bg-gray-900">
                   <svg aria-hidden="true" className="h-6 w-6 text-gray-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                   </svg>
@@ -191,9 +191,9 @@ export default function ProductList({
               <div className="p-4">
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1 pr-2">
-                    <h3 className="text-sm font-semibold text-gray-900">{product.name}</h3>
+                    <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{product.name}</h3>
                     {product.category && (
-                      <span className="mt-0.5 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">{product.category}</span>
+                      <span className="mt-0.5 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500 dark:text-gray-400">{product.category}</span>
                     )}
                   </div>
                   <div className="flex shrink-0 gap-1">
@@ -201,7 +201,7 @@ export default function ProductList({
                       <span className="rounded bg-green-50 px-1.5 py-0.5 text-xs text-green-600">Refundable</span>
                     )}
                     {!product.is_active && (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">Inactive</span>
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400">Inactive</span>
                     )}
                   </div>
                 </div>
@@ -211,7 +211,7 @@ export default function ProductList({
                 )}
 
                 <div className="mt-3 flex items-center justify-between">
-                  <span className="text-sm font-bold text-gray-900">
+                  <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
                     {(() => {
                       if (!product.has_variants) return formatCurrency(product.price, country);
                       const ext = product as Product & { _price_min?: number; _price_max?: number };
@@ -238,13 +238,13 @@ export default function ProductList({
                           : `${product.stock_quantity} in stock`}
                       </span>
                     ) : !product.has_variants && product.stock_quantity !== null ? (
-                      <span className="text-xs text-gray-500">{product.stock_quantity} in stock</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{product.stock_quantity} in stock</span>
                     ) : null}
                   </div>
                 </div>
 
                 {/* Quick actions bar */}
-                <div className="mt-3 flex items-center justify-between border-t border-gray-50 pt-3">
+                <div className="mt-3 flex items-center justify-between border-t border-gray-50 dark:border-gray-700 pt-3">
                   <div className="flex items-center gap-2">
                     <button
                       onClick={(e) => { e.stopPropagation(); toggleActive(product); }}
@@ -279,7 +279,7 @@ export default function ProductList({
         <div className="mt-6">
           <button
             onClick={() => setShowSyncHistory(!showSyncHistory)}
-            className="flex items-center gap-2 text-sm font-semibold text-gray-700 hover:text-gray-900"
+            className="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
           >
             <svg
               aria-hidden="true"
@@ -293,7 +293,7 @@ export default function ProductList({
             Sync History
           </button>
           {showSyncHistory && (
-            <div className="mt-3 rounded-xl border border-gray-100 bg-white divide-y divide-gray-50">
+            <div className="mt-3 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 divide-y divide-gray-50 dark:divide-gray-700">
               {syncLogs.map((log) => (
                 <div key={log.id} className="flex items-center justify-between px-4 py-3">
                   <div className="flex items-center gap-3">
@@ -304,7 +304,7 @@ export default function ProductList({
                         : 'bg-gray-400'
                     }`} />
                     <div>
-                      <p className="text-sm text-gray-900">
+                      <p className="text-sm text-gray-900 dark:text-gray-100">
                         {log.synced_count} synced{log.failed_count > 0 ? `, ${log.failed_count} failed` : ''}
                       </p>
                       {log.error_message && (
@@ -321,7 +321,7 @@ export default function ProductList({
                     }`}>
                       {log.status}
                     </span>
-                    <span className="text-xs text-gray-400">
+                    <span className="text-xs text-gray-400 dark:text-gray-500">
                       {new Date(log.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
