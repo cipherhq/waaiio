@@ -10,13 +10,16 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const { id } = await params;
   const supabase = createServiceClient();
 
-  // Try events first
-  const { data: event } = await supabase
+  // Detect if ID is a UUID or slug
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+  // Try events first (by ID or slug)
+  let eventQuery = supabase
     .from('events')
     .select('id, name, date, time, venue, description, image_url, invite_message, business_id, businesses(name, owner_id, country_code)')
-    .eq('id', id)
-    .eq('status', 'published')
-    .single();
+    .eq('status', 'published');
+  eventQuery = isUuid ? eventQuery.eq('id', id) : eventQuery.eq('slug', id);
+  const { data: event } = await eventQuery.single();
 
   if (event) {
     const biz = event.businesses as unknown as { name: string; owner_id?: string; country_code?: string } | null;
@@ -50,12 +53,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     });
   }
 
-  // Try parties
-  const { data: party } = await supabase
+  // Try parties (by ID or slug)
+  let partyQuery = supabase
     .from('parties')
-    .select('id, name, date, time, venue, description, image_url, invite_message, dress_code, business_id, businesses(name, owner_id, country_code)')
-    .eq('id', id)
-    .single();
+    .select('id, name, date, time, venue, description, image_url, invite_message, dress_code, business_id, businesses(name, owner_id, country_code)');
+  partyQuery = isUuid ? partyQuery.eq('id', id) : partyQuery.eq('slug', id);
+  const { data: party } = await partyQuery.single();
 
   if (party) {
     const biz = party.businesses as unknown as { name: string; owner_id?: string; country_code?: string } | null;
