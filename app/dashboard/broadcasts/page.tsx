@@ -986,6 +986,7 @@ export default function BroadcastsPage() {
 
               {sendMode === 'schedule' && (
                 <div className="mt-3 grid grid-cols-2 gap-3">
+                  <p className="col-span-2 text-xs text-gray-400">Pick a future date/time to send automatically</p>
                   <div>
                     <label className="text-xs font-medium text-gray-600 dark:text-gray-400">Date</label>
                     <input

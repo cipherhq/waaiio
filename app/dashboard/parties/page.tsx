@@ -369,6 +369,7 @@ export default function PartiesPage() {
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Description</label>
               <textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} rows={2} placeholder="What's this party about?" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <p className="mt-1 text-xs text-gray-400">Tell guests what to expect — food, activities, vibe</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -389,6 +390,7 @@ export default function PartiesPage() {
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Venue</label>
               <input type="text" value={form.venue} onChange={e => setForm({ ...form, venue: e.target.value })} placeholder="e.g. Eko Hotel, Victoria Island" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <p className="mt-1 text-xs text-gray-400">Guests will see this address and can tap to open in maps</p>
             </div>
 
             <div>
@@ -403,6 +405,7 @@ export default function PartiesPage() {
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Dress Code</label>
               <input type="text" value={form.dress_code} onChange={e => setForm({ ...form, dress_code: e.target.value })} placeholder="e.g. All White, Smart Casual" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <p className="mt-1 text-xs text-gray-400">Leave blank if casual — only add if it matters</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -424,13 +427,14 @@ export default function PartiesPage() {
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Guest Capacity</label>
                 <input type="number" min={1} value={form.max_guests ?? ''} onChange={e => setForm({ ...form, max_guests: e.target.value === '' ? null : Number(e.target.value) })} placeholder="Unlimited" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
-                <p className="mt-1 text-xs text-gray-400">Leave blank for unlimited</p>
+                <p className="mt-1 text-xs text-gray-400">We&apos;ll stop accepting RSVPs when capacity is reached</p>
               </div>
             </div>
 
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Custom Invite Message</label>
               <textarea value={form.invite_message} onChange={e => setForm({ ...form, invite_message: e.target.value })} rows={2} placeholder="Personal message to include in invites" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+              <p className="mt-1 text-xs text-gray-400">This personal note appears in every invite you send</p>
             </div>
 
             {/* Custom RSVP Responses (Growth+ only) */}
@@ -444,18 +448,22 @@ export default function PartiesPage() {
                 <div>
                   <label className="mb-1 block text-xs font-medium text-green-700">When guest says Yes</label>
                   <input type="text" value={form.rsvp_yes_message} onChange={e => setForm({ ...form, rsvp_yes_message: e.target.value })} placeholder="Can't wait to see you! 🎉" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <p className="mt-1 text-xs text-gray-400">Guests see this after they respond on WhatsApp</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-amber-700">When guest says Maybe</label>
                   <input type="text" value={form.rsvp_maybe_message} onChange={e => setForm({ ...form, rsvp_maybe_message: e.target.value })} placeholder="Hope to see you there! Let us know if anything changes." maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <p className="mt-1 text-xs text-gray-400">Guests see this after they respond on WhatsApp</p>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-red-700">When guest declines</label>
                   <input type="text" value={form.rsvp_no_message} onChange={e => setForm({ ...form, rsvp_no_message: e.target.value })} placeholder="Sorry you can't make it. You'll be missed!" maxLength={500} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <p className="mt-1 text-xs text-gray-400">Guests see this after they respond on WhatsApp</p>
                 </div>
                 <div className="border-t border-brand/10 pt-3 mt-3">
                   <label className="mb-1 block text-xs font-medium text-gray-700">Auto-Followup Message</label>
                   <textarea value={form.followup_message} onChange={e => setForm({ ...form, followup_message: e.target.value })} rows={2} placeholder="Reminder: The party is tomorrow! See you there 🎊" maxLength={1000} className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand" />
+                  <p className="mt-1 text-xs text-gray-400">Sent automatically to confirmed guests before the party</p>
                   <div className="mt-2 flex items-center gap-2">
                     <label className="text-xs text-gray-500">Send</label>
                     <input type="number" min={1} max={14} value={form.followup_days_before || ''} onChange={e => setForm({ ...form, followup_days_before: e.target.value === '' ? 0 : Number(e.target.value) })} className="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-center outline-none focus:border-brand" />
@@ -500,6 +508,7 @@ export default function PartiesPage() {
                   )}
                 </button>
               )}
+              <p className="mt-1 text-xs text-gray-400">Upload a flyer or photo — it shows in the invite and RSVP page</p>
             </div>
           </div>
 

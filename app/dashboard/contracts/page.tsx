@@ -1404,6 +1404,7 @@ export default function ContractsPage() {
                       onChange={setSignerPhone}
                       countryCode={(business.country_code as CountryCode) || 'US'}
                     />
+                    <p className="mt-1 text-xs text-gray-400">The person who needs to sign — they&apos;ll get the link on WhatsApp</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700">Signer Name</label>
@@ -1424,6 +1425,7 @@ export default function ContractsPage() {
                       placeholder="e.g. john@example.com"
                       className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand"
                     />
+                    <p className="mt-1 text-xs text-gray-400">Optional — we&apos;ll also send the signing link via email</p>
                   </div>
 
                   {/* Additional Signers */}
@@ -1499,7 +1501,7 @@ export default function ContractsPage() {
                     />
                     <div>
                       <p className="text-sm font-medium text-gray-700">Require OTP Verification</p>
-                      <p className="text-xs text-gray-400">Signer must verify via WhatsApp code before signing</p>
+                      <p className="text-xs text-gray-400">Extra security — signer must verify with a code before signing</p>
                     </div>
                   </label>
 

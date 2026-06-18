@@ -324,6 +324,7 @@ export default function InvitesPage() {
                 onChange={setInvitePhone}
                 countryCode={(business.country_code || 'US') as CountryCode}
               />
+              <p className="mt-1 text-xs text-gray-400">Enter the guest&apos;s WhatsApp number</p>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Name (optional)</label>
@@ -363,6 +364,7 @@ export default function InvitesPage() {
             placeholder={"2348012345678\n2349087654321\n2347011111111"}
             className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand font-mono"
           />
+          <p className="mt-1 text-xs text-gray-400">One number per line. Include country code (e.g. 2348012345678)</p>
           <div className="mt-3 flex gap-2">
             <button
               onClick={handleBulkInvite}

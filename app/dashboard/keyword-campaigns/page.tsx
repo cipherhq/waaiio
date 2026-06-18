@@ -482,13 +482,15 @@ export default function KeywordCampaignsPage() {
                 }
                 className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
               />
-              {form.response_text.length > 0 && (
+              {form.response_text.length > 0 ? (
                 <p className="mt-1 text-xs text-gray-400">
                   {form.response_text.length} / 1024 characters
                   {form.response_text.length > 1024 && (
                     <span className="ml-1 text-red-400">Exceeds WhatsApp body limit</span>
                   )}
                 </p>
+              ) : (
+                <p className="mt-1 text-xs text-gray-400">The auto-reply message customers receive. Max 1024 characters.</p>
               )}
             </div>
 
@@ -506,7 +508,7 @@ export default function KeywordCampaignsPage() {
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
                 />
                 <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                  Public URL to an image (JPEG, PNG). WhatsApp does not support WebP.
+                  Direct link to an image (JPEG, PNG). Shows with your response.
                 </p>
               </div>
             )}
@@ -524,7 +526,7 @@ export default function KeywordCampaignsPage() {
                 className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-3 text-sm text-gray-900 dark:text-gray-100 outline-none focus:border-brand"
               />
               <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-                Optional follow-up message after the auto-response (e.g. opt-in confirmation)
+                Sent after the response — tells customers what they&apos;re signing up for
               </p>
             </div>
 
@@ -549,6 +551,7 @@ export default function KeywordCampaignsPage() {
                 />
               </div>
             </div>
+            <p className="mt-1 text-xs text-gray-400">Campaign only responds during this date range. Leave blank for always-on.</p>
 
             {/* WhatsApp Preview */}
             <div>

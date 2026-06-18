@@ -222,6 +222,7 @@ export default function AppointmentsManagementPage() {
                 <input type="number" min={0} value={form.deposit_amount || ''} onChange={e => setForm({ ...form, deposit_amount: Number(e.target.value) })}
                   placeholder="Enter amount"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <p className="mt-1 text-xs text-gray-400">Amount collected upfront. Balance due at appointment.</p>
               </div>
             </div>
 
@@ -256,6 +257,7 @@ export default function AppointmentsManagementPage() {
                   onChange={e => setForm({ ...form, buffer_minutes: e.target.value === '' ? 0 : Number(e.target.value) })}
                   placeholder="Enter amount"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <p className="mt-1 text-xs text-gray-400">Minutes between appointments for cleanup or breaks</p>
               </div>
               <div>
                 <label className="mb-1 flex items-center gap-1.5 text-sm font-medium text-gray-700">

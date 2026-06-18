@@ -345,6 +345,7 @@ export default function EventsPage() {
                   No Refund
                 </button>
               </div>
+              <p className="mt-1 text-xs text-gray-400">Shown to buyers before purchase</p>
             </div>
 
             <div>
@@ -411,6 +412,7 @@ export default function EventsPage() {
                   )}
                 </button>
               )}
+              <p className="mt-1 text-xs text-gray-400">Appears on the ticket page and in WhatsApp messages</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -420,14 +422,17 @@ export default function EventsPage() {
                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">{curr}</span>
                   <input type="number" min={0} value={form.price || ''} onChange={e => setForm({ ...form, price: Number(e.target.value) })} placeholder="0 = Free" className="w-full rounded-lg border border-gray-200 py-2.5 pl-7 pr-3 text-sm outline-none focus:border-brand" />
                 </div>
+                <p className="mt-1 text-xs text-gray-400">Price per ticket in your local currency. Set to 0 for free events.</p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Total Tickets</label>
                 <input type="number" min={1} value={form.total_tickets || ''} onChange={e => setForm({ ...form, total_tickets: Number(e.target.value) })} className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <p className="mt-1 text-xs text-gray-400">Maximum tickets available for sale</p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max per Order</label>
                 <input type="number" min={1} value={form.max_per_order || ''} onChange={e => setForm({ ...form, max_per_order: Number(e.target.value) })} placeholder="Default" className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand" />
+                <p className="mt-1 text-xs text-gray-400">How many tickets one person can buy at once</p>
               </div>
             </div>
 

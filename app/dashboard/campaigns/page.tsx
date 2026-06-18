@@ -245,6 +245,7 @@ export default function CampaignsPage() {
                 placeholder="Enter amount"
                 className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
               />
+              <p className="mt-1 text-xs text-gray-400">Leave at 0 for open-ended campaigns with no target</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -258,7 +259,7 @@ export default function CampaignsPage() {
                   placeholder="No minimum"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
-                <p className="mt-0.5 text-xs text-gray-400">Leave empty for no minimum</p>
+                <p className="mt-0.5 text-xs text-gray-400">Leave blank for no limits</p>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Maximum Donation</label>
@@ -270,7 +271,7 @@ export default function CampaignsPage() {
                   placeholder="No maximum"
                   className="w-full rounded-lg border border-gray-200 px-3 py-3 text-sm outline-none focus:border-brand"
                 />
-                <p className="mt-0.5 text-xs text-gray-400">Leave empty for no maximum</p>
+                <p className="mt-0.5 text-xs text-gray-400">Leave blank for no limits</p>
               </div>
             </div>
 
