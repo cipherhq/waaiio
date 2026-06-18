@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { verifyCronAuth } from '@/lib/cron-auth';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { logger } from '@/lib/logger';
 export const dynamic = 'force-dynamic';
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
             const { data: profile } = await supabase
               .from('profiles')
               .select('id')
-              .or(`phone.eq.${r.guest_phone},phone.eq.+${r.guest_phone}`)
+              .or(`phone.eq.${sanitizeFilterValue(r.guest_phone)},phone.eq.+${sanitizeFilterValue(r.guest_phone)}`)
               .limit(1)
               .maybeSingle();
 
@@ -150,7 +151,7 @@ export async function GET(request: NextRequest) {
             const { data: profile } = await supabase
               .from('profiles')
               .select('id')
-              .or(`phone.eq.${b.guest_phone},phone.eq.+${b.guest_phone}`)
+              .or(`phone.eq.${sanitizeFilterValue(b.guest_phone)},phone.eq.+${sanitizeFilterValue(b.guest_phone)}`)
               .limit(1)
               .maybeSingle();
 

@@ -38,6 +38,7 @@ export function getConfirmationMessage(opts: {
   }
 
   lines.push('', 'Thank you! 🙏');
+  lines.push('', '_Powered by Waaiio_');
   return lines.join('\n');
 }
 
@@ -59,6 +60,8 @@ export function getPaymentReceiptMessage(opts: {
     `🔑 Ref: *${opts.referenceCode}*`,
     '',
     'Thank you for your payment! 🙏',
+    '',
+    '_Powered by Waaiio_',
   ].join('\n');
 }
 
@@ -119,6 +122,7 @@ export function getOrderConfirmationMessage(opts: {
   }
 
   lines.push('', 'Thank you for your order! 🙏');
+  lines.push('', '_Powered by Waaiio_');
   return lines.join('\n');
 }
 
@@ -195,6 +199,7 @@ export function getReservationConfirmationMessage(opts: {
   }
 
   lines.push(`🔑 Ref: *${opts.referenceCode}*`);
+  lines.push('', '_Powered by Waaiio_');
   return lines.join('\n');
 }
 
@@ -224,5 +229,7 @@ export function getTicketConfirmationMessage(opts: {
     `• Type *my bookings* to view your tickets`,
     `• Type *receipt* to get your purchase receipt`,
     `• Type *Hi* to buy more tickets`,
+    '',
+    `_Powered by Waaiio_`,
   ].join('\n');
 }

@@ -630,7 +630,7 @@ export const orderingFlow: FlowDefinition = {
           buttonLabel: 'Select Option',
           items: available.map(v => ({
             title: truncTitle(v.label, 24),
-            description: formatCurrency(v.price, cc) + (v.stock_quantity !== null && v.stock_quantity <= 3 ? ` (${v.stock_quantity} left)` : ''),
+            description: (formatCurrency(v.price, cc) + (v.stock_quantity !== null && v.stock_quantity <= 3 ? ` (${v.stock_quantity} left)` : '')).slice(0, 72),
             postbackText: v.id,
           })),
         });
@@ -1163,7 +1163,7 @@ export const orderingFlow: FlowDefinition = {
           !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
         );
 
-        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
+        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
         await ctx.supabase
           .from('bot_sessions')
@@ -1266,7 +1266,7 @@ export const orderingFlow: FlowDefinition = {
           !p.track_inventory || (p.stock_quantity !== null && p.stock_quantity > 0)
         );
 
-        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`, postbackText: 'checkout' };
+        const checkoutItem = { title: 'Checkout ✅', description: `Total: ${formatCurrency(total, cc)}`.slice(0, 72), postbackText: 'checkout' };
 
         // Group by category into sections
         const categoryMap = new Map<string, typeof products>();
@@ -2134,7 +2134,7 @@ export const orderingFlow: FlowDefinition = {
           const label = item.variant_label ? `${item.name} (${item.variant_label})` : item.name;
           items.push({
             title: truncTitle(`❌ ${label}`, 24),
-            description: `Remove — x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`,
+            description: `Remove — x${item.quantity} @ ${formatCurrency(item.price * item.quantity, cc)}`.slice(0, 72),
             postbackText: `remove:${i}`,
           });
         }

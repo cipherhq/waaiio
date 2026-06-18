@@ -847,6 +847,8 @@ export const reservationFlow: FlowDefinition = {
             '• Type *reschedule* to change dates',
             '• Type *cancel* to cancel this reservation',
             '• Type *receipt* to get your receipt',
+            '',
+            '_Powered by Waaiio_',
           ].filter(Boolean).join('\n'),
         }];
       },
@@ -946,6 +948,8 @@ export const reservationFlow: FlowDefinition = {
                   '• Type *my bookings* to view your reservation',
                   '• Type *receipt* to get your receipt',
                   '• Type *Hi* to make another booking',
+                  '',
+                  '_Powered by Waaiio_',
                 ].filter(Boolean).join('\n')),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
@@ -993,6 +997,8 @@ export const reservationFlow: FlowDefinition = {
                 '',
                 'See you soon!',
                 resPayCalLinks ? resPayCalLinks : null,
+                '',
+                '_Powered by Waaiio_',
               ].filter(Boolean).join('\n')),
             });
 

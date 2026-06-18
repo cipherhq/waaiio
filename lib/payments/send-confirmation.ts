@@ -380,6 +380,70 @@ export async function sendProactiveConfirmation(
           });
         }
       }
+
+      // ── 7b. Invoice payment owner notification ──
+      if (payment.invoice_id && resolved) {
+        const { notifyOwnerNewInvoicePayment } = await import('@/lib/bot/flows/shared/notify-owner');
+        const { data: invoice } = await supabase.from('invoices')
+          .select('reference_code, customer_name, customer_phone')
+          .eq('id', payment.invoice_id).single();
+
+        if (invoice) {
+          notifyOwnerNewInvoicePayment({
+            supabase, sender: resolved.sender, businessId, businessName, countryCode,
+            referenceCode: invoice.reference_code || referenceCode,
+            customerName: invoice.customer_name || 'Customer',
+            amount: payment.amount,
+            invoiceNumber: invoice.reference_code || referenceCode,
+          }).catch(err => logger.error(`${logPrefix} Invoice owner notify error:`, err));
+        }
+      }
+
+      // ── 7c. Campaign donation owner notification ──
+      if (payment.campaign_id && resolved) {
+        const { notifyOwnerNewDonation } = await import('@/lib/bot/flows/shared/notify-owner');
+        const { data: donation } = await supabase.from('campaign_donations')
+          .select('donor_name, reference_code, campaigns(title)')
+          .eq('campaign_id', payment.campaign_id)
+          .eq('status', 'success')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const campaignTitle = (donation?.campaigns as unknown as { title: string } | null)?.title || 'Campaign';
+        notifyOwnerNewDonation({
+          supabase, sender: resolved.sender, businessId, businessName, countryCode,
+          referenceCode: donation?.reference_code || referenceCode,
+          donorName: donation?.donor_name || null,
+          amount: payment.amount,
+          campaignTitle,
+        }).catch(err => logger.error(`${logPrefix} Donation owner notify error:`, err));
+      }
+
+      // ── 7d. Order owner notification ──
+      if (payment.order_id && resolved) {
+        const { notifyOwnerNewOrder } = await import('@/lib/bot/flows/shared/notify-owner');
+        const { data: order } = await supabase.from('orders')
+          .select('reference_code, delivery_name, delivery_address, order_items(product_name, variant_label, quantity, unit_price)')
+          .eq('id', payment.order_id).single();
+
+        if (order) {
+          const items = ((order.order_items || []) as Array<{ product_name: string; variant_label?: string; quantity: number; unit_price: number }>).map(i => ({
+            name: i.variant_label ? `${i.product_name} (${i.variant_label})` : i.product_name,
+            quantity: i.quantity,
+            price: i.unit_price * i.quantity,
+          }));
+          notifyOwnerNewOrder({
+            supabase, sender: resolved.sender, businessId, businessName, countryCode,
+            referenceCode: order.reference_code || referenceCode,
+            customerName: order.delivery_name || 'Customer',
+            items,
+            totalAmount: payment.amount,
+            deliveryAddress: order.delivery_address || undefined,
+          }).catch(err => logger.error(`${logPrefix} Order owner notify error:`, err));
+        }
+      }
+
       // Send email to business owner
       try {
         const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', businessId).single();

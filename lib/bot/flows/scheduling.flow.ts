@@ -1085,7 +1085,7 @@ export const schedulingFlow: FlowDefinition = {
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
         const optional = addons.filter(a => !a.is_required);
         const items = optional.map(a => ({
-          title: `${a.name} — ${formatCurrency(a.price, cc)}`,
+          title: truncTitle(`${a.name} — ${formatCurrency(a.price, cc)}`, 24),
           postbackText: a.id,
         }));
         items.push({ title: 'No add-ons', postbackText: 'skip_addons' });

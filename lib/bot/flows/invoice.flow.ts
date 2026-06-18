@@ -288,7 +288,7 @@ const invoicePayStep: FlowStepConfig = {
 
       return [{
         type: 'text',
-        text: `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt`,
+        text: `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt\n\n_Powered by Waaiio_`,
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);

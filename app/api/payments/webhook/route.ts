@@ -10,6 +10,7 @@ import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendEmail } from '@/lib/email/client';
 import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export async function POST(request: NextRequest) {
   try {
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
           .in('status', ['active', 'pending']);
 
         if (phoneVariants.length > 0) {
-          subQuery = subQuery.or(phoneVariants.map(p => `customer_phone.eq.${p}`).join(','));
+          subQuery = subQuery.or(phoneVariants.map(p => `customer_phone.eq.${sanitizeFilterValue(p)}`).join(','));
         } else if (custEmail) {
           subQuery = subQuery.eq('customer_email', custEmail);
         }

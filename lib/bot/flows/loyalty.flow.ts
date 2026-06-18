@@ -264,6 +264,8 @@ const loyaltyRedeemStep: FlowStepConfig = {
           '',
           `Type *my points* to check your balance`,
           `Type *Hi* to book or order`,
+          '',
+          `_Powered by Waaiio_`,
         ].join('\n')),
       });
 

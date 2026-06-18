@@ -26,6 +26,12 @@ const feedbackRatingStep: FlowStepConfig = {
   },
 
   async validate(input: string): Promise<ValidationResult> {
+    // Escape hatch: allow user to skip/cancel feedback
+    const lower = input.toLowerCase().trim();
+    if (lower === 'skip' || lower === 'cancel' || lower === 'exit' || lower === 'no thanks') {
+      return { valid: true, data: { _feedback_skipped: true } };
+    }
+
     const match = input.match(/^rate_(\d)$/);
     if (match) {
       const rating = parseInt(match[1], 10);
@@ -42,6 +48,10 @@ const feedbackRatingStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
+    if (ctx.session.session_data._feedback_skipped) {
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No problem! Type *Hi* to explore more.') });
+      return null;
+    }
     const rating = ctx.session.session_data.feedback_rating as number;
     // Only ask for comment if rating is 3 or below
     if (rating <= 3) return 'feedback_comment';
@@ -111,8 +121,8 @@ const feedbackThanksStep: FlowStepConfig = {
 
     const stars = '⭐'.repeat(rating);
     const thanks = rating >= 4
-      ? `Thank you for the ${stars} rating! We appreciate your feedback.`
-      : `Thank you for your feedback ${stars}. We'll work to improve your experience.`;
+      ? `Thank you for the ${stars} rating! We appreciate your feedback.\n\n_Powered by Waaiio_`
+      : `Thank you for your feedback ${stars}. We'll work to improve your experience.\n\n_Powered by Waaiio_`;
 
     const messages: PromptMessage[] = [{ type: 'text', text: thanks }];
 

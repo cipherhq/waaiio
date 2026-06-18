@@ -136,7 +136,7 @@ const surveyQuestionStep: FlowStepConfig = {
     const skipHint = q.required === false ? ' (or type *skip*)' : '';
     return [{
       type: 'text',
-      text: `${prefix}${q.text}${skipHint}`,
+      text: `${prefix}${q.text}${skipHint}\n\n_Type *cancel* to skip the survey._`,
     }];
   },
 
@@ -147,6 +147,12 @@ const surveyQuestionStep: FlowStepConfig = {
     const q = questions[index];
 
     if (!q) return { valid: true };
+
+    // Escape hatch: allow user to cancel the survey mid-flow
+    const lower = input.toLowerCase().trim();
+    if (lower === 'cancel_survey' || lower === 'cancel' || lower === 'stop' || lower === 'exit') {
+      return { valid: true, data: { _survey_cancelled: true } };
+    }
 
     const answers = (d.survey_answers as Record<string, unknown>) || {};
     const trimmed = input.trim();
@@ -206,6 +212,9 @@ const surveyQuestionStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
+    if (ctx.session.session_data._survey_cancelled) {
+      return 'survey_complete';
+    }
     const d = ctx.session.session_data;
     const questions = (d.survey_questions as SurveyQuestion[]) || [];
     const index = (d.survey_q_index as number) || 0;
@@ -223,6 +232,10 @@ const surveyCompleteStep: FlowStepConfig = {
   async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
     const d = ctx.session.session_data;
     const accepted = d.survey_accepted as boolean;
+
+    if (d._survey_cancelled) {
+      return [{ type: 'text', text: 'No problem! Survey cancelled. Type *Hi* to explore more.' }];
+    }
 
     if (!accepted) {
       return [{ type: 'text', text: 'No problem! You can take the survey another time.' }];

@@ -237,7 +237,7 @@ export default function Broadcasts() {
               className="mt-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
             >
               <option value="all_users">All Users</option>
-              <option value="all_businesses">All Businesses</option>
+              <option value="all_businesses">All Accounts</option>
               <option value="specific">Specific Recipients</option>
             </select>
           </div>

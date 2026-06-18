@@ -182,10 +182,16 @@ const enterDonationAmountStep: FlowStepConfig = {
       hint = `Enter the amount (maximum ${formatCurrency(maxDonation, cc)}):`;
     }
 
-    return [{ type: 'text', text: `How much would you like to donate? ${hint}` }];
+    return [{ type: 'text', text: `How much would you like to donate? ${hint}\n\n_Type *cancel* to go back._` }];
   },
 
   async validate(input: string, ctx: FlowContext) {
+    // Escape hatch: allow user to go back or cancel
+    const lower = input.toLowerCase().trim();
+    if (lower === 'cancel' || lower === 'back' || lower === 'exit') {
+      return { valid: true, data: { _donation_back: true } };
+    }
+
     const amount = Math.round(parseFloat(input.replace(/[^0-9.]/g, '')) * 100) / 100;
     const cc = (ctx.business?.country_code || 'NG') as CountryCode;
     const sd = ctx.session.session_data;
@@ -214,7 +220,11 @@ const enterDonationAmountStep: FlowStepConfig = {
     return { valid: true, data: { donation_amount: amount } };
   },
 
-  async next() {
+  async next(ctx: FlowContext) {
+    if (ctx.session.session_data._donation_back) {
+      delete ctx.session.session_data._donation_back;
+      return 'campaign_view';
+    }
     return 'enter_donor_name';
   },
 };
@@ -440,6 +450,8 @@ const awaitDonationPaymentStep: FlowStepConfig = {
               '• Type *my giving* to see your giving history',
               '• Type *receipt* to get your donation receipt',
               '• Type *Hi* to give again',
+              '',
+              '_Powered by Waaiio_',
             ].join('\n')),
           });
           return { valid: true, data: { _action: 'already_confirmed' } };
@@ -462,6 +474,8 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             '• Type *my giving* to see your giving history',
             '• Type *receipt* to get your donation receipt',
             '• Type *Hi* to give again',
+            '',
+            '_Powered by Waaiio_',
           ].join('\n')),
         });
 

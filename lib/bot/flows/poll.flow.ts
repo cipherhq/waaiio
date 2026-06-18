@@ -103,6 +103,12 @@ const pollQuestionStep: FlowStepConfig = {
       return { valid: true };
     }
 
+    // Escape hatch: allow user to cancel/skip the poll
+    const lower = input.toLowerCase().trim();
+    if (lower === 'cancel' || lower === 'skip' || lower === 'exit' || lower === 'no thanks') {
+      return { valid: true, data: { _poll_cancelled: true } };
+    }
+
     // Parse vote
     const match = input.match(/poll_vote_(\d+)/);
     const optIndex = match ? parseInt(match[1], 10) : -1;
@@ -186,6 +192,10 @@ const pollQuestionStep: FlowStepConfig = {
   },
 
   async next(ctx: FlowContext) {
+    if (ctx.session.session_data._poll_cancelled) {
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('No problem! Type *Hi* to explore more.') });
+      return null;
+    }
     if (ctx.session.session_data._poll_already_voted) return null;
     if (ctx.session.session_data._poll_voted) return 'poll_results';
     return null;

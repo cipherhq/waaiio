@@ -74,8 +74,11 @@ const queueStartStep: FlowStepConfig = {
       ctx.session.session_data._queue_already_joined = true;
 
       return [{
-        type: 'text',
-        text: `You're already in the queue! You're *#${existingEntry.queue_number}*.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. ${waitText}\n\nWe'll message you when it's your turn!`,
+        type: 'buttons',
+        body: `You're already in the queue! You're *#${existingEntry.queue_number}*.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. ${waitText}\n\nWe'll message you when it's your turn!`,
+        buttons: [
+          { id: 'leave_queue', title: 'Leave Queue' },
+        ],
       }];
     }
 
@@ -90,8 +93,27 @@ const queueStartStep: FlowStepConfig = {
   },
 
   async validate(input: string, ctx: FlowContext) {
-    // If user is already in the queue, accept any input and end flow
+    // If user is already in the queue, handle leave or accept any input
     if (ctx.session.session_data._queue_already_joined) {
+      const lower = input.toLowerCase().trim();
+      if (lower === 'leave_queue' || lower === 'leave') {
+        if (ctx.business) {
+          const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+          const today = new Date().toISOString().split('T')[0];
+          await ctx.supabase
+            .from('queue_entries')
+            .update({ status: 'cancelled' })
+            .eq('business_id', ctx.business.id)
+            .eq('customer_phone', phoneP)
+            .eq('queue_date', today)
+            .in('status', ['waiting']);
+
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t("You've been removed from the queue. Type *Hi* to start over."),
+          });
+        }
+      }
       return { valid: true };
     }
 
@@ -315,7 +337,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     await ctx.sender.sendText({
       to: ctx.from,
-      text: await ctx.t(`✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status`),
+      text: await ctx.t(`✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status\n\n_Powered by Waaiio_`),
     });
 
     return { valid: true };
@@ -374,20 +396,46 @@ const queueCheckStatusStep: FlowStepConfig = {
     const estimatedWait = ahead * avgMinutes;
 
     return [{
-      type: 'text',
-      text: `You're *#${entry.queue_number}* in the queue.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. Estimated wait: ~${estimatedWait} minutes.`,
+      type: 'buttons',
+      body: `You're *#${entry.queue_number}* in the queue.\n\n${ahead} ${ahead === 1 ? 'person' : 'people'} ahead of you. Estimated wait: ~${estimatedWait} minutes.`,
+      buttons: [
+        { id: 'leave_queue', title: 'Leave Queue' },
+      ],
     }];
   },
 
-  async validate(input: string) {
+  async validate(input: string, ctx: FlowContext) {
     // If they tap check in from the "no entry" prompt
     if (input.toLowerCase() === 'queue_checkin') {
       return { valid: true, data: { queue_action: 'checkin' } };
     }
+
+    // Leave Queue escape hatch
+    if (input.toLowerCase() === 'leave_queue' || input.toLowerCase() === 'leave') {
+      if (ctx.business) {
+        const phoneP = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
+        const today = new Date().toISOString().split('T')[0];
+        await ctx.supabase
+          .from('queue_entries')
+          .update({ status: 'cancelled' })
+          .eq('business_id', ctx.business.id)
+          .eq('customer_phone', phoneP)
+          .eq('queue_date', today)
+          .in('status', ['waiting']);
+
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: await ctx.t("You've been removed from the queue. Type *Hi* to start over."),
+        });
+      }
+      return { valid: true, data: { _queue_left: true } };
+    }
+
     return { valid: true };
   },
 
   async next(ctx: FlowContext) {
+    if (ctx.session.session_data._queue_left) return null;
     if (ctx.session.session_data.queue_action === 'checkin') {
       return 'queue_collect_name';
     }

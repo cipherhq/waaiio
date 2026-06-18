@@ -273,7 +273,7 @@ export default function BotManagement() {
           onChange={e => { setBusinessFilter(e.target.value); setPage(1); }}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none"
         >
-          <option value="all">All Businesses</option>
+          <option value="all">All Accounts</option>
           {businesses.map(b => (
             <option key={b.id} value={b.id}>{b.name}</option>
           ))}
