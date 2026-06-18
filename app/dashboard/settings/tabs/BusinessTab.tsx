@@ -442,7 +442,7 @@ export function BusinessTab({ business, capabilities, country, curr, saving, set
         <div className="mt-6 max-w-xl">
           <div className="rounded-xl border border-gray-100 bg-white p-6">
             <h2 className="text-sm font-bold text-gray-900">Weekly Schedule</h2>
-            <p className="mt-1 text-xs text-gray-500">Set when your business is open. The WhatsApp bot uses these hours to let customers know your availability.</p>
+            <p className="mt-1 text-xs text-gray-500">Set when you're available. Your WhatsApp bot uses these hours to let people know when you're open.</p>
 
             <div className="mt-5 space-y-3">
               {DAYS.map((day) => {

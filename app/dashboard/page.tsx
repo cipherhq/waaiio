@@ -229,7 +229,7 @@ export default function DashboardOverview() {
     {
       id: 'services',
       title: `Add your ${(labels.serviceNamePlural || 'Services').toLowerCase()}`,
-      desc: `Tell customers what you offer`,
+      desc: `Tell people what you offer`,
       done: stats.totalServices > 0,
       href: '/dashboard/services',
       icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
@@ -237,7 +237,7 @@ export default function DashboardOverview() {
     {
       id: 'hours',
       title: 'Set operating hours',
-      desc: 'Let customers know when you\'re open',
+      desc: 'Let people know when you\'re available',
       done: stats.hasHours,
       href: '/dashboard/settings',
       icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
@@ -253,7 +253,7 @@ export default function DashboardOverview() {
     {
       id: 'share',
       title: 'Share your WhatsApp link',
-      desc: 'Start receiving customers',
+      desc: 'Go live',
       done: stats.totalBookings > 0,
       href: '/dashboard/whatsapp',
       icon: 'M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1',
@@ -352,7 +352,7 @@ export default function DashboardOverview() {
             <span className="text-2xl">💰</span>
             <div>
               <p className="text-sm font-semibold text-amber-900">You have pending earnings!</p>
-              <p className="text-xs text-amber-700">Set up your payout account to start receiving payments from customers.</p>
+              <p className="text-xs text-amber-700">Set up your payout account to start receiving payments.</p>
             </div>
           </div>
           <a href="/dashboard/payouts" className="shrink-0 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700 transition">
@@ -512,7 +512,7 @@ export default function DashboardOverview() {
               </div>
               <div>
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Your WhatsApp Bot</h3>
-                <p className="text-xs text-gray-500 dark:text-gray-400">Share this link with your customers</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400">Share this link to get started</p>
               </div>
             </div>
 
@@ -865,7 +865,7 @@ function QuickActions({
   if (hasCapability('broadcast')) {
     actions.push({
       title: 'Send Broadcast',
-      description: 'Message your customers at once',
+      description: 'Send a message to everyone',
       href: '/dashboard/broadcasts',
       icon: 'M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z',
       bgColor: 'bg-blue-50 dark:bg-blue-950/30',
@@ -876,7 +876,7 @@ function QuickActions({
   if (hasCapability('ordering')) {
     actions.push({
       title: 'Add Products',
-      description: 'List items for customers to order',
+      description: 'Add items people can order',
       href: '/dashboard/products',
       icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z',
       bgColor: 'bg-amber-50 dark:bg-amber-950/30',

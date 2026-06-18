@@ -28,7 +28,7 @@ export function OnboardingChecklist() {
       return {
         key: 'setup',
         label: 'Add your appointments',
-        description: 'Add the services customers can book with date, time, and staff.',
+        description: 'Add the services people can book with date, time, and staff.',
         href: '/dashboard/appointments-management',
         check: async () => {
           const supabase = createClient();
@@ -41,7 +41,7 @@ export function OnboardingChecklist() {
       return {
         key: 'setup',
         label: 'Add your products',
-        description: 'Add products or menu items so customers can browse and order.',
+        description: 'Add products or menu items for people to browse and order.',
         href: '/dashboard/products',
         check: async () => {
           const supabase = createClient();
@@ -67,7 +67,7 @@ export function OnboardingChecklist() {
       return {
         key: 'setup',
         label: 'Create your first event',
-        description: 'Add an event so customers can buy tickets.',
+        description: 'Add an event so people can buy tickets.',
         href: '/dashboard/events',
         check: async () => {
           const supabase = createClient();
@@ -93,7 +93,7 @@ export function OnboardingChecklist() {
     return {
       key: 'setup',
       label: 'Add your services',
-      description: 'Add the services you offer with prices so customers can get started.',
+      description: 'Add the services you offer with prices so people can get started.',
       href: '/dashboard/services',
       check: async () => {
         const supabase = createClient();
@@ -108,7 +108,7 @@ export function OnboardingChecklist() {
     {
       key: 'whatsapp',
       label: 'Connect your WhatsApp number',
-      description: 'Get your own dedicated number so customers can message your business directly.',
+      description: 'Get your own dedicated number so people can message you directly.',
       href: '/dashboard/whatsapp/connect',
       check: async () => {
         const supabase = createClient();
@@ -135,7 +135,7 @@ export function OnboardingChecklist() {
     {
       key: 'launch',
       label: 'Get paid & go live',
-      description: 'Connect your payout account and share your WhatsApp link with customers.',
+      description: 'Connect your payout account and share your WhatsApp link.',
       href: '/dashboard/payouts',
       check: async () => {
         const supabase = createClient();

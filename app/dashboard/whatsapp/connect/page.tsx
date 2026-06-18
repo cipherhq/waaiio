@@ -278,7 +278,7 @@ export default function ConnectWhatsAppPage() {
     <div className="max-w-lg mx-auto mt-8 space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Connect Your WhatsApp Number</h1>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Get your own dedicated WhatsApp number for your business bot.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Get your own dedicated WhatsApp number for your bot.</p>
       </div>
 
       {/* How it works */}
