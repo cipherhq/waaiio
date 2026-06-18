@@ -243,6 +243,63 @@ export class BotService {
       } catch { /* use default */ }
 
       await this.sendText(from, `${responseMsg}\n\n_Powered by Waaiio_`);
+
+      // Notify host via email (non-blocking)
+      try {
+        const { data: invite } = await this.supabase
+          .from('event_invites')
+          .select('guest_name, guest_phone, business_id, party_id, event_id')
+          .eq('id', inviteId)
+          .single();
+
+        if (invite?.business_id) {
+          const { data: biz } = await this.supabase
+            .from('businesses')
+            .select('owner_id, name')
+            .eq('id', invite.business_id)
+            .single();
+
+          if (biz?.owner_id) {
+            const { data: owner } = await this.supabase
+              .from('profiles')
+              .select('email, first_name')
+              .eq('id', biz.owner_id)
+              .single();
+
+            if (owner?.email) {
+              // Get event/party name
+              let eventName = 'your event';
+              if (invite.party_id) {
+                const { data: p } = await this.supabase.from('parties').select('name').eq('id', invite.party_id).single();
+                if (p?.name) eventName = p.name;
+              } else if (invite.event_id) {
+                const { data: e } = await this.supabase.from('events').select('name').eq('id', invite.event_id).single();
+                if (e?.name) eventName = e.name;
+              }
+
+              const guestName = invite.guest_name || invite.guest_phone || 'A guest';
+              const statusLabel = rsvpStatus === 'accepted' ? 'accepted ✅' : rsvpStatus === 'maybe' ? 'said maybe 🤔' : 'declined ❌';
+              const { sendEmail } = await import('@/lib/email/client');
+              sendEmail({
+                to: owner.email,
+                subject: `RSVP: ${guestName} ${statusLabel} — ${eventName}`,
+                html: `
+                  <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
+                    <h2 style="color: #6C2BD9;">New RSVP Response</h2>
+                    <p>Hi ${owner.first_name || 'there'},</p>
+                    <p><strong>${guestName}</strong> has ${statusLabel} your invitation to <strong>${eventName}</strong>.</p>
+                    <div style="margin: 20px 0;">
+                      <a href="https://www.waaiio.com/dashboard/parties" style="background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">View Guest List</a>
+                    </div>
+                    <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>
+                  </div>
+                `,
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch { /* non-critical */ }
+
       return;
     }
 
