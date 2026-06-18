@@ -140,12 +140,22 @@ export async function POST(request: NextRequest) {
           logger.error('[INVITE-OPTIN] Re-send WhatsApp error:', err);
         }
 
+        // Get WA number for CtWA
+        let waNum = '';
+        try {
+          const r = new ChannelResolver(supabase);
+          const res = await r.resolveByBusinessId(target.business_id);
+          if (res?.channel?.phone_number) waNum = res.channel.phone_number.replace(/\D/g, '');
+        } catch {}
+
         return NextResponse.json({
           success: true,
           already_invited: true,
           whatsapp_sent: whatsappSent,
           status: existing.status,
           rsvp_url: inviteLink,
+          invite_token: existing.invite_token,
+          wa_number: waNum,
         });
       }
     }
@@ -290,11 +300,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Get the WhatsApp number for Click-to-WhatsApp RSVP
+    let waNumber = '';
+    try {
+      const resolver2 = new ChannelResolver(supabase);
+      const resolved2 = await resolver2.resolveByBusinessId(target.business_id);
+      if (resolved2?.channel?.phone_number) {
+        waNumber = resolved2.channel.phone_number.replace(/\D/g, '');
+      }
+    } catch { /* non-critical */ }
+
     return NextResponse.json({
       success: true,
       whatsapp_sent: whatsappSent,
       email_sent: emailSent,
       rsvp_url: inviteLink,
+      invite_token: invite.invite_token,
+      wa_number: waNumber,
     });
   } catch (error) {
     logger.error('[INVITE-OPTIN] Error:', error);

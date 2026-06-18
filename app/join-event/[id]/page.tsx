@@ -31,7 +31,7 @@ export default function PublicInvitePage() {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
-  const [result, setResult] = useState<{ whatsapp_sent: boolean; rsvp_url: string; already_invited?: boolean } | null>(null);
+  const [result, setResult] = useState<{ whatsapp_sent: boolean; rsvp_url: string; already_invited?: boolean; invite_token?: string; wa_number?: string; email_sent?: boolean } | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -126,14 +126,13 @@ export default function PublicInvitePage() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-50 to-pink-50 px-4 py-8">
         <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-xl text-center">
-          <div className="text-5xl mb-4">{result.whatsapp_sent ? '🎉' : '✉️'}</div>
+          <div className="text-5xl mb-4">🎉</div>
           <h1 className="text-2xl font-bold text-gray-900">
-            {result.already_invited ? "You're already invited!" : 'Invite on its way!'}
+            {result.already_invited ? "You're on the list!" : "You're in!"}
           </h1>
           <p className="mt-2 text-gray-600">
-            {result.whatsapp_sent
-              ? 'Check your WhatsApp for the full invite with RSVP options.'
-              : 'Check your email for the invite with RSVP link. You can also RSVP below.'}
+            RSVP on WhatsApp to confirm your attendance.
+            {result.email_sent && ' We also sent the details to your email.'}
           </p>
 
           <div className="mt-6 rounded-xl bg-gray-50 p-4 text-left">
@@ -143,11 +142,25 @@ export default function PublicInvitePage() {
             {event.host_name && <p className="mt-2 text-xs text-gray-500">Hosted by {event.host_name}</p>}
           </div>
 
+          {/* Click-to-WhatsApp RSVP — the key CTA */}
+          {result.wa_number && result.invite_token && (
+            <a
+              href={`https://wa.me/${result.wa_number}?text=${encodeURIComponent(`RSVP ${result.invite_token}`)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-whatsapp py-3.5 text-sm font-bold text-white shadow-lg hover:bg-whatsapp/85"
+            >
+              <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/></svg>
+              RSVP on WhatsApp
+            </a>
+          )}
+
+          {/* Fallback: web RSVP */}
           <a
             href={result.rsvp_url}
-            className="mt-6 block w-full rounded-xl bg-brand py-3 text-center text-sm font-semibold text-white hover:bg-brand-600"
+            className="mt-3 block w-full rounded-xl border border-gray-200 py-3 text-center text-sm font-medium text-gray-600 hover:bg-gray-50"
           >
-            RSVP Now
+            Or RSVP on Web
           </a>
 
           <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
