@@ -622,7 +622,7 @@ export default function PartiesPage() {
           <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50/30 p-4">
             <div className="flex items-start gap-4">
               <div className="shrink-0 rounded-lg bg-white p-2 shadow-sm">
-                <QRCodeSVG value={`${appUrl}/join-event/${selectedParty.id}`} size={80} level="M" />
+                <QRCodeSVG value={`${appUrl}/i/${selectedParty.id}`} size={80} level="M" />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-brand-700 uppercase">Share this party</p>
@@ -630,7 +630,7 @@ export default function PartiesPage() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(`${appUrl}/join-event/${selectedParty.id}`);
+                      navigator.clipboard.writeText(`${appUrl}/i/${selectedParty.id}`);
                       setStatusMessage('Invite link copied!');
                     }}
                     className="rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-600"
@@ -638,7 +638,7 @@ export default function PartiesPage() {
                     Copy Link
                   </button>
                   <a
-                    href={`https://wa.me/?text=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here: ${appUrl}/join-event/${selectedParty.id}`)}`}
+                    href={`https://wa.me/?text=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here: ${appUrl}/i/${selectedParty.id}`)}`}
                     target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg bg-[#25D366] px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
@@ -646,7 +646,7 @@ export default function PartiesPage() {
                     WhatsApp
                   </a>
                   <a
-                    href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(`${appUrl}/join-event/${selectedParty.id}`)}`}
+                    href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(`${appUrl}/i/${selectedParty.id}`)}`}
                     target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg bg-[#1877F2] px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
@@ -654,7 +654,7 @@ export default function PartiesPage() {
                     Facebook
                   </a>
                   <a
-                    href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here:`)}&url=${encodeURIComponent(`${appUrl}/join-event/${selectedParty.id}`)}`}
+                    href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here:`)}&url=${encodeURIComponent(`${appUrl}/i/${selectedParty.id}`)}`}
                     target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg bg-[#000] px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
@@ -662,14 +662,14 @@ export default function PartiesPage() {
                     X
                   </a>
                   <a
-                    href={`sms:?body=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here: ${appUrl}/join-event/${selectedParty.id}`)}`}
+                    href={`sms:?body=${encodeURIComponent(`You're invited to ${selectedParty.name}! RSVP here: ${appUrl}/i/${selectedParty.id}`)}`}
                     className="inline-flex items-center gap-1 rounded-lg bg-gray-600 px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
                     <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                     SMS
                   </a>
                   <a
-                    href={`mailto:?subject=${encodeURIComponent(`You're invited: ${selectedParty.name}`)}&body=${encodeURIComponent(`You're invited to ${selectedParty.name}!\n\nRSVP here: ${appUrl}/join-event/${selectedParty.id}`)}`}
+                    href={`mailto:?subject=${encodeURIComponent(`You're invited: ${selectedParty.name}`)}&body=${encodeURIComponent(`You're invited to ${selectedParty.name}!\n\nRSVP here: ${appUrl}/i/${selectedParty.id}`)}`}
                     className="inline-flex items-center gap-1 rounded-lg bg-gray-400 px-3 py-1.5 text-xs font-medium text-white hover:opacity-85"
                   >
                     <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>

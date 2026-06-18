@@ -533,7 +533,7 @@ export default function EventsPage() {
             {view === 'edit' && form.status === 'published' && events.find(e => e.id === form.id)?.slug && (() => {
               const slug = events.find(e => e.id === form.id)?.slug;
               const eventUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/e/${slug}`;
-              const inviteUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/join-event/${form.id}`;
+              const inviteUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://www.waaiio.com'}/i/${form.id}`;
               return (
                 <div className="rounded-lg border border-brand/20 bg-brand-50/30 p-3 space-y-3">
                   <p className="text-xs font-semibold text-brand uppercase">Share Event</p>

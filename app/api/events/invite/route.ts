@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
 
   // Build public invite URL for numbers that need opt-in
   const eventOrPartyId = partyId || eventId;
-  const publicInviteUrl = `${appUrl}/join-event/${eventOrPartyId}`;
+  const publicInviteUrl = `${appUrl}/i/${eventOrPartyId}`;
 
   for (let i = 0; i < Math.min(phones.length, 50); i++) {
     const rawPhone = phones[i];
