@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -111,16 +112,29 @@ export async function POST(request: NextRequest) {
               '', `RSVP: ${inviteLink}`,
             ].filter(Boolean).join('\n');
 
-            await resolved.sender.sendButtons({
-              to: cleanPhone,
-              body: message,
-              buttons: [
-                { id: `rsvp_yes_${existing.id}`, title: "Yes, I'll be there!" },
-                { id: `rsvp_maybe_${existing.id}`, title: 'Maybe' },
-                { id: `rsvp_no_${existing.id}`, title: "Can't make it" },
-              ],
-            });
-            whatsappSent = true;
+            try {
+              await resolved.sender.sendButtons({
+                to: cleanPhone,
+                body: message,
+                buttons: [
+                  { id: `rsvp_yes_${existing.id}`, title: "Yes, I'll be there!" },
+                  { id: `rsvp_maybe_${existing.id}`, title: 'Maybe' },
+                  { id: `rsvp_no_${existing.id}`, title: "Can't make it" },
+                ],
+              });
+              whatsappSent = true;
+            } catch {
+              // Buttons failed (cold number) — fall back to template
+              const eventDetails = `${hostName ? `${hostName} invites you to ` : ''}${target.name} on ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}${target.venue ? ` at ${target.venue}` : ''}`;
+              const templateResult = await sendWithTemplate({
+                sender: resolved.sender,
+                to: cleanPhone,
+                templateName: 'waaiio_event_invite',
+                templateParams: [eventDetails, inviteLink],
+                templateOnly: true,
+              });
+              whatsappSent = templateResult.sent;
+            }
           }
         } catch (err) {
           logger.error('[INVITE-OPTIN] Re-send WhatsApp error:', err);
@@ -217,16 +231,30 @@ export async function POST(request: NextRequest) {
         ];
         const message = messageParts.filter(Boolean).join('\n');
 
-        await resolved.sender.sendButtons({
-          to: cleanPhone,
-          body: message,
-          buttons: [
-            { id: `rsvp_yes_${invite.id}`, title: "Yes, I'll be there!" },
-            { id: `rsvp_maybe_${invite.id}`, title: 'Maybe' },
-            { id: `rsvp_no_${invite.id}`, title: "Can't make it" },
-          ],
-        });
-        whatsappSent = true;
+        try {
+          await resolved.sender.sendButtons({
+            to: cleanPhone,
+            body: message,
+            buttons: [
+              { id: `rsvp_yes_${invite.id}`, title: "Yes, I'll be there!" },
+              { id: `rsvp_maybe_${invite.id}`, title: 'Maybe' },
+              { id: `rsvp_no_${invite.id}`, title: "Can't make it" },
+            ],
+          });
+          whatsappSent = true;
+        } catch {
+          // Buttons failed (cold number) — fall back to template
+          const hostPrefix = hostName ? `${hostName} invites you to ` : '';
+          const eventDetails = `${hostPrefix}${target.name} on ${dateLabel}${timeLabel ? ` at ${timeLabel}` : ''}${target.venue ? ` at ${target.venue}` : ''}`;
+          const templateResult = await sendWithTemplate({
+            sender: resolved.sender,
+            to: cleanPhone,
+            templateName: 'waaiio_event_invite',
+            templateParams: [eventDetails, inviteLink],
+            templateOnly: true,
+          });
+          whatsappSent = templateResult.sent;
+        }
       }
     } catch (err) {
       logger.error('[INVITE-OPTIN] WhatsApp send error:', err);
