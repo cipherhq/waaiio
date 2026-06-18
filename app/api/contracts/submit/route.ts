@@ -285,6 +285,21 @@ export async function POST(request: NextRequest) {
             logger.warn('Failed to send owner notification:', ownerErr);
           }
         }
+
+        // Email owner about all signers completing
+        try {
+          if (biz?.owner_id) {
+            const { data: owner } = await supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
+            if (owner?.email) {
+              const { sendEmail } = await import('@/lib/email/client');
+              sendEmail({
+                to: owner.email,
+                subject: `Contract signed: ${activeContract.title}`,
+                html: `<p>Hi ${owner.first_name || 'there'},</p><p>All signers have signed "${activeContract.title}". View it in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+              }).catch(() => {});
+            }
+          }
+        } catch { /* non-critical */ }
       } else if (activeContract.signing_mode === 'sequential') {
         // Advance next signer from 'waiting' to 'pending'
         const nextSigner = (allSigners || []).find(s => s.status === 'waiting');
@@ -499,6 +514,21 @@ export async function POST(request: NextRequest) {
         logger.warn('Failed to send owner notification:', ownerErr);
       }
     }
+
+    // Email owner about signed contract
+    try {
+      if (biz?.owner_id) {
+        const { data: owner } = await supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
+        if (owner?.email) {
+          const { sendEmail } = await import('@/lib/email/client');
+          sendEmail({
+            to: owner.email,
+            subject: `Contract signed: ${activeContract.title}`,
+            html: `<p>Hi ${owner.first_name || 'there'},</p><p>${signerName} signed "${activeContract.title}". View it in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          }).catch(() => {});
+        }
+      }
+    } catch { /* non-critical */ }
 
     // Send CC notifications
     const ccList = activeContract.cc_recipients as { phone?: string; email?: string }[] | null;

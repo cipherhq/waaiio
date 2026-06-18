@@ -117,6 +117,24 @@ const feedbackThanksStep: FlowStepConfig = {
         comment,
         service_type: (d.service_type as string) || null,
       });
+
+      // Email owner about new review
+      try {
+        const { data: biz } = await ctx.supabase.from('businesses').select('owner_id').eq('id', ctx.business.id).single();
+        if (biz?.owner_id) {
+          const { data: owner } = await ctx.supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
+          if (owner?.email) {
+            const displayName = customerName || ctx.from;
+            const commentLine = comment ? `<p>Comment: "${comment}"</p>` : '';
+            const { sendEmail } = await import('@/lib/email/client');
+            sendEmail({
+              to: owner.email,
+              subject: `New ${'⭐'.repeat(rating)} review from ${displayName}`,
+              html: `<p>Hi ${owner.first_name || 'there'},</p><p>${displayName} left a ${rating}-star review.${comment ? ` "${comment}"` : ''}</p>${commentLine ? '' : ''}<p>View feedback in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+            }).catch(() => {});
+          }
+        }
+      } catch { /* non-critical */ }
     }
 
     const stars = '⭐'.repeat(rating);

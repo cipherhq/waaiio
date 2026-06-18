@@ -313,6 +313,26 @@ export async function executeKeywordAction(
           await sendText(from, campaign.opt_in_message);
         }
 
+        // Email owner about keyword campaign response
+        try {
+          const { data: biz } = await supabase.from('businesses').select('owner_id').eq('id', campaign.business_id).single();
+          if (biz?.owner_id) {
+            const { data: owner } = await supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
+            if (owner?.email) {
+              const { count: responseCount } = await supabase
+                .from('keyword_campaign_responses')
+                .select('id', { count: 'exact', head: true })
+                .eq('campaign_id', campaign.id);
+              const { sendEmail } = await import('@/lib/email/client');
+              sendEmail({
+                to: owner.email,
+                subject: `Keyword hit: ${kw.keyword}`,
+                html: `<p>Hi ${owner.first_name || 'there'},</p><p>${from} texted "${kw.keyword}". You now have ${responseCount || 1} response${(responseCount || 1) === 1 ? '' : 's'}.</p><p>View results in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+              }).catch(() => {});
+            }
+          }
+        } catch { /* non-critical */ }
+
         return true;
       }
 
