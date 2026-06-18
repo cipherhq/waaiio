@@ -69,7 +69,7 @@ export const router = createBrowserRouter([
       { path: 'dashboard', Component: Dashboard },
       // Users
       { path: 'users', element: <RoleGuard roles={['admin']}><Users /></RoleGuard> },
-      { path: 'customers', Component: Customers },
+      { path: 'customers', element: <RoleGuard roles={['admin', 'support', 'operations']}><Customers /></RoleGuard> },
       { path: 'admin-team', element: <RoleGuard roles={['admin']}><AdminTeam /></RoleGuard> },
       // Businesses
       { path: 'businesses', element: <RoleGuard roles={['admin', 'support', 'operations']}><Businesses /></RoleGuard> },
@@ -88,7 +88,7 @@ export const router = createBrowserRouter([
       { path: 'reports', element: <RoleGuard roles={['admin', 'operations']}><Reports /></RoleGuard> },
       { path: 'queue-management', element: <RoleGuard roles={['admin', 'operations']}><QueueManagement /></RoleGuard> },
       // Giving
-      { path: 'giving', Component: Giving },
+      { path: 'giving', element: <RoleGuard roles={['admin', 'finance']}><Giving /></RoleGuard> },
       // Communication
       { path: 'bot-management', element: <RoleGuard roles={['admin', 'operations']}><BotManagement /></RoleGuard> },
       { path: 'bot-keywords', element: <RoleGuard roles={['admin', 'operations']}><BotKeywords /></RoleGuard> },
@@ -107,7 +107,7 @@ export const router = createBrowserRouter([
       { path: 'events', element: <RoleGuard roles={['admin', 'operations']}><Events /></RoleGuard> },
       { path: 'campaigns', element: <RoleGuard roles={['admin', 'operations']}><Campaigns /></RoleGuard> },
       { path: 'countries', element: <RoleGuard roles={['admin']}><Countries /></RoleGuard> },
-      { path: 'surveys', Component: Surveys },
+      { path: 'surveys', element: <RoleGuard roles={['admin', 'operations']}><Surveys /></RoleGuard> },
       { path: 'ai-setup-log', Component: AISetupLog },
       { path: 'ai-usage', Component: AIUsage },
       { path: 'conversation-usage', Component: ConversationUsage },

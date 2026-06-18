@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger';
 import { stripPlus } from '@/lib/utils/phone';
 import { getCustomerName } from '@/lib/bot/flows/shared/user';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 interface PaymentForConfirmation {
   id: string;
@@ -228,7 +229,7 @@ export async function sendProactiveConfirmation(
       const { data: profile } = await supabase
         .from('profiles')
         .select('id')
-        .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+        .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
         .limit(1)
         .maybeSingle();
 
@@ -577,7 +578,7 @@ export async function sendProactiveConfirmation(
           const { data: donorProfile } = await supabase
             .from('profiles')
             .select('email')
-            .or(`phone.eq.${phoneP},phone.eq.${phoneN}`)
+            .or(`phone.eq.${sanitizeFilterValue(phoneP)},phone.eq.${sanitizeFilterValue(phoneN)}`)
             .limit(1)
             .maybeSingle();
 
