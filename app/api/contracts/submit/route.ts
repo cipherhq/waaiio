@@ -276,30 +276,17 @@ export async function POST(request: NextRequest) {
           })
           .eq('id', activeContract.id);
 
-        // Notify owner
-        if (biz?.phone) {
-          try {
-            const ownerMsg = `"${activeContract.title}" has been signed by all signers! View from your dashboard.`;
-            await sendWhatsApp(supabase, activeContract.business_id, biz.country_code, biz.phone, ownerMsg);
-          } catch (ownerErr) {
-            logger.warn('Failed to send owner notification:', ownerErr);
-          }
+        // Notify owner (email + WhatsApp)
+        {
+          const { notifyOwnerGeneric } = await import('@/lib/bot/flows/shared/notify-owner');
+          notifyOwnerGeneric({
+            supabase,
+            businessId: activeContract.business_id,
+            subject: `Contract signed: ${activeContract.title}`,
+            emailHtml: `<p>All signers have signed "${activeContract.title}". View it in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+            whatsappText: `✅ *Contract Signed*\n\n"${activeContract.title}" has been signed by all signers! View from your dashboard.\n\n_Powered by Waaiio_`,
+          }).catch(() => {});
         }
-
-        // Email owner about all signers completing
-        try {
-          if (biz?.owner_id) {
-            const { data: owner } = await supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
-            if (owner?.email) {
-              const { sendEmail } = await import('@/lib/email/client');
-              sendEmail({
-                to: owner.email,
-                subject: `Contract signed: ${activeContract.title}`,
-                html: `<p>Hi ${owner.first_name || 'there'},</p><p>All signers have signed "${activeContract.title}". View it in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-              }).catch(() => {});
-            }
-          }
-        } catch { /* non-critical */ }
       } else if (activeContract.signing_mode === 'sequential') {
         // Advance next signer from 'waiting' to 'pending'
         const nextSigner = (allSigners || []).find(s => s.status === 'waiting');
@@ -505,30 +492,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Notify business owner
-    if (biz?.phone) {
-      try {
-        const ownerMsg = `"${activeContract.title}" has been signed by ${signerName}! View from your dashboard.`;
-        await sendWhatsApp(supabase, activeContract.business_id, biz.country_code, biz.phone, ownerMsg);
-      } catch (ownerErr) {
-        logger.warn('Failed to send owner notification:', ownerErr);
-      }
+    // Notify business owner (email + WhatsApp)
+    {
+      const { notifyOwnerGeneric } = await import('@/lib/bot/flows/shared/notify-owner');
+      notifyOwnerGeneric({
+        supabase,
+        businessId: activeContract.business_id,
+        subject: `Contract signed: ${activeContract.title}`,
+        emailHtml: `<p>${signerName} signed "${activeContract.title}". View it in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+        whatsappText: `✅ *Contract Signed*\n\n"${activeContract.title}" has been signed by ${signerName}! View from your dashboard.\n\n_Powered by Waaiio_`,
+      }).catch(() => {});
     }
-
-    // Email owner about signed contract
-    try {
-      if (biz?.owner_id) {
-        const { data: owner } = await supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
-        if (owner?.email) {
-          const { sendEmail } = await import('@/lib/email/client');
-          sendEmail({
-            to: owner.email,
-            subject: `Contract signed: ${activeContract.title}`,
-            html: `<p>Hi ${owner.first_name || 'there'},</p><p>${signerName} signed "${activeContract.title}". View it in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-          }).catch(() => {});
-        }
-      }
-    } catch { /* non-critical */ }
 
     // Send CC notifications
     const ccList = activeContract.cc_recipients as { phone?: string; email?: string }[] | null;

@@ -278,23 +278,20 @@ const surveyCompleteStep: FlowStepConfig = {
         .update({ total_responses: count || 0 })
         .eq('id', surveyId);
 
-      // Email owner about survey completion
-      try {
-        const { data: biz } = await ctx.supabase.from('businesses').select('owner_id').eq('id', ctx.business.id).single();
-        if (biz?.owner_id) {
-          const { data: owner } = await ctx.supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
-          if (owner?.email) {
-            const surveyTitle = (d.survey_title as string) || 'Quick Survey';
-            const displayName = customerName || ctx.from;
-            const { sendEmail } = await import('@/lib/email/client');
-            sendEmail({
-              to: owner.email,
-              subject: `Survey completed: ${surveyTitle}`,
-              html: `<p>Hi ${owner.first_name || 'there'},</p><p>${displayName} completed your survey "${surveyTitle}". View responses in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-            }).catch(() => {});
-          }
-        }
-      } catch { /* non-critical */ }
+      // Notify owner about survey completion (email + WhatsApp)
+      {
+        const surveyTitle = (d.survey_title as string) || 'Quick Survey';
+        const displayName = customerName || ctx.from;
+        const { notifyOwnerGeneric } = await import('./shared/notify-owner');
+        notifyOwnerGeneric({
+          supabase: ctx.supabase,
+          sender: ctx.sender,
+          businessId: ctx.business.id,
+          subject: `Survey completed: ${surveyTitle}`,
+          emailHtml: `<p>${displayName} completed your survey "${surveyTitle}". View responses in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          whatsappText: `📋 *Survey Response*\n\n${displayName} completed your survey "${surveyTitle}".\n\nView responses in your dashboard.\n\n_Powered by Waaiio_`,
+        }).catch(() => {});
+      }
     }
 
     const messages: PromptMessage[] = [

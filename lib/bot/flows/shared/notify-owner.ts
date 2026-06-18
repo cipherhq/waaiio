@@ -683,3 +683,39 @@ export async function notifyOwnerNewQueueCheckin(opts: NotifyQueueCheckinOpts): 
     );
   }
 }
+
+/**
+ * Generic owner notification — sends email + WhatsApp (if enabled).
+ * For activities that don't have a dedicated notifyOwner* function.
+ * Fire-and-forget pattern — never throws.
+ */
+export async function notifyOwnerGeneric(opts: {
+  supabase: SupabaseClient;
+  sender?: MessageSender;
+  businessId: string;
+  subject: string;
+  emailHtml: string;
+  whatsappText: string;
+}): Promise<void> {
+  try {
+    const info = await fetchOwnerInfo(opts.supabase, opts.businessId);
+    if (!info) return;
+
+    // Email
+    if (info.notifyEmail && info.ownerEmail) {
+      sendEmail({ to: info.ownerEmail, subject: opts.subject, html: opts.emailHtml }).catch(err =>
+        logger.error('[NOTIFY-OWNER] Generic email error:', err),
+      );
+    }
+
+    // WhatsApp
+    if (info.notifyWhatsApp && info.notifyWhatsAppPhone && opts.sender) {
+      const phone = info.notifyWhatsAppPhone.startsWith('+') ? info.notifyWhatsAppPhone.slice(1) : info.notifyWhatsAppPhone;
+      opts.sender.sendText({ to: phone, text: opts.whatsappText }).catch(err =>
+        logger.error('[NOTIFY-OWNER] Generic WhatsApp error:', err),
+      );
+    }
+  } catch (err) {
+    logger.error('[NOTIFY-OWNER] Generic notify error:', err);
+  }
+}

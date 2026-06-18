@@ -180,25 +180,20 @@ const pollQuestionStep: FlowStepConfig = {
         .update({ total_votes: count || 0 })
         .eq('id', pollId);
 
-      // Email owner about new poll response
-      try {
-        if (ctx.business) {
-          const { data: biz } = await ctx.supabase.from('businesses').select('owner_id').eq('id', ctx.business.id).single();
-          if (biz?.owner_id) {
-            const { data: owner } = await ctx.supabase.from('profiles').select('email, first_name').eq('id', biz.owner_id).single();
-            if (owner?.email) {
-              const pollTitle = (d.poll_question as string) || 'your poll';
-              const displayName = customerName || ctx.from;
-              const { sendEmail } = await import('@/lib/email/client');
-              sendEmail({
-                to: owner.email,
-                subject: `New poll response: ${pollTitle}`,
-                html: `<p>Hi ${owner.first_name || 'there'},</p><p>${displayName} voted in "${pollTitle}". View results in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-              }).catch(() => {});
-            }
-          }
-        }
-      } catch { /* non-critical */ }
+      // Notify owner about new poll response (email + WhatsApp)
+      if (ctx.business) {
+        const pollTitle = (d.poll_question as string) || 'your poll';
+        const displayName = customerName || ctx.from;
+        const { notifyOwnerGeneric } = await import('./shared/notify-owner');
+        notifyOwnerGeneric({
+          supabase: ctx.supabase,
+          sender: ctx.sender,
+          businessId: ctx.business.id,
+          subject: `New poll response: ${pollTitle}`,
+          emailHtml: `<p>${displayName} voted in "${pollTitle}". View results in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
+          whatsappText: `📊 *Poll Vote*\n\n${displayName} voted in "${pollTitle}".\n\nView results in your dashboard.\n\n_Powered by Waaiio_`,
+        }).catch(() => {});
+      }
     }
 
     return {
