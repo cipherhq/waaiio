@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
+import { isWhiteLabel } from '@/lib/whitelabel';
 
 interface WaiverInfo {
   id: string;
@@ -11,6 +12,7 @@ interface WaiverInfo {
   pdf_url: string | null;
   business_name: string;
   logo_url: string | null;
+  subscription_tier?: string;
 }
 
 type PageState = 'loading' | 'ready' | 'submitting' | 'success' | 'error';
@@ -308,7 +310,9 @@ export default function WaiverSignPage() {
               ? 'A confirmation has been sent to you.'
               : 'Thank you for signing.'}
           </p>
-          <p className="mt-6 text-xs text-gray-400">Powered by Waaiio</p>
+          {!isWhiteLabel(waiver?.subscription_tier) && (
+            <p className="mt-6 text-xs text-gray-400">Powered by Waaiio</p>
+          )}
         </div>
       </div>
     );
@@ -644,7 +648,9 @@ export default function WaiverSignPage() {
         </div>
       </div>
 
-      <p className="pb-20 md:pb-4 text-center text-xs text-gray-400">Powered by Waaiio</p>
+      {!isWhiteLabel(waiver?.subscription_tier) && (
+        <p className="pb-20 md:pb-4 text-center text-xs text-gray-400">Powered by Waaiio</p>
+      )}
     </div>
   );
 }

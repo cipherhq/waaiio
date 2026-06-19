@@ -427,6 +427,8 @@ export default function Dashboard() {
     }
 
     loadStats();
+    const interval = setInterval(loadStats, 60_000);
+    return () => clearInterval(interval);
   }, []);
 
   const cardColors: Record<string, string> = {
@@ -462,7 +464,7 @@ export default function Dashboard() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Dashboard <span className="ml-2 text-xs text-gray-400">Auto-refreshing</span></h1>
       <p className="mt-1 text-sm text-gray-500">Platform overview and quick actions</p>
 
       {/* Action Required Alerts */}

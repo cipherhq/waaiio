@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
   // Get business details + owner name for the message
   const { data: business } = await service
     .from('businesses')
-    .select('name, country_code, owner_id')
+    .select('name, country_code, owner_id, subscription_tier')
     .eq('id', businessId)
     .single();
 
@@ -288,7 +288,7 @@ export async function POST(request: NextRequest) {
                     <p style="margin: 4px 0 12px; font-size: 12px; color: #555;">Receive reminders and updates for this event on WhatsApp.</p>
                     <a href="${publicInviteUrl}" style="background: #25D366; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; font-size: 13px;">Get WhatsApp Invite</a>
                   </div>
-                  <p style="color: #999; font-size: 12px;">From ${business?.name || 'Waaiio'} · Powered by Waaiio</p>
+                  <p style="color: #999; font-size: 12px;">From ${business?.name || 'Waaiio'}${business?.subscription_tier !== 'business' ? ' · Powered by Waaiio' : ''}</p>
                 </div>
               `,
             });

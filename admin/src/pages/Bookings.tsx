@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -52,9 +52,14 @@ export default function Bookings() {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Booking | null>(null);
   const perPage = 20;
+  const loadingRef = useRef(false);
 
-  useEffect(() => {
-    async function load() {
+  async function loadBookings() {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setLoading(true);
+
+    try {
       // Load bookings + reservations
       const [bookingsRes, reservationsRes] = await Promise.all([
         adminDb.from('bookings').select('*').order('created_at', { ascending: false }),
@@ -128,9 +133,18 @@ export default function Bookings() {
         }));
 
       setBookings(enriched);
+    } catch (error) {
+      console.warn('Failed to load bookings:', error);
+    } finally {
       setLoading(false);
+      loadingRef.current = false;
     }
-    load();
+  }
+
+  useEffect(() => {
+    loadBookings();
+    const interval = setInterval(loadBookings, 60_000);
+    return () => clearInterval(interval);
   }, []);
 
   const filtered = bookings.filter(b => {
@@ -160,7 +174,7 @@ export default function Bookings() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Bookings</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Bookings <span className="ml-2 text-xs text-gray-400">Auto-refreshing</span></h1>
       <p className="mt-1 text-sm text-gray-500">Manage all customer bookings across accounts</p>
 
       {/* Filters */}

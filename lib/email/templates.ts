@@ -18,17 +18,20 @@ function esc(str: string): string {
 interface WrapOptions {
   businessName?: string;
   logoUrl?: string;
+  whitelabel?: boolean;
 }
 
 function wrap(body: string, opts?: WrapOptions): string {
   const biz = opts?.businessName ? esc(opts.businessName) : '';
   const logo = opts?.logoUrl || '';
 
+  const wl = opts?.whitelabel === true;
+
   const headerContent = biz
     ? `<table cellpadding="0" cellspacing="0" width="100%"><tr>
         ${logo ? `<td style="width:40px;padding-right:12px"><img src="${logo}" width="36" height="36" style="border-radius:8px;display:block" alt="${biz}" /></td>` : ''}
         <td style="font-size:16px;font-weight:700;color:#ffffff">${biz}</td>
-        <td style="text-align:right;font-size:11px;color:#B5A3E0">via <span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
+        ${wl ? '' : `<td style="text-align:right;font-size:11px;color:#B5A3E0">via <span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>`}
       </tr></table>`
     : `<table cellpadding="0" cellspacing="0"><tr>
         <td style="font-size:18px;font-weight:700"><span style="color:#25D366">wa</span><span style="color:#E5993E">ai</span><span style="color:#B5A3E0">io</span></td>
@@ -58,7 +61,7 @@ function wrap(body: string, opts?: WrapOptions): string {
     </td>
   </tr>
   <!-- Footer -->
-  <tr>
+  ${wl ? '' : `<tr>
     <td style="padding:24px 32px;border-top:1px solid #e4e4e7;text-align:center">
       <p style="margin:0;font-size:12px;color:#a1a1aa">
         &copy; ${new Date().getFullYear()} Waaiio. All rights reserved.
@@ -67,7 +70,7 @@ function wrap(body: string, opts?: WrapOptions): string {
         Automate your business with AI-powered WhatsApp bots.
       </p>
     </td>
-  </tr>
+  </tr>`}
 </table>
 </td></tr>
 </table>
@@ -282,8 +285,9 @@ export function bookingConfirmationEmail(details: {
   quantityLabel: string;
   confirmationEmoji: string;
   googleCalendarUrl?: string;
+  whitelabel?: boolean;
 }) {
-  const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji, googleCalendarUrl } = details;
+  const { firstName, businessName, businessLogoUrl, date, time, quantity, referenceCode, amount, formattedAmount, quantityLabel, confirmationEmoji, googleCalendarUrl, whitelabel } = details;
   const amountDisplay = formattedAmount || (amount > 0 ? amount.toLocaleString() : '');
   const calendarBtn = googleCalendarUrl
     ? `<table cellpadding="0" cellspacing="0" style="margin:16px 0"><tr>
@@ -307,7 +311,7 @@ export function bookingConfirmationEmail(details: {
       )}
       ${calendarBtn}
       ${p("We'll send you a reminder beforehand. See you soon!")}
-    `, { businessName, logoUrl: businessLogoUrl }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel }),
   };
 }
 
@@ -319,6 +323,7 @@ export function bookingReminderEmail(
   time: string,
   referenceCode: string,
   businessLogoUrl?: string,
+  whitelabel?: boolean,
 ) {
   return {
     subject: `Reminder: ${businessName} is tomorrow`,
@@ -333,7 +338,7 @@ export function bookingReminderEmail(
         kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
       ${p('If you need to reschedule or cancel, please contact the business directly.')}
-    `, { businessName, logoUrl: businessLogoUrl }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel }),
   };
 }
 
@@ -589,6 +594,7 @@ export function invoiceEmail(details: {
   items: Array<{ description: string; quantity: number; unitPrice: number; amount: number }>;
   invoiceUrl: string;
   currency: string;
+  whitelabel?: boolean;
 }) {
   const { businessName, businessLogoUrl, referenceCode, totalAmount, dueDate, customerName, items, invoiceUrl } = details;
 
@@ -625,7 +631,7 @@ export function invoiceEmail(details: {
       ${btn('View & Pay Invoice', invoiceUrl)}
       ${p('You can also copy and paste this link into your browser:')}
       ${p(`<a href="${invoiceUrl}" style="color:#7c3aed;word-break:break-all">${invoiceUrl}</a>`)}
-    `, { businessName, logoUrl: businessLogoUrl }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel }),
   };
 }
 
@@ -641,6 +647,7 @@ export function ticketConfirmationEmail(details: {
   referenceCode: string;
   formattedAmount: string;
   ticketCodes: string[];
+  whitelabel?: boolean;
 }) {
   const { firstName, businessName, businessLogoUrl, eventName, eventDate, eventTime, venue, quantity, referenceCode, formattedAmount, ticketCodes } = details;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
@@ -665,7 +672,7 @@ export function ticketConfirmationEmail(details: {
       ${ticketList ? `${p('<strong>Your Ticket Codes:</strong>')}${table(ticketList)}` : ''}
       ${p('Show your QR code or ticket code at the entrance. Your tickets are also available on WhatsApp.')}
       ${p('Enjoy the event! 🎉')}
-    `, { businessName, logoUrl: businessLogoUrl }),
+    `, { businessName, logoUrl: businessLogoUrl, whitelabel: details.whitelabel }),
   };
 }
 
@@ -675,6 +682,7 @@ export function donationReceiptEmail(details: {
   campaignTitle: string;
   formattedAmount: string;
   referenceCode: string;
+  whitelabel?: boolean;
 }) {
   const { donorName, businessName, campaignTitle, formattedAmount, referenceCode } = details;
   const firstName = donorName.split(' ')[0] || 'there';
@@ -692,7 +700,7 @@ export function donationReceiptEmail(details: {
         kv('Reference', `<code style="background:#f4f4f5;padding:2px 6px;border-radius:4px;font-family:monospace">${esc(referenceCode)}</code>`)
       )}
       ${p('Your support makes a difference. Thank you!')}
-    `, { businessName }),
+    `, { businessName, whitelabel: details.whitelabel }),
   };
 }
 

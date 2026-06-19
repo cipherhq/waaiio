@@ -135,7 +135,11 @@ export default function Payments() {
     }
   }
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    loadData();
+    const interval = setInterval(loadData, 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Apply filters
   const filtered = payments.filter(p => {
@@ -242,7 +246,7 @@ export default function Payments() {
     <div>
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Payments</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Payments <span className="ml-2 text-xs text-gray-400">Auto-refreshing</span></h1>
           <p className="mt-1 text-sm text-gray-500">View and inspect all payment transactions</p>
         </div>
         <button

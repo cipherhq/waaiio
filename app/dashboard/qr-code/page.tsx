@@ -5,6 +5,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 // ── Poster templates based on business capabilities / use case ──
 const TEMPLATES = [
@@ -239,6 +240,11 @@ export default function QRCodePage() {
         <p className="mt-1 text-sm text-gray-500">
           Share your QR code or link so customers can reach you on WhatsApp instantly
         </p>
+        <PageHelp
+          pageKey="qr-code"
+          title="QR Code & Link"
+          description="Share your booking link or WhatsApp QR code. Print it, add it to your website, or share on social media."
+        />
       </div>
 
       {channelLoaded && !phone && (

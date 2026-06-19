@@ -9,8 +9,9 @@ import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewPayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import type { SubscriptionTier } from '@/lib/constants';
-import { getAuthorization, createPlan, createSubscription } from '@/lib/payments/paystack-recurring';
+import { getAuthorization, createPlan as createPaystackPlan, createSubscription as createPaystackSubscription } from '@/lib/payments/paystack-recurring';
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
+import { getCardToken, createPlan as createFlutterwavePlan, createSubscription as createFlutterwaveSubscription } from '@/lib/payments/flutterwave-recurring';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -696,8 +697,14 @@ export const paymentFlow: FlowDefinition = {
           }
         }
 
-        // Determine gateway based on country
-        const isPaystack = ['NG', 'GH'].includes(cc);
+        // Determine gateway: business override > country default
+        // Gateway follows business — businesses.payment_gateway overrides country default
+        const businessGateway = ctx.business.payment_gateway as string | null;
+        const resolvedGateway: 'paystack' | 'flutterwave' | 'stripe' =
+          businessGateway === 'flutterwave' ? 'flutterwave' :
+          businessGateway === 'stripe' ? 'stripe' :
+          businessGateway === 'paystack' ? 'paystack' :
+          ['NG', 'GH'].includes(cc) ? 'paystack' : 'stripe';
 
         let subscriptionCode = '';
         let planCode = '';
@@ -705,9 +712,10 @@ export const paymentFlow: FlowDefinition = {
         let authCode = '';
         let cardLast4 = '';
         let cardBrand = '';
-        let gatewayName: 'paystack' | 'stripe' = isPaystack ? 'paystack' : 'stripe';
+        let cardToken = '';
+        const gatewayName = resolvedGateway;
 
-        if (isPaystack) {
+        if (resolvedGateway === 'paystack') {
           // Extract authorization from the payment just made
           const authData = await getAuthorization(ref);
           if (!authData) {
@@ -720,7 +728,7 @@ export const paymentFlow: FlowDefinition = {
           customerCode = authData.customerCode;
 
           // Create plan
-          const plan = await createPlan({
+          const plan = await createPaystackPlan({
             name: `${ctx.business.name} - ${serviceName} (${frequency})`,
             interval: frequency,
             amount,
@@ -731,7 +739,7 @@ export const paymentFlow: FlowDefinition = {
           planCode = plan.planCode;
 
           // Create subscription
-          const sub = await createSubscription({
+          const sub = await createPaystackSubscription({
             customer: authData.email || authData.customerCode,
             planCode: plan.planCode,
             authorizationCode: authCode,
@@ -741,6 +749,38 @@ export const paymentFlow: FlowDefinition = {
           }
           subscriptionCode = sub.subscriptionCode;
           d._recurring_email_token = sub.emailToken;
+        } else if (resolvedGateway === 'flutterwave') {
+          // Flutterwave: extract card token from the payment just made, then create plan + subscription
+          const tokenData = await getCardToken(ref);
+          if (!tokenData) {
+            return [{ type: 'text', text: 'Unable to set up automatic payments with this payment method. You can still pay manually each time.' }];
+          }
+
+          cardToken = tokenData.token;
+          cardLast4 = tokenData.last4;
+          cardBrand = tokenData.brand;
+
+          // Create Flutterwave payment plan
+          const plan = await createFlutterwavePlan(
+            `${ctx.business.name} - ${serviceName} (${frequency})`,
+            amount,
+            frequency,
+          );
+          if (!plan) {
+            return [{ type: 'text', text: 'Failed to set up recurring plan. Please try again later.' }];
+          }
+          planCode = plan.planId;
+
+          // Subscribe customer to the plan using their card token
+          const sub = await createFlutterwaveSubscription(
+            plan.planId,
+            tokenData.email,
+            cardToken,
+          );
+          if (!sub) {
+            return [{ type: 'text', text: 'Failed to activate recurring payments. Please try again later.' }];
+          }
+          subscriptionCode = sub.subscriptionId;
         } else {
           // Stripe: create subscription checkout
           const phone = ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`;
@@ -798,8 +838,9 @@ export const paymentFlow: FlowDefinition = {
           nextCharge.setMonth(nextCharge.getMonth() + 1);
         }
 
-        // Save customer subscription — pending for Stripe (needs checkout completion), active for Paystack
-        const subStatus = isPaystack ? 'active' : 'pending';
+        // Paystack & Flutterwave: active immediately (card token captured).
+        // Stripe: pending until checkout is completed.
+        const subStatus = resolvedGateway === 'stripe' ? 'pending' : 'active';
 
         await ctx.supabase.from('customer_subscriptions').insert({
           business_id: ctx.business.id,
@@ -813,7 +854,7 @@ export const paymentFlow: FlowDefinition = {
           gateway_subscription_code: subscriptionCode,
           gateway_plan_code: planCode || null,
           gateway_customer_code: customerCode || null,
-          authorization_code: authCode || null,
+          authorization_code: authCode || cardToken || null,
           card_last_four: cardLast4 || null,
           card_brand: cardBrand || null,
           next_charge_at: nextCharge.toISOString(),
@@ -827,7 +868,7 @@ export const paymentFlow: FlowDefinition = {
         });
 
         const label = frequency === 'weekly' ? 'weekly' : 'monthly';
-        if (!isPaystack) {
+        if (resolvedGateway === 'stripe') {
           // Stripe: subscription is pending until checkout is completed
           return [{
             type: 'text',
@@ -840,6 +881,7 @@ export const paymentFlow: FlowDefinition = {
             ].join('\n'),
           }];
         }
+        // Paystack & Flutterwave: active immediately
         return [{
           type: 'text',
           text: [

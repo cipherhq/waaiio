@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceClient();
   const { data: ticket } = await supabase
     .from('event_tickets')
-    .select('ticket_code, guest_name, status, events:event_id(name, date, time, venue, image_url), businesses:business_id(name, logo_url)')
+    .select('ticket_code, guest_name, status, events:event_id(name, date, time, venue, image_url), businesses:business_id(name, logo_url, subscription_tier)')
     .eq('ticket_code', code)
     .single();
 
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   }
 
   const event = ticket.events as unknown as { name: string; date: string; time?: string; venue?: string; image_url?: string } | null;
-  const business = ticket.businesses as unknown as { name: string; logo_url?: string } | null;
+  const business = ticket.businesses as unknown as { name: string; logo_url?: string; subscription_tier?: string } | null;
 
   const eventName = event?.name || 'Event';
   const eventDate = event?.date
@@ -159,9 +159,11 @@ export async function GET(request: NextRequest) {
             <div style={{ fontSize: 14, fontWeight: 'bold', color: '#6C2BD9', background: 'rgba(108, 43, 217, 0.15)', padding: '4px 12px', borderRadius: '6px', display: 'flex' }}>
               {ticketCode}
             </div>
-            <div style={{ fontSize: 10, color: '#505060', display: 'flex' }}>
-              Powered by Waaiio
-            </div>
+            {business?.subscription_tier !== 'business' && (
+              <div style={{ fontSize: 10, color: '#505060', display: 'flex' }}>
+                Powered by Waaiio
+              </div>
+            )}
           </div>
         </div>
       </div>

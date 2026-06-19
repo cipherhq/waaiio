@@ -19,7 +19,7 @@ async function getReceiptData(code: string) {
       `id, reference_code, date, time, status, total_amount, deposit_amount, deposit_status,
        guest_name, guest_phone, created_at,
        services(name),
-       businesses!inner(name, logo_url, country_code, is_active)`
+       businesses!inner(name, logo_url, country_code, is_active, subscription_tier)`
     )
     .eq('reference_code', code)
     .eq('businesses.is_active', true)
@@ -32,6 +32,7 @@ async function getReceiptData(code: string) {
     logo_url: string | null;
     country_code: string | null;
     is_active: boolean;
+    subscription_tier?: string;
   } | null;
 
   const service = booking.services as unknown as { name: string } | null;
@@ -72,6 +73,7 @@ async function getReceiptData(code: string) {
     isPaid,
     status: isPaid ? 'Paid' : 'Pending',
     countryCode,
+    subscriptionTier: business?.subscription_tier || 'free',
   };
 }
 

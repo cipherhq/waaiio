@@ -60,6 +60,11 @@ export default function Verification() {
     if (loadRef.current) return;
     loadRef.current = true;
     load();
+    const interval = setInterval(() => {
+      loadRef.current = false;
+      load();
+    }, 60_000);
+    return () => clearInterval(interval);
   }, []);
 
   async function load() {
@@ -276,7 +281,7 @@ export default function Verification() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Verification</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Verification <span className="ml-2 text-xs text-gray-400">Auto-refreshing</span></h1>
       <p className="mt-1 text-sm text-gray-500">Review account verification requests and documents</p>
 
       {/* Summary Cards */}

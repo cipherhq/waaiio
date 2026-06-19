@@ -5,6 +5,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import EmptyState from '@/components/dashboard/EmptyState';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface PaymentLink {
   id: string;
@@ -203,6 +204,11 @@ export default function ScanToPayPage() {
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Create payment links and QR codes. Print them, display them, or share them.
           </p>
+          <PageHelp
+            pageKey="scan-to-pay"
+            title="Scan to Pay"
+            description="Generate a payment QR code that anyone can scan to pay you instantly."
+          />
         </div>
         {links.length > 0 && (
           <button

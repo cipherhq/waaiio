@@ -38,7 +38,7 @@ export async function GET(
     // Get business name and logo
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, logo_url')
+      .select('name, logo_url, subscription_tier')
       .eq('id', template.business_id)
       .single();
 
@@ -50,6 +50,7 @@ export async function GET(
       pdf_url: template.pdf_url || null,
       business_name: biz?.name || 'Business',
       logo_url: biz?.logo_url || null,
+      subscription_tier: biz?.subscription_tier || 'free',
     });
   } catch (err) {
     logger.error('Waiver token GET error:', err);

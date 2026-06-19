@@ -29,12 +29,12 @@ export async function GET(
       events (
         id, name, description, date, time, venue, image_url,
         allow_plus_ones, max_plus_ones, ask_dietary, invite_message,
-        businesses!inner ( name, slug )
+        businesses!inner ( name, slug, subscription_tier )
       ),
       parties (
         id, name, description, date, time, venue, image_url,
         allow_plus_ones, max_plus_ones, ask_dietary, invite_message, dress_code,
-        businesses!inner ( name, slug )
+        businesses!inner ( name, slug, subscription_tier )
       )
     `)
     .eq('invite_token', token)
@@ -49,7 +49,13 @@ export async function GET(
     return NextResponse.json({ error: 'Invite not found' }, { status: 404 });
   }
 
-  return NextResponse.json({ invite: data });
+  // Extract subscription_tier from the nested business
+  const rawEventOrParty = data.events || data.parties;
+  const eventOrParty = rawEventOrParty as unknown as Record<string, unknown> | null;
+  const biz = eventOrParty?.businesses as Record<string, unknown> | null;
+  const subscriptionTier = (biz?.subscription_tier as string) || 'free';
+
+  return NextResponse.json({ invite: data, subscription_tier: subscriptionTier });
 }
 
 /**

@@ -5,6 +5,34 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-06-19
+
+### Feature: Flutterwave recurring payment support
+- `lib/payments/flutterwave-recurring.ts` — New file. Functions: createPlan, createSubscription, cancelSubscription, getSubscription, chargeToken, getCardToken. Follows Paystack recurring pattern. Uses tokenized charges + payment plans.
+- Affects: businesses using Flutterwave can now have recurring billing (subscriptions). Does NOT affect Stripe/Paystack recurring flows.
+
+### Feature: White-label for Business/Premium tier
+- 23 files updated across public pages, API routes, PDFs, emails, bot messages
+- Business/Premium tier hides "Powered by Waaiio" footer across all touchpoints
+- `lib/whitelabel.ts` provides central `isWhiteLabel()` helper
+- API routes now return `subscription_tier` so public pages can conditionally render branding
+- Affects: receipts, tickets, contracts, waivers, invoices, RSVP pages, email templates, ticket PDFs, bot payment confirmations
+
+### Feature: Admin auto-refresh
+- `admin/src/pages/Dashboard.tsx` — 60s auto-refresh on stats
+- `admin/src/pages/Bookings.tsx` — 60s auto-refresh on bookings list
+- `admin/src/pages/Payments.tsx` — 60s auto-refresh on payments list
+- `admin/src/pages/Support.tsx` — 60s auto-refresh on support tickets
+- `admin/src/pages/Verification.tsx` — 60s auto-refresh on pending verifications
+
+### Feature: PageHelp on remaining dashboard pages
+- Added PageHelp banners to: alerts, faq, qr-code, scan-to-pay, settings
+
+### Enhancement: Flutterwave recurring in bot payment flow
+- `lib/bot/flows/payment.flow.ts` — Added Flutterwave tokenized charge support for recurring payments. Captures card token after first payment, uses chargeToken for subsequent charges.
+
+---
+
 ## 2026-06-12
 
 ### Feature: Keyword Campaigns backend

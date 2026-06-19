@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
+import { isWhiteLabel } from '@/lib/whitelabel';
 
 export interface TicketPdfOptions {
   eventName: string;
@@ -14,6 +15,7 @@ export interface TicketPdfOptions {
     totalTickets: number;
   }>;
   verifyBaseUrl: string;   // derived from NEXT_PUBLIC_APP_URL env var
+  subscriptionTier?: string;
 }
 
 function collectPdfBuffer(doc: PDFDocument): Promise<Buffer> {
@@ -128,8 +130,10 @@ export async function generateTicketsPdf(opts: TicketPdfOptions): Promise<Buffer
     const footerY = pageHeight - margin - 10;
     doc.moveTo(margin, footerY - 8).lineTo(pageWidth - margin, footerY - 8)
       .strokeColor('#e5e5e5').stroke();
-    doc.fontSize(8).font('Helvetica').fillColor('#bbbbbb')
-      .text('Powered by Waaiio', margin, footerY, { width: contentWidth, align: 'center' });
+    if (!isWhiteLabel(opts.subscriptionTier)) {
+      doc.fontSize(8).font('Helvetica').fillColor('#bbbbbb')
+        .text('Powered by Waaiio', margin, footerY, { width: contentWidth, align: 'center' });
+    }
   }
 
   doc.end();

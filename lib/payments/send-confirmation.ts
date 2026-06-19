@@ -182,6 +182,14 @@ export async function sendProactiveConfirmation(
     return;
   }
 
+  // Fetch subscription tier for white-label checks on emails
+  let isWl = false;
+  try {
+    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', businessId).single();
+    const { isWhiteLabel } = await import('@/lib/whitelabel');
+    isWl = isWhiteLabel(bizTier?.subscription_tier);
+  } catch { /* non-critical */ }
+
   // For web channel bookings, we may not have a phone but should still send email
   if (!customerPhone) {
     // Try to send email-only confirmation for web channel bookings
@@ -550,6 +558,7 @@ export async function sendProactiveConfirmation(
             quantityLabel: 'Guest(s)',
             confirmationEmoji: '✅',
             googleCalendarUrl: googleCalUrl,
+            whitelabel: isWl,
           });
           await sendEmail({ to: guestEmail, ...emailContent });
           logger.info(`${logPrefix} Email confirmation sent to ${guestEmail}`);
@@ -593,6 +602,7 @@ export async function sendProactiveConfirmation(
               campaignTitle,
               formattedAmount: formatCurrency(payment.amount, countryCode),
               referenceCode: donation.reference_code || referenceCode,
+              whitelabel: isWl,
             });
             await sendEmail({ to: donorEmail, ...emailContent });
             logger.info(`${logPrefix} Donation receipt email sent to ${donorEmail}`);

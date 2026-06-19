@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface Alert {
   id: string;
@@ -128,6 +129,11 @@ export default function AlertsPage() {
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Monitor important notifications about your business
         </p>
+        <PageHelp
+          pageKey="alerts"
+          title="Alerts"
+          description="System notifications about payments, subscriptions, and account activity."
+        />
       </div>
 
       {/* Stats */}

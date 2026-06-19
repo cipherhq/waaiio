@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
+import { isWhiteLabel } from '@/lib/whitelabel';
 
 export const metadata = {
   title: 'Payment Successful — Waaiio',
@@ -21,6 +22,7 @@ export default async function PaymentSuccessPage({
   let isTicketing = false;
   let ticketCodes: string[] = [];
   let hasPhone = false;
+  let subscriptionTier = 'free';
 
   // Verify payment and trigger WhatsApp confirmation automatically
   if (params.ref) {
@@ -29,7 +31,7 @@ export default async function PaymentSuccessPage({
       // ref can be gateway_reference (cs_test_xxx) OR booking reference_code (WA-BK-3218)
       let payment = (await supabase
         .from('payments')
-        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code)')
+        .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
         .eq('gateway_reference', params.ref)
         .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
 
@@ -43,14 +45,15 @@ export default async function PaymentSuccessPage({
         if (booking) {
           payment = (await supabase
             .from('payments')
-            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code)')
+            .select('id, status, amount, booking_id, invoice_id, campaign_id, order_id, reservation_id, business_id, businesses(phone, name, country_code, subscription_tier)')
             .eq('booking_id', booking.id)
             .order('created_at', { ascending: false }).limit(1).maybeSingle()).data;
         }
       }
 
       if (payment) {
-        const biz = payment.businesses as unknown as { phone: string; name: string; country_code?: string } | null;
+        const biz = payment.businesses as unknown as { phone: string; name: string; country_code?: string; subscription_tier?: string } | null;
+        if (biz?.subscription_tier) subscriptionTier = biz.subscription_tier;
 
         // Get the WhatsApp channel number (not the owner's personal phone)
         if (payment.business_id) {
@@ -212,7 +215,9 @@ export default async function PaymentSuccessPage({
         )}
         {/* Show "Return to WhatsApp" only for WhatsApp channel or web channel with phone */}
         {(!isWebChannel || hasPhone) && <ReturnToWhatsApp phone={businessPhone} />}
-        <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+        {!isWhiteLabel(subscriptionTier) && (
+          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+        )}
       </div>
     </div>
   );

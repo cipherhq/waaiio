@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 interface FAQ {
   id: string;
@@ -364,6 +365,11 @@ export default function FAQPage() {
           <p className="mt-1 text-sm text-gray-500">
             Auto-respond to common customer questions via WhatsApp
           </p>
+          <PageHelp
+            pageKey="faq"
+            title="Auto-Replies"
+            description="Set up automatic responses for common questions. Configure business hours and away messages."
+          />
         </div>
         <button
           onClick={openAdd}

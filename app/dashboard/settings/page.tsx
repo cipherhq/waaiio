@@ -8,6 +8,7 @@ import { BusinessTab } from './tabs/BusinessTab';
 import { PaymentsTab } from './tabs/PaymentsTab';
 import { FeaturesTab } from './tabs/FeaturesTab';
 import { AccountTab } from './tabs/AccountTab';
+import { PageHelp } from '@/components/dashboard/PageHelp';
 
 export default function SettingsPage() {
   const business = useBusiness();
@@ -49,6 +50,11 @@ export default function SettingsPage() {
     <div>
       <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
       <p className="mt-1 text-sm text-gray-500">Set up your business profile, operating hours, payment options, and how your WhatsApp bot works.</p>
+      <PageHelp
+        pageKey="settings"
+        title="Settings"
+        description="Configure your account, operating hours, payment gateways, and notification preferences."
+      />
 
       {/* Tabs */}
       <div className="relative mt-4">

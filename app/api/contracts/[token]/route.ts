@@ -49,7 +49,7 @@ export async function GET(
 
     const { data: business } = await supabase
       .from('businesses')
-      .select('name, logo_url')
+      .select('name, logo_url, subscription_tier')
       .eq('id', parentContract.business_id)
       .single();
 
@@ -66,6 +66,7 @@ export async function GET(
         has_pdf: false, // individual signer doesn't have separate PDF
         is_multi_signer: true,
         reference_code: parentContract.reference_code || null,
+        subscription_tier: business?.subscription_tier || 'free',
       });
     }
 
@@ -98,13 +99,14 @@ export async function GET(
       is_multi_signer: true,
       logo_url: business?.logo_url || null,
       reference_code: parentContract.reference_code || null,
+      subscription_tier: business?.subscription_tier || 'free',
     });
   }
 
   // Get business name and branding
   const { data: business } = await supabase
     .from('businesses')
-    .select('name, logo_url')
+    .select('name, logo_url, subscription_tier')
     .eq('id', contract.business_id)
     .single();
 
@@ -120,6 +122,7 @@ export async function GET(
       signed_at: contract.signed_at,
       has_pdf: !!contract.signed_url?.endsWith('.pdf'),
       reference_code: contract.reference_code || null,
+      subscription_tier: business?.subscription_tier || 'free',
     });
   }
 
@@ -152,5 +155,6 @@ export async function GET(
     otp_verified: contract.otp_verified || false,
     logo_url: business?.logo_url || null,
     reference_code: contract.reference_code || null,
+    subscription_tier: business?.subscription_tier || 'free',
   });
 }

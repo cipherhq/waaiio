@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
+import { isWhiteLabel } from '@/lib/whitelabel';
 
 interface ContractInfo {
   id: string;
@@ -20,6 +21,7 @@ interface ContractInfo {
   otp_verified?: boolean;
   logo_url?: string | null;
   reference_code?: string | null;
+  subscription_tier?: string;
 }
 
 type PageState = 'loading' | 'otp_required' | 'otp_verifying' | 'ready' | 'signing' | 'submitting' | 'success' | 'already_signed' | 'declined' | 'error';
@@ -426,7 +428,9 @@ export default function SignPage() {
           )}
 
           <ReturnToWhatsApp />
-          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          {!isWhiteLabel(contract?.subscription_tier) && (
+            <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          )}
         </div>
       </div>
     );
@@ -446,7 +450,9 @@ export default function SignPage() {
             You have declined to sign &quot;{contract?.title}&quot;. The sender has been notified.
           </p>
           <ReturnToWhatsApp />
-          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          {!isWhiteLabel(contract?.subscription_tier) && (
+            <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          )}
         </div>
       </div>
     );
@@ -552,7 +558,9 @@ export default function SignPage() {
           </p>
 
           <ReturnToWhatsApp />
-          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          {!isWhiteLabel(contract?.subscription_tier) && (
+            <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          )}
         </div>
       </div>
     );

@@ -113,10 +113,17 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   const phone = guestPhone.startsWith('+') ? guestPhone : `+${guestPhone}`;
   const ticketLabel = quantity === 1 ? 'ticket' : 'tickets';
 
+  // Fetch subscription tier for white-label branding
+  let subscriptionTier: string | undefined;
+  try {
+    const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', businessId).single();
+    subscriptionTier = bizTier?.subscription_tier || 'free';
+  } catch { subscriptionTier = 'free'; }
+
   // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
   try {
     const pdfBuffer = await generateTicketsPdf({
-      eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl,
+      eventName, eventDate, eventTime, venue, guestName, referenceCode, tickets, verifyBaseUrl, subscriptionTier,
     });
 
     const storagePath = `tickets/${businessId}/${bookingId}.pdf`;
@@ -200,6 +207,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
         .eq('id', businessId)
         .single();
 
+      const { isWhiteLabel: isWl } = await import('@/lib/whitelabel');
       const emailContent = ticketConfirmationEmail({
         firstName,
         businessName: biz?.name || 'Event',
@@ -211,6 +219,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
         referenceCode,
         formattedAmount: opts.amount ? formatCurrency(opts.amount, opts.countryCode || 'US') : 'Paid',
         ticketCodes,
+        whitelabel: isWl(subscriptionTier),
       });
 
       await sendEmail({ to: email, ...emailContent });

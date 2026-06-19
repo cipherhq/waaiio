@@ -27,17 +27,18 @@ export async function GET(request: NextRequest) {
     status: string;
     guestName: string;
     quantity?: number;
+    subscriptionTier?: string;
   } | null = null;
 
   // Check bookings
   const { data: booking } = await supabase
     .from('bookings')
-    .select('reference_code, date, total_amount, status, guest_name, quantity, services(name), businesses(name, logo_url, country_code)')
+    .select('reference_code, date, total_amount, status, guest_name, quantity, services(name), businesses(name, logo_url, country_code, subscription_tier)')
     .eq('reference_code', ref)
     .maybeSingle();
 
   if (booking) {
-    const biz = booking.businesses as unknown as { name: string; logo_url?: string; country_code?: string } | null;
+    const biz = booking.businesses as unknown as { name: string; logo_url?: string; country_code?: string; subscription_tier?: string } | null;
     const svc = booking.services as unknown as { name: string } | null;
     const cc = biz?.country_code || 'NG';
     receiptData = {
@@ -52,6 +53,7 @@ export async function GET(request: NextRequest) {
       status: booking.status,
       guestName: booking.guest_name || 'Customer',
       quantity: booking.quantity || 1,
+      subscriptionTier: biz?.subscription_tier || 'free',
     };
   }
 
@@ -59,12 +61,12 @@ export async function GET(request: NextRequest) {
   if (!receiptData) {
     const { data: order } = await supabase
       .from('orders')
-      .select('reference_code, total_amount, status, created_at, businesses:business_id(name, logo_url, country_code), user:profiles!orders_user_id_fkey(first_name, last_name)')
+      .select('reference_code, total_amount, status, created_at, businesses:business_id(name, logo_url, country_code, subscription_tier), user:profiles!orders_user_id_fkey(first_name, last_name)')
       .eq('reference_code', ref)
       .maybeSingle();
 
     if (order) {
-      const biz = order.businesses as unknown as { name: string; logo_url?: string; country_code?: string } | null;
+      const biz = order.businesses as unknown as { name: string; logo_url?: string; country_code?: string; subscription_tier?: string } | null;
       const user = order.user as unknown as { first_name?: string; last_name?: string } | null;
       const cc = biz?.country_code || 'NG';
       receiptData = {
@@ -78,6 +80,7 @@ export async function GET(request: NextRequest) {
         referenceCode: order.reference_code,
         status: order.status,
         guestName: `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Customer',
+        subscriptionTier: biz?.subscription_tier || 'free',
       };
     }
   }
@@ -167,8 +170,12 @@ export async function GET(request: NextRequest) {
 
         {/* Footer */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 40px', background: '#fafafa', borderTop: '1px solid #eee' }}>
-          <div style={{ fontSize: 11, color: '#aaa', display: 'flex' }}>Powered by Waaiio</div>
-          <div style={{ fontSize: 11, color: '#aaa', display: 'flex' }}>waaiio.com</div>
+          {r.subscriptionTier !== 'business' && (
+            <div style={{ fontSize: 11, color: '#aaa', display: 'flex' }}>Powered by Waaiio</div>
+          )}
+          {r.subscriptionTier !== 'business' && (
+            <div style={{ fontSize: 11, color: '#aaa', display: 'flex' }}>waaiio.com</div>
+          )}
         </div>
       </div>
     ),

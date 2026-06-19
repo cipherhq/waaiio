@@ -40,7 +40,8 @@ export async function GET(
         venue,
         image_url,
         self_checkin_enabled,
-        business_id
+        business_id,
+        businesses!inner ( subscription_tier )
       ),
       booking:bookings!booking_id (
         quantity,
@@ -71,6 +72,8 @@ export async function GET(
   // Mask guest phone if no business_id (public/self-checkin view)
   const guestPhone = businessId ? (ticket.guest_phone || '') : undefined;
 
+  const eventBiz = event?.businesses as unknown as { subscription_tier?: string } | null;
+
   return NextResponse.json({
     valid: ticket.status === 'valid',
     ticket: {
@@ -89,6 +92,7 @@ export async function GET(
       scanned_by: ticket.scanned_by,
       self_checkin_enabled: event?.self_checkin_enabled || false,
       image_url: event?.image_url || null,
+      subscription_tier: eventBiz?.subscription_tier || 'free',
     },
   });
 }

@@ -198,10 +198,12 @@ export default function Support() {
     }
   }
 
-  /* ---- initial load ---- */
+  /* ---- initial load + auto-refresh ---- */
   useEffect(() => {
     loadTickets();
     loadAdmins();
+    const interval = setInterval(loadTickets, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   /* ---- scroll messages to bottom ---- */
@@ -366,7 +368,7 @@ export default function Support() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900">Support Tickets</h1>
+      <h1 className="text-2xl font-bold text-gray-900">Support Tickets <span className="ml-2 text-xs text-gray-400">Auto-refreshing</span></h1>
       <p className="mt-1 text-sm text-gray-500">
         View and manage customer support requests
       </p>

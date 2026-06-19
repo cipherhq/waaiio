@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { PhoneInput } from '@/components/auth/PhoneInput';
 import { type CountryCode } from '@/lib/constants';
+import { isWhiteLabel } from '@/lib/whitelabel';
 
 interface EventDetails {
   id: string;
@@ -19,6 +20,7 @@ interface EventDetails {
   host_name: string;
   business_name: string;
   business_country: string;
+  subscription_tier?: string;
 }
 
 type PageState = 'loading' | 'not_found' | 'form' | 'sending' | 'sent';
@@ -163,7 +165,9 @@ export default function PublicInvitePage() {
             Or RSVP on Web
           </a>
 
-          <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          {!isWhiteLabel(event?.subscription_tier) && (
+            <p className="mt-4 text-xs text-gray-400">Powered by Waaiio</p>
+          )}
         </div>
       </div>
     );
@@ -266,9 +270,11 @@ export default function PublicInvitePage() {
             </form>
           </div>
 
-          <div className="border-t border-gray-100 px-6 py-4 text-center">
-            <p className="text-xs text-gray-400">Powered by Waaiio</p>
-          </div>
+          {!isWhiteLabel(event?.subscription_tier) && (
+            <div className="border-t border-gray-100 px-6 py-4 text-center">
+              <p className="text-xs text-gray-400">Powered by Waaiio</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

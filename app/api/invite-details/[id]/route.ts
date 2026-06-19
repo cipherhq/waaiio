@@ -16,13 +16,13 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   // Try events first (by ID or slug)
   let eventQuery = supabase
     .from('events')
-    .select('id, name, date, time, venue, description, image_url, invite_message, business_id, businesses(name, owner_id, country_code)')
+    .select('id, name, date, time, venue, description, image_url, invite_message, business_id, businesses(name, owner_id, country_code, subscription_tier)')
     .eq('status', 'published');
   eventQuery = isUuid ? eventQuery.eq('id', id) : eventQuery.eq('slug', id);
   const { data: event } = await eventQuery.single();
 
   if (event) {
-    const biz = event.businesses as unknown as { name: string; owner_id?: string; country_code?: string } | null;
+    const biz = event.businesses as unknown as { name: string; owner_id?: string; country_code?: string; subscription_tier?: string } | null;
     let hostName = biz?.name || '';
     if (biz?.owner_id) {
       const { data: owner } = await supabase
@@ -49,6 +49,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         host_name: hostName,
         business_name: biz?.name || '',
         business_country: biz?.country_code || 'US',
+        subscription_tier: biz?.subscription_tier || 'free',
       },
     });
   }
@@ -56,12 +57,12 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   // Try parties (by ID or slug)
   let partyQuery = supabase
     .from('parties')
-    .select('id, name, date, time, venue, description, image_url, invite_message, dress_code, business_id, businesses(name, owner_id, country_code)');
+    .select('id, name, date, time, venue, description, image_url, invite_message, dress_code, business_id, businesses(name, owner_id, country_code, subscription_tier)');
   partyQuery = isUuid ? partyQuery.eq('id', id) : partyQuery.eq('slug', id);
   const { data: party } = await partyQuery.single();
 
   if (party) {
-    const biz = party.businesses as unknown as { name: string; owner_id?: string; country_code?: string } | null;
+    const biz = party.businesses as unknown as { name: string; owner_id?: string; country_code?: string; subscription_tier?: string } | null;
     let hostName = biz?.name || '';
     if (biz?.owner_id) {
       const { data: owner } = await supabase
@@ -89,6 +90,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         host_name: hostName,
         business_name: biz?.name || '',
         business_country: biz?.country_code || 'US',
+        subscription_tier: biz?.subscription_tier || 'free',
       },
     });
   }

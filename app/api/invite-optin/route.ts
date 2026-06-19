@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
           const resolved = await resolver.resolveByBusinessId(target.business_id);
           if (resolved) {
             // Get host name
-            const { data: biz } = await supabase.from('businesses').select('name, owner_id').eq('id', target.business_id).single();
+            const { data: biz } = await supabase.from('businesses').select('name, owner_id, subscription_tier').eq('id', target.business_id).single();
             let hostName = biz?.name || '';
             if (biz?.owner_id) {
               const { data: owner } = await supabase.from('profiles').select('first_name, last_name').eq('id', biz.owner_id).single();
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
     // Get host name
     const { data: biz } = await supabase
       .from('businesses')
-      .select('name, owner_id')
+      .select('name, owner_id, subscription_tier')
       .eq('id', target.business_id)
       .single();
 
@@ -290,7 +290,7 @@ export async function POST(request: NextRequest) {
               <div style="margin: 24px 0;">
                 <a href="${inviteLink}" style="background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">RSVP Now</a>
               </div>
-              <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>
+              ${biz?.subscription_tier !== 'business' ? '<p style="color: #999; font-size: 12px;">Powered by Waaiio</p>' : ''}
             </div>
           `,
         });

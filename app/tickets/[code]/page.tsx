@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Image from 'next/image';
 import { ReturnToWhatsApp } from '@/components/ReturnToWhatsApp';
+import { isWhiteLabel } from '@/lib/whitelabel';
 
 interface TicketData {
   ticket_code: string;
@@ -318,9 +319,11 @@ export default function TicketVerifyPage() {
         </div>
 
         {/* Footer */}
-        <p className="mt-4 text-center text-xs text-gray-400">
-          Powered by Waaiio
-        </p>
+        {!isWhiteLabel((ticket as any).subscription_tier) && (
+          <p className="mt-4 text-center text-xs text-gray-400">
+            Powered by Waaiio
+          </p>
+        )}
       </main>
     </div>
   );
