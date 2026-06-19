@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
 const feedbackRatingStep: FlowStepConfig = {
   id: 'feedback_rating',
@@ -128,16 +129,16 @@ const feedbackThanksStep: FlowStepConfig = {
           sender: ctx.sender,
           businessId: ctx.business.id,
           subject: `New ${stars} review from ${displayName}`,
-          emailHtml: `<p>${displayName} left a ${rating}-star review.${comment ? ` "${comment}"` : ''}</p><p>View feedback in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-          whatsappText: `${stars} *New Review*\n\n${displayName} left a ${rating}-star review.${comment ? `\n"${comment}"` : ''}\n\nView feedback in your dashboard.\n\n_Powered by Waaiio_`,
+          emailHtml: `<p>${displayName} left a ${rating}-star review.${comment ? ` "${comment}"` : ''}</p><p>View feedback in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
+          whatsappText: `${stars} *New Review*\n\n${displayName} left a ${rating}-star review.${comment ? `\n"${comment}"` : ''}\n\nView feedback in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
         }).catch(() => {});
       }
     }
 
     const stars = '⭐'.repeat(rating);
     const thanks = rating >= 4
-      ? await ctx.t(`Thank you for the ${stars} rating! We appreciate your feedback.\n\n_Powered by Waaiio_`)
-      : await ctx.t(`Thank you for your feedback ${stars}. We'll work to improve your experience.\n\n_Powered by Waaiio_`);
+      ? await ctx.t(`Thank you for the ${stars} rating! We appreciate your feedback.${getPoweredByFooter(ctx.business?.subscription_tier)}`)
+      : await ctx.t(`Thank you for your feedback ${stars}. We'll work to improve your experience.${getPoweredByFooter(ctx.business?.subscription_tier)}`);
 
     const messages: PromptMessage[] = [{ type: 'text', text: thanks }];
 

@@ -4,6 +4,7 @@ import type { MessageSender } from '@/lib/channels/message-sender';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { getPoweredByHtml } from '@/lib/whitelabel';
 
 interface ChatSession {
   id: string;
@@ -123,7 +124,7 @@ export async function handleChatHandoff(
     if (now - lastEmailAt > 30 * 60 * 1000) {
       const { data: biz } = await supabase
         .from('businesses')
-        .select('name, profiles:owner_id (email)')
+        .select('name, subscription_tier, profiles:owner_id (email)')
         .eq('id', session.business_id)
         .single();
       const ownerEmail = (biz?.profiles as any)?.email;
@@ -136,7 +137,7 @@ export async function handleChatHandoff(
           html: `<p><strong>${displayName}</strong> sent you a message:</p>
                  <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
                  <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
-                 <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
+                 ${getPoweredByHtml(biz.subscription_tier)}`,
         }).catch(() => {});
         session.session_data._last_chat_email_at = now;
         await supabase.from('bot_sessions').update({
@@ -282,7 +283,7 @@ export async function handleChatStart(
       if (nowMs - lastEmailAt > 30 * 60 * 1000) {
         const { data: bizForEmail } = await supabase
           .from('businesses')
-          .select('name, profiles:owner_id (email)')
+          .select('name, subscription_tier, profiles:owner_id (email)')
           .eq('id', session.business_id)
           .single();
         const ownerEmailAddr = (bizForEmail?.profiles as any)?.email;
@@ -295,7 +296,7 @@ export async function handleChatStart(
             html: `<p><strong>${displayName}</strong> sent you a message:</p>
                    <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
                    <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
-                   <p style="color: #999; font-size: 12px;">Powered by Waaiio</p>`,
+                   ${getPoweredByHtml(bizForEmail.subscription_tier)}`,
           }).catch(() => {});
           session.session_data._last_chat_email_at = nowMs;
           await supabase.from('bot_sessions').update({

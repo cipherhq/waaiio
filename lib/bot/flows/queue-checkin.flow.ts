@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage } from './types';
 import { notifyOwnerNewQueueCheckin } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 const DEFAULT_AVG_SERVICE_MINUTES = 10;
 
@@ -337,7 +338,7 @@ const queueConfirmCheckinStep: FlowStepConfig = {
 
     await ctx.sender.sendText({
       to: ctx.from,
-      text: await ctx.t(`✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status\n\n_Powered by Waaiio_`),
+      text: await ctx.t(`✅ You're in the queue, ${customerName}!\n\nYou're *#${queueNumber}* in line. ${waitText}\n\nWe'll message you when it's your turn! 🔔\n\n💡 Type *my position* to check your status${getPoweredByFooter(ctx.business?.subscription_tier)}`),
     });
 
     return { valid: true };

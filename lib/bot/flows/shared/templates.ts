@@ -1,4 +1,5 @@
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 export function fillTemplate(
   template: string,
@@ -21,6 +22,7 @@ export function getConfirmationMessage(opts: {
   referenceCode: string;
   amount?: number;
   countryCode?: CountryCode;
+  subscriptionTier?: string | null;
 }): string {
   const cc = opts.countryCode || 'NG';
   const lines = [
@@ -38,7 +40,8 @@ export function getConfirmationMessage(opts: {
   }
 
   lines.push('', 'Thank you! 🙏');
-  lines.push('', '_Powered by Waaiio_');
+  const footer = getPoweredByFooter(opts.subscriptionTier);
+  if (footer) lines.push('', '_Powered by Waaiio_');
   return lines.join('\n');
 }
 
@@ -49,6 +52,7 @@ export function getPaymentReceiptMessage(opts: {
   amount: number;
   referenceCode: string;
   countryCode?: CountryCode;
+  subscriptionTier?: string | null;
 }): string {
   const cc = opts.countryCode || 'NG';
   return [
@@ -60,8 +64,7 @@ export function getPaymentReceiptMessage(opts: {
     `🔑 Ref: *${opts.referenceCode}*`,
     '',
     'Thank you for your payment! 🙏',
-    '',
-    '_Powered by Waaiio_',
+    ...(getPoweredByFooter(opts.subscriptionTier) ? ['', '_Powered by Waaiio_'] : []),
   ].join('\n');
 }
 
@@ -77,6 +80,7 @@ export function getOrderConfirmationMessage(opts: {
   addonsTotal?: number;
   volumeDiscountAmount?: number;
   countryCode?: CountryCode;
+  subscriptionTier?: string | null;
 }): string {
   const cc = opts.countryCode || 'NG';
   const itemLines: string[] = [];
@@ -122,7 +126,8 @@ export function getOrderConfirmationMessage(opts: {
   }
 
   lines.push('', 'Thank you for your order! 🙏');
-  lines.push('', '_Powered by Waaiio_');
+  const orderFooter = getPoweredByFooter(opts.subscriptionTier);
+  if (orderFooter) lines.push('', '_Powered by Waaiio_');
   return lines.join('\n');
 }
 
@@ -179,6 +184,7 @@ export function getReservationConfirmationMessage(opts: {
   depositAmount: number;
   referenceCode: string;
   countryCode?: CountryCode;
+  subscriptionTier?: string | null;
 }): string {
   const cc = opts.countryCode || 'NG';
   const lines = [
@@ -199,7 +205,8 @@ export function getReservationConfirmationMessage(opts: {
   }
 
   lines.push(`🔑 Ref: *${opts.referenceCode}*`);
-  lines.push('', '_Powered by Waaiio_');
+  const resFooter = getPoweredByFooter(opts.subscriptionTier);
+  if (resFooter) lines.push('', '_Powered by Waaiio_');
   return lines.join('\n');
 }
 
@@ -211,6 +218,7 @@ export function getTicketConfirmationMessage(opts: {
   totalAmount: number;
   referenceCode: string;
   countryCode?: CountryCode;
+  subscriptionTier?: string | null;
 }): string {
   const cc = opts.countryCode || 'NG';
   return [
@@ -230,6 +238,6 @@ export function getTicketConfirmationMessage(opts: {
     `• Type *receipt* to get your purchase receipt`,
     `• Type *Hi* to buy more tickets`,
     '',
-    `_Powered by Waaiio_`,
+    ...(getPoweredByFooter(opts.subscriptionTier) ? ['_Powered by Waaiio_'] : []),
   ].join('\n');
 }

@@ -630,6 +630,7 @@ export const ticketingFlow: FlowDefinition = {
             quantity: qty,
             totalAmount: total,
             referenceCode: booking.reference_code,
+            subscriptionTier: ctx.business?.subscription_tier,
           }),
         }];
       },
@@ -718,6 +719,7 @@ export const ticketingFlow: FlowDefinition = {
                   totalAmount: d.total_amount as number,
                   referenceCode: d.reference_code as string,
                   countryCode: (ctx.business?.country_code || 'NG') as CountryCode,
+                  subscriptionTier: ctx.business?.subscription_tier,
                 })),
               });
 
@@ -797,6 +799,7 @@ export const ticketingFlow: FlowDefinition = {
                 quantity: d.ticket_quantity as number,
                 totalAmount: d.total_amount as number,
                 referenceCode: d.reference_code as string,
+                subscriptionTier: ctx.business?.subscription_tier,
               })),
             });
 

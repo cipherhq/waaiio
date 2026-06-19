@@ -1,5 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getLocale, type CountryCode } from '@/lib/constants';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 export const rsvpFlow: FlowDefinition = {
   type: 'ticketing', // piggybacks on ticketing flow type
@@ -178,14 +179,14 @@ export const rsvpFlow: FlowDefinition = {
         if (response === 'declined') {
           return [{
             type: 'text',
-            text: `🙏 We'll miss you! Maybe next time 💛\n\nIf you change your mind, just send *rsvp* again.\n\n_Powered by Waaiio_`,
+            text: `🙏 We'll miss you! Maybe next time 💛\n\nIf you change your mind, just send *rsvp* again.${getPoweredByFooter(ctx.business?.subscription_tier)}`,
           }];
         }
 
         if (response === 'maybe') {
           return [{
             type: 'text',
-            text: `🤔 No pressure! We'll keep a spot warm for you 😊\n\nIf you decide, just send *yes* or *no* anytime.\n\n_Powered by Waaiio_`,
+            text: `🤔 No pressure! We'll keep a spot warm for you 😊\n\nIf you decide, just send *yes* or *no* anytime.${getPoweredByFooter(ctx.business?.subscription_tier)}`,
           }];
         }
 
@@ -222,7 +223,7 @@ export const rsvpFlow: FlowDefinition = {
           '',
           `We'll send you a reminder before the event. See you there! 💃🕺`,
           '',
-          `_Powered by Waaiio_`,
+          ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['_Powered by Waaiio_'] : []),
         ].filter(Boolean);
 
         return [{ type: 'text', text: lines.join('\n') }];

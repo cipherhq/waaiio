@@ -2592,6 +2592,7 @@ export const orderingFlow: FlowDefinition = {
                   addonsTotal: addonsTotal || undefined,
                   volumeDiscountAmount: volumeDiscountTotal || undefined,
                   countryCode: cc,
+                  subscriptionTier: ctx.business?.subscription_tier,
                 }) + `\n\n💳 Pay here 👇\n${paymentResult.url}\n\n❗ After completing payment, *come back to this chat* and tap *I've Paid* to confirm your order.`,
               },
               {
@@ -2669,6 +2670,7 @@ export const orderingFlow: FlowDefinition = {
               deliveryZonePrice: zoneName ? zonePrice : undefined,
               addonsTotal: addonsTotal || undefined,
               volumeDiscountAmount: volumeDiscountTotal || undefined,
+              subscriptionTier: ctx.business?.subscription_tier,
             }) + orderTips,
           },
           {
@@ -2803,6 +2805,7 @@ export const orderingFlow: FlowDefinition = {
                   addonsTotal: dedupAddonsTotal || undefined,
                   volumeDiscountAmount: dedupVolumeDiscount || undefined,
                   countryCode: cc,
+                  subscriptionTier: ctx.business?.subscription_tier,
                 }) + `\n\n💡 *What you can do:*\n• Type *my orders* to track your order\n• Type *receipt* to get your receipt\n• Type *Hi* to order again`),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
@@ -2848,6 +2851,7 @@ export const orderingFlow: FlowDefinition = {
                 addonsTotal: addonsTotal || undefined,
                 volumeDiscountAmount: volumeDiscountTotal || undefined,
                 countryCode: cc,
+                subscriptionTier: ctx.business?.subscription_tier,
               })),
             });
 

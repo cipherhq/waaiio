@@ -6,6 +6,7 @@ import { checkTierLimit } from '@/lib/tier-limits';
 import { handlePostCompletion } from './shared/post-completion';
 import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
@@ -473,8 +474,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
               '• Type *my giving* to see your giving history',
               '• Type *receipt* to get your donation receipt',
               '• Type *Hi* to give again',
-              '',
-              '_Powered by Waaiio_',
+              ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
             ].join('\n')),
           });
           return { valid: true, data: { _action: 'already_confirmed' } };
@@ -497,8 +497,7 @@ const awaitDonationPaymentStep: FlowStepConfig = {
             '• Type *my giving* to see your giving history',
             '• Type *receipt* to get your donation receipt',
             '• Type *Hi* to give again',
-            '',
-            '_Powered by Waaiio_',
+            ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
           ].join('\n')),
         });
 

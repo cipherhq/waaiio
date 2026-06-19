@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 function generateRedemptionCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -264,8 +265,7 @@ const loyaltyRedeemStep: FlowStepConfig = {
           '',
           `Type *my points* to check your balance`,
           `Type *Hi* to book or order`,
-          '',
-          `_Powered by Waaiio_`,
+          ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
         ].join('\n')),
       });
 

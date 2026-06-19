@@ -5,6 +5,7 @@ import { createNotification } from './shared/notifications';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 
 // ── Invoice List ──
 const invoiceListStep: FlowStepConfig = {
@@ -288,7 +289,7 @@ const invoicePayStep: FlowStepConfig = {
 
       return [{
         type: 'text',
-        text: await ctx.t(`💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt\n\n_Powered by Waaiio_`),
+        text: await ctx.t(`💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}\n\nTap the link below to pay securely:\n${result.url}\n\n💡 *What you can do:*\n• Type *my invoices* to check your invoices\n• Type *receipt* to get your payment receipt${getPoweredByFooter(biz.subscription_tier)}`),
       }];
     } catch (err) {
       logger.error('[INVOICE] Payment initialization error:', err);

@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { truncTitle } from '../utils/truncate';
+import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
 /**
  * Survey Flow
@@ -288,8 +289,8 @@ const surveyCompleteStep: FlowStepConfig = {
           sender: ctx.sender,
           businessId: ctx.business.id,
           subject: `Survey completed: ${surveyTitle}`,
-          emailHtml: `<p>${displayName} completed your survey "${surveyTitle}". View responses in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-          whatsappText: `📋 *Survey Response*\n\n${displayName} completed your survey "${surveyTitle}".\n\nView responses in your dashboard.\n\n_Powered by Waaiio_`,
+          emailHtml: `<p>${displayName} completed your survey "${surveyTitle}". View responses in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
+          whatsappText: `📋 *Survey Response*\n\n${displayName} completed your survey "${surveyTitle}".\n\nView responses in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
         }).catch(() => {});
       }
     }

@@ -7,6 +7,7 @@ import { createNotification } from './shared/notifications';
 import { notifyOwnerNewBooking } from './shared/notify-owner';
 import { getReservationConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
+import { getPoweredByFooter } from '@/lib/whitelabel';
 import { getTermsPrompt } from './shared/terms';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 import type { SubscriptionTier } from '@/lib/constants';
@@ -504,6 +505,7 @@ export const reservationFlow: FlowDefinition = {
           depositAmount,
           referenceCode: '(pending)',
           countryCode: cc,
+          subscriptionTier: ctx.business?.subscription_tier,
         });
 
         // Send summary first, then buttons — so customer reads details before acting
@@ -754,6 +756,7 @@ export const reservationFlow: FlowDefinition = {
               depositAmount,
               referenceCode: reservation.reference_code,
               countryCode: cc,
+              subscriptionTier: ctx.business?.subscription_tier,
             });
 
             return [
@@ -847,8 +850,7 @@ export const reservationFlow: FlowDefinition = {
             '• Type *reschedule* to change dates',
             '• Type *cancel* to cancel this reservation',
             '• Type *receipt* to get your receipt',
-            '',
-            '_Powered by Waaiio_',
+            ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
           ].filter(Boolean).join('\n'),
         }];
       },
@@ -948,8 +950,7 @@ export const reservationFlow: FlowDefinition = {
                   '• Type *my bookings* to view your reservation',
                   '• Type *receipt* to get your receipt',
                   '• Type *Hi* to make another booking',
-                  '',
-                  '_Powered by Waaiio_',
+                  ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
                 ].filter(Boolean).join('\n')),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
@@ -997,8 +998,7 @@ export const reservationFlow: FlowDefinition = {
                 '',
                 'See you soon!',
                 resPayCalLinks ? resPayCalLinks : null,
-                '',
-                '_Powered by Waaiio_',
+                ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
               ].filter(Boolean).join('\n')),
             });
 

@@ -404,6 +404,7 @@ export const paymentFlow: FlowDefinition = {
                   amount: d.amount as number,
                   referenceCode: d.reference_code as string,
                   countryCode: cc,
+                  subscriptionTier: ctx.business?.subscription_tier,
                 }) + dedupTips),
               });
               return { valid: true, data: { _action: 'already_confirmed' } };
@@ -475,6 +476,7 @@ export const paymentFlow: FlowDefinition = {
                 amount: d.amount as number,
                 referenceCode: d.reference_code as string,
                 countryCode: cc,
+                subscriptionTier: ctx.business?.subscription_tier,
               }) + tipsText),
             });
 

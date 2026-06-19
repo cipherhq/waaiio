@@ -2445,6 +2445,7 @@ export const schedulingFlow: FlowDefinition = {
             quantity: partySize,
             quantityLabel: labels.quantityLabel,
             referenceCode: booking.reference_code,
+            subscriptionTier: ctx.business?.subscription_tier,
           });
         }
 

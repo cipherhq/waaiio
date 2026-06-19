@@ -17,6 +17,7 @@ import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 import { loadBotCustomConfig, matchQuickReply, loadUnifiedKeywords, matchUnifiedKeyword } from './keyword-service';
 import type { UnifiedKeyword } from './keyword-service';
 import { evaluateRules } from './automation/rules-engine';
@@ -223,12 +224,14 @@ export class BotService {
 
       // Check for custom response messages from the party
       let responseMsg = `${defaultEmoji[rsvpStatus]} ${defaultLabel[rsvpStatus]}`;
+      let rsvpTier: string | null = null;
       try {
         const { data: inv } = await this.supabase
           .from('event_invites')
-          .select('party_id')
+          .select('party_id, business_id, businesses:business_id(subscription_tier)')
           .eq('id', inviteId)
           .single();
+        rsvpTier = (inv?.businesses as unknown as { subscription_tier: string } | null)?.subscription_tier || null;
         if (inv?.party_id) {
           const { data: party } = await this.supabase
             .from('parties')
@@ -242,7 +245,7 @@ export class BotService {
         }
       } catch { /* use default */ }
 
-      await this.sendText(from, `${responseMsg}\n\n_Powered by Waaiio_`);
+      await this.sendText(from, `${responseMsg}${getPoweredByFooter(rsvpTier)}`);
 
       // Notify host via email + WhatsApp (non-blocking)
       try {
@@ -272,8 +275,8 @@ export class BotService {
             sender: this.messageSender,
             businessId: invite.business_id,
             subject: `RSVP: ${guestName} ${statusLabel} — ${eventName}`,
-            emailHtml: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto"><h2 style="color:#6C2BD9">New RSVP Response</h2><p>${guestName} has ${statusLabel} your invitation to <strong>${eventName}</strong>.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p></div>`,
-            whatsappText: `📋 *RSVP Update*\n\n${guestName} has ${statusLabel} your invitation to *${eventName}*.\n\n_Powered by Waaiio_`,
+            emailHtml: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto"><h2 style="color:#6C2BD9">New RSVP Response</h2><p>${guestName} has ${statusLabel} your invitation to <strong>${eventName}</strong>.</p>${getPoweredByHtml(rsvpTier)}</div>`,
+            whatsappText: `📋 *RSVP Update*\n\n${guestName} has ${statusLabel} your invitation to *${eventName}*.${getPoweredByFooter(rsvpTier)}`,
           }).catch(() => {});
         }
       } catch { /* non-critical */ }

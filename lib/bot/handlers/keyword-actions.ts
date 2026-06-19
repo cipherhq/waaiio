@@ -8,6 +8,7 @@ import type { BotSession, BotContext, BusinessRecord } from '../bot-types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 import type { UnifiedKeyword } from '../keyword-service';
 import { parseKeywordPayload } from '../keyword-service';
 import { capabilityToFirstStep } from './flow-routing';
@@ -315,18 +316,19 @@ export async function executeKeywordAction(
 
         // Notify owner about keyword campaign response (email + WhatsApp)
         {
-          const { count: responseCount } = await supabase
-            .from('keyword_campaign_responses')
-            .select('id', { count: 'exact', head: true })
-            .eq('campaign_id', campaign.id);
+          const [{ count: responseCount }, { data: kwBiz }] = await Promise.all([
+            supabase.from('keyword_campaign_responses').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id),
+            supabase.from('businesses').select('subscription_tier').eq('id', campaign.business_id).single(),
+          ]);
+          const kwTier = kwBiz?.subscription_tier || null;
           const { notifyOwnerGeneric } = await import('../flows/shared/notify-owner');
           notifyOwnerGeneric({
             supabase,
             sender: messageSender,
             businessId: campaign.business_id,
             subject: `Keyword hit: ${kw.keyword}`,
-            emailHtml: `<p>${from} texted "${kw.keyword}". You now have ${responseCount || 1} response${(responseCount || 1) === 1 ? '' : 's'}.</p><p>View results in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-            whatsappText: `🔑 *Keyword Hit*\n\n${from} texted "${kw.keyword}".\nTotal responses: ${responseCount || 1}\n\nView results in your dashboard.\n\n_Powered by Waaiio_`,
+            emailHtml: `<p>${from} texted "${kw.keyword}". You now have ${responseCount || 1} response${(responseCount || 1) === 1 ? '' : 's'}.</p><p>View results in your dashboard.</p>${getPoweredByHtml(kwTier)}`,
+            whatsappText: `🔑 *Keyword Hit*\n\n${from} texted "${kw.keyword}".\nTotal responses: ${responseCount || 1}\n\nView results in your dashboard.${getPoweredByFooter(kwTier)}`,
           }).catch(() => {});
         }
 

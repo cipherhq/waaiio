@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { truncTitle } from '../utils/truncate';
+import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
 /**
  * Poll Flow
@@ -190,8 +191,8 @@ const pollQuestionStep: FlowStepConfig = {
           sender: ctx.sender,
           businessId: ctx.business.id,
           subject: `New poll response: ${pollTitle}`,
-          emailHtml: `<p>${displayName} voted in "${pollTitle}". View results in your dashboard.</p><p style="color:#999;font-size:12px">Powered by Waaiio</p>`,
-          whatsappText: `📊 *Poll Vote*\n\n${displayName} voted in "${pollTitle}".\n\nView results in your dashboard.\n\n_Powered by Waaiio_`,
+          emailHtml: `<p>${displayName} voted in "${pollTitle}". View results in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
+          whatsappText: `📊 *Poll Vote*\n\n${displayName} voted in "${pollTitle}".\n\nView results in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
         }).catch(() => {});
       }
     }
