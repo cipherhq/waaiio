@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-19
 
+### Feature: Reseller layer Phase 1 — migration + API routes
+- `supabase/migrations/205_resellers.sql` — New migration. Creates `resellers` table (user_id, company_name, commission_percentage, billing_type, max_sub_accounts, status). Adds `reseller_id` to businesses and `reseller_id`/`reseller_commission` to platform_fees. RLS policies for reseller self-management + sub-business access. Indexes on reseller_id columns.
+- `app/api/reseller/route.ts` — GET reseller profile by auth user
+- `app/api/reseller/accounts/route.ts` — GET list sub-accounts, POST create sub-account (enforces max_sub_accounts limit, generates slug)
+- `app/api/reseller/accounts/[id]/route.ts` — GET detail, PATCH update (name/status/subscription_tier/category only), DELETE soft-suspends
+- `app/api/reseller/stats/route.ts` — GET dashboard stats (account counts, revenue, commission, this/last month comparison)
+- Affects: businesses table (new reseller_id column), platform_fees table (new reseller_id + reseller_commission columns). No existing functionality changed.
+
 ### Feature: Flutterwave recurring payment support
 - `lib/payments/flutterwave-recurring.ts` — New file. Functions: createPlan, createSubscription, cancelSubscription, getSubscription, chargeToken, getCardToken. Follows Paystack recurring pattern. Uses tokenized charges + payment plans.
 - Affects: businesses using Flutterwave can now have recurring billing (subscriptions). Does NOT affect Stripe/Paystack recurring flows.
