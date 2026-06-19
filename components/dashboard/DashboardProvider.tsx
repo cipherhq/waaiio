@@ -60,6 +60,7 @@ interface DashboardContextType {
   allBusinesses: BusinessSummary[];
   switchingBusiness: boolean;
   switchBusiness: (businessId: string) => Promise<void>;
+  isReseller: boolean;
 }
 
 const DashboardContext = createContext<DashboardContextType | null>(null);
@@ -68,11 +69,13 @@ export function DashboardProvider({
   business,
   userId,
   allBusinesses = [],
+  isReseller = false,
   children,
 }: {
   business: Business;
   userId: string;
   allBusinesses?: BusinessSummary[];
+  isReseller?: boolean;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -104,7 +107,7 @@ export function DashboardProvider({
   }, [business.id, router]);
 
   return (
-    <DashboardContext.Provider value={{ business, userId, allBusinesses, switchingBusiness, switchBusiness }}>
+    <DashboardContext.Provider value={{ business, userId, allBusinesses, switchingBusiness, switchBusiness, isReseller }}>
       {children}
     </DashboardContext.Provider>
   );
@@ -130,6 +133,13 @@ export function useCapabilities() {
     [business.capabilities],
   );
   return { capabilities: business.capabilities, hasCapability };
+}
+
+/** Check if the current user is a reseller */
+export function useIsReseller() {
+  const ctx = useContext(DashboardContext);
+  if (!ctx) throw new Error('useIsReseller must be used within DashboardProvider');
+  return ctx.isReseller;
 }
 
 /** Redirect to capabilities page if business lacks a required capability */

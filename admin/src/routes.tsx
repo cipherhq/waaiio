@@ -58,6 +58,7 @@ import Surveys from './pages/Surveys';
 import AISetupLog from './pages/AISetupLog';
 import SystemHealth from './pages/SystemHealth';
 import ChatHistory from './pages/ChatHistory';
+import Resellers from './pages/Resellers';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -77,6 +78,7 @@ export const router = createBrowserRouter([
       { path: 'category-templates', Component: CategoryTemplates },
       { path: 'impersonation', element: <RoleGuard roles={['admin']}><ImpersonationMode /></RoleGuard> },
       { path: 'impersonation-audit', element: <RoleGuard roles={['admin']}><ImpersonationAudit /></RoleGuard> },
+      { path: 'resellers', element: <RoleGuard roles={['admin']}><Resellers /></RoleGuard> },
       // Operations
       { path: 'bookings', element: <RoleGuard roles={['admin', 'support', 'operations']}><Bookings /></RoleGuard> },
       { path: 'orders', element: <RoleGuard roles={['admin', 'support', 'operations']}><Orders /></RoleGuard> },

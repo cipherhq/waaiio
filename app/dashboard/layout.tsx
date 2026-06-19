@@ -29,6 +29,14 @@ export default async function DashboardLayout({
 
   if (!user) redirect('/login?redirect=/dashboard');
 
+  // Check if user is a reseller
+  const { data: resellerRow } = await supabase
+    .from('resellers')
+    .select('id')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  const isReseller = !!resellerRow;
+
   // Check for impersonation cookies
   const cookieStore = await cookies();
   const impersonateBusinessId = cookieStore.get('impersonate_business_id')?.value;
@@ -106,7 +114,7 @@ export default async function DashboardLayout({
         const businessWithCaps = { ...impBiz, capabilities, capabilityOverrides };
 
         return (
-          <DashboardProvider business={businessWithCaps} userId={user.id}>
+          <DashboardProvider business={businessWithCaps} userId={user.id} isReseller={isReseller}>
             <div data-dashboard className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
               <ImpersonationBanner businessName={impersonatedBusinessName} />
@@ -196,7 +204,7 @@ export default async function DashboardLayout({
   }));
 
   return (
-    <DashboardProvider business={businessWithCaps} userId={user.id} allBusinesses={allBusinessesList}>
+    <DashboardProvider business={businessWithCaps} userId={user.id} allBusinesses={allBusinessesList} isReseller={isReseller}>
       <div data-dashboard className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
         <AlertBanner />

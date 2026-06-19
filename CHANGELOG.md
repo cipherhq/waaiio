@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-19
 
+### Feature: Reseller layer Phase 2 — Dashboard sidebar + Admin page
+- `components/dashboard/DashboardProvider.tsx` — Added `isReseller` boolean to context and `useIsReseller()` hook
+- `app/dashboard/layout.tsx` — Queries `resellers` table for current user, passes `isReseller` to DashboardProvider (both normal and impersonation flows)
+- `components/dashboard/Sidebar.tsx` — Added 3 reseller nav items (Portfolio, Accounts, Billing & Commission) in new 'reseller' section. Only visible when `isReseller` is true. Section type union updated to include 'reseller'.
+- `admin/src/pages/Resellers.tsx` — New admin page. Lists all resellers with company name, email, commission %, billing type, sub-account count, status. Add/edit modal, suspend/activate toggle. Uses existing admin component patterns (SummaryCard, StatusBadge, DetailModal, Pagination).
+- `admin/src/routes.tsx` — Added `/resellers` route with `RoleGuard` for admin-only access
+- `admin/src/components/AdminSidebar.tsx` — Added Resellers link (Handshake icon) under Accounts section, admin-only
+- Affects: Dashboard sidebar (reseller users see 3 new items), admin panel (new Resellers management page). No existing functionality changed. Reseller section is hidden for non-resellers.
+- Could break: If `resellers` table doesn't exist yet (requires migration 205). If `reseller_businesses` table doesn't exist, admin sub-account count will fail gracefully (shows 0).
+
 ### Feature: Reseller layer Phase 1 — migration + API routes
 - `supabase/migrations/205_resellers.sql` — New migration. Creates `resellers` table (user_id, company_name, commission_percentage, billing_type, max_sub_accounts, status). Adds `reseller_id` to businesses and `reseller_id`/`reseller_commission` to platform_fees. RLS policies for reseller self-management + sub-business access. Indexes on reseller_id columns.
 - `app/api/reseller/route.ts` — GET reseller profile by auth user

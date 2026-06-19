@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { useDashboard, useCapabilities } from './DashboardProvider';
+import { useDashboard, useCapabilities, useIsReseller } from './DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -20,7 +20,7 @@ interface NavItem {
   icon: string;
   /** Show only if ANY of these capabilities is enabled */
   capabilities?: CapabilityId[];
-  section?: 'main' | 'manage' | 'money' | 'engage' | 'settings';
+  section?: 'main' | 'manage' | 'money' | 'engage' | 'reseller' | 'settings';
   /** Hide for these business categories */
   hideForCategories?: string[];
 }
@@ -334,6 +334,26 @@ const navItems: NavItem[] = [
     section: 'engage',
   },
 
+  // ── RESELLER: Manage sub-accounts (only visible to resellers) ──
+  {
+    href: '/dashboard/reseller',
+    label: 'Portfolio',
+    icon: 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4',
+    section: 'reseller',
+  },
+  {
+    href: '/dashboard/reseller/accounts',
+    label: 'Accounts',
+    icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z',
+    section: 'reseller',
+  },
+  {
+    href: '/dashboard/reseller/billing',
+    label: 'Billing & Commission',
+    icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
+    section: 'reseller',
+  },
+
   // ── SETTINGS: Configure your business ──
   {
     href: '/dashboard/alerts',
@@ -383,6 +403,7 @@ const sectionLabels: Record<string, string> = {
   manage: 'Your Business',
   money: 'Money',
   engage: 'Grow',
+  reseller: 'Reseller',
   settings: 'Settings',
 };
 
@@ -395,6 +416,7 @@ export function Sidebar() {
   const switcherRef = useRef<HTMLDivElement>(null);
 
   const { capabilities } = useCapabilities();
+  const isReseller = useIsReseller();
   const hasMultipleBusinesses = allBusinesses.length > 1;
 
   // Close switcher on outside click
@@ -438,6 +460,12 @@ export function Sidebar() {
   for (const item of navItems) {
     // Hide by category
     if (item.hideForCategories?.includes(business.category)) continue;
+
+    // Reseller section: only show if user is a reseller
+    if (item.section === 'reseller') {
+      if (isReseller) essentialItems.push(item);
+      continue;
+    }
 
     // Settings and main section items are always essential
     if (item.section === 'main' || item.section === 'settings') {

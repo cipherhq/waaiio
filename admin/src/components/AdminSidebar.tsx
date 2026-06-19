@@ -27,6 +27,7 @@ import {
   Eye,
   Layers,
   Contact,
+  Handshake,
   Heart,
   Globe,
   Repeat,
@@ -77,6 +78,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Layers, label: 'Category Templates', path: '/category-templates', roles: ['admin'] },
       { icon: UserCog, label: 'Impersonation', path: '/impersonation', roles: ['admin'] },
       { icon: Eye, label: 'Impersonation Audit', path: '/impersonation-audit', roles: ['admin'] },
+      { icon: Handshake, label: 'Resellers', path: '/resellers', roles: ['admin'] },
     ],
   },
   {
