@@ -18,6 +18,8 @@ export function createMockSupabase(overrides: Record<string, unknown> = {}) {
       in: vi.fn().mockReturnThis(),
       is: vi.fn().mockReturnThis(),
       not: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      lte: vi.fn().mockReturnThis(),
       order: vi.fn().mockReturnThis(),
       limit: vi.fn().mockReturnThis(),
       single: vi.fn().mockResolvedValue({ data: null, error: null }),

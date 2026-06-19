@@ -10,6 +10,7 @@ import { createNotification } from './shared/notifications';
 import { handlePostCompletion } from './shared/post-completion';
 import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
+import { checkTierLimit } from '@/lib/tier-limits';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -433,6 +434,29 @@ export const ticketingFlow: FlowDefinition = {
           }
         }
         if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+
+        // ── Tier limit check for tickets (per-event) ──
+        if (ctx.business) {
+          const tierResult = await checkTierLimit(
+            ctx.supabase,
+            ctx.business.id,
+            'tickets',
+            ctx.business.subscription_tier,
+            d.event_id as string,
+          );
+          if (!tierResult.allowed) {
+            return [{ type: 'text', text: await ctx.t('This event has reached its ticket limit for this plan. Please contact the event organizer.') }];
+          }
+          if (tierResult.softBlock) {
+            createNotification(ctx.supabase, {
+              businessId: ctx.business.id,
+              type: 'tier_limit_warning',
+              channel: 'in_app',
+              subject: 'Ticket limit approaching',
+              body: `You've sold ${tierResult.current}/${tierResult.limit} tickets for this event. Upgrade for more.`,
+            }).catch(() => {});
+          }
+        }
 
         // Create booking for ticket
         const { data: booking, error } = await ctx.supabase

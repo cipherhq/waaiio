@@ -551,6 +551,31 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   },
 };
 
+// ── Transaction Limits per Tier (monthly, except tickets which are per-event) ──
+export const TIER_TRANSACTION_LIMITS: Record<string, Record<string, number>> = {
+  free: {
+    bookings: 50,
+    orders: 50,
+    tickets_per_event: 50,
+    giving: 50,
+    invoices: 20,
+  },
+  growth: {
+    bookings: 300,
+    orders: 500,
+    tickets_per_event: 500,
+    giving: 300,
+    invoices: 100,
+  },
+  business: {
+    bookings: -1, // unlimited
+    orders: -1,
+    tickets_per_event: -1,
+    giving: -1,
+    invoices: -1,
+  },
+};
+
 // ── Broadcast Limits per Tier ──
 export const BROADCAST_LIMITS: Record<SubscriptionTier, {
   maxBroadcasts: number;

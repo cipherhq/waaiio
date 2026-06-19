@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
+import { checkTierLimit } from '@/lib/tier-limits';
 
 export async function GET(request: NextRequest) {
   try {
@@ -62,8 +63,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'business_id, customer_name, and items are required' }, { status: 400 });
     }
 
-    const { data: ownedBusiness } = await supabase.from('businesses').select('id').eq('id', business_id).eq('owner_id', user.id).maybeSingle();
+    const { data: ownedBusiness } = await supabase.from('businesses').select('id, subscription_tier').eq('id', business_id).eq('owner_id', user.id).maybeSingle();
     if (!ownedBusiness) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    // ── Tier limit check for invoices ──
+    const tierResult = await checkTierLimit(
+      supabase,
+      business_id,
+      'invoices',
+      ownedBusiness.subscription_tier || 'free',
+    );
+    if (!tierResult.allowed) {
+      return NextResponse.json(
+        { error: `You've reached your monthly invoice limit (${tierResult.limit}). Upgrade your plan to create more invoices.` },
+        { status: 429 },
+      );
+    }
 
     // Compute financials server-side
     const subtotal = items.reduce((sum: number, item: { quantity: number; unit_price: number }) =>

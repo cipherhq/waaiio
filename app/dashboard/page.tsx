@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import {
   formatCurrency,
   getLocale,
+  TIER_TRANSACTION_LIMITS,
   type CountryCode,
 } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
@@ -69,6 +70,7 @@ export default function DashboardOverview() {
   const [orderRevenue, setOrderRevenue] = useState(0);
   const [totalOrders, setTotalOrders] = useState(0);
   const [monthlyBookings, setMonthlyBookings] = useState(0);
+  const [monthlyOrders, setMonthlyOrders] = useState(0);
   const [webBookings, setWebBookings] = useState(0);
   const [loading, setLoading] = useState(true);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -143,7 +145,7 @@ export default function DashboardOverview() {
       const today = new Date().toISOString().split('T')[0];
       const monthStart = today.slice(0, 7) + '-01'; // YYYY-MM-01
 
-      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes, outstandingInvCountRes, webBookingsRes] = await Promise.all([
+      const [totalRes, todayRes, pendingRes, revenueRes, recentRes, servicesRes, waConfigRes, monthlyRes, orderCountRes, orderRevenueRes, recentOrdersRes, completedRes, outstandingInvRes, outstandingInvCountRes, webBookingsRes, monthlyOrdersRes] = await Promise.all([
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('date', today),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('status', 'pending'),
@@ -169,6 +171,8 @@ export default function DashboardOverview() {
         // Outstanding invoice count (moved into Promise.all — was sequential before)
         supabase.from('invoices').select('id', { count: 'exact', head: true }).eq('business_id', business.id).in('status', ['sent', 'viewed', 'overdue']),
         supabase.from('bookings').select('id', { count: 'exact', head: true }).eq('business_id', business.id).eq('channel', 'web'),
+        // Monthly orders for tier usage
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('business_id', business.id).is('deleted_at', null).gte('created_at', monthStart),
       ]);
 
       const revenue = Number(revenueRes.data ?? 0);
@@ -193,6 +197,7 @@ export default function DashboardOverview() {
       setOrderRevenue(Number(orderRevenueRes.data ?? 0));
       setRecentOrders((recentOrdersRes.data || []) as RecentOrder[]);
       setMonthlyBookings(monthlyRes.count || 0);
+      setMonthlyOrders(monthlyOrdersRes.count || 0);
       setWebBookings(webBookingsRes.count || 0);
       setLoading(false);
 
@@ -499,6 +504,24 @@ export default function DashboardOverview() {
           />
         )}
       </div>
+
+      {/* Tier Usage Indicators — show for free/growth tiers */}
+      {(business.subscription_tier === 'free' || business.subscription_tier === 'growth') && (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <UsageBar
+            label={`${labels.entityNamePlural} this month`}
+            current={monthlyBookings}
+            limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.bookings ?? 50}
+          />
+          {hasCapability('ordering') && (
+            <UsageBar
+              label="Orders this month"
+              current={monthlyOrders}
+              limit={TIER_TRANSACTION_LIMITS[business.subscription_tier]?.orders ?? 50}
+            />
+          )}
+        </div>
+      )}
 
       {/* WhatsApp Link Card */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
@@ -958,6 +981,52 @@ function StatCard({
       </div>
       <p className="mt-3 text-2xl font-bold text-gray-900 dark:text-gray-100">{value}</p>
       {sub && <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">{sub}</p>}
+    </div>
+  );
+}
+
+function UsageBar({
+  label,
+  current,
+  limit,
+}: {
+  label: string;
+  current: number;
+  limit: number;
+}) {
+  if (limit <= 0) return null;
+  const ratio = Math.min(current / limit, 1.2);
+  const percent = Math.min(ratio * 100, 100);
+
+  let barColor = 'bg-brand';
+  let textColor = 'text-gray-600 dark:text-gray-400';
+  if (ratio >= 1) {
+    barColor = 'bg-red-500';
+    textColor = 'text-red-600';
+  } else if (ratio >= 0.8) {
+    barColor = 'bg-amber-500';
+    textColor = 'text-amber-600';
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-medium text-gray-500 dark:text-gray-400">{label}</p>
+        <p className={`text-xs font-semibold ${textColor}`}>
+          {current}/{limit}
+        </p>
+      </div>
+      <div className="h-2 w-full rounded-full bg-gray-100 dark:bg-gray-700">
+        <div
+          className={`h-2 rounded-full ${barColor} transition-all`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      {ratio >= 1 && (
+        <p className="mt-1.5 text-[10px] text-red-500">
+          Limit reached. <a href="/dashboard/settings" className="underline font-semibold">Upgrade</a> for more.
+        </p>
+      )}
     </div>
   );
 }

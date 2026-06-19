@@ -14,6 +14,7 @@ import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import type { SubscriptionTier } from '@/lib/constants';
+import { checkTierLimit } from '@/lib/tier-limits';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { getCalendarLinksText } from '@/lib/calendar/generate-links';
 
@@ -2088,6 +2089,28 @@ export const schedulingFlow: FlowDefinition = {
             .update({ session_data: d })
             .eq('id', ctx.session.id);
           { const meta = (ctx.business?.metadata || {}) as Record<string, unknown>; return getTermsPrompt(ctx.business?.name || 'Business', meta.terms_text as string | undefined, ctx.business?.slug, meta.terms_url as string | undefined); }
+        }
+
+        // ── Tier limit check for bookings ──
+        if (ctx.business && !(d.booking_id && d.reference_code)) {
+          const tierResult = await checkTierLimit(
+            ctx.supabase,
+            ctx.business.id,
+            'bookings',
+            ctx.business.subscription_tier,
+          );
+          if (!tierResult.allowed) {
+            return [{ type: 'text', text: await ctx.t('This account has reached its monthly limit. Please contact the business owner.') }];
+          }
+          if (tierResult.softBlock) {
+            createNotification(ctx.supabase, {
+              businessId: ctx.business.id,
+              type: 'tier_limit_warning',
+              channel: 'in_app',
+              subject: 'Booking limit approaching',
+              body: `You've used ${tierResult.current}/${tierResult.limit} bookings this month. Upgrade for more.`,
+            }).catch(() => {});
+          }
         }
 
         const insertPayload: Record<string, unknown> = {

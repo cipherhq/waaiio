@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
+import { checkTierLimit } from '@/lib/tier-limits';
 import { handlePostCompletion } from './shared/post-completion';
 import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
@@ -313,6 +314,28 @@ const donationPaymentStep: FlowStepConfig = {
     const sd = ctx.session.session_data;
     const amount = sd.donation_amount as number;
     const country = (ctx.business?.country_code || 'NG') as CountryCode;
+
+    // ── Tier limit check for giving/donations ──
+    if (ctx.business) {
+      const tierResult = await checkTierLimit(
+        ctx.supabase,
+        ctx.business.id,
+        'giving',
+        ctx.business.subscription_tier,
+      );
+      if (!tierResult.allowed) {
+        return [{ type: 'text', text: await ctx.t('This account has reached its monthly limit. Please contact the business owner.') }];
+      }
+      if (tierResult.softBlock) {
+        createNotification(ctx.supabase, {
+          businessId: ctx.business.id,
+          type: 'tier_limit_warning',
+          channel: 'in_app',
+          subject: 'Donation limit approaching',
+          body: `You've received ${tierResult.current}/${tierResult.limit} donations this month. Upgrade for more.`,
+        }).catch(() => {});
+      }
+    }
 
     // Generate reference
     const refCode = `DON-${Date.now().toString(36).toUpperCase()}`;

@@ -6,9 +6,11 @@ import { getOrderConfirmationMessage } from './shared/templates';
 import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewOrder, notifyOwnerNewQuoteRequest } from './shared/notify-owner';
+import { createNotification } from './shared/notifications';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { formatCurrency, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
 
 /** Generic labels for ordering flow */
@@ -2402,6 +2404,28 @@ export const orderingFlow: FlowDefinition = {
           }
         }
         if (!userId) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
+
+        // ── Tier limit check for orders ──
+        if (ctx.business) {
+          const tierResult = await checkTierLimit(
+            ctx.supabase,
+            ctx.business.id,
+            'orders',
+            ctx.business.subscription_tier,
+          );
+          if (!tierResult.allowed) {
+            return [{ type: 'text', text: await ctx.t('This account has reached its monthly limit. Please contact the business owner.') }];
+          }
+          if (tierResult.softBlock) {
+            createNotification(ctx.supabase, {
+              businessId: ctx.business.id,
+              type: 'tier_limit_warning',
+              channel: 'in_app',
+              subject: 'Order limit approaching',
+              body: `You've used ${tierResult.current}/${tierResult.limit} orders this month. Upgrade for more.`,
+            }).catch(() => {});
+          }
+        }
 
         // Create order with new fields
         const orderPayload: Record<string, unknown> = {

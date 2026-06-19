@@ -416,22 +416,69 @@ export function Sidebar() {
 
   const isEventsCategory = business.category === 'events';
 
-  // Filter nav items based on capabilities and category
-  const visibleItems = navItems.filter(item => {
-    // If item has required capabilities, check if any are enabled
+  const [showMore, setShowMore] = useState(false);
+
+  // Core items that are always "essential" (no capability requirement needed)
+  const CORE_HREFS = new Set([
+    '/dashboard',
+    '/dashboard/setup-assistant',
+    '/dashboard/calendar',
+    '/dashboard/chat',
+    '/dashboard/customers',
+  ]);
+  // Events category also treats Parties as essential
+  if (isEventsCategory) {
+    CORE_HREFS.add('/dashboard/parties');
+  }
+
+  // Separate nav items into essential (visible) and "more" (collapsed)
+  const essentialItems: NavItem[] = [];
+  const moreItems: NavItem[] = [];
+
+  for (const item of navItems) {
+    // Hide by category
+    if (item.hideForCategories?.includes(business.category)) continue;
+
+    // Settings and main section items are always essential
+    if (item.section === 'main' || item.section === 'settings') {
+      // Main section items with capabilities still need the capability check
+      if (item.capabilities) {
+        const hasCapability = item.capabilities.some(cap => capabilities.includes(cap));
+        if (hasCapability) {
+          essentialItems.push(item);
+        } else {
+          moreItems.push(item);
+        }
+      } else {
+        essentialItems.push(item);
+      }
+      continue;
+    }
+
+    // Core items (no capability requirement) are always essential
+    if (CORE_HREFS.has(item.href) && !item.capabilities) {
+      essentialItems.push(item);
+      continue;
+    }
+
+    // Items with capabilities: essential if capability is enabled, otherwise "more"
     if (item.capabilities) {
       const hasCapability = item.capabilities.some(cap => capabilities.includes(cap));
-      if (!hasCapability) return false;
-      return true;
+      if (hasCapability) {
+        essentialItems.push(item);
+      } else {
+        moreItems.push(item);
+      }
+      continue;
     }
-    // No capability requirement — hide by category if specified
-    if (item.hideForCategories?.includes(business.category)) return false;
-    return true;
-  });
 
-  // Group by section — for events category, promote Parties to 'main'
+    // No capability requirement and not in core set — essential
+    essentialItems.push(item);
+  }
+
+  // Group essential items by section — for events category, promote Parties to 'main'
   const sections = new Map<string, typeof navItems>();
-  for (const item of visibleItems) {
+  for (const item of essentialItems) {
     let section = item.section || 'main';
     // Events businesses see Parties in 'main' (after Overview and Ace AI Setup)
     if (isEventsCategory && item.href === '/dashboard/parties') {
@@ -647,6 +694,58 @@ export function Sidebar() {
             </div>
           </div>
         ))}
+
+        {/* More Features — collapsed by default */}
+        {moreItems.length > 0 && (
+          <div className="mt-4">
+            <button
+              onClick={() => setShowMore(!showMore)}
+              className="flex w-full items-center justify-between px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400"
+            >
+              <span>More Features</span>
+              <svg
+                className={`h-4 w-4 transition ${showMore ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {showMore && (
+              <div className="space-y-0.5">
+                {moreItems.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setMobileOpen(false)}
+                    title={PAGE_TOOLTIPS[item.href.split('/dashboard/')[1] || 'overview'] || ''}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium transition ${
+                      isActive(item.href)
+                        ? 'bg-brand text-white'
+                        : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-gray-100'
+                    }`}
+                  >
+                    <svg
+                      className="h-5 w-5 flex-shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={1.5}
+                        d={item.icon}
+                      />
+                    </svg>
+                    <span className="flex-1">{getLabel(item)}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* Bottom actions */}
