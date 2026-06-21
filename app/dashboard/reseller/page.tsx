@@ -52,8 +52,17 @@ export default function ResellerOverviewPage() {
       }
 
       if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
+        const json = await statsRes.json();
+        const s = json.stats;
+        setStats({
+          total_accounts: s?.accounts?.total ?? 0,
+          active_accounts: s?.accounts?.active ?? 0,
+          revenue_this_month: s?.revenue?.this_month ?? 0,
+          commission_earned: s?.commission?.total ?? 0,
+          max_sub_accounts: s?.reseller?.max_sub_accounts ?? 50,
+          billing_type: s?.reseller?.billing_type ?? 'per_seat',
+          commission_rate: s?.reseller?.commission_percentage ?? 0,
+        });
       } else {
         setError(true);
       }

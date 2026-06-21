@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Fix: Complete reseller dashboard — commission wiring, API gaps, data mapping
+- `app/api/reseller/commissions/route.ts` — **NEW** endpoint. Returns recent commission entries from platform_fees joined with business names. The billing page was calling this but it didn't exist (404).
+- `lib/payments/process-success.ts` — `recordPlatformFee()` now looks up `business.reseller_id`, fetches reseller's `commission_percentage`, calculates `reseller_commission` as percentage of fee_total, and includes `reseller_id` + `reseller_commission` in the platform_fees INSERT. Only active resellers earn commission.
+- `admin/src/pages/Resellers.tsx` — Fixed sub-account count query. Was querying non-existent `reseller_businesses` table, now queries `businesses WHERE reseller_id IN (...)`.
+- `app/dashboard/reseller/page.tsx` — Fixed stats data mapping. Was reading `data.total_accounts` but API returns `data.stats.accounts.total`. Now correctly destructures nested response.
+- `app/dashboard/reseller/accounts/page.tsx` — Same fix: reads `stats.accounts.total` and `stats.reseller.max_sub_accounts` instead of flat fields.
+- `app/dashboard/reseller/billing/page.tsx` — Same fix: reads `stats.reseller.billing_type`, `stats.reseller.commission_percentage`, `stats.commission.total`, `stats.revenue.this_month`.
+- Affects: All 3 reseller dashboard pages (portfolio, accounts, billing), admin resellers page, platform fee recording for all payment flows.
+- Could break: Nothing — all existing platform_fees rows will have reseller_id=NULL and reseller_commission=0 (column defaults from migration 205). New fees for reseller sub-accounts will now populate both fields.
+
 ### Feature: White Label marketing page + demo request flow
 - `app/(marketing)/white-label/page.tsx` — New marketing page at `/white-label`. Hero with white-label positioning, 6 feature highlight cards, 3-step "how it works" strip, demo request form, final CTA. Uses AnimatedSection, brand tokens, existing marketing layout.
 - `app/(marketing)/white-label/DemoForm.tsx` — Client component with 9 fields (business name, contact, email, phone, industry dropdown, volume, WABA status, use case qualifier, notes). Honeypot, input validation, loading/success/error states. Matches existing ContactForm patterns.

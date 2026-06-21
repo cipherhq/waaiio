@@ -239,7 +239,7 @@ export async function recordPlatformFee(
 
   const { data: business } = await supabase
     .from('businesses')
-    .select('subscription_tier, trial_ends_at, payout_mode, custom_fee_percentage, custom_fee_flat')
+    .select('subscription_tier, trial_ends_at, payout_mode, custom_fee_percentage, custom_fee_flat, reseller_id')
     .eq('id', businessId)
     .single();
 
@@ -253,6 +253,25 @@ export async function recordPlatformFee(
     feePercentage: business.custom_fee_percentage != null ? Number(business.custom_fee_percentage) : null,
     feeFlat: business.custom_fee_flat != null ? Number(business.custom_fee_flat) : null,
   });
+
+  // Calculate reseller commission if this business belongs to a reseller
+  let resellerId: string | null = business.reseller_id || null;
+  let resellerCommission = 0;
+
+  if (resellerId && feeTotal > 0) {
+    const { data: reseller } = await supabase
+      .from('resellers')
+      .select('id, commission_percentage, status')
+      .eq('id', resellerId)
+      .maybeSingle();
+
+    if (reseller && reseller.status === 'active' && reseller.commission_percentage > 0) {
+      resellerCommission = Math.round(feeTotal * (Number(reseller.commission_percentage) / 100));
+    } else {
+      // Don't assign commission to suspended resellers
+      resellerId = null;
+    }
+  }
 
   // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
   const { error: feeErr } = await supabase.from('platform_fees').insert({
@@ -268,6 +287,8 @@ export async function recordPlatformFee(
     fee_total: feeTotal,
     gateway_fee: opts.gatewayFee || 0,
     tier,
+    reseller_id: resellerId,
+    reseller_commission: resellerCommission,
   });
   if (feeErr) {
     console.error('[PLATFORM-FEE] Insert error (possible duplicate):', feeErr.message);

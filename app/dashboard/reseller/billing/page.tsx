@@ -47,13 +47,14 @@ export default function ResellerBillingPage() {
       ]);
 
       if (statsRes.ok) {
-        const data = await statsRes.json();
+        const json = await statsRes.json();
+        const s = json.stats;
         setSummary({
-          billing_type: data.billing_type || 'revenue_share',
-          commission_rate: data.commission_rate ?? 0,
-          total_accounts: data.total_accounts ?? 0,
-          commission_earned: data.commission_earned ?? 0,
-          revenue_this_month: data.revenue_this_month ?? 0,
+          billing_type: s?.reseller?.billing_type || 'revenue_share',
+          commission_rate: s?.reseller?.commission_percentage ?? 0,
+          total_accounts: s?.accounts?.total ?? 0,
+          commission_earned: s?.commission?.total ?? 0,
+          revenue_this_month: s?.revenue?.this_month ?? 0,
         });
       } else {
         setError(true);

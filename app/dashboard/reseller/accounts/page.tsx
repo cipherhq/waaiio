@@ -90,8 +90,12 @@ export default function ResellerAccountsPage() {
       }
 
       if (statsRes.ok) {
-        const data = await statsRes.json();
-        setMeta({ total_accounts: data.total_accounts, max_sub_accounts: data.max_sub_accounts });
+        const json = await statsRes.json();
+        const s = json.stats;
+        setMeta({
+          total_accounts: s?.accounts?.total ?? 0,
+          max_sub_accounts: s?.reseller?.max_sub_accounts ?? 50,
+        });
       }
     } catch {
       setError(true);

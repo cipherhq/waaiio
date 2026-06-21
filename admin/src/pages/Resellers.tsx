@@ -88,16 +88,19 @@ export default function Resellers() {
 
       const emailMap = new Map((profiles || []).map(p => [p.id, p.email]));
 
-      // Count sub-accounts per reseller
+      // Count sub-accounts per reseller (businesses linked via reseller_id)
       const resellerIds = rows.map(r => r.id);
-      const { data: subCounts } = await adminDb
-        .from('reseller_businesses')
-        .select('reseller_id');
+      const { data: subAccounts } = await adminDb
+        .from('businesses')
+        .select('reseller_id')
+        .in('reseller_id', resellerIds);
 
       const countMap = new Map<string, number>();
-      if (subCounts) {
-        for (const row of subCounts) {
-          countMap.set(row.reseller_id, (countMap.get(row.reseller_id) || 0) + 1);
+      if (subAccounts) {
+        for (const row of subAccounts) {
+          if (row.reseller_id) {
+            countMap.set(row.reseller_id, (countMap.get(row.reseller_id) || 0) + 1);
+          }
         }
       }
 
