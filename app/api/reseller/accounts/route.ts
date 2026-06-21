@@ -31,7 +31,7 @@ export async function GET() {
 
     const { data: businesses, error, count } = await supabase
       .from('businesses')
-      .select('id, name, category, status, subscription_tier, created_at, slug, country_code', { count: 'exact' })
+      .select('id, name, category, status, subscription_tier, created_at, slug, country_code, email', { count: 'exact' })
       .eq('reseller_id', reseller.id)
       .order('created_at', { ascending: false });
 

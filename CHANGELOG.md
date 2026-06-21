@@ -7,6 +7,12 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Fix: Reseller stats wrong column + missing email field
+- `app/api/reseller/stats/route.ts` — Fixed column name from `amount` to `transaction_amount` in all 3 platform_fees queries. Was causing revenue to always show $0 because `amount` doesn't exist on platform_fees (the actual column is `transaction_amount`).
+- `app/api/reseller/accounts/route.ts` — Added `email` to the SELECT clause. Edit form on accounts page couldn't pre-fill the email field because it wasn't returned by the API.
+- Affects: Reseller portfolio revenue display, billing page revenue, accounts edit form.
+- Could break: Nothing — fixes data that was already returning null/0.
+
 ### Fix: Mobile dashboard layout instability
 - `components/dashboard/Sidebar.tsx` — Added body scroll lock (`menu-open` class) when mobile sidebar opens. Calculates scrollbar width to prevent layout shift via CSS variable. Closes sidebar on route change. Replaced floating hamburger button with a proper fixed top bar showing business name.
 - `app/dashboard/layout.tsx` — Changed NotificationBell from absolute positioning to in-flow on mobile (`flex justify-end` on mobile, `absolute` on desktop). Prevents layout shift when bell loads async.

@@ -39,31 +39,31 @@ export async function GET() {
     // All-time totals
     const { data: allTimeFees } = await supabase
       .from('platform_fees')
-      .select('amount, reseller_commission')
+      .select('transaction_amount, reseller_commission')
       .eq('reseller_id', reseller.id);
 
-    const totalRevenue = (allTimeFees || []).reduce((sum, f) => sum + (f.amount || 0), 0);
+    const totalRevenue = (allTimeFees || []).reduce((sum, f) => sum + (f.transaction_amount || 0), 0);
     const totalCommission = (allTimeFees || []).reduce((sum, f) => sum + (f.reseller_commission || 0), 0);
 
     // This month
     const { data: thisMonthFees } = await supabase
       .from('platform_fees')
-      .select('amount, reseller_commission')
+      .select('transaction_amount, reseller_commission')
       .eq('reseller_id', reseller.id)
       .gte('created_at', thisMonthStart);
 
-    const thisMonthRevenue = (thisMonthFees || []).reduce((sum, f) => sum + (f.amount || 0), 0);
+    const thisMonthRevenue = (thisMonthFees || []).reduce((sum, f) => sum + (f.transaction_amount || 0), 0);
     const thisMonthCommission = (thisMonthFees || []).reduce((sum, f) => sum + (f.reseller_commission || 0), 0);
 
     // Last month
     const { data: lastMonthFees } = await supabase
       .from('platform_fees')
-      .select('amount, reseller_commission')
+      .select('transaction_amount, reseller_commission')
       .eq('reseller_id', reseller.id)
       .gte('created_at', lastMonthStart)
       .lt('created_at', lastMonthEnd);
 
-    const lastMonthRevenue = (lastMonthFees || []).reduce((sum, f) => sum + (f.amount || 0), 0);
+    const lastMonthRevenue = (lastMonthFees || []).reduce((sum, f) => sum + (f.transaction_amount || 0), 0);
     const lastMonthCommission = (lastMonthFees || []).reduce((sum, f) => sum + (f.reseller_commission || 0), 0);
 
     return NextResponse.json({
