@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Fix: Mobile dashboard layout instability
+- `components/dashboard/Sidebar.tsx` — Added body scroll lock (`menu-open` class) when mobile sidebar opens. Calculates scrollbar width to prevent layout shift via CSS variable. Closes sidebar on route change. Replaced floating hamburger button with a proper fixed top bar showing business name.
+- `app/dashboard/layout.tsx` — Changed NotificationBell from absolute positioning to in-flow on mobile (`flex justify-end` on mobile, `absolute` on desktop). Prevents layout shift when bell loads async.
+- `app/globals.css` — Added `padding-right: var(--scrollbar-width)` to `body.menu-open` to compensate for scrollbar disappearing.
+- Affects: All dashboard pages on mobile. Fixes: content scrolling behind open sidebar, layout shift when sidebar opens/closes, hamburger button floating over content, NotificationBell causing content jumps.
+- Could break: Nothing — purely CSS/layout changes. No logic changes.
+
 ### Fix: Complete reseller dashboard — commission wiring, API gaps, data mapping
 - `app/api/reseller/commissions/route.ts` — **NEW** endpoint. Returns recent commission entries from platform_fees joined with business names. The billing page was calling this but it didn't exist (404).
 - `lib/payments/process-success.ts` — `recordPlatformFee()` now looks up `business.reseller_id`, fetches reseller's `commission_percentage`, calculates `reseller_commission` as percentage of fee_total, and includes `reseller_id` + `reseller_commission` in the platform_fees INSERT. Only active resellers earn commission.

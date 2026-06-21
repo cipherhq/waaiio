@@ -131,6 +131,8 @@ body {
 
 body.menu-open {
   overflow: hidden;
+  /* Prevent layout shift when scrollbar disappears */
+  padding-right: var(--scrollbar-width, 0px);
 }
 
 /* CMS page content styles */

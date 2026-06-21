@@ -212,7 +212,7 @@ export default async function DashboardLayout({
         <IdleTimeout />
         <main className="flex-1 overflow-y-auto md:ml-64">
           <div id="main-content" className="relative mx-auto max-w-7xl px-4 pt-16 pb-6 md:pt-6 md:pb-6 sm:px-6 lg:px-8 dark:text-gray-100">
-            <div className="absolute right-4 top-4 z-40 md:right-6 md:top-4">
+            <div className="mb-2 flex h-8 items-center justify-end md:absolute md:right-6 md:top-4 md:mb-0">
               <NotificationBell />
             </div>
             {children}

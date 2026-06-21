@@ -419,6 +419,27 @@ export function Sidebar() {
   const isReseller = useIsReseller();
   const hasMultipleBusinesses = allBusinesses.length > 1;
 
+  // Lock body scroll when mobile sidebar is open
+  useEffect(() => {
+    if (mobileOpen) {
+      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+      document.documentElement.style.setProperty('--scrollbar-width', `${scrollbarWidth}px`);
+      document.body.classList.add('menu-open');
+    } else {
+      document.body.classList.remove('menu-open');
+      document.documentElement.style.removeProperty('--scrollbar-width');
+    }
+    return () => {
+      document.body.classList.remove('menu-open');
+      document.documentElement.style.removeProperty('--scrollbar-width');
+    };
+  }, [mobileOpen]);
+
+  // Close mobile sidebar on route change
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
   // Close switcher on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -803,16 +824,21 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Mobile hamburger */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        className="fixed left-4 top-4 z-40 rounded-lg bg-white dark:bg-gray-800 p-2 shadow-md md:hidden"
-        aria-label="Open menu"
-      >
-        <svg aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
+      {/* Mobile top bar with hamburger */}
+      <div className="fixed left-0 right-0 top-0 z-40 flex h-14 items-center border-b border-gray-200 bg-white/95 px-4 backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/95 md:hidden">
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+          aria-label="Open menu"
+        >
+          <svg aria-hidden="true" className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+        <span className="ml-2 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+          {business.name}
+        </span>
+      </div>
 
       {/* Mobile overlay */}
       {mobileOpen && (
