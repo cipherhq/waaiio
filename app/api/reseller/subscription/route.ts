@@ -38,9 +38,9 @@ async function stripeRequest(path: string, method: 'GET' | 'POST' | 'DELETE', bo
   return response.json() as Promise<Record<string, unknown>>;
 }
 
-async function getReseller(supabase: ReturnType<typeof createServiceClient>) {
-  const authClient = await createClient();
-  const { data: { user } } = await authClient.auth.getUser();
+async function getReseller() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
   const { data: reseller } = await supabase
@@ -55,7 +55,7 @@ async function getReseller(supabase: ReturnType<typeof createServiceClient>) {
 export async function GET() {
   try {
     const supabase = createServiceClient();
-    const reseller = await getReseller(supabase);
+    const reseller = await getReseller();
     if (!reseller) {
       return NextResponse.json({ error: 'Reseller profile not found' }, { status: 404 });
     }
@@ -100,7 +100,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const supabase = createServiceClient();
-    const reseller = await getReseller(supabase);
+    const reseller = await getReseller();
     if (!reseller) {
       return NextResponse.json({ error: 'Reseller profile not found' }, { status: 404 });
     }
@@ -153,7 +153,7 @@ export async function POST(request: NextRequest) {
 
       const customer = await stripeRequest('/customers', 'POST', {
         email: user?.email || '',
-        name: reseller.company_name || reseller.name || '',
+        name: reseller.company_name || '',
         'metadata[reseller_id]': reseller.id,
       });
 
@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE() {
   try {
     const supabase = createServiceClient();
-    const reseller = await getReseller(supabase);
+    const reseller = await getReseller();
     if (!reseller) {
       return NextResponse.json({ error: 'Reseller profile not found' }, { status: 404 });
     }

@@ -22,14 +22,13 @@ interface Payout {
   period_start: string;
   period_end: string;
   gross_commission: number;
-  holdback_percentage: number;
-  holdback_amount: number;
+  holdback: number;
   deductions: number;
   net_amount: number;
   status: string;
   notes: string | null;
   created_at: string;
-  approved_at: string | null;
+  approved_by: string | null;
   paid_at: string | null;
   // Enriched
   company_name?: string;
@@ -198,8 +197,7 @@ export default function ResellerPayouts() {
           period_start: genPeriodStart,
           period_end: genPeriodEnd,
           gross_commission: genGrossCommission,
-          holdback_percentage: holdbackPct,
-          holdback_amount: holdbackAmount,
+          holdback: holdbackAmount,
           deductions,
           net_amount: netAmount,
           notes: genNotes || null,
@@ -240,7 +238,7 @@ export default function ResellerPayouts() {
 
       if (action === 'approve') {
         updates.status = 'approved';
-        updates.approved_at = new Date().toISOString();
+        updates.approved_by = adminSession?.id || null;
       } else if (action === 'reject') {
         updates.status = 'rejected';
       } else if (action === 'pay') {
@@ -388,7 +386,7 @@ export default function ResellerPayouts() {
                   </td>
                   <td className="px-4 py-3 text-right text-gray-700">{fmtCurrency(p.gross_commission / 100, 'USD')}</td>
                   <td className="px-4 py-3 text-right text-gray-500">
-                    {fmtCurrency(p.holdback_amount / 100, 'USD')} ({p.holdback_percentage}%)
+                    {fmtCurrency(p.holdback / 100, 'USD')} ({Math.round((p.holdback / (p.gross_commission || 1)) * 100)}%)
                   </td>
                   <td className="px-4 py-3 text-right text-gray-500">{fmtCurrency(p.deductions / 100, 'USD')}</td>
                   <td className="px-4 py-3 text-right font-medium text-gray-900">{fmtCurrency(p.net_amount / 100, 'USD')}</td>
@@ -441,7 +439,7 @@ export default function ResellerPayouts() {
             <DetailRow label="Reseller" value={selected.company_name} />
             <DetailRow label="Period" value={`${fmtDate(selected.period_start)} - ${fmtDate(selected.period_end)}`} />
             <DetailRow label="Gross Commission" value={fmtCurrency(selected.gross_commission / 100, 'USD')} />
-            <DetailRow label="Holdback" value={`${fmtCurrency(selected.holdback_amount / 100, 'USD')} (${selected.holdback_percentage}%)`} />
+            <DetailRow label="Holdback" value={`${fmtCurrency(selected.holdback / 100, 'USD')} (${Math.round((selected.holdback / (selected.gross_commission || 1)) * 100)}%)`} />
             <DetailRow label="Deductions" value={fmtCurrency(selected.deductions / 100, 'USD')} />
             <DetailRow label="Net Amount" value={
               <span className="font-semibold">{fmtCurrency(selected.net_amount / 100, 'USD')}</span>
@@ -449,7 +447,7 @@ export default function ResellerPayouts() {
             <DetailRow label="Status" value={<StatusBadge status={selected.status} />} />
             <DetailRow label="Notes" value={selected.notes || '---'} />
             <DetailRow label="Created" value={fmtDate(selected.created_at)} />
-            {selected.approved_at && <DetailRow label="Approved" value={fmtDate(selected.approved_at)} />}
+            {selected.approved_by && <DetailRow label="Approved By" value="Admin" />}
             {selected.paid_at && <DetailRow label="Paid" value={fmtDate(selected.paid_at)} />}
 
             {/* Action buttons inside detail modal */}

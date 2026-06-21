@@ -71,7 +71,7 @@ export default function ResellerFinancials() {
       // Fetch all resellers
       const { data: rows, error } = await adminDb
         .from('resellers')
-        .select('id, company_name, billing_type, commission_percentage, status, created_at')
+        .select('id, company_name, billing_type, commission_percentage, status, created_at, tier')
         .order('created_at', { ascending: false });
 
       if (error || !rows || rows.length === 0) {
@@ -132,23 +132,13 @@ export default function ResellerFinancials() {
         }
       }
 
-      // Derive tier from billing_type as a simple label
-      const tierFromBilling = (billingType: string): string => {
-        switch (billingType) {
-          case 'per_seat': return 'starter';
-          case 'revenue_share': return 'professional';
-          case 'flat_monthly': return 'enterprise';
-          default: return billingType;
-        }
-      };
-
       const enriched: ResellerFinancial[] = rows.map(r => {
         const earned = commissionMap.get(r.id) || 0;
         const paid = paidMap.get(r.id) || 0;
         return {
           id: r.id,
           company_name: r.company_name,
-          tier: tierFromBilling(r.billing_type),
+          tier: r.tier || 'starter',
           status: r.status,
           commission_percentage: r.commission_percentage,
           active_sub_accounts: subCountMap.get(r.id) || 0,

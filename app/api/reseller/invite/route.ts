@@ -21,12 +21,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Check admin role
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('role')
       .eq('id', user.id)
       .single();
 
+    if (profileError) {
+      logger.error('[RESELLER_INVITE] Profile lookup error:', profileError.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
     if (!profile || profile.role !== 'admin') {
       return NextResponse.json({ error: 'Forbidden — admin role required' }, { status: 403 });
     }
@@ -50,12 +54,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Look up the reseller's email via profiles
-    const { data: resellerProfile } = await supabase
+    const { data: resellerProfile, error: rpError } = await supabase
       .from('profiles')
       .select('email, full_name')
       .eq('id', reseller.user_id)
       .single();
 
+    if (rpError) {
+      logger.error('[RESELLER_INVITE] Reseller profile lookup error:', rpError.message);
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
     if (!resellerProfile?.email) {
       return NextResponse.json({ error: 'Reseller has no email on file' }, { status: 400 });
     }

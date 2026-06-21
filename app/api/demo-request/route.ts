@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
 
     // Persist to Supabase
     const supabase = createServiceClient();
-    const { error: dbError } = await supabase.from('demo_requests').insert({
+    const { data: created, error: dbError } = await supabase.from('demo_requests').insert({
       business_name: business_name.trim(),
       contact_name: contact_name.trim(),
       work_email: work_email.trim().toLowerCase(),
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
       has_waba: typeof has_waba === 'boolean' ? has_waba : null,
       use_case: use_case || 'own_business',
       notes: notes?.trim() || null,
-    });
+    }).select('id').single();
 
     if (dbError) {
       logger.error('[DEMO-REQUEST] DB insert failed:', dbError.message);
@@ -127,9 +127,7 @@ export async function POST(request: NextRequest) {
         supabase
           .from('demo_requests')
           .update({ auto_response_sent: true })
-          .eq('work_email', work_email.trim().toLowerCase())
-          .order('created_at', { ascending: false })
-          .limit(1)
+          .eq('id', created?.id)
           .then(({ error: updateErr }) => {
             if (updateErr) {
               logger.error('[DEMO-REQUEST] Failed to mark auto_response_sent:', updateErr.message);
