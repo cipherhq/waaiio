@@ -60,6 +60,8 @@ import SystemHealth from './pages/SystemHealth';
 import ChatHistory from './pages/ChatHistory';
 import Resellers from './pages/Resellers';
 import DemoRequests from './pages/DemoRequests';
+import ResellerFinancials from './pages/ResellerFinancials';
+import ResellerPayouts from './pages/ResellerPayouts';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -81,6 +83,8 @@ export const router = createBrowserRouter([
       { path: 'impersonation-audit', element: <RoleGuard roles={['admin']}><ImpersonationAudit /></RoleGuard> },
       { path: 'resellers', element: <RoleGuard roles={['admin']}><Resellers /></RoleGuard> },
       { path: 'demo-requests', element: <RoleGuard roles={['admin', 'support']}><DemoRequests /></RoleGuard> },
+      { path: 'reseller-financials', element: <RoleGuard roles={['admin', 'finance']}><ResellerFinancials /></RoleGuard> },
+      { path: 'reseller-payouts', element: <RoleGuard roles={['admin', 'finance']}><ResellerPayouts /></RoleGuard> },
       // Operations
       { path: 'bookings', element: <RoleGuard roles={['admin', 'support', 'operations']}><Bookings /></RoleGuard> },
       { path: 'orders', element: <RoleGuard roles={['admin', 'support', 'operations']}><Orders /></RoleGuard> },

@@ -7,6 +7,34 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Feature: Reseller white-label phases 1-3 — full build
+- `supabase/migrations/207_reseller_full.sql` — New tables: reseller_payouts (commission disbursement with holdback), reseller_invoices (platform fee billing). New columns on resellers: branding JSONB, custom_domain, tier, billing_notes, onboarded_at, invite_token, stripe_customer_id, stripe_subscription_id. RLS + indexes + triggers.
+- `app/api/demo-request/route.ts` — Auto-response email to submitter with "Schedule a Call" CTA. Marks auto_response_sent on demo_requests row.
+- `lib/email/partner-templates.ts` — White-label email templates: wrapPartnerEmail(), partnerBtn(), getResellerBranding(). Replaces Waaiio branding with reseller's logo/colors.
+- `app/api/reseller/branding/route.ts` — GET/PUT branding config (logo_url, favicon_url, primary_color, accent_color, company_name). Hex color validation, URL validation.
+- `app/dashboard/reseller/branding/page.tsx` — Branding settings page with logo preview, color pickers, custom domain display.
+- `app/api/reseller/accounts/[id]/route.ts` — Expanded ALLOWED_FIELDS from 4 to 10 (added description, address, phone, email, slug, flow_type). Field-level validation.
+- `app/api/reseller/invite/route.ts` — Admin generates invite token, sends branded invite email to reseller.
+- `app/api/reseller/setup/route.ts` — GET validates token, POST completes onboarding (branding + optional first account).
+- `app/(marketing)/reseller-setup/page.tsx` + `SetupWizard.tsx` — 3-step onboarding wizard: Your Brand → First Account → All Set.
+- `app/api/reseller/subscription/route.ts` — GET/POST/DELETE for Stripe partner subscriptions. 3 tiers: Starter $299, Professional $799, Enterprise $1500. Manual billing fallback if Stripe env vars not set.
+- `app/api/reseller/invoices/route.ts` — GET invoice history for reseller.
+- `app/dashboard/reseller/subscription/page.tsx` — Tier comparison cards, upgrade/downgrade, invoice history table.
+- `app/api/reseller/payouts/route.ts` — GET payout history for reseller.
+- `app/api/admin/reseller-payouts/route.ts` — GET list + POST generate payout (auto-calculates commission, 10% holdback for <90 day resellers).
+- `app/api/admin/reseller-payouts/[id]/route.ts` — PATCH approve/reject/mark_paid with balance re-verification.
+- `app/dashboard/reseller/payouts/page.tsx` — Payout history with summary cards (earned, paid, pending, available).
+- `app/api/reseller/analytics/route.ts` — Per-account breakdown, 6-month trends, top 5 accounts.
+- `app/dashboard/reseller/analytics/page.tsx` — CSS bar chart, top accounts, searchable breakdown table.
+- `app/api/cron/reseller-reconciliation/route.ts` — Monthly reconciliation: fee/payout mismatch, zero-transaction fraud, tier limit checks, overdue invoices.
+- `app/api/cron/reseller-invoice-generation/route.ts` — Monthly invoice generation per tier with duplicate prevention.
+- `admin/src/pages/ResellerFinancials.tsx` — Admin financial overview per reseller (revenue, commission, owed, tier).
+- `admin/src/pages/ResellerPayouts.tsx` — Admin payout management (generate, approve, reject, mark paid).
+- Admin routes + sidebar wired for ResellerFinancials and ResellerPayouts.
+- Dashboard sidebar: added Payouts, Subscription, Analytics nav items in reseller section.
+- Affects: Reseller dashboard (6 new pages), admin panel (2 new pages), marketing site (onboarding wizard), cron jobs (2 new), email system (partner templates). No existing functionality changed.
+- Could break: Nothing — all additive. Requires migration 207 on Supabase. Stripe env vars optional (RESELLER_STRIPE_PRICE_STARTER, RESELLER_STRIPE_PRICE_PRO, RESELLER_STRIPE_PRICE_ENTERPRISE).
+
 ### Feature: Demo Requests admin page
 - `admin/src/pages/DemoRequests.tsx` — **NEW** admin page. Lists all white-label demo requests with search, status filter, pagination. Summary cards (total, new, in progress). Click for detail modal with all form fields. Status dropdown to update leads (new → contacted → qualified → closed). Admin + support roles can view, admin + support can update status. Audit logged.
 - `admin/src/routes.tsx` — Added `/demo-requests` route with RoleGuard for admin + support

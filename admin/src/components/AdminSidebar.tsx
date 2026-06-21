@@ -81,6 +81,8 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Eye, label: 'Impersonation Audit', path: '/impersonation-audit', roles: ['admin'] },
       { icon: Handshake, label: 'Resellers', path: '/resellers', roles: ['admin'] },
       { icon: Inbox, label: 'Demo Requests', path: '/demo-requests', roles: ['admin', 'support'] },
+      { icon: BarChart3, label: 'Reseller Financials', path: '/reseller-financials', roles: ['admin', 'finance'] },
+      { icon: Wallet, label: 'Reseller Payouts', path: '/reseller-payouts', roles: ['admin', 'finance'] },
     ],
   },
   {
