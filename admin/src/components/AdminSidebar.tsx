@@ -40,6 +40,7 @@ import {
   Zap,
   Activity,
   MessagesSquare,
+  Inbox,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -79,6 +80,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: UserCog, label: 'Impersonation', path: '/impersonation', roles: ['admin'] },
       { icon: Eye, label: 'Impersonation Audit', path: '/impersonation-audit', roles: ['admin'] },
       { icon: Handshake, label: 'Resellers', path: '/resellers', roles: ['admin'] },
+      { icon: Inbox, label: 'Demo Requests', path: '/demo-requests', roles: ['admin', 'support'] },
     ],
   },
   {

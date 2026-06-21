@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Feature: Demo Requests admin page
+- `admin/src/pages/DemoRequests.tsx` — **NEW** admin page. Lists all white-label demo requests with search, status filter, pagination. Summary cards (total, new, in progress). Click for detail modal with all form fields. Status dropdown to update leads (new → contacted → qualified → closed). Admin + support roles can view, admin + support can update status. Audit logged.
+- `admin/src/routes.tsx` — Added `/demo-requests` route with RoleGuard for admin + support
+- `admin/src/components/AdminSidebar.tsx` — Added "Demo Requests" link (Inbox icon) in Accounts section, visible to admin + support
+- Affects: Admin panel only. Requires migration 206 (demo_requests table) to be run.
+- Could break: Nothing — additive only.
+
 ### Fix: Reseller stats wrong column + missing email field
 - `app/api/reseller/stats/route.ts` — Fixed column name from `amount` to `transaction_amount` in all 3 platform_fees queries. Was causing revenue to always show $0 because `amount` doesn't exist on platform_fees (the actual column is `transaction_amount`).
 - `app/api/reseller/accounts/route.ts` — Added `email` to the SELECT clause. Edit form on accounts page couldn't pre-fill the email field because it wasn't returned by the API.
