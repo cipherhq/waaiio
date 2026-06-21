@@ -5,6 +5,20 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-06-21
+
+### Feature: White Label marketing page + demo request flow
+- `app/(marketing)/white-label/page.tsx` — New marketing page at `/white-label`. Hero with white-label positioning, 6 feature highlight cards, 3-step "how it works" strip, demo request form, final CTA. Uses AnimatedSection, brand tokens, existing marketing layout.
+- `app/(marketing)/white-label/DemoForm.tsx` — Client component with 9 fields (business name, contact, email, phone, industry dropdown, volume, WABA status, use case qualifier, notes). Honeypot, input validation, loading/success/error states. Matches existing ContactForm patterns.
+- `app/api/demo-request/route.ts` — POST handler. Rate limited (5/min), validates all fields + enum values, honeypot, persists to `demo_requests` table via service client, sends notification email to hello@waaiio.com via Resend. Fail-open on email (lead is already saved).
+- `supabase/migrations/206_demo_requests.sql` — New `demo_requests` table with RLS (service_role INSERT, admin/support/operations SELECT, admin/support UPDATE). Indexes on status, created_at, email. Updated_at trigger.
+- `components/marketing/Navbar.tsx` — Added "White Label" nav link between Pricing and Directory
+- `components/marketing/Footer.tsx` — Added "White Label" link in Product column
+- Affects: Marketing site navigation (new nav item), new `/white-label` route. No existing pages or functionality changed.
+- Could break: Nothing — additive only. Requires migration 206 to be run on Supabase before form submissions will persist.
+
+---
+
 ## 2026-06-19
 
 ### Feature: Reseller layer Phase 2 — Dashboard sidebar + Admin page

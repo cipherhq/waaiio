@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase/client';
 const NAV_LINKS = [
   { href: '/features', label: 'Features' },
   { href: '/pricing', label: 'Pricing' },
+  { href: '/white-label', label: 'White Label' },
   { href: '/directory', label: 'Directory' },
   { href: '/help', label: 'Help' },
 ];

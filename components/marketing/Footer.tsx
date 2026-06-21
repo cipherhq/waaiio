@@ -60,6 +60,7 @@ export default function Footer() {
               <li><Link href="/#faq" className="text-sm text-gray-300 transition hover:text-white">FAQ</Link></li>
               <li><Link href="/help" className="text-sm text-gray-300 transition hover:text-white">Help Center</Link></li>
               <li><Link href="/blog" className="text-sm text-gray-300 transition hover:text-white">Blog</Link></li>
+              <li><Link href="/white-label" className="text-sm text-gray-300 transition hover:text-white">White Label</Link></li>
               <li><Link href="/get-started" className="text-sm text-gray-300 transition hover:text-white">Get Started</Link></li>
             </ul>
           </div>
