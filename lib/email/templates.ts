@@ -4,7 +4,7 @@ const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 
 // ─── HTML escape ──────────────────────────────────────────────────
 
-function esc(str: string): string {
+export function esc(str: string): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -21,7 +21,7 @@ interface WrapOptions {
   whitelabel?: boolean;
 }
 
-function wrap(body: string, opts?: WrapOptions): string {
+export function wrap(body: string, opts?: WrapOptions): string {
   const biz = opts?.businessName ? esc(opts.businessName) : '';
   const logo = opts?.logoUrl || '';
 
@@ -78,7 +78,7 @@ function wrap(body: string, opts?: WrapOptions): string {
 </html>`;
 }
 
-function btn(text: string, url: string): string {
+export function btn(text: string, url: string): string {
   return `<table cellpadding="0" cellspacing="0" style="margin:24px 0"><tr>
     <td style="background:#7c3aed;border-radius:8px;padding:12px 24px">
       <a href="${url}" style="color:#ffffff;text-decoration:none;font-size:14px;font-weight:600">${text}</a>
@@ -86,11 +86,11 @@ function btn(text: string, url: string): string {
   </tr></table>`;
 }
 
-function h(text: string): string {
+export function h(text: string): string {
   return `<h2 style="margin:0 0 16px;font-size:20px;font-weight:700;color:#18181b">${text}</h2>`;
 }
 
-function p(text: string): string {
+export function p(text: string): string {
   return `<p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#3f3f46">${text}</p>`;
 }
 

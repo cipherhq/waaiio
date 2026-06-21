@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
+import { wrap, btn, h, p } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
@@ -105,6 +106,39 @@ export async function POST(request: NextRequest) {
       // Don't fail the request if email fails — lead is already saved
       logger.error('[DEMO-REQUEST] Email notification failed:', (err as Error).message);
     });
+
+    // Send auto-response email to the submitter
+    const firstName = esc(contact_name.trim().split(' ')[0] || contact_name.trim());
+    sendEmail({
+      to: work_email.trim().toLowerCase(),
+      subject: 'Thanks for your interest in Waaiio White Label',
+      html: wrap(`
+        ${h(`Hi ${firstName},`)}
+        ${p('Thank you for your interest in Waaiio White Label. We\'ve received your demo request and our partnerships team is reviewing it now.')}
+        ${p('You can expect to hear from us within <strong>1 business day</strong>. In the meantime, feel free to schedule a call at a time that works for you:')}
+        ${btn('Schedule a Call', 'https://cal.com/waaiio/white-label-demo')}
+        ${p('If you have any questions before then, just reply to this email.')}
+        <p style="margin:24px 0 4px;font-size:14px;color:#3f3f46">Looking forward to speaking with you,</p>
+        <p style="margin:0;font-size:14px;font-weight:600;color:#3f3f46">The Waaiio Team</p>
+      `),
+      replyTo: 'hello@waaiio.com',
+    })
+      .then(() => {
+        supabase
+          .from('demo_requests')
+          .update({ auto_response_sent: true })
+          .eq('work_email', work_email.trim().toLowerCase())
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .then(({ error: updateErr }) => {
+            if (updateErr) {
+              logger.error('[DEMO-REQUEST] Failed to mark auto_response_sent:', updateErr.message);
+            }
+          });
+      })
+      .catch((err) => {
+        logger.error('[DEMO-REQUEST] Auto-response email failed:', (err as Error).message);
+      });
 
     logger.info(`[DEMO-REQUEST] New lead: ${work_email} (${business_name})`);
 
