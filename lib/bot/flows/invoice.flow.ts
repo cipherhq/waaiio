@@ -1,11 +1,13 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
-import { initializePayment } from './shared/payment';
+import { initializePayment, verifyPayment } from './shared/payment';
 import { notifyOwnerNewInvoicePayment } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
-import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
+import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
+import { randomBytes } from 'crypto';
 
 // ── Invoice List ──
 const invoiceListStep: FlowStepConfig = {
@@ -250,7 +252,6 @@ const invoicePayStep: FlowStepConfig = {
         .in('status', ['sent']); // Only update if still 'sent'
 
       // Notify owner that invoice payment link was sent (non-blocking)
-      // The customer name comes from the invoice record
       const { data: customerProfile } = await ctx.supabase
         .from('profiles')
         .select('first_name, last_name')
@@ -280,7 +281,86 @@ const invoicePayStep: FlowStepConfig = {
         body: `${custName} opened payment link for Invoice ${invoice.invoice_number} (${formatCurrency(invoice.total_amount, cc)}).`,
       }).catch(err => logger.error('[INVOICE] Notification error:', err));
 
-      // End session
+      // Store payment reference and customer info for await step
+      const sd = ctx.session.session_data;
+      sd.payment_reference = result.reference;
+      sd._invoice_id = invoice.id;
+      sd._invoice_number = invoice.invoice_number;
+      sd._invoice_amount = invoice.total_amount;
+      sd._invoice_business_id = invoice.business_id;
+      sd._invoice_customer_name = custName;
+
+      // Check if business qualifies for direct bank transfer
+      const tier = biz?.subscription_tier || 'free';
+      let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
+
+      if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business')) {
+        const { data: ba } = await ctx.supabase
+          .from('business_bank_accounts')
+          .select('bank_name, account_number, account_name')
+          .eq('business_id', invoice.business_id)
+          .eq('is_active', true)
+          .eq('is_default', true)
+          .maybeSingle();
+        bankAccount = ba;
+      }
+
+      if (bankAccount) {
+        // Dual-option: online + bank transfer
+        const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+        sd.bank_transfer_reference = transferRef;
+        sd.bank_transfer_offered = true;
+        sd.bank_transfer_amount = invoice.total_amount;
+
+        await ctx.supabase.from('pending_transfers').insert({
+          business_id: invoice.business_id,
+          invoice_id: invoice.id,
+          customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+          customer_name: custName,
+          expected_amount: Math.round(invoice.total_amount * 100),
+          currency: getCurrencyCode(cc),
+          reference_code: transferRef,
+          status: 'pending',
+          expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        });
+
+        await ctx.supabase
+          .from('bot_sessions')
+          .update({ session_data: sd, current_step: 'await_invoice_payment' })
+          .eq('id', ctx.session.id);
+
+        return [
+          {
+            type: 'text',
+            text: await ctx.t([
+              `💳 Pay ${formatCurrency(invoice.total_amount, cc)} for Invoice ${invoice.invoice_number}`,
+              '',
+              `*Option 1 — Pay Online* 👇`,
+              result.url,
+              '',
+              `*Option 2 — Bank Transfer* 🏦`,
+              `Bank: ${bankAccount.bank_name}`,
+              `Account: ${bankAccount.account_number}`,
+              `Name: ${bankAccount.account_name}`,
+              `Amount: ${formatCurrency(invoice.total_amount, cc)}`,
+              `Reference: *${transferRef}*`,
+              '',
+              `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+            ].join('\n')),
+          },
+          {
+            type: 'buttons',
+            body: "After paying, tap below:",
+            buttons: [
+              { id: 'i_paid_online', title: "I've Paid Online" },
+              { id: 'sent_transfer', title: "I've Sent Transfer" },
+              { id: 'go_back', title: 'Cancel' },
+            ],
+          },
+        ];
+      }
+
+      // Standard online-only flow — end session
       await ctx.supabase.from('bot_sessions').update({
         current_step: 'complete',
         is_active: false,
@@ -317,11 +397,176 @@ const invoicePayStep: FlowStepConfig = {
     const action = ctx.session.session_data._invoice_action;
     if (action === 'retry') return 'invoice_pay'; // re-prompt (retry payment)
     if (action === 'chat') return 'chat_start'; // route to live chat
+    if (ctx.session.session_data.bank_transfer_offered) return 'await_invoice_payment';
     return null; // done — end session
+  },
+};
+
+// ── Await Invoice Payment (bank transfer) ──
+const awaitInvoicePaymentStep: FlowStepConfig = {
+  id: 'await_invoice_payment',
+  acceptsMedia: true,
+
+  async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+    const sd = ctx.session.session_data;
+    if (sd.bank_transfer_offered) {
+      return [{
+        type: 'buttons',
+        body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
+        buttons: [
+          { id: 'i_paid_online', title: "I've Paid Online" },
+          { id: 'sent_transfer', title: "I've Sent Transfer" },
+          { id: 'go_back', title: 'Cancel' },
+        ],
+      }];
+    }
+    return [{
+      type: 'buttons',
+      body: "Complete payment using the link above.\n\nPaid already? Tap below to confirm:",
+      buttons: [
+        { id: 'i_paid', title: "I've Paid" },
+        { id: 'go_back', title: 'Cancel' },
+      ],
+    }];
+  },
+
+  async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+    const text = input.toLowerCase();
+    const sd = ctx.session.session_data;
+
+    if ((text === 'cancel' || text === 'go_back')) {
+      if (sd.bank_transfer_reference) {
+        await ctx.supabase
+          .from('pending_transfers')
+          .update({ status: 'cancelled' })
+          .eq('reference_code', sd.bank_transfer_reference as string);
+      }
+      await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Invoice payment cancelled. Send *Hi* to start over.') });
+      return { valid: true, data: { _action: 'cancel' } };
+    }
+
+    // ── Bank transfer proof: image uploaded ──
+    if (ctx.mediaType === 'image' && ctx.mediaUrl && sd.bank_transfer_reference) {
+      const transferRef = sd.bank_transfer_reference as string;
+      const expectedAmount = sd.bank_transfer_amount as number;
+      const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+      const currency = getCurrencyCode(cc);
+
+      const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
+      const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
+
+      await ctx.supabase
+        .from('pending_transfers')
+        .update({
+          proof_type: 'screenshot',
+          proof_image_url: ctx.mediaUrl,
+          verified_by_ocr: ocrMatches,
+          ocr_result: ocrMatches ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, confidence: ocr.confidence } : null,
+        })
+        .eq('reference_code', transferRef)
+        .eq('status', 'pending');
+
+      if (ctx.business) {
+        const custName = (sd._invoice_customer_name as string) || 'Customer';
+        notifyOwnerNewInvoicePayment({
+          supabase: ctx.supabase,
+          sender: ctx.sender,
+          businessId: sd._invoice_business_id as string,
+          businessName: ctx.business.name,
+          countryCode: cc,
+          referenceCode: transferRef,
+          customerName: custName,
+          amount: expectedAmount,
+          invoiceNumber: `${sd._invoice_number as string} (Bank Transfer)`,
+        }).catch(err => logger.error('[INVOICE] Transfer notify error:', err));
+
+        createNotification(ctx.supabase, {
+          businessId: sd._invoice_business_id as string,
+          type: 'transfer_proof_received',
+          channel: 'whatsapp',
+          body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, cc)} invoice payment. Ref: ${transferRef}. Confirm in Dashboard → Pending Transfers.`,
+        }).catch(err => logger.error('[INVOICE] Transfer notification error:', err));
+      }
+
+      const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
+      await ctx.sender.sendText({
+        to: ctx.from,
+        text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm your invoice payment shortly.\n\nRef: *${transferRef}*${ocrHint}\n\nSend *Hi* to continue.`),
+      });
+      return { valid: true, data: { _action: 'transfer_proof_sent' } };
+    }
+
+    // ── "I've Sent Transfer" button ──
+    if (text === 'sent_transfer' || text === "i've sent transfer" || text === 'i_sent_transfer') {
+      if (!sd.bank_transfer_reference) {
+        return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
+      }
+      sd._awaiting_transfer_proof = true;
+      await ctx.supabase.from('bot_sessions').update({ session_data: sd }).eq('id', ctx.session.id);
+      await ctx.sender.sendText({
+        to: ctx.from,
+        text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${sd.bank_transfer_reference}*`),
+      });
+      return { valid: false, errorMessage: '' };
+    }
+
+    // ── Text proof after tapping "I've Sent Transfer" ──
+    if (sd._awaiting_transfer_proof && text && !['i_paid', 'i_paid_online', 'paid', 'done', 'check'].includes(text)) {
+      await ctx.supabase
+        .from('pending_transfers')
+        .update({ proof_type: 'text', proof_text: input.trim() })
+        .eq('reference_code', sd.bank_transfer_reference as string)
+        .eq('status', 'pending');
+
+      await ctx.sender.sendText({
+        to: ctx.from,
+        text: await ctx.t(`✅ Transfer reference received. *${ctx.business?.name || 'The business'}* will review and confirm your invoice payment shortly.\n\nRef: *${sd.bank_transfer_reference}*\n\nSend *Hi* to continue.`),
+      });
+      return { valid: true, data: { _action: 'transfer_proof_sent' } };
+    }
+
+    if (text === 'i_paid' || text === 'i_paid_online' || text === 'paid' || text === 'done' || text === 'check') {
+      const ref = sd.payment_reference as string;
+      if (!ref) return { valid: true, data: { _action: 'cancel' } };
+
+      const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+      const verified = await verifyPayment(ctx.supabase, ref, cc);
+
+      if (verified) {
+        const invoiceNum = sd._invoice_number as string;
+        const amount = sd._invoice_amount as number;
+
+        await ctx.sender.sendText({
+          to: ctx.from,
+          text: await ctx.t([
+            `✅ *Payment Confirmed!*`,
+            '',
+            `Invoice ${invoiceNum} has been paid.`,
+            `💰 Amount: ${formatCurrency(amount, cc)}`,
+            '',
+            '💡 *What you can do:*',
+            '• Type *my invoices* to check your invoices',
+            '• Type *receipt* to get your payment receipt',
+            '• Type *Hi* to start over',
+            ...(getPoweredByFooter(ctx.business?.subscription_tier) ? ['', '_Powered by Waaiio_'] : []),
+          ].join('\n')),
+        });
+
+        return { valid: true, data: { _action: 'payment_confirmed' } };
+      }
+
+      return { valid: false, errorMessage: "Payment not yet received. The link may have expired — please try again or send your transfer proof." };
+    }
+
+    return { valid: false, errorMessage: "Tap *I've Paid Online*, *I've Sent Transfer*, or *Cancel*." };
+  },
+
+  async next() {
+    return null; // Flow complete after confirmation, proof, or cancel
   },
 };
 
 export const invoiceFlow: FlowDefinition = {
   type: 'scheduling', // placeholder — pseudo-flow
-  steps: [invoiceListStep, invoiceDetailStep, invoicePayStep],
+  steps: [invoiceListStep, invoiceDetailStep, invoicePayStep, awaitInvoicePaymentStep],
 };
