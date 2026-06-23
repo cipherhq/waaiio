@@ -7,6 +7,21 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Feature: Direct bank transfer payment system (zero gateway fees)
+- `supabase/migrations/209_direct_bank_transfer.sql` — New tables: business_bank_accounts (bank details per business), pending_transfers (transfer tracking with 4-hour expiry). Added is_direct_transfer flag to platform_fees. RLS + indexes.
+- `app/api/dashboard/bank-account/route.ts` — CRUD for business bank accounts. Tier-gated (Growth/Business only). 10-digit account validation.
+- `app/api/dashboard/pending-transfers/route.ts` — GET pending transfers with status filter.
+- `app/api/dashboard/pending-transfers/[id]/route.ts` — PATCH confirm/reject. On confirm: updates booking/order/invoice, creates payment record with gateway='direct', records platform fee with is_direct_transfer=true. On reject: stores reason.
+- `app/api/cron/expire-transfers/route.ts` — Expires pending transfers past 4-hour deadline. Cancels related bookings/orders.
+- `lib/bot/flows/payment.flow.ts` — Dual-option payment for qualifying businesses: Paystack link + bank details with unique WA-XXXX reference. Customer can send receipt screenshot as proof. Added acceptsMedia to await_payment step.
+- `lib/bot/flows/types.ts` — Added acceptsMedia property to FlowStepConfig.
+- `lib/bot/flows/executor.ts` — Respects acceptsMedia flag on flow steps.
+- `app/dashboard/payments/pending/page.tsx` — Pending transfers dashboard: summary cards, tabbed view (pending/confirmed/rejected/expired), proof viewer, confirm/reject dialogs, 30-second auto-refresh, time remaining countdown.
+- `app/dashboard/settings/tabs/PaymentsTab.tsx` — Bank Account section with Nigerian bank dropdown, account validation, tier-gated unlock.
+- `components/dashboard/Sidebar.tsx` — Added "Pending Transfers" nav item in money section.
+- Affects: Nigerian/Ghanaian businesses on Growth/Business tier. Bot payment flow (dual option when bank account configured + amount >= NGN 10,000). Platform fee tracking (is_direct_transfer flag).
+- Could break: Nothing — bank transfer option only appears when business has configured bank account AND is on paid tier. Existing Paystack flow unchanged. Requires migration 209.
+
 ### Feature: Nigerian payment channels — bank transfer + USSD + card
 - `supabase/migrations/208_payment_channels.sql` — Adds `payment_channels` JSONB column to businesses table. Null = all channels (backward compatible).
 - `lib/payments/types.ts` — Added `channels?: string[]` to InitPaymentOpts interface.
