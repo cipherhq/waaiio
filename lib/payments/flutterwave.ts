@@ -78,6 +78,7 @@ export class FlutterwaveGateway implements PaymentGateway {
           currency: opts.currency,
           redirect_url: `${callbackUrl}/payment-success?ref=${opts.referenceCode}`,
           ...splitParams,
+          ...(opts.channels?.length ? { payment_options: opts.channels.join(',') } : {}),
           customer: {
             email,
             phonenumber: opts.phone,

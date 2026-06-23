@@ -37,6 +37,8 @@ export interface InitPaymentOpts {
   campaignId?: string;
   /** Business ID — stored on payment record for payout reconciliation */
   businessId?: string;
+  /** Payment channels to show (e.g. ['card', 'bank_transfer', 'ussd']). Null = all. */
+  channels?: string[];
 }
 
 export interface InitPaymentResult {

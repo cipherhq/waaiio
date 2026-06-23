@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Feature: Nigerian payment channels — bank transfer + USSD + card
+- `supabase/migrations/208_payment_channels.sql` — Adds `payment_channels` JSONB column to businesses table. Null = all channels (backward compatible).
+- `lib/payments/types.ts` — Added `channels?: string[]` to InitPaymentOpts interface.
+- `lib/payments/paystack.ts` — Passes `channels` parameter to Paystack transaction/initialize API. Enables business-level control of which payment methods customers see.
+- `lib/payments/flutterwave.ts` — Passes `payment_options` parameter to Flutterwave payments API. Same concept.
+- `lib/bot/flows/shared/payment.ts` — Fetches `payment_channels` from business record before initializing payment. Passes array to gateway.
+- `lib/bot/flows/payment.flow.ts` — Payment message for NG/GH businesses now includes hint: "You can pay with card, bank transfer, or USSD on the payment page."
+- `app/dashboard/settings/tabs/PaymentsTab.tsx` — New "Accepted Payment Methods" section with channel toggles (card, bank_transfer, ussd, qr, mobile_money). Country-aware: bank transfer/USSD only shown for NG/GH.
+- Affects: All payment flows (booking, ordering, ticketing, invoices, campaigns, reservations). Nigerian businesses can now configure which payment methods to offer. Bank transfer + USSD enabled by default.
+- Could break: Nothing — null payment_channels = all methods (backward compatible). Requires migration 208.
+
 ### Feature: Reseller white-label phases 1-3 — full build
 - `supabase/migrations/207_reseller_full.sql` — New tables: reseller_payouts (commission disbursement with holdback), reseller_invoices (platform fee billing). New columns on resellers: branding JSONB, custom_domain, tier, billing_notes, onboarded_at, invite_token, stripe_customer_id, stripe_subscription_id. RLS + indexes + triggers.
 - `app/api/demo-request/route.ts` — Auto-response email to submitter with "Schedule a Call" CTA. Marks auto_response_sent on demo_requests row.

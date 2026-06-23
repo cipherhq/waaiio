@@ -295,22 +295,31 @@ export const paymentFlow: FlowDefinition = {
             .update({ session_data: d, current_step: 'await_payment' })
             .eq('id', ctx.session.id);
 
+          // Build payment message — include bank transfer hint for Nigerian businesses
+          const paymentLines = [
+            `💳 *Payment Link Ready*`,
+            '',
+            `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
+            `📌 ${d.service_name as string}`,
+            `💰 ${formatCurrency(amount, cc)}`,
+            `🔑 Ref: *${booking.reference_code}*`,
+            '',
+            `Pay here 👇`,
+            paymentResult.url,
+          ];
+
+          if (cc === 'NG' || cc === 'GH') {
+            paymentLines.push('');
+            paymentLines.push('💡 _You can pay with card, bank transfer, or USSD on the payment page._');
+          }
+
+          paymentLines.push('');
+          paymentLines.push('⚠️ Your confirmation will arrive automatically after payment.');
+
           return [
             {
               type: 'text',
-              text: [
-                `💳 *Payment Link Ready*`,
-                '',
-                `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
-                `📌 ${d.service_name as string}`,
-                `💰 ${formatCurrency(amount, cc)}`,
-                `🔑 Ref: *${booking.reference_code}*`,
-                '',
-                `Pay here 👇`,
-                paymentResult.url,
-                '',
-                `⚠️ Your confirmation will arrive automatically after payment.`,
-              ].join('\n'),
+              text: paymentLines.join('\n'),
             },
             {
               type: 'buttons',

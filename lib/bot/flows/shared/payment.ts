@@ -179,6 +179,19 @@ export async function initializePayment(
       }
     }
 
+    // Fetch business payment channel preferences
+    let channels: string[] | undefined;
+    if (opts.businessId) {
+      const { data: channelConfig } = await supabase
+        .from('businesses')
+        .select('payment_channels')
+        .eq('id', opts.businessId)
+        .single();
+      if (channelConfig?.payment_channels && Array.isArray(channelConfig.payment_channels) && channelConfig.payment_channels.length > 0) {
+        channels = channelConfig.payment_channels;
+      }
+    }
+
     const result = await gateway.initializePayment({
       supabase,
       bookingId: opts.bookingId,
@@ -203,6 +216,7 @@ export async function initializePayment(
       byoBusinessId,
       connectAccountId,
       campaignId: opts.campaignId,
+      channels,
     });
 
     // Create donation record if this is a campaign payment

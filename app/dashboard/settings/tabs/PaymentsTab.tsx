@@ -27,7 +27,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
   // Payment channels state
   const ALL_CHANNELS = ['card', 'bank_transfer', 'ussd', 'qr', 'mobile_money'] as const;
   type PaymentChannel = (typeof ALL_CHANNELS)[number];
-  const rawChannels = (business as Record<string, unknown>).payment_channels as PaymentChannel[] | null;
+  const rawChannels = (business as unknown as { payment_channels?: PaymentChannel[] }).payment_channels ?? null;
   const [paymentChannels, setPaymentChannels] = useState<Set<PaymentChannel>>(
     () => new Set(rawChannels && rawChannels.length > 0 ? rawChannels : ALL_CHANNELS)
   );
