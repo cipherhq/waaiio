@@ -83,6 +83,18 @@
     {
       "path": "/api/cron/cleanup-sessions",
       "schedule": "0 4 * * 0"
+    },
+    {
+      "path": "/api/cron/expire-transfers",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/platform-fee-invoices",
+      "schedule": "17 9 1 * *"
+    },
+    {
+      "path": "/api/cron/platform-fee-overdue",
+      "schedule": "23 10 * * *"
     }
   ]
 }

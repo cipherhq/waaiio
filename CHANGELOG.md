@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Feature: Platform fee invoicing for direct bank transfers
+- `supabase/migrations/212_platform_fee_invoices.sql` — New `platform_fee_invoices` table with dedup index, status tracking, line items. Added `invoiced_at` + `invoice_id` columns to `platform_fees`. RLS for business owners, admin/finance, service role.
+- `app/api/cron/platform-fee-invoices/route.ts` — Monthly cron (1st of each month, 9:17 UTC). Aggregates uninvoiced direct transfer fees per business, generates PFI-YYYY-MM-NNN invoices, marks fees as invoiced, emails business owner with breakdown.
+- `app/api/cron/platform-fee-overdue/route.ts` — Daily cron (10:23 UTC). Marks past-due invoices as overdue, sends reminder emails, disables direct transfers after 7 days overdue (deactivates bank accounts).
+- `vercel.json` — Added 3 new cron schedules: expire-transfers (every 15min), platform-fee-invoices (monthly), platform-fee-overdue (daily).
+- Affects: All businesses using direct bank transfers. Fee collection is now automated with email notifications + overdue enforcement.
+- Could break: Nothing — invoicing is additive. Overdue enforcement deactivates bank accounts (reversible by paying invoice).
+
 ### Security + integrity fixes for direct bank transfer system
 - `lib/bot/receipt-ocr.ts` — Raised OCR confidence threshold from 0.5 to 0.7.
 - `lib/bot/flows/payment.flow.ts` — **OCR no longer auto-confirms.** OCR pre-verifies receipt and stores results, but business always confirms. Bot notifies business owner via `notifyOwnerNewPayment()` + `createNotification()` with OCR status. Customer told "business will review."
