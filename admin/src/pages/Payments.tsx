@@ -370,6 +370,9 @@ export default function Payments() {
           <option value="paystack">Paystack</option>
           <option value="stripe">Stripe</option>
           <option value="flutterwave">Flutterwave</option>
+          <option value="direct">Direct Transfer</option>
+          <option value="square">Square</option>
+          <option value="paypal">PayPal</option>
         </select>
 
         <input
@@ -464,6 +467,12 @@ export default function Payments() {
             <DetailRow label="Gateway Ref" value={selected.gateway_ref} />
             <DetailRow label="Status" value={selected.status} />
             <DetailRow label="Payment Method" value={selected.payment_method} />
+
+            {selected.gateway === 'direct' && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Warning: Direct bank transfer — refunds must be processed manually via bank transfer.
+              </div>
+            )}
 
             <div className="my-3 border-t border-gray-100" />
 

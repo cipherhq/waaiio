@@ -19,6 +19,7 @@ interface PlatformFee {
   refunded_at: string | null;
   business_id: string;
   created_at: string;
+  is_direct_transfer: boolean | null;
 }
 
 interface BusinessPayout {
@@ -73,7 +74,7 @@ export default function Finance() {
     async function load() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
         adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
-        adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at').is('refunded_at', null),
+        adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at, is_direct_transfer').is('refunded_at', null),
         adminDb.from('business_payouts').select('net_amount, platform_fee, currency, status, created_at'),
         adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
         adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
@@ -159,9 +160,17 @@ export default function Finance() {
     }
 
     const platformFeesByCurrency: Record<string, number> = {};
+    const directTransferFeesByCurrency: Record<string, number> = {};
+    const gatewayFeesByCurrency: Record<string, number> = {};
     for (const f of filteredFees.filter(f => !f.waived)) {
       const feeCur = bizCurrencyMap.get(f.business_id) || 'NGN';
-      platformFeesByCurrency[feeCur] = (platformFeesByCurrency[feeCur] || 0) + Number(f.fee_total || 0);
+      const amt = Number(f.fee_total || 0);
+      platformFeesByCurrency[feeCur] = (platformFeesByCurrency[feeCur] || 0) + amt;
+      if (f.is_direct_transfer) {
+        directTransferFeesByCurrency[feeCur] = (directTransferFeesByCurrency[feeCur] || 0) + amt;
+      } else {
+        gatewayFeesByCurrency[feeCur] = (gatewayFeesByCurrency[feeCur] || 0) + amt;
+      }
     }
 
     const payoutsOwedByCurrency: Record<string, number> = {};
@@ -214,6 +223,8 @@ export default function Finance() {
       grossVolume,
       totalRefunds,
       platformFeesByCurrency,
+      directTransferFeesByCurrency,
+      gatewayFeesByCurrency,
       payoutsOwedByCurrency,
       paidOutByCurrency,
       outstandingByCurrency,
@@ -400,6 +411,8 @@ export default function Finance() {
         <h3 className="text-xs font-medium uppercase tracking-wide text-gray-400 mb-3">Platform</h3>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricCard label="Platform Fees Earned" value={formatMultiCurrency(metrics.platformFeesByCurrency)} color="green" />
+          <MetricCard label="Direct Transfer Revenue" value={formatMultiCurrency(metrics.directTransferFeesByCurrency)} color="indigo" />
+          <MetricCard label="Gateway Revenue" value={formatMultiCurrency(metrics.gatewayFeesByCurrency)} color="blue" />
           <MetricCard label="Payouts Owed" value={formatMultiCurrency(metrics.payoutsOwedByCurrency)} color="yellow" />
           <MetricCard label="Paid Out" value={formatMultiCurrency(metrics.paidOutByCurrency)} color="green" />
           <MetricCard label="Outstanding Liability" value={formatMultiCurrency(metrics.outstandingByCurrency)} color="red" />

@@ -80,6 +80,7 @@ interface Business {
   assigned_channel_id: string | null;
   custom_fee_percentage: number | null;
   custom_fee_flat: number | null;
+  payment_channels: string[] | null;
 }
 
 interface PayoutAccount {
@@ -144,6 +145,7 @@ export default function Businesses() {
   const [editValue, setEditValue] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   // Products & Services
+  const [selectedBankAccount, setSelectedBankAccount] = useState<{ bank_name: string | null; account_number: string | null; status: string } | null>(null);
   const [selectedServices, setSelectedServices] = useState<Array<{ id: string; name: string; price: number | null; duration_minutes: number | null; is_active: boolean; status: string | null }>>([]);
   const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string; name: string; price: number | null; stock: number | null; is_active: boolean }>>([]);
   const [showServices, setShowServices] = useState(false);
@@ -153,7 +155,7 @@ export default function Businesses() {
   async function loadData() {
     const { data } = await adminDb
       .from('businesses')
-      .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat')
+      .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels')
       .order('created_at', { ascending: false });
 
     setBusinesses(data || []);
@@ -181,6 +183,7 @@ export default function Businesses() {
       setSelectedCaps([]);
       setSelectedOverrides([]);
       setSelectedFinancials(null);
+      setSelectedBankAccount(null);
       setSelectedTier('');
       setSelectedStatus('');
       setSelectedServices([]);
@@ -245,6 +248,15 @@ export default function Businesses() {
       .is('deleted_at', null)
       .order('sort_order')
       .then(({ data }) => setSelectedProducts(data || []));
+
+    // Load bank account
+    adminDb
+      .from('business_bank_accounts')
+      .select('bank_name, account_number, status')
+      .eq('business_id', selected.id)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => setSelectedBankAccount(data || null));
 
     // Load financial summary
     Promise.all([
@@ -776,6 +788,33 @@ export default function Businesses() {
                 </div>
               </div>
             )}
+
+            {/* Payment Configuration */}
+            <div className="mt-4 rounded-lg bg-gray-50 p-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase mb-2">Payment Configuration</p>
+              <div className="space-y-2">
+                <DetailRow
+                  label="Payment Channels"
+                  value={
+                    selected.payment_channels && selected.payment_channels.length > 0
+                      ? selected.payment_channels.map(c => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')
+                      : 'All channels (default)'
+                  }
+                />
+                {selectedBankAccount ? (
+                  <>
+                    <DetailRow label="Bank" value={selectedBankAccount.bank_name || '—'} />
+                    <DetailRow
+                      label="Account"
+                      value={selectedBankAccount.account_number ? `****${selectedBankAccount.account_number.slice(-4)}` : '—'}
+                    />
+                    <DetailRow label="Bank Account Status" value={selectedBankAccount.status} />
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-400">No bank account configured</p>
+                )}
+              </div>
+            </div>
 
             {selectedServiceStats && (
               <div className="mt-4 rounded-lg bg-gray-50 p-4">
