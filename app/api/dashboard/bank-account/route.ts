@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
     const service = createServiceClient();
     const { data: accounts, error } = await service
-      .from('bank_accounts')
+      .from('business_bank_accounts')
       .select('id, bank_name, account_number, account_name, bank_code, is_default, is_active')
       .eq('business_id', businessId)
       .eq('is_active', true)
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
 
     // Check if this is the first account (set as default)
     const { count } = await service
-      .from('bank_accounts')
+      .from('business_bank_accounts')
       .select('id', { count: 'exact', head: true })
       .eq('business_id', business_id)
       .eq('is_active', true);
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     const isFirst = (count ?? 0) === 0;
 
     const { data: account, error: insertError } = await service
-      .from('bank_accounts')
+      .from('business_bank_accounts')
       .insert({
         business_id,
         bank_name: bank_name.trim(),
@@ -166,7 +166,7 @@ export async function PUT(request: NextRequest) {
 
     // Fetch account + verify business ownership
     const { data: existing } = await service
-      .from('bank_accounts')
+      .from('business_bank_accounts')
       .select('id, business_id')
       .eq('id', id)
       .eq('is_active', true)
@@ -206,7 +206,7 @@ export async function PUT(request: NextRequest) {
     // If setting is_default=true, unset other defaults for this business
     if (is_default === true) {
       await service
-        .from('bank_accounts')
+        .from('business_bank_accounts')
         .update({ is_default: false })
         .eq('business_id', existing.business_id)
         .eq('is_active', true)
@@ -226,7 +226,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const { data: updated, error: updateError } = await service
-      .from('bank_accounts')
+      .from('business_bank_accounts')
       .update(updatePayload)
       .eq('id', id)
       .select('id, bank_name, account_number, account_name, bank_code, is_default, is_active')
@@ -275,7 +275,7 @@ export async function DELETE(request: NextRequest) {
 
     const service = createServiceClient();
     const { error: updateError } = await service
-      .from('bank_accounts')
+      .from('business_bank_accounts')
       .update({ is_active: false, is_default: false })
       .eq('id', accountId)
       .eq('business_id', businessId);
