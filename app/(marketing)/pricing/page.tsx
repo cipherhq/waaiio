@@ -168,6 +168,10 @@ export default function PricingPage() {
                     values={['—', '10 (500 recipients)', 'Unlimited']}
                   />
                   <CompareRow
+                    label="Direct bank transfer"
+                    values={[false, true, true]}
+                  />
+                  <CompareRow
                     label="Whitelabel branding"
                     values={[false, false, true]}
                   />
