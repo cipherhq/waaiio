@@ -18,6 +18,397 @@ interface DeliveryZone {
   sort_order: number;
 }
 
+const NIGERIAN_BANKS = [
+  'GTBank', 'Access Bank', 'First Bank', 'UBA', 'Zenith Bank', 'Fidelity Bank',
+  'Union Bank', 'Sterling Bank', 'Wema Bank', 'Stanbic IBTC', 'FCMB',
+  'Ecobank', 'Keystone Bank', 'Polaris Bank', 'Unity Bank', 'Heritage Bank',
+  'Jaiz Bank', 'Kuda', 'OPay', 'PalmPay', 'Moniepoint',
+] as const;
+
+interface BankAccount {
+  id: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  is_active: boolean;
+  is_default: boolean;
+}
+
+function BankAccountSection({ business, openSections, toggleSection, saving, setSaving, saved, setSaved }: {
+  business: SettingsTabProps['business'];
+  openSections: string[];
+  toggleSection: (s: string) => void;
+  saving: boolean;
+  setSaving: (v: boolean) => void;
+  saved: boolean;
+  setSaved: (v: boolean) => void;
+}) {
+  const tier = business.subscription_tier || 'free';
+  const isFreeTier = tier === 'free';
+
+  const [bankAccount, setBankAccount] = useState<BankAccount | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  // Form state
+  const [bankName, setBankName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  const [accountName, setAccountName] = useState('');
+  const businessMeta = (business.metadata || {}) as Record<string, unknown>;
+  const [bankEnabled, setBankEnabled] = useState<boolean>(businessMeta.bank_transfer_enabled !== false);
+
+  // Validation
+  const [errors, setErrors] = useState<{ bank?: string; number?: string; name?: string }>({});
+
+  // Load bank account on mount
+  useEffect(() => {
+    async function loadBankAccount() {
+      try {
+        const res = await fetch(`/api/dashboard/bank-account?business_id=${business.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          // API returns { accounts: [...] } — take the first (default) one
+          if (data.accounts && data.accounts.length > 0) {
+            const acct = data.accounts[0];
+            setBankAccount(acct);
+            setBankName(acct.bank_name);
+            setAccountNumber(acct.account_number);
+            setAccountName(acct.account_name);
+          }
+        }
+      } catch {
+        // silently fail — section will show empty form
+      } finally {
+        setLoading(false);
+      }
+    }
+    if (!isFreeTier) loadBankAccount();
+    else setLoading(false);
+  }, [business.id, isFreeTier]);
+
+  function validate(): boolean {
+    const errs: typeof errors = {};
+    if (!bankName) errs.bank = 'Please select a bank.';
+    if (!accountNumber || accountNumber.length !== 10 || !/^\d{10}$/.test(accountNumber)) {
+      errs.number = 'Account number must be exactly 10 digits.';
+    }
+    if (!accountName || accountName.trim().length < 3) {
+      errs.name = 'Account name must be at least 3 characters.';
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  }
+
+  async function handleSave() {
+    if (!validate()) return;
+    setSaving(true);
+    try {
+      if (bankAccount) {
+        // PUT — update existing
+        const res = await fetch('/api/dashboard/bank-account', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: bankAccount.id,
+            bank_name: bankName,
+            account_number: accountNumber,
+            account_name: accountName.trim(),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBankAccount(data.account);
+          setEditing(false);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        }
+      } else {
+        // POST — create new
+        const res = await fetch('/api/dashboard/bank-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: business.id,
+            bank_name: bankName,
+            account_number: accountNumber,
+            account_name: accountName.trim(),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBankAccount(data.account);
+          setEditing(false);
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        }
+      }
+    } catch {
+      // network error
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!bankAccount) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/dashboard/bank-account?id=${bankAccount.id}&business_id=${business.id}`, {
+        method: 'DELETE',
+      });
+      if (res.ok) {
+        setBankAccount(null);
+        setBankName('');
+        setAccountNumber('');
+        setAccountName('');
+        setBankEnabled(true);
+        setEditing(false);
+        setErrors({});
+      }
+    } catch {
+      // network error
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function handleToggleEnabled() {
+    if (!bankAccount) return;
+    const newVal = !bankEnabled;
+    setBankEnabled(newVal);
+    try {
+      // Store toggle in business metadata since bank_accounts table uses is_active for soft-delete
+      const supabase = createClient();
+      await supabase
+        .from('businesses')
+        .update({
+          metadata: {
+            ...(business.metadata as Record<string, unknown> || {}),
+            bank_transfer_enabled: newVal,
+          },
+        })
+        .eq('id', business.id);
+    } catch {
+      setBankEnabled(!newVal); // revert on failure
+    }
+  }
+
+  const showForm = !bankAccount || editing;
+
+  return (
+    <div>
+      <button onClick={() => toggleSection('bank_account')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+        <h3 className="text-sm font-bold text-gray-900">Bank Account for Direct Transfers</h3>
+        <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('bank_account') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+      </button>
+      {openSections.includes('bank_account') && (
+        <div className="mt-4">
+          <div className="mt-6 max-w-xl">
+            <div className="rounded-xl border border-gray-100 bg-white p-6">
+              <h2 className="text-sm font-bold text-gray-900">Bank Account for Direct Transfers</h2>
+              <p className="mt-1 text-xs text-gray-500">
+                Add your bank account details so customers can pay you directly via bank transfer. Available on Growth and Business plans.
+              </p>
+
+              {isFreeTier ? (
+                /* Locked state for free tier */
+                <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <div className="flex items-start gap-3">
+                    <svg aria-hidden="true" className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-amber-800">Upgrade to Growth to accept direct bank transfers</p>
+                      <p className="mt-1 text-xs text-amber-600">
+                        Direct bank transfers let your customers pay you without going through a payment gateway.
+                      </p>
+                      <Link
+                        href="/dashboard/settings?tab=subscription"
+                        className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"
+                      >
+                        Upgrade Plan
+                        <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ) : loading ? (
+                <div className="mt-6 flex justify-center">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+                </div>
+              ) : bankAccount && !editing ? (
+                /* Display configured bank account */
+                <div className="mt-5">
+                  <div className="rounded-lg border border-green-200 bg-green-50 p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <svg aria-hidden="true" className="h-5 w-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <p className="text-sm font-semibold text-green-800">Bank Account Configured</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-gray-700 w-32">Bank:</span>
+                        <span className="text-gray-900">{bankAccount.bank_name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-gray-700 w-32">Account No:</span>
+                        <span className="text-gray-900 font-mono">{bankAccount.account_number}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium text-gray-700 w-32">Account Name:</span>
+                        <span className="text-gray-900">{bankAccount.account_name}</span>
+                      </div>
+                    </div>
+
+                    {/* Toggle enable/disable */}
+                    <div className="mt-4 flex items-center justify-between border-t border-green-200 pt-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Enable Direct Bank Transfer</p>
+                        <p className="text-xs text-gray-500">
+                          {bankEnabled ? 'Customers can see your bank details for direct transfer.' : 'Bank transfer option is hidden from customers.'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleToggleEnabled}
+                        className={`relative h-6 w-11 shrink-0 rounded-full transition ${bankEnabled ? 'bg-brand' : 'bg-gray-200'}`}
+                      >
+                        <div
+                          className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left]"
+                          style={{ left: bankEnabled ? '22px' : '2px' }}
+                        />
+                      </button>
+                    </div>
+
+                    {/* Edit / Delete buttons */}
+                    <div className="mt-4 flex items-center gap-3 border-t border-green-200 pt-3">
+                      <button
+                        onClick={() => setEditing(true)}
+                        className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={handleDelete}
+                        disabled={deleting}
+                        className="rounded-lg border border-red-200 px-4 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {deleting ? 'Deleting...' : 'Delete'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* Form for adding/editing bank account */
+                <div className="mt-5 space-y-4">
+                  {/* Bank Name */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Bank Name</label>
+                    <select
+                      value={bankName}
+                      onChange={(e) => { setBankName(e.target.value); setErrors((prev) => ({ ...prev, bank: undefined })); }}
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-brand ${errors.bank ? 'border-red-300' : 'border-gray-200'}`}
+                    >
+                      <option value="">Select a bank</option>
+                      {NIGERIAN_BANKS.map((bank) => (
+                        <option key={bank} value={bank}>{bank}</option>
+                      ))}
+                    </select>
+                    {errors.bank && <p className="mt-1 text-xs text-red-500">{errors.bank}</p>}
+                  </div>
+
+                  {/* Account Number */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Account Number</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={accountNumber}
+                      onChange={(e) => {
+                        const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        setAccountNumber(cleaned);
+                        setErrors((prev) => ({ ...prev, number: undefined }));
+                      }}
+                      placeholder="0123456789"
+                      maxLength={10}
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-brand font-mono ${errors.number ? 'border-red-300' : 'border-gray-200'}`}
+                    />
+                    {accountNumber && accountNumber.length < 10 && (
+                      <p className="mt-1 text-xs text-gray-400">{accountNumber.length}/10 digits</p>
+                    )}
+                    {errors.number && <p className="mt-1 text-xs text-red-500">{errors.number}</p>}
+                  </div>
+
+                  {/* Account Name */}
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Account Name</label>
+                    <input
+                      type="text"
+                      value={accountName}
+                      onChange={(e) => { setAccountName(e.target.value); setErrors((prev) => ({ ...prev, name: undefined })); }}
+                      placeholder="e.g. John Doe"
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-brand ${errors.name ? 'border-red-300' : 'border-gray-200'}`}
+                    />
+                    {errors.name && <p className="mt-1 text-xs text-red-500">{errors.name}</p>}
+                  </div>
+
+                  {/* Enable toggle in form */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-700">Enable Direct Bank Transfer</p>
+                      <p className="text-xs text-gray-400">Show bank details to customers for direct payments.</p>
+                    </div>
+                    <button
+                      onClick={() => setBankEnabled(!bankEnabled)}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition ${bankEnabled ? 'bg-brand' : 'bg-gray-200'}`}
+                    >
+                      <div
+                        className="absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-[left]"
+                        style={{ left: bankEnabled ? '22px' : '2px' }}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white hover:bg-brand-600 disabled:opacity-50"
+                    >
+                      {saving ? 'Saving...' : saved ? 'Saved!' : bankAccount ? 'Update Bank Account' : 'Save Bank Account'}
+                    </button>
+                    {editing && (
+                      <button
+                        onClick={() => {
+                          setEditing(false);
+                          // Reset to saved values
+                          if (bankAccount) {
+                            setBankName(bankAccount.bank_name);
+                            setAccountNumber(bankAccount.account_number);
+                            setAccountName(bankAccount.account_name);
+                          }
+                          setErrors({});
+                        }}
+                        className="rounded-lg border border-gray-200 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PaymentsTab({ business, capabilities, country, curr, saving, setSaving, saved, setSaved, openSections, toggleSection }: SettingsTabProps) {
   const meta = (business.metadata || {}) as Record<string, unknown>;
 
@@ -430,6 +821,7 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
               )}
             </div>
           )}
+          <BankAccountSection business={business} openSections={openSections} toggleSection={toggleSection} saving={saving} setSaving={setSaving} saved={saved} setSaved={setSaved} />
           {capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding') && (
             <div>
               <button onClick={() => toggleSection('gateway')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
