@@ -63,6 +63,7 @@ import DemoRequests from './pages/DemoRequests';
 import ResellerFinancials from './pages/ResellerFinancials';
 import ResellerPayouts from './pages/ResellerPayouts';
 import PendingTransfers from './pages/PendingTransfers';
+import FeeInvoices from './pages/FeeInvoices';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -112,6 +113,7 @@ export const router = createBrowserRouter([
       // Finance
       { path: 'payouts', element: <RoleGuard roles={['admin', 'finance']}><Payouts /></RoleGuard> },
       { path: 'finance', element: <RoleGuard roles={['admin', 'finance']}><Finance /></RoleGuard> },
+      { path: 'fee-invoices', element: <RoleGuard roles={['admin', 'finance']}><FeeInvoices /></RoleGuard> },
       // Content & System
       { path: 'content', Component: ContentManagement },
       { path: 'events', element: <RoleGuard roles={['admin', 'operations']}><Events /></RoleGuard> },

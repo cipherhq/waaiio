@@ -42,6 +42,7 @@ import {
   MessagesSquare,
   Inbox,
   Landmark,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -132,6 +133,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     items: [
       { icon: Wallet, label: 'Payouts', path: '/payouts', roles: ['admin', 'finance'] },
       { icon: BarChart3, label: 'Finance', path: '/finance', roles: ['admin', 'finance'] },
+      { icon: FileSpreadsheet, label: 'Fee Invoices', path: '/fee-invoices', roles: ['admin', 'finance'] },
     ],
   },
   {
