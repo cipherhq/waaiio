@@ -78,20 +78,23 @@ export async function POST(request: NextRequest) {
       if (existing) continue;
 
       // Get platform fees for this period (authoritative source for transaction amounts and fees)
+      // Exclude direct transfers — Waaiio never holds those funds (money goes straight to business bank account)
       const { data: fees } = await supabase
         .from('platform_fees')
-        .select('transaction_amount, fee_total, gateway_fee, waived')
+        .select('transaction_amount, fee_total, gateway_fee, waived, is_direct_transfer')
         .eq('business_id', biz.id)
         .is('refunded_at', null)
         .gte('created_at', periodStart.toISOString())
         .lte('created_at', periodEnd.toISOString());
 
-      // Gross from platform_fees.transaction_amount (consistent with auto-payout)
-      const gross = (fees || []).reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
+      // Gross from platform_fees.transaction_amount — only gateway payments (Waaiio holds these funds)
+      // Direct transfers are excluded: business already has the money, we only invoice the platform fee
+      const gatewayFees = (fees || []).filter(f => !f.is_direct_transfer);
+      const gross = gatewayFees.reduce((s, f) => s + Number(f.transaction_amount || 0), 0);
       if (gross <= 0) continue;
 
-      const totalFees = (fees || []).filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
-      const totalGatewayFees = (fees || []).reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
+      const totalFees = gatewayFees.filter(f => !f.waived).reduce((s, f) => s + Number(f.fee_total || 0), 0);
+      const totalGatewayFees = gatewayFees.reduce((s, f) => s + Number(f.gateway_fee || 0), 0);
 
       // Still fetch payments for velocity check below
       const { data: payments } = await supabase

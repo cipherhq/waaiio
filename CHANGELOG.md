@@ -7,9 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
-### Feature: Receipt OCR auto-verification via Claude Vision
-- `lib/bot/receipt-ocr.ts` — New utility: sends receipt/transfer screenshots to Claude Haiku Vision, extracts amount, reference, sender name, bank, date. Returns confidence score. ~$0.01 per image.
-- `lib/bot/flows/payment.flow.ts` — When customer sends receipt screenshot, bot runs OCR. If amount matches (±1%) AND reference code found → auto-confirms instantly (updates pending_transfer, booking/order/invoice, records platform fee + payment). If no match → falls back to manual business confirmation.
+### Security + integrity fixes for direct bank transfer system
+- `lib/bot/receipt-ocr.ts` — Raised OCR confidence threshold from 0.5 to 0.7.
+- `lib/bot/flows/payment.flow.ts` — **OCR no longer auto-confirms.** OCR pre-verifies receipt and stores results, but business always confirms. Bot notifies business owner via `notifyOwnerNewPayment()` + `createNotification()` with OCR status. Customer told "business will review."
+- `app/api/dashboard/pending-transfers/[id]/route.ts` — **Fixed race condition:** added `.eq('status', 'pending')` to UPDATE to prevent double-confirm (duplicate payment + fee records). Added customer WhatsApp notification on confirm. Added in-app notification.
+- `app/api/cron/expire-transfers/route.ts` — Added customer WhatsApp notification when transfer expires and booking cancelled.
+- `app/api/admin/payouts/generate/route.ts` — **Fixed phantom payouts:** excluded `is_direct_transfer=true` from gross calculation. Waaiio never holds direct transfer funds.
+- `supabase/migrations/211_ocr_result_and_admin_rls.sql` — Added `ocr_result` JSONB column to pending_transfers. Added admin RLS policies for business_bank_accounts (SELECT) and pending_transfers (UPDATE).
+- Affects: All direct bank transfer flows, payout generation, admin panel access.
+- Could break: Nothing — all changes are additive or fix existing bugs.
+
+### Feature: Receipt OCR pre-verification via Claude Vision (was auto-confirm, now business-confirms)
+- `lib/bot/receipt-ocr.ts` — Sends receipt screenshots to Claude Haiku Vision, extracts amount, reference, sender name, bank, date. Returns confidence score. ~$0.01 per image.
 - `supabase/migrations/210_receipt_ocr.sql` — Adds `verified_by_ocr` boolean to pending_transfers for analytics.
 - Affects: All direct bank transfer payments. Auto-confirm reduces wait from hours to seconds.
 - Could break: Nothing — OCR is additive. Falls back to manual if ANTHROPIC_API_KEY unset or OCR fails.

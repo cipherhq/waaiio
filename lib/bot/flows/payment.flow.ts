@@ -495,126 +495,70 @@ export const paymentFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
 
-        // ── Bank transfer proof: image uploaded — OCR + auto-confirm ──
+        // ── Bank transfer proof: image uploaded — OCR pre-verification ──
         if (ctx.mediaType === 'image' && ctx.mediaUrl && d.bank_transfer_reference) {
           const transferRef = d.bank_transfer_reference as string;
           const expectedAmount = d.bank_transfer_amount as number;
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const currency = getCurrencyCode(cc);
 
-          // Store proof image immediately
+          // Run OCR on the receipt
+          const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
+          const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
+
+          // Store proof image + OCR results on the pending_transfer
           await ctx.supabase
             .from('pending_transfers')
             .update({
               proof_type: 'screenshot',
               proof_image_url: ctx.mediaUrl,
+              verified_by_ocr: ocrMatches,
+              ocr_result: ocrMatches ? {
+                amount: ocr.amount,
+                reference: ocr.reference,
+                sender_name: ocr.senderName,
+                bank_name: ocr.bankName,
+                confidence: ocr.confidence,
+              } : null,
             })
             .eq('reference_code', transferRef)
             .eq('status', 'pending');
 
-          // Run OCR on the receipt
-          const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
+          // Notify business owner about the transfer proof
+          if (ctx.business) {
+            const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
+            const ocrStatus = ocrMatches
+              ? `✅ AI verified: amount ${formatCurrency(expectedAmount, cc)} and ref *${transferRef}* match the receipt.`
+              : `⚠️ AI could not verify — please check the receipt manually.`;
 
-          if (ocr.confidence >= 0.5 && receiptMatchesExpected(ocr, expectedAmount, transferRef)) {
-            // Auto-confirm: amount + reference match
-            const service = createServiceClient();
-            const now = new Date().toISOString();
+            notifyOwnerNewPayment({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business.id,
+              businessName: ctx.business.name,
+              countryCode: cc,
+              referenceCode: transferRef,
+              customerName: custName,
+              amount: expectedAmount,
+              categoryName: `${d.service_name as string} (Bank Transfer)`,
+            }).catch(err => console.error('[PAYMENT] Transfer notify error:', err));
 
-            // Update pending_transfer
-            const { data: transfer } = await service
-              .from('pending_transfers')
-              .update({
-                status: 'confirmed',
-                confirmed_at: now,
-                verified_by_ocr: true,
-              })
-              .eq('reference_code', transferRef)
-              .eq('status', 'pending')
-              .select('*, business_id')
-              .single();
-
-            if (transfer) {
-              // Update related booking/order/invoice
-              if (transfer.booking_id) {
-                await service.from('bookings').update({
-                  deposit_status: 'paid', status: 'confirmed', confirmed_at: now,
-                }).eq('id', transfer.booking_id);
-              }
-              if (transfer.order_id) {
-                await service.from('orders').update({
-                  status: 'confirmed', paid_at: now,
-                }).eq('id', transfer.order_id);
-              }
-              if (transfer.invoice_id) {
-                await service.from('invoices').update({
-                  status: 'paid', paid_at: now,
-                }).eq('id', transfer.invoice_id);
-              }
-
-              // Record platform fee (getPlatformFees expects minor units — kobo/cents)
-              const amountInMinorUnits = transfer.expected_amount; // already in kobo from insert
-              if (ctx.business) {
-                const tier = ((ctx.business as unknown as { subscription_tier?: string }).subscription_tier || 'free') as SubscriptionTier;
-                const trialEnd = (ctx.business as unknown as { trial_ends_at?: string }).trial_ends_at;
-                const isInTrial = tier === 'free' && trialEnd ? new Date(trialEnd) > new Date() : false;
-                const customFeePercentage = (ctx.business as unknown as { custom_fee_percentage?: number }).custom_fee_percentage ?? null;
-                const customFeeFlat = (ctx.business as unknown as { custom_fee_flat?: number }).custom_fee_flat ?? null;
-
-                const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(
-                  amountInMinorUnits, tier, isInTrial,
-                  { feePercentage: customFeePercentage, feeFlat: customFeeFlat },
-                );
-
-                await service.from('platform_fees').insert({
-                  business_id: ctx.business.id,
-                  booking_id: transfer.booking_id || null,
-                  invoice_id: transfer.invoice_id || null,
-                  order_id: transfer.order_id || null,
-                  transaction_amount: amountInMinorUnits,
-                  fee_percentage: feePercentage,
-                  fee_flat: feeFlat,
-                  fee_total: feeTotal,
-                  gateway_fee: 0,
-                  tier,
-                  is_direct_transfer: true,
-                });
-                // Log fee insert errors but don't block confirmation
-              }
-
-              // Create payment record (amount in minor units to match other payment records)
-              await service.from('payments').insert({
-                business_id: transfer.business_id,
-                amount: amountInMinorUnits,
-                currency: currency,
-                status: 'success',
-                payment_method: 'bank_transfer',
-                gateway: 'direct',
-                booking_id: transfer.booking_id || null,
-                order_id: transfer.order_id || null,
-                invoice_id: transfer.invoice_id || null,
-                customer_phone: ctx.from,
-                reference: transferRef,
-                metadata: {
-                  pending_transfer_id: transfer.id,
-                  auto_verified_by_ocr: true,
-                  ocr_confidence: ocr.confidence,
-                  ocr_amount: ocr.amount,
-                  ocr_sender: ocr.senderName,
-                },
-              });
-            }
-
-            await ctx.sender.sendText({
-              to: ctx.from,
-              text: await ctx.t(`✅ *Payment Verified Automatically!*\n\n💰 ${formatCurrency(expectedAmount, cc)}\n🔑 Ref: *${transferRef}*\n🏦 ${ocr.bankName || 'Bank transfer'} from ${ocr.senderName || 'you'}\n\nYour booking is confirmed. Send *Hi* to continue.`),
-            });
-            return { valid: true, data: { _action: 'transfer_auto_confirmed' } };
+            createNotification(ctx.supabase, {
+              businessId: ctx.business.id,
+              bookingId: d.booking_id as string,
+              type: 'transfer_proof_received',
+              channel: 'whatsapp',
+              body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, cc)}. Ref: ${transferRef}. ${ocrStatus}\n\nConfirm in Dashboard → Pending Transfers.`,
+            }).catch(err => console.error('[PAYMENT] Transfer notification error:', err));
           }
 
-          // OCR didn't match — fall back to manual verification
+          const ocrHint = ocrMatches
+            ? `\n\n🤖 _Our AI verified your receipt — amount and reference match. The business will confirm shortly._`
+            : '';
+
           await ctx.sender.sendText({
             to: ctx.from,
-            text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm shortly.\n\nRef: *${transferRef}*\n\nYou'll get a confirmation message once verified. Send *Hi* to continue using other services.`),
+            text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm shortly.\n\nRef: *${transferRef}*${ocrHint}\n\nYou'll get a confirmation message once verified. Send *Hi* to continue using other services.`),
           });
           return { valid: true, data: { _action: 'transfer_proof_sent' } };
         }

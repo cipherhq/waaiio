@@ -3,7 +3,10 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import type { SubscriptionTier } from '@/lib/constants';
+import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { createNotification } from '@/lib/bot/flows/shared/notifications';
 
 /**
  * PATCH /api/dashboard/pending-transfers/[id]
@@ -83,19 +86,25 @@ export async function PATCH(
     // ── Confirm ──
     const now = new Date().toISOString();
 
-    // 1. Update pending_transfer status
-    const { error: confirmErr } = await service
+    // 1. Update pending_transfer status (guard with status='pending' to prevent double-confirm)
+    const { data: confirmedRows, error: confirmErr } = await service
       .from('pending_transfers')
       .update({
         status: 'confirmed',
         confirmed_by: user.id,
         confirmed_at: now,
       })
-      .eq('id', transferId);
+      .eq('id', transferId)
+      .eq('status', 'pending')
+      .select('id');
 
     if (confirmErr) {
       logger.error('[PENDING_TRANSFERS] Confirm update error:', confirmErr.message);
       return NextResponse.json({ error: 'Failed to confirm transfer' }, { status: 500 });
+    }
+
+    if (!confirmedRows || confirmedRows.length === 0) {
+      return NextResponse.json({ error: 'Transfer already confirmed or no longer pending' }, { status: 409 });
     }
 
     // 2. Update related entity
@@ -208,6 +217,38 @@ export async function PATCH(
     if (paymentErr) {
       logger.error('[PENDING_TRANSFERS] Payment record error:', paymentErr.message);
     }
+
+    // 5. Notify customer via WhatsApp that transfer was confirmed
+    if (transfer.customer_phone) {
+      try {
+        const resolver = new ChannelResolver(service);
+        const resolved = await resolver.resolveByBusinessId(business_id);
+        if (resolved) {
+          const { data: biz } = await service
+            .from('businesses')
+            .select('name, country_code')
+            .eq('id', business_id)
+            .single();
+          const cc = (biz?.country_code || 'NG') as CountryCode;
+          const amountFormatted = formatCurrency(transfer.expected_amount / 100, cc);
+          await resolved.sender.sendText({
+            to: transfer.customer_phone,
+            text: `✅ *Payment Confirmed!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${biz?.name || 'Business'}\n\nYour booking is confirmed. Thank you!`,
+          });
+        }
+      } catch (notifyErr) {
+        logger.error('[PENDING_TRANSFERS] Customer notification error:', notifyErr);
+      }
+    }
+
+    // 6. In-app notification
+    createNotification(service, {
+      businessId: business_id,
+      bookingId: transfer.booking_id || undefined,
+      type: 'transfer_confirmed',
+      channel: 'dashboard',
+      body: `Bank transfer of ${formatCurrency(transfer.expected_amount / 100, 'NG')} confirmed. Ref: ${transfer.reference_code}`,
+    }).catch(err => logger.error('[PENDING_TRANSFERS] Notification error:', err));
 
     return NextResponse.json({ success: true, status: 'confirmed' });
   } catch (err) {

@@ -133,7 +133,7 @@ export function receiptMatchesExpected(
   expectedAmount: number,
   expectedReference: string,
 ): boolean {
-  if (ocr.confidence < 0.5) return false;
+  if (ocr.confidence < 0.7) return false;
   if (!ocr.amount) return false;
 
   // Amount match: within 1% tolerance (handles rounding)

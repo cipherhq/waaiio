@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { ChannelResolver } from '@/lib/channels/channel-resolver';
 
 /**
  * POST /api/cron/expire-transfers
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
     // Fetch expired pending transfers
     const { data: expired, error: fetchErr } = await service
       .from('pending_transfers')
-      .select('id, booking_id, order_id')
+      .select('id, booking_id, order_id, customer_phone, business_id, reference_code')
       .eq('status', 'pending')
       .lt('expires_at', now);
 
@@ -63,6 +64,22 @@ export async function POST(request: NextRequest) {
           .update({ status: 'cancelled' })
           .eq('id', transfer.order_id)
           .in('status', ['pending']);
+      }
+
+      // Notify customer via WhatsApp
+      if (transfer.customer_phone && transfer.business_id) {
+        try {
+          const resolver = new ChannelResolver(service);
+          const resolved = await resolver.resolveByBusinessId(transfer.business_id);
+          if (resolved) {
+            await resolved.sender.sendText({
+              to: transfer.customer_phone,
+              text: `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and your booking has been cancelled.\n\nSend *Hi* to start a new booking.`,
+            });
+          }
+        } catch (notifyErr) {
+          logger.error(`[EXPIRE_TRANSFERS] Failed to notify customer for transfer ${transfer.id}:`, notifyErr);
+        }
       }
 
       expiredCount++;
