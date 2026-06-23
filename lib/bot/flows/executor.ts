@@ -270,9 +270,10 @@ export class FlowExecutor {
     // Check for media messages at text-only steps
     // If mediaType is set (image, audio, video, sticker, document) and the input is empty
     // or looks like a media URL, prompt user to reply with text instead
+    // Steps with acceptsMedia=true can handle media directly (e.g. payment proof screenshots)
     const isMediaMessage = mediaType && ['image', 'audio', 'video', 'sticker', 'voice', 'document'].includes(mediaType);
     const isEmptyOrMediaOnly = !input.trim() || (isMediaMessage && !input.trim());
-    if (isMediaMessage && isEmptyOrMediaOnly) {
+    if (isMediaMessage && isEmptyOrMediaOnly && !step.acceptsMedia) {
       const mediaHint = await this.maybeTranslate(
         'Please reply with text. Photos and voice notes aren\'t supported at this step.',
         session,

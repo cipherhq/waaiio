@@ -107,6 +107,8 @@ export interface FlowStepConfig {
   next(ctx: FlowContext): Promise<string | null>;
   /** Optionally skip this step */
   skipIf?(ctx: FlowContext): Promise<boolean>;
+  /** If true, media messages (images, documents) are passed through to validate() instead of being rejected */
+  acceptsMedia?: boolean;
 }
 
 // ── Flow definition ──
