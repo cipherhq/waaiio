@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { getPlatformFees } from '@/lib/getPlatformFees';
-import type { SubscriptionTier } from '@/lib/constants';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
@@ -139,59 +137,23 @@ export async function PATCH(
         .eq('id', transfer.invoice_id);
     }
 
-    // 3. Record platform fee (skip for direct_split businesses)
-    if (business.payout_mode !== 'direct_split') {
-      const tier = (business.subscription_tier || 'free') as SubscriptionTier;
-      const isInTrial = tier === 'free' && new Date(business.trial_ends_at) > new Date();
-
-      const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(
-        transfer.expected_amount,
-        tier,
-        isInTrial,
-        {
-          feePercentage: business.custom_fee_percentage != null ? Number(business.custom_fee_percentage) : null,
-          feeFlat: business.custom_fee_flat != null ? Number(business.custom_fee_flat) : null,
-        },
-      );
-
-      // Calculate reseller commission if applicable
-      let resellerId: string | null = business.reseller_id || null;
-      let resellerCommission = 0;
-
-      if (resellerId && feeTotal > 0) {
-        const { data: reseller } = await service
-          .from('resellers')
-          .select('id, commission_percentage, status')
-          .eq('id', resellerId)
-          .maybeSingle();
-
-        if (reseller && reseller.status === 'active' && reseller.commission_percentage > 0) {
-          resellerCommission = Math.round(feeTotal * (Number(reseller.commission_percentage) / 100));
-        } else {
-          resellerId = null;
-        }
-      }
-
-      const { error: feeErr } = await service.from('platform_fees').insert({
-        business_id: business_id,
-        booking_id: transfer.booking_id || null,
-        invoice_id: transfer.invoice_id || null,
-        order_id: transfer.order_id || null,
-        transaction_amount: transfer.expected_amount,
-        fee_percentage: feePercentage,
-        fee_flat: feeFlat,
-        fee_total: feeTotal,
-        gateway_fee: 0,
-        tier,
-        is_direct_transfer: true,
-        reseller_id: resellerId,
-        reseller_commission: resellerCommission,
-      });
-
-      if (feeErr) {
-        logger.error('[PENDING_TRANSFERS] Platform fee error (possible duplicate):', feeErr.message);
-      }
-    }
+    // 3. Record platform fee for analytics (zero fee — direct transfers included in subscription)
+    // No per-transaction fee charged; this record is for tracking volume only
+    await service.from('platform_fees').insert({
+      business_id: business_id,
+      booking_id: transfer.booking_id || null,
+      invoice_id: transfer.invoice_id || null,
+      order_id: transfer.order_id || null,
+      transaction_amount: transfer.expected_amount,
+      fee_percentage: 0,
+      fee_flat: 0,
+      fee_total: 0,
+      gateway_fee: 0,
+      tier: (business.subscription_tier || 'free') as string,
+      is_direct_transfer: true,
+    }).then(({ error }) => {
+      if (error) logger.error('[PENDING_TRANSFERS] Analytics fee record error:', error.message);
+    });
 
     // 4. Create payment record
     const { error: paymentErr } = await service.from('payments').insert({

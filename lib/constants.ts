@@ -221,12 +221,12 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // Total cost to business = waaiio fee + gateway fee
 // Flat fees below are LEGACY and set to 0 in PRICING_TIERS — kept for COUNTRY_PRICING only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 14_999, feeFlat: 50 }, business: { price: 39_999, feeFlat: 75 } },
-  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.25 }, business: { price: 99, feeFlat: 0.35 } },
-  GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 29, feeFlat: 0.20 }, business: { price: 79, feeFlat: 0.25 } },
-  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 39, feeFlat: 0.25 }, business: { price: 99, feeFlat: 0.35 } },
-  GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 149, feeFlat: 2 }, business: { price: 399, feeFlat: 1.50 } },
-  IN: { free: { price: 0, feeFlat: 10 }, growth: { price: 999, feeFlat: 5 }, business: { price: 2_999, feeFlat: 3 } },
+  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 19_999, feeFlat: 50 }, business: { price: 59_999, feeFlat: 75 } },
+  US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 20, feeFlat: 0.25 }, business: { price: 45, feeFlat: 0.35 } },
+  GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 16, feeFlat: 0.20 }, business: { price: 35, feeFlat: 0.25 } },
+  CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 25, feeFlat: 0.25 }, business: { price: 55, feeFlat: 0.35 } },
+  GH: { free: { price: 0, feeFlat: 3 }, growth: { price: 199, feeFlat: 2 }, business: { price: 499, feeFlat: 1.50 } },
+  IN: { free: { price: 0, feeFlat: 10 }, growth: { price: 1_499, feeFlat: 5 }, business: { price: 3_999, feeFlat: 3 } },
 };
 
 // ── Business Categories ──
@@ -519,7 +519,7 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
   },
   growth: {
     name: 'Pro',
-    price: 15_000,
+    price: 20_000,
     feePercentage: 1.5,
     feeFlat: 50,
     maxBookings: 500,
@@ -530,12 +530,13 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'WhatsApp reminders',
       'Recurring payments',
       'Broadcast messages',
-      '1.5% + ₦50 per transaction',
+      'Direct bank transfer (zero fees)',
+      '1.5% + ₦50 per gateway transaction',
     ],
   },
   business: {
     name: 'Premium',
-    price: 50_000,
+    price: 60_000,
     feePercentage: 1.5,
     feeFlat: 75,
     maxBookings: Infinity,
@@ -546,7 +547,8 @@ export const PRICING_TIERS: Record<SubscriptionTier, {
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
-      '1.5% + ₦75 per transaction',
+      'Direct bank transfer (zero fees)',
+      '1.5% + ₦75 per gateway transaction',
     ],
   },
 };
@@ -634,6 +636,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
       'Up to 500 bookings/month',
       'WhatsApp reminders',
       'Recurring payments',
+      'Direct bank transfer (zero gateway fees)',
       'Broadcast messages (10/mo, 500 recipients)',
     ],
   },
@@ -652,6 +655,7 @@ export const TIER_FEATURES: Record<SubscriptionTier, TierFeatureSet> = {
       'Loyalty & referral programs',
       'Queue & waitlist management',
       'Customer feedback & reviews',
+      'Direct bank transfer (zero gateway fees)',
       'Whitelabel branding',
       'Unlimited broadcasts',
     ],

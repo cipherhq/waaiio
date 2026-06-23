@@ -91,10 +91,6 @@
     {
       "path": "/api/cron/platform-fee-invoices",
       "schedule": "17 9 1 * *"
-    },
-    {
-      "path": "/api/cron/platform-fee-overdue",
-      "schedule": "23 10 * * *"
     }
   ]
 }

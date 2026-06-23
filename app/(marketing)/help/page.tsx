@@ -86,7 +86,7 @@ const HELP_ARTICLES: HelpArticle[] = [
   {
     category: 'Payments & Payouts',
     question: 'How much does Waaiio cost?',
-    answer: 'Waaiio has 3 plans: Starter (free, 2.5% per transaction), Pro (\u20A615,000/month, 1.5%), and Premium (\u20A650,000/month, 1%). All plans include a 30-day free trial with zero fees. You can also check our Pricing page for prices in your currency.',
+    answer: 'Waaiio has 3 plans: Starter (free, 2.5% per transaction), Pro (\u20A620,000/month, 1.5% + free direct bank transfers), and Premium (\u20A660,000/month, 1.5% + free direct bank transfers). All plans include a 30-day free trial with zero fees. You can also check our Pricing page for prices in your currency.',
   },
   {
     category: 'Payments & Payouts',

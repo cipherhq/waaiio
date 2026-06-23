@@ -7,7 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
-### Feature: Platform fee invoicing for direct bank transfers
+### Pricing update: Direct transfers included in subscription
+- `lib/constants.ts` — Updated PRICING_TIERS: Growth ₦15,000→₦20,000 ($20), Business ₦50,000→₦60,000 ($45). Updated COUNTRY_PRICING for all 6 countries. Added "Direct bank transfer (zero gateway fees)" to features list for Growth + Business. Updated TIER_FEATURES highlights.
+- `app/api/dashboard/pending-transfers/[id]/route.ts` — Platform fee on direct transfers now recorded as ₦0 (analytics only, not billed). Removed getPlatformFees call + reseller commission calculation for direct transfers.
+- `app/api/cron/platform-fee-overdue/route.ts` — DISABLED. Returns immediately. Per-transaction invoicing replaced by subscription pricing.
+- `app/(marketing)/help/page.tsx` — Updated pricing FAQ to reflect new prices.
+- `vercel.json` — Removed platform-fee-overdue cron schedule.
+- Affects: All pricing pages (auto-update via getPricingTiers), help page, billing. Direct transfers are now zero per-transaction fee — included in subscription.
+- Could break: Existing subscribers see old price until renewal. New subscribers get new pricing immediately.
+
+### Feature: Platform fee invoicing for direct bank transfers (SUPERSEDED by pricing update above)
 - `supabase/migrations/212_platform_fee_invoices.sql` — New `platform_fee_invoices` table with dedup index, status tracking, line items. Added `invoiced_at` + `invoice_id` columns to `platform_fees`. RLS for business owners, admin/finance, service role.
 - `app/api/cron/platform-fee-invoices/route.ts` — Monthly cron (1st of each month, 9:17 UTC). Aggregates uninvoiced direct transfer fees per business, generates PFI-YYYY-MM-NNN invoices, marks fees as invoiced, emails business owner with breakdown.
 - `app/api/cron/platform-fee-overdue/route.ts` — Daily cron (10:23 UTC). Marks past-due invoices as overdue, sends reminder emails, disables direct transfers after 7 days overdue (deactivates bank accounts).
