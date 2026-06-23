@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-06-21
 
+### Feature: Receipt OCR auto-verification via Claude Vision
+- `lib/bot/receipt-ocr.ts` — New utility: sends receipt/transfer screenshots to Claude Haiku Vision, extracts amount, reference, sender name, bank, date. Returns confidence score. ~$0.01 per image.
+- `lib/bot/flows/payment.flow.ts` — When customer sends receipt screenshot, bot runs OCR. If amount matches (±1%) AND reference code found → auto-confirms instantly (updates pending_transfer, booking/order/invoice, records platform fee + payment). If no match → falls back to manual business confirmation.
+- `supabase/migrations/210_receipt_ocr.sql` — Adds `verified_by_ocr` boolean to pending_transfers for analytics.
+- Affects: All direct bank transfer payments. Auto-confirm reduces wait from hours to seconds.
+- Could break: Nothing — OCR is additive. Falls back to manual if ANTHROPIC_API_KEY unset or OCR fails.
+
 ### Feature: Direct bank transfer payment system (zero gateway fees)
 - `supabase/migrations/209_direct_bank_transfer.sql` — New tables: business_bank_accounts (bank details per business), pending_transfers (transfer tracking with 4-hour expiry). Added is_direct_transfer flag to platform_fees. RLS + indexes.
 - `app/api/dashboard/bank-account/route.ts` — CRUD for business bank accounts. Tier-gated (Growth/Business only). 10-digit account validation.

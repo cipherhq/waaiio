@@ -13,6 +13,9 @@ import { getAuthorization, createPlan as createPaystackPlan, createSubscription 
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken, createPlan as createFlutterwavePlan, createSubscription as createFlutterwaveSubscription } from '@/lib/payments/flutterwave-recurring';
 import { randomBytes } from 'crypto';
+import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
+import { createServiceClient } from '@/lib/supabase/service';
+import { getPlatformFees } from '@/lib/getPlatformFees';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -317,6 +320,7 @@ export const paymentFlow: FlowDefinition = {
             const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
             d.bank_transfer_reference = transferRef;
             d.bank_transfer_offered = true;
+            d.bank_transfer_amount = amount; // Store in main currency unit for OCR comparison
 
             // Insert pending_transfer record (expected_amount in smallest unit — kobo)
             await ctx.supabase.from('pending_transfers').insert({
@@ -491,20 +495,126 @@ export const paymentFlow: FlowDefinition = {
           return { valid: true, data: { _action: 'cancel' } };
         }
 
-        // ── Bank transfer proof: image uploaded ──
+        // ── Bank transfer proof: image uploaded — OCR + auto-confirm ──
         if (ctx.mediaType === 'image' && ctx.mediaUrl && d.bank_transfer_reference) {
+          const transferRef = d.bank_transfer_reference as string;
+          const expectedAmount = d.bank_transfer_amount as number;
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const currency = getCurrencyCode(cc);
+
+          // Store proof image immediately
           await ctx.supabase
             .from('pending_transfers')
             .update({
               proof_type: 'screenshot',
               proof_image_url: ctx.mediaUrl,
             })
-            .eq('reference_code', d.bank_transfer_reference as string)
+            .eq('reference_code', transferRef)
             .eq('status', 'pending');
 
+          // Run OCR on the receipt
+          const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
+
+          if (ocr.confidence >= 0.5 && receiptMatchesExpected(ocr, expectedAmount, transferRef)) {
+            // Auto-confirm: amount + reference match
+            const service = createServiceClient();
+            const now = new Date().toISOString();
+
+            // Update pending_transfer
+            const { data: transfer } = await service
+              .from('pending_transfers')
+              .update({
+                status: 'confirmed',
+                confirmed_at: now,
+                verified_by_ocr: true,
+              })
+              .eq('reference_code', transferRef)
+              .eq('status', 'pending')
+              .select('*, business_id')
+              .single();
+
+            if (transfer) {
+              // Update related booking/order/invoice
+              if (transfer.booking_id) {
+                await service.from('bookings').update({
+                  deposit_status: 'paid', status: 'confirmed', confirmed_at: now,
+                }).eq('id', transfer.booking_id);
+              }
+              if (transfer.order_id) {
+                await service.from('orders').update({
+                  status: 'confirmed', paid_at: now,
+                }).eq('id', transfer.order_id);
+              }
+              if (transfer.invoice_id) {
+                await service.from('invoices').update({
+                  status: 'paid', paid_at: now,
+                }).eq('id', transfer.invoice_id);
+              }
+
+              // Record platform fee (getPlatformFees expects minor units — kobo/cents)
+              const amountInMinorUnits = transfer.expected_amount; // already in kobo from insert
+              if (ctx.business) {
+                const tier = ((ctx.business as unknown as { subscription_tier?: string }).subscription_tier || 'free') as SubscriptionTier;
+                const trialEnd = (ctx.business as unknown as { trial_ends_at?: string }).trial_ends_at;
+                const isInTrial = tier === 'free' && trialEnd ? new Date(trialEnd) > new Date() : false;
+                const customFeePercentage = (ctx.business as unknown as { custom_fee_percentage?: number }).custom_fee_percentage ?? null;
+                const customFeeFlat = (ctx.business as unknown as { custom_fee_flat?: number }).custom_fee_flat ?? null;
+
+                const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(
+                  amountInMinorUnits, tier, isInTrial,
+                  { feePercentage: customFeePercentage, feeFlat: customFeeFlat },
+                );
+
+                await service.from('platform_fees').insert({
+                  business_id: ctx.business.id,
+                  booking_id: transfer.booking_id || null,
+                  invoice_id: transfer.invoice_id || null,
+                  order_id: transfer.order_id || null,
+                  transaction_amount: amountInMinorUnits,
+                  fee_percentage: feePercentage,
+                  fee_flat: feeFlat,
+                  fee_total: feeTotal,
+                  gateway_fee: 0,
+                  tier,
+                  is_direct_transfer: true,
+                });
+                // Log fee insert errors but don't block confirmation
+              }
+
+              // Create payment record (amount in minor units to match other payment records)
+              await service.from('payments').insert({
+                business_id: transfer.business_id,
+                amount: amountInMinorUnits,
+                currency: currency,
+                status: 'success',
+                payment_method: 'bank_transfer',
+                gateway: 'direct',
+                booking_id: transfer.booking_id || null,
+                order_id: transfer.order_id || null,
+                invoice_id: transfer.invoice_id || null,
+                customer_phone: ctx.from,
+                reference: transferRef,
+                metadata: {
+                  pending_transfer_id: transfer.id,
+                  auto_verified_by_ocr: true,
+                  ocr_confidence: ocr.confidence,
+                  ocr_amount: ocr.amount,
+                  ocr_sender: ocr.senderName,
+                },
+              });
+            }
+
+            await ctx.sender.sendText({
+              to: ctx.from,
+              text: await ctx.t(`✅ *Payment Verified Automatically!*\n\n💰 ${formatCurrency(expectedAmount, cc)}\n🔑 Ref: *${transferRef}*\n🏦 ${ocr.bankName || 'Bank transfer'} from ${ocr.senderName || 'you'}\n\nYour booking is confirmed. Send *Hi* to continue.`),
+            });
+            return { valid: true, data: { _action: 'transfer_auto_confirmed' } };
+          }
+
+          // OCR didn't match — fall back to manual verification
           await ctx.sender.sendText({
             to: ctx.from,
-            text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm shortly.\n\nRef: *${d.bank_transfer_reference}*\n\nYou'll get a confirmation message once verified. Send *Hi* to continue using other services.`),
+            text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm shortly.\n\nRef: *${transferRef}*\n\nYou'll get a confirmation message once verified. Send *Hi* to continue using other services.`),
           });
           return { valid: true, data: { _action: 'transfer_proof_sent' } };
         }
