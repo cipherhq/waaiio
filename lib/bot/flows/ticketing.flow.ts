@@ -8,9 +8,11 @@ import { sendTicketsAfterPurchase } from './shared/send-tickets';
 import { notifyOwnerNewTicketSale } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { handlePostCompletion } from './shared/post-completion';
-import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getLocale, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
+import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
+import { randomBytes } from 'crypto';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -23,7 +25,7 @@ export const ticketingFlow: FlowDefinition = {
 
         const { data: events } = await ctx.supabase
           .from('events')
-          .select('id, name, date, time, venue, price, total_tickets, tickets_sold, image_url')
+          .select('id, name, date, time, venue, price, total_tickets, tickets_sold, image_url, event_ticket_types(price)')
           .eq('business_id', ctx.business.id)
           .in('status', ['published'])
           .gte('date', new Date().toISOString().split('T')[0])
@@ -53,9 +55,14 @@ export const ticketingFlow: FlowDefinition = {
           const available = e.total_tickets - e.tickets_sold;
           const cc = (ctx.business?.country_code || 'NG') as CountryCode;
           const dateLabel = new Date(e.date + 'T00:00').toLocaleDateString(getLocale(cc), { day: 'numeric', month: 'short' });
+          // Use minimum ticket type price if available, otherwise event.price
+          const ticketPrices = ((e as unknown as { event_ticket_types?: { price: number }[] }).event_ticket_types || [])
+            .map(t => Number(t.price)).filter(p => p > 0);
+          const displayPrice = ticketPrices.length > 0 ? Math.min(...ticketPrices) : e.price;
+          const pricePrefix = ticketPrices.length > 1 ? 'From ' : '';
           return {
             title: truncTitle(e.name, 24),
-            description: `${dateLabel} • ${formatCurrency(e.price, cc)} • ${available} left`,
+            description: `${dateLabel} • ${pricePrefix}${formatCurrency(displayPrice, cc)} • ${available} left`,
             postbackText: e.id,
           };
         });
@@ -512,6 +519,85 @@ export const ticketingFlow: FlowDefinition = {
 
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
+
+            // Check if business qualifies for direct bank transfer
+            const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+            const tier = ctx.business?.subscription_tier || 'free';
+            let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
+
+            if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business')) {
+              const { data: ba } = await ctx.supabase
+                .from('business_bank_accounts')
+                .select('bank_name, account_number, account_name')
+                .eq('business_id', ctx.business!.id)
+                .eq('is_active', true)
+                .eq('is_default', true)
+                .maybeSingle();
+              bankAccount = ba;
+            }
+
+            if (bankAccount) {
+              // Dual-option: online + bank transfer
+              const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+              d.bank_transfer_reference = transferRef;
+              d.bank_transfer_offered = true;
+              d.bank_transfer_amount = total;
+
+              await ctx.supabase.from('pending_transfers').insert({
+                business_id: ctx.business!.id,
+                booking_id: booking.id,
+                customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+                customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                expected_amount: Math.round(total * 100),
+                currency: getCurrencyCode(cc),
+                reference_code: transferRef,
+                status: 'pending',
+                expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+              });
+
+              await ctx.supabase
+                .from('bot_sessions')
+                .update({ session_data: d, current_step: 'await_ticket_payment' })
+                .eq('id', ctx.session.id);
+
+              return [
+                {
+                  type: 'text',
+                  text: [
+                    `🎫 *Tickets Reserved!*`,
+                    '',
+                    `🎟️ ${d.event_name}`,
+                    `📅 ${dateLabel}`,
+                    `🎟️ ${qty} ticket${qty > 1 ? 's' : ''}`,
+                    `💰 ${formatCurrency(total, cc)}`,
+                    `🔑 Ref: *${booking.reference_code}*`,
+                    '',
+                    `*Option 1 — Pay Online* 👇`,
+                    paymentResult.url,
+                    '',
+                    `*Option 2 — Bank Transfer* 🏦`,
+                    `Bank: ${bankAccount.bank_name}`,
+                    `Account: ${bankAccount.account_number}`,
+                    `Name: ${bankAccount.account_name}`,
+                    `Amount: ${formatCurrency(total, cc)}`,
+                    `Reference: *${transferRef}*`,
+                    '',
+                    `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+                  ].join('\n'),
+                },
+                {
+                  type: 'buttons',
+                  body: "After paying, tap below:",
+                  buttons: [
+                    { id: 'i_paid_online', title: "I've Paid Online" },
+                    { id: 'sent_transfer', title: "I've Sent Transfer" },
+                    { id: 'go_back', title: 'Cancel' },
+                  ],
+                },
+              ];
+            }
+
+            // Standard Paystack-only flow
             await ctx.supabase
               .from('bot_sessions')
               .update({ session_data: d, current_step: 'await_ticket_payment' })
@@ -520,7 +606,7 @@ export const ticketingFlow: FlowDefinition = {
             return [
               {
                 type: 'text',
-                text: `🎫 *Tickets Reserved!*\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, (ctx.business?.country_code || 'NG') as CountryCode)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Your confirmation will arrive automatically after payment.`,
+                text: `🎫 *Tickets Reserved!*\n\n🎟️ ${d.event_name}\n📅 ${dateLabel}\n🎟️ ${qty} ticket${qty > 1 ? 's' : ''}\n💰 ${formatCurrency(total, cc)}\n🔑 Ref: *${booking.reference_code}*\n\n💳 Pay here 👇\n${paymentResult.url}\n\n⚠️ Your confirmation will arrive automatically after payment.`,
               },
               {
                 type: 'buttons',
@@ -654,7 +740,20 @@ export const ticketingFlow: FlowDefinition = {
     // ── Await Ticket Payment ──
     {
       id: 'await_ticket_payment',
-      async prompt(): Promise<PromptMessage[]> {
+      acceptsMedia: true,
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const d = ctx.session.session_data;
+        if (d.bank_transfer_offered) {
+          return [{
+            type: 'buttons',
+            body: "Complete your payment using the link or bank transfer above.\n\nTap below after paying:",
+            buttons: [
+              { id: 'i_paid_online', title: "I've Paid Online" },
+              { id: 'sent_transfer', title: "I've Sent Transfer" },
+              { id: 'go_back', title: 'Cancel' },
+            ],
+          }];
+        }
         return [{
           type: 'buttons',
           body: "Complete payment using the link above.\n\nYour confirmation will arrive automatically after payment. If it doesn't, tap below:",
@@ -667,24 +766,113 @@ export const ticketingFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
+        const d = ctx.session.session_data;
 
         if (text === 'retry_payment') {
           return { valid: true, data: { _retry_payment: true } };
         }
 
         if ((text === 'cancel' || text === 'go_back')) {
-          const bookingId = ctx.session.session_data.booking_id as string;
+          const bookingId = d.booking_id as string;
           if (bookingId) {
             await ctx.supabase
               .from('bookings')
               .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
               .eq('id', bookingId);
           }
+          if (d.bank_transfer_reference) {
+            await ctx.supabase
+              .from('pending_transfers')
+              .update({ status: 'cancelled' })
+              .eq('reference_code', d.bank_transfer_reference as string);
+          }
           await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(`Ticket purchase from *${ctx.business?.name || 'business'}* cancelled. Send *Hi* to start over.`) });
           return { valid: true, data: { _action: 'cancel' } };
         }
 
-        if (text === 'i_paid' || text === 'paid' || text === 'done') {
+        // ── Bank transfer proof: image uploaded ──
+        if (ctx.mediaType === 'image' && ctx.mediaUrl && d.bank_transfer_reference) {
+          const transferRef = d.bank_transfer_reference as string;
+          const expectedAmount = d.bank_transfer_amount as number;
+          const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+          const currency = getCurrencyCode(cc);
+
+          const ocr = await analyzeReceipt(ctx.mediaUrl, expectedAmount, transferRef, currency);
+          const ocrMatches = receiptMatchesExpected(ocr, expectedAmount, transferRef);
+
+          await ctx.supabase
+            .from('pending_transfers')
+            .update({
+              proof_type: 'screenshot',
+              proof_image_url: ctx.mediaUrl,
+              verified_by_ocr: ocrMatches,
+              ocr_result: ocrMatches ? { amount: ocr.amount, reference: ocr.reference, sender_name: ocr.senderName, bank_name: ocr.bankName, confidence: ocr.confidence } : null,
+            })
+            .eq('reference_code', transferRef)
+            .eq('status', 'pending');
+
+          if (ctx.business) {
+            const custName = `${d.first_name || ''} ${d.last_name || ''}`.trim() || 'Customer';
+            notifyOwnerNewTicketSale({
+              supabase: ctx.supabase,
+              sender: ctx.sender,
+              businessId: ctx.business.id,
+              businessName: ctx.business.name,
+              countryCode: cc,
+              referenceCode: transferRef,
+              customerName: custName,
+              totalAmount: expectedAmount,
+              eventName: `${d.event_name as string} (Bank Transfer)`,
+              quantity: d.ticket_quantity as number,
+            }).catch(err => console.error('[TICKETING] Transfer notify error:', err));
+
+            createNotification(ctx.supabase, {
+              businessId: ctx.business.id,
+              bookingId: d.booking_id as string,
+              type: 'transfer_proof_received',
+              channel: 'whatsapp',
+              body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, cc)} tickets. Ref: ${transferRef}. Confirm in Dashboard → Pending Transfers.`,
+            }).catch(err => console.error('[TICKETING] Transfer notification error:', err));
+          }
+
+          const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t(`✅ Payment proof received. *${ctx.business?.name || 'The business'}* will review and confirm your tickets shortly.\n\nRef: *${transferRef}*${ocrHint}\n\nSend *Hi* to continue.`),
+          });
+          return { valid: true, data: { _action: 'transfer_proof_sent' } };
+        }
+
+        // ── "I've Sent Transfer" button ──
+        if (text === 'sent_transfer' || text === "i've sent transfer" || text === 'i_sent_transfer') {
+          if (!d.bank_transfer_reference) {
+            return { valid: false, errorMessage: 'No bank transfer reference found. Please use the online payment link instead.' };
+          }
+          d._awaiting_transfer_proof = true;
+          await ctx.supabase.from('bot_sessions').update({ session_data: d }).eq('id', ctx.session.id);
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t(`Please send a *screenshot* of your transfer receipt, or type the bank *transaction reference* so we can verify your payment.\n\nRef: *${d.bank_transfer_reference}*`),
+          });
+          return { valid: false, errorMessage: '' };
+        }
+
+        // ── Text proof after tapping "I've Sent Transfer" ──
+        if (d._awaiting_transfer_proof && text && !['i_paid', 'i_paid_online', 'paid', 'done', 'check'].includes(text)) {
+          await ctx.supabase
+            .from('pending_transfers')
+            .update({ proof_type: 'text', proof_text: input.trim() })
+            .eq('reference_code', d.bank_transfer_reference as string)
+            .eq('status', 'pending');
+
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t(`✅ Transfer reference received. *${ctx.business?.name || 'The business'}* will review and confirm your tickets shortly.\n\nRef: *${d.bank_transfer_reference}*\n\nSend *Hi* to continue.`),
+          });
+          return { valid: true, data: { _action: 'transfer_proof_sent' } };
+        }
+
+        if (text === 'i_paid' || text === 'i_paid_online' || text === 'paid' || text === 'done') {
           const ref = ctx.session.session_data.payment_reference as string;
           if (!ref) return { valid: true, data: { _action: 'cancel' } };
 
