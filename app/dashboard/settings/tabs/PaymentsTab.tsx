@@ -24,6 +24,15 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
   const [recurringEnabled, setRecurringEnabled] = useState(business.recurring_enabled ?? false);
   const [selectedGateway, setSelectedGateway] = useState<string>(business.payment_gateway || 'auto');
 
+  // Payment channels state
+  const ALL_CHANNELS = ['card', 'bank_transfer', 'ussd', 'qr', 'mobile_money'] as const;
+  type PaymentChannel = (typeof ALL_CHANNELS)[number];
+  const rawChannels = (business as Record<string, unknown>).payment_channels as PaymentChannel[] | null;
+  const [paymentChannels, setPaymentChannels] = useState<Set<PaymentChannel>>(
+    () => new Set(rawChannels && rawChannels.length > 0 ? rawChannels : ALL_CHANNELS)
+  );
+  const [channelsSaving, setChannelsSaving] = useState(false);
+
   // Shipping settings from business.metadata
   const [shippingMode, setShippingMode] = useState<'none' | 'flat' | 'per_product'>((meta.shipping_mode as 'none' | 'flat' | 'per_product') || 'none');
   const [defaultShippingFee, setDefaultShippingFee] = useState<number>((meta.default_shipping_fee as number) || 0);
@@ -328,8 +337,99 @@ export function PaymentsTab({ business, capabilities, country, curr, saving, set
     }
   }
 
+  const CHANNEL_CONFIG: { id: PaymentChannel; label: string; description: string; countries: string[] | null }[] = [
+    { id: 'card', label: 'Card (Visa, Mastercard, Verve)', description: 'Accept debit and credit card payments', countries: null },
+    { id: 'bank_transfer', label: 'Bank Transfer', description: 'Direct bank transfer payments', countries: ['NG', 'GH'] },
+    { id: 'ussd', label: 'USSD', description: 'Pay via USSD short codes', countries: ['NG', 'GH'] },
+    { id: 'qr', label: 'QR Code', description: 'Scan-to-pay QR code payments', countries: ['NG'] },
+    { id: 'mobile_money', label: 'Mobile Money', description: 'Mobile money wallet payments', countries: ['GH'] },
+  ];
+
+  const visibleChannels = CHANNEL_CONFIG.filter(ch => ch.countries === null || ch.countries.includes(country));
+
+  async function handleToggleChannel(channelId: PaymentChannel) {
+    const updated = new Set(paymentChannels);
+    if (updated.has(channelId)) {
+      // Prevent disabling the last channel
+      const wouldRemain = [...updated].filter(c => c !== channelId && visibleChannels.some(vc => vc.id === c));
+      if (wouldRemain.length === 0) return;
+      updated.delete(channelId);
+    } else {
+      updated.add(channelId);
+    }
+    setPaymentChannels(updated);
+
+    // If all visible channels are enabled, save null (backward compatible)
+    const allEnabled = visibleChannels.every(vc => updated.has(vc.id));
+    const channelsToSave = allEnabled ? null : [...updated];
+
+    setChannelsSaving(true);
+    const supabase = createClient();
+    await supabase
+      .from('businesses')
+      .update({ payment_channels: channelsToSave })
+      .eq('id', business.id);
+    setChannelsSaving(false);
+  }
+
   return (
         <div className="mt-6 max-w-3xl space-y-4">
+          {capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding') && (
+            <div>
+              <button onClick={() => toggleSection('payment_methods')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
+                <h3 className="text-sm font-bold text-gray-900">Accepted Payment Methods</h3>
+                <svg aria-hidden="true" className={`h-5 w-5 text-brand transition-transform ${openSections.includes('payment_methods') ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+              </button>
+              {openSections.includes('payment_methods') && (
+                <div className="mt-4">
+                  <div className="mt-6 max-w-xl">
+                    <div className="rounded-xl border border-gray-100 bg-white p-6">
+                      <h2 className="text-sm font-bold text-gray-900">Accepted Payment Methods</h2>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Choose which payment methods your customers can use. All methods are enabled by default.
+                      </p>
+
+                      <div className="mt-5 space-y-3">
+                        {visibleChannels.map((channel) => {
+                          const isEnabled = paymentChannels.has(channel.id);
+                          const isLastEnabled = isEnabled && [...paymentChannels].filter(c => visibleChannels.some(vc => vc.id === c)).length === 1;
+                          return (
+                            <label
+                              key={channel.id}
+                              className={`flex items-start gap-3 rounded-lg border-2 p-4 transition cursor-pointer ${
+                                isEnabled ? 'border-brand bg-brand-50/50' : 'border-gray-200 hover:border-gray-300'
+                              } ${isLastEnabled ? 'opacity-75' : ''}`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isEnabled}
+                                disabled={isLastEnabled || channelsSaving}
+                                onChange={() => handleToggleChannel(channel.id)}
+                                className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand focus:ring-brand"
+                              />
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-gray-900">{channel.label}</p>
+                                <p className="text-xs text-gray-500">{channel.description}</p>
+                              </div>
+                              {isLastEnabled && (
+                                <span className="ml-auto shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                                  Required
+                                </span>
+                              )}
+                            </label>
+                          );
+                        })}
+                      </div>
+
+                      {channelsSaving && (
+                        <p className="mt-3 text-xs text-gray-400">Saving...</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {capabilities.includes('payment') || capabilities.includes('ordering') || capabilities.includes('ticketing') || capabilities.includes('crowdfunding') && (
             <div>
               <button onClick={() => toggleSection('gateway')} className="flex w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-4 py-3.5 hover:bg-gray-50 transition shadow-sm cursor-pointer">
