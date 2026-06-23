@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
@@ -37,6 +37,31 @@ interface PaymentRow {
   created_at: string;
 }
 
+interface FeeLineItem {
+  payment_id: string;
+  amount: number;
+  fee: number;
+  date: string;
+  description?: string;
+}
+
+interface FeeInvoiceRow {
+  id: string;
+  invoice_number: string;
+  period_start: string;
+  period_end: string;
+  total_transaction_amount: number;
+  total_fee_amount: number;
+  transaction_count: number;
+  currency: string;
+  status: string;
+  due_date: string;
+  paid_at: string | null;
+  paid_via: string | null;
+  line_items: FeeLineItem[] | null;
+  created_at: string;
+}
+
 export default function BillingPage() {
   const business = useBusiness();
   const tier = ((business as any).subscription_tier || 'free') as SubscriptionTier;
@@ -44,6 +69,8 @@ export default function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState<SubscriptionRow | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
+  const [feeInvoices, setFeeInvoices] = useState<FeeInvoiceRow[]>([]);
+  const [expandedInvoices, setExpandedInvoices] = useState<Set<string>>(new Set());
 
   // Usage stats
   const [conversationCount, setConversationCount] = useState(0);
@@ -56,7 +83,7 @@ export default function BillingPage() {
       const supabase = createClient();
       const monthKey = new Date().toISOString().slice(0, 7);
 
-      const [subRes, paymentsRes, convRes, broadcastRes, aiRes] = await Promise.all([
+      const [subRes, paymentsRes, convRes, broadcastRes, aiRes, feeInvoicesRes] = await Promise.all([
         // Current subscription
         supabase
           .from('subscriptions')
@@ -95,6 +122,14 @@ export default function BillingPage() {
           .select('id', { count: 'exact', head: true })
           .eq('business_id', business.id)
           .gte('created_at', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString()),
+
+        // Platform fee invoices
+        supabase
+          .from('platform_fee_invoices')
+          .select('id, invoice_number, period_start, period_end, total_transaction_amount, total_fee_amount, transaction_count, currency, status, due_date, paid_at, paid_via, line_items, created_at')
+          .eq('business_id', business.id)
+          .order('created_at', { ascending: false })
+          .limit(50),
       ]);
 
       setSubscription(subRes.data || null);
@@ -102,6 +137,7 @@ export default function BillingPage() {
       setConversationCount(convRes.data?.conversation_count ?? 0);
       setBroadcastCount(broadcastRes.data?.broadcast_count ?? 0);
       setAiCallCount(aiRes.count ?? 0);
+      setFeeInvoices(feeInvoicesRes.data || []);
 
       setLoading(false);
     }
@@ -298,6 +334,125 @@ export default function BillingPage() {
           </div>
         )}
       </div>
+
+      {/* Direct Transfer Fee Invoices */}
+      {feeInvoices.length > 0 && (
+        <div className="mt-6 rounded-xl border border-gray-100 bg-white">
+          <div className="border-b border-gray-100 px-6 py-4">
+            <h2 className="text-sm font-semibold text-gray-900">Direct Transfer Fee Invoices</h2>
+            <p className="mt-0.5 text-xs text-gray-400">
+              Platform fees on direct bank transfer payments, aggregated monthly
+            </p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-50 text-xs text-gray-500">
+                  <th className="px-6 py-3 font-medium">Invoice #</th>
+                  <th className="px-6 py-3 font-medium">Period</th>
+                  <th className="px-6 py-3 font-medium text-right">Transfers</th>
+                  <th className="px-6 py-3 font-medium text-right">Fee Amount</th>
+                  <th className="px-6 py-3 font-medium">Status</th>
+                  <th className="px-6 py-3 font-medium">Due Date</th>
+                  <th className="px-6 py-3 font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {feeInvoices.map((inv) => {
+                  const isExpanded = expandedInvoices.has(inv.id);
+                  const lineItems = Array.isArray(inv.line_items) ? inv.line_items : [];
+                  return (
+                    <Fragment key={inv.id}>
+                      <tr className="border-b border-gray-50 last:border-0">
+                        <td className="whitespace-nowrap px-6 py-3 font-mono text-xs text-gray-700">
+                          {inv.invoice_number}
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 text-gray-700">
+                          {formatDateShort(inv.period_start)} &ndash; {formatDateShort(inv.period_end)}
+                        </td>
+                        <td className="px-6 py-3 text-right text-gray-700">{inv.transaction_count}</td>
+                        <td className="whitespace-nowrap px-6 py-3 text-right font-medium text-gray-900">
+                          {formatSmallestUnit(inv.total_fee_amount, inv.currency)}
+                        </td>
+                        <td className="px-6 py-3">
+                          <FeeStatusBadge status={inv.status} />
+                        </td>
+                        <td className="whitespace-nowrap px-6 py-3 text-gray-700">
+                          {formatDateShort(inv.due_date)}
+                        </td>
+                        <td className="px-6 py-3">
+                          <div className="flex items-center gap-2">
+                            {(inv.status === 'pending' || inv.status === 'overdue') && (
+                              <a
+                                href="mailto:support@waaiio.com?subject=Fee Invoice Payment — "
+                                className="text-xs font-medium text-brand hover:text-brand-700"
+                              >
+                                Contact Support
+                              </a>
+                            )}
+                            {inv.status === 'paid' && inv.paid_at && (
+                              <span className="text-xs text-gray-400">
+                                Paid {formatDateShort(inv.paid_at)}
+                              </span>
+                            )}
+                            {lineItems.length > 0 && (
+                              <button
+                                onClick={() => {
+                                  setExpandedInvoices((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(inv.id)) next.delete(inv.id);
+                                    else next.add(inv.id);
+                                    return next;
+                                  });
+                                }}
+                                className="ml-1 text-xs text-gray-400 hover:text-gray-600"
+                                title={isExpanded ? 'Hide details' : 'Show details'}
+                              >
+                                <svg
+                                  className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && lineItems.length > 0 && (
+                        <tr>
+                          <td colSpan={7} className="bg-gray-50 px-6 py-3">
+                            <p className="mb-2 text-xs font-medium text-gray-500">Fee Breakdown</p>
+                            <div className="space-y-1">
+                              {lineItems.map((item, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-xs">
+                                  <span className="text-gray-600">
+                                    {item.date ? formatDateShort(item.date) : `#${idx + 1}`}
+                                    {item.description && ` — ${item.description}`}
+                                  </span>
+                                  <span className="text-gray-500">
+                                    {formatSmallestUnit(item.amount, inv.currency)} transfer
+                                    {' '}→{' '}
+                                    <span className="font-medium text-gray-700">
+                                      {formatSmallestUnit(item.fee, inv.currency)} fee
+                                    </span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -377,6 +532,21 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function FeeStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    paid: 'bg-green-100 text-green-700',
+    pending: 'bg-yellow-100 text-yellow-700',
+    overdue: 'bg-red-100 text-red-700',
+    waived: 'bg-gray-100 text-gray-500',
+    cancelled: 'bg-gray-100 text-gray-500',
+  };
+  return (
+    <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${styles[status] || 'bg-gray-100 text-gray-600'}`}>
+      {status}
+    </span>
+  );
+}
+
 /* ── Formatters ───────────────────────────────────────────────── */
 
 function formatCurrency(amount: number, currency: string): string {
@@ -390,6 +560,14 @@ function formatCurrency(amount: number, currency: string): string {
   };
   const sym = symbols[currency.toUpperCase()] || currency + ' ';
   return `${sym}${amount.toLocaleString()}`;
+}
+
+function formatDateShort(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
 }
 
 function formatSmallestUnit(amount: number, currency: string): string {
