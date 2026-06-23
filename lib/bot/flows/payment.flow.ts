@@ -301,8 +301,7 @@ export const paymentFlow: FlowDefinition = {
           const tier = ctx.business?.subscription_tier || 'free';
           const qualifiesForBankTransfer =
             (cc === 'NG' || cc === 'GH') &&
-            (tier === 'growth' || tier === 'business') &&
-            amount >= 10_000;
+            (tier === 'growth' || tier === 'business');
 
           if (qualifiesForBankTransfer) {
             const { data: ba } = await ctx.supabase
