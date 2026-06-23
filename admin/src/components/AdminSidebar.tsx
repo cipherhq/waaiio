@@ -41,6 +41,7 @@ import {
   Activity,
   MessagesSquare,
   Inbox,
+  Landmark,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -93,6 +94,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: CreditCard, label: 'Payments', path: '/payments', roles: ['admin', 'finance'] },
       { icon: RefreshCw, label: 'Subscriptions', path: '/subscriptions', roles: ['admin', 'finance'] },
       { icon: Repeat, label: 'Recurring', path: '/recurring', roles: ['admin', 'finance'] },
+      { icon: Landmark, label: 'Bank Transfers', path: '/pending-transfers', roles: ['admin', 'finance'] },
       { icon: Ticket, label: 'Tickets', path: '/tickets', roles: ['admin', 'support', 'operations'] },
       { icon: AlertTriangle, label: 'Alerts', path: '/alerts', roles: ['admin', 'support', 'operations'] },
       { icon: ClipboardList, label: 'Surveys', path: '/surveys', roles: ['admin', 'operations'] },
