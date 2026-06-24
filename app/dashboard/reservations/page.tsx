@@ -124,7 +124,13 @@ export default function BookingsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [filter, setFilter] = useState('all');
-  const [bookingType, setBookingType] = useState<'all' | 'reservations' | 'bookings'>('all');
+  // Determine default booking type based on capabilities
+  const hasSchedulingCapability = business.capabilities?.includes('scheduling' as any) || business.capabilities?.includes('appointment' as any);
+  const hasReservationCap = business.capabilities?.includes('reservation' as any) || business.flow_type === 'reservation';
+  const defaultBookingType: 'reservations' | 'bookings' = hasReservationCap && !hasSchedulingCapability ? 'reservations' : 'bookings';
+  const hasBothTypes = hasReservationCap && hasSchedulingCapability && business.flow_type !== 'reservation';
+
+  const [bookingType, setBookingType] = useState<'reservations' | 'bookings'>(defaultBookingType);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [search, setSearch] = useState('');
@@ -303,8 +309,8 @@ export default function BookingsPage() {
 
   const selected = bookings.find((b) => b.id === selectedId) || null;
 
-  // Filter by booking type tab
-  const filteredByType = bookingType === 'all' ? bookings
+  // Filter by booking type tab (no "All" tab — show one type at a time)
+  const filteredByType = !hasBothTypes ? bookings
     : bookingType === 'reservations' ? bookings.filter(b => b._isReservation)
     : bookings.filter(b => !b._isReservation);
 
@@ -660,11 +666,10 @@ export default function BookingsPage() {
         );
       })()}
 
-      {/* Booking type tabs — only show when business has multiple types */}
-      {showReservations && !isReservationType && (
+      {/* Booking type tabs — only show when business has both types */}
+      {hasBothTypes && (
         <div className="mt-4 flex gap-1 border-b border-gray-200 dark:border-gray-700">
           {([
-            { id: 'all' as const, label: 'All' },
             { id: 'bookings' as const, label: 'Appointments' },
             { id: 'reservations' as const, label: 'Reservations' },
           ]).map(tab => (
@@ -674,7 +679,7 @@ export default function BookingsPage() {
               }`}>
               {tab.label}
               <span className="ml-1.5 text-xs text-gray-400">
-                {tab.id === 'all' ? bookings.length : tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length : bookings.filter(b => !b._isReservation).length}
+                {tab.id === 'reservations' ? bookings.filter(b => b._isReservation).length : bookings.filter(b => !b._isReservation).length}
               </span>
             </button>
           ))}
@@ -755,7 +760,7 @@ export default function BookingsPage() {
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</th>
-                {bookingType === 'reservations' || (bookingType === 'all' && showReservations) ? (
+                {bookingType === 'reservations' || (!hasBothTypes && showReservations) ? (
                   <>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</th>
@@ -769,7 +774,7 @@ export default function BookingsPage() {
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Staff</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Channel</th>
+                    <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
                   </>
                 )}
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
@@ -813,10 +818,10 @@ export default function BookingsPage() {
                         {r.time && !r.time.includes('night') && ` at ${r.time.slice(0, 5)}`}
                       </td>
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
-                      <td className="px-4 py-3">
-                        <span className={`rounded-full px-2.5 py-1 text-xs ${r.channel === 'whatsapp' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
-                          {r.channel || 'whatsapp'}
-                        </span>
+                      <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-gray-100">
+                        {r.total_amount || r.deposit_amount
+                          ? formatCurrency(r.total_amount || r.deposit_amount || 0, (business.country_code || 'NG') as CountryCode)
+                          : '—'}
                       </td>
                     </>
                   )}
@@ -830,19 +835,27 @@ export default function BookingsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500">{r.reference_code}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap min-w-[5rem]">{r.reference_code}</td>
                   <td className="px-4 py-3">
-                    <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                      {(nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next)).map((action) => (
-                        <button
-                          key={action.next}
-                          onClick={() => updateStatus(r.id, action.next)}
-                          className={`rounded px-3 py-1.5 text-xs font-medium ${action.color}`}
-                        >
-                          {action.label}
-                        </button>
-                      ))}
-                    </div>
+                    {(() => {
+                      const actions = (nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next));
+                      if (actions.length === 0) {
+                        return <span className="text-xs text-gray-400 dark:text-gray-500">—</span>;
+                      }
+                      return (
+                        <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                          {actions.map((action) => (
+                            <button
+                              key={action.next}
+                              onClick={() => updateStatus(r.id, action.next)}
+                              className={`rounded px-3 py-1.5 text-xs font-medium ${action.color}`}
+                            >
+                              {action.label}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
               ))}
