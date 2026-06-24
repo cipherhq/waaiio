@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
@@ -118,7 +120,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Send WhatsApp confirmation if requested
+    // Send confirmation via WhatsApp (with email fallback) if requested
     let whatsappSent = false;
     if (sendConfirmation && customerPhone) {
       try {
@@ -131,24 +133,48 @@ export async function POST(request: NextRequest) {
             day: 'numeric',
             month: 'long',
           });
-          await resolved.sender.sendText({
+          const messageText = [
+            '*Booking Confirmed!*',
+            '',
+            `${biz.name}`,
+            `${service.name}`,
+            `${dateLabel}`,
+            `${time}`,
+            `Ref: *${refCode}*`,
+            '',
+            'See you there!',
+          ].join('\n');
+
+          // Use provided email or look up from customer profile
+          const emailAddr = customerEmail || await findCustomerEmail(serviceClient, customerPhone, businessId);
+
+          const result = await sendOrEmail({
+            supabase: serviceClient,
+            sender: resolved.sender,
             to: phone,
-            text: [
-              '*Booking Confirmed!*',
-              '',
-              `${biz.name}`,
-              `${service.name}`,
-              `${dateLabel}`,
-              `${time}`,
-              `Ref: *${refCode}*`,
-              '',
-              'See you there!',
-            ].join('\n'),
+            text: messageText,
+            businessName: biz.name,
+            alwaysEmail: true,
+            email: emailAddr ? {
+              address: emailAddr,
+              subject: `Booking Confirmed - ${biz.name}`,
+              html: businessNotificationEmail({
+                businessName: biz.name,
+                title: 'Booking Confirmed',
+                message: `Your booking at ${biz.name} has been confirmed.`,
+                details: {
+                  'Service': service.name,
+                  'Date': dateLabel,
+                  'Time': time,
+                  'Reference': refCode,
+                },
+              }).html,
+            } : null,
           });
-          whatsappSent = true;
+          whatsappSent = result.whatsapp === 'sent';
         }
       } catch (err) {
-        logger.error('[MANUAL BOOKING] WhatsApp error:', err);
+        logger.error('[MANUAL BOOKING] Notification error:', err);
       }
     }
 

@@ -4,6 +4,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 import { createNotification } from '@/lib/bot/flows/shared/notifications';
 
 /**
@@ -78,7 +80,7 @@ export async function PATCH(
         return NextResponse.json({ error: 'Failed to reject transfer' }, { status: 500 });
       }
 
-      // Notify customer via WhatsApp that their transfer was rejected
+      // Notify customer via WhatsApp (with email fallback) that their transfer was rejected
       if (transfer.customer_phone) {
         try {
           const resolver = new ChannelResolver(service);
@@ -89,10 +91,31 @@ export async function PATCH(
               .select('name')
               .eq('id', business_id)
               .single();
+            const bizName = biz?.name || 'the business';
             const rejectionReason = reason || 'No reason provided';
-            await resolved.sender.sendText({
+            const messageText = `❌ Your bank transfer (Ref: *${transfer.reference_code}*) was not verified by *${bizName}*.\nReason: ${rejectionReason}\n\nPlease try again or use the online payment link. Send *Hi* to start over.`;
+
+            const customerEmail = await findCustomerEmail(service, transfer.customer_phone, business_id);
+            await sendOrEmail({
+              supabase: service,
+              sender: resolved.sender,
               to: transfer.customer_phone,
-              text: `❌ Your bank transfer (Ref: *${transfer.reference_code}*) was not verified by *${biz?.name || 'the business'}*.\nReason: ${rejectionReason}\n\nPlease try again or use the online payment link. Send *Hi* to start over.`,
+              text: messageText,
+              businessName: bizName,
+              alwaysEmail: true,
+              email: customerEmail ? {
+                address: customerEmail,
+                subject: `Transfer Not Verified - ${bizName}`,
+                html: businessNotificationEmail({
+                  businessName: bizName,
+                  title: 'Transfer Not Verified',
+                  message: `Your bank transfer (Ref: ${transfer.reference_code}) was not verified.\nReason: ${rejectionReason}\n\nPlease try again or use the online payment link.`,
+                  details: {
+                    'Reference': transfer.reference_code,
+                    'Reason': rejectionReason,
+                  },
+                }).html,
+              } : null,
             });
           }
         } catch (notifyErr) {
@@ -202,7 +225,7 @@ export async function PATCH(
       logger.error('[PENDING_TRANSFERS] Payment record error:', paymentErr.message);
     }
 
-    // 5. Notify customer via WhatsApp that transfer was confirmed
+    // 5. Notify customer via WhatsApp (with email fallback) that transfer was confirmed
     if (transfer.customer_phone) {
       try {
         const resolver = new ChannelResolver(service);
@@ -214,10 +237,31 @@ export async function PATCH(
             .eq('id', business_id)
             .single();
           const cc = (biz?.country_code || 'NG') as CountryCode;
+          const bizName = biz?.name || 'Business';
           const amountFormatted = formatCurrency(transfer.expected_amount / 100, cc);
-          await resolved.sender.sendText({
+          const messageText = `✅ *Payment Confirmed!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${bizName}\n\nYour booking is confirmed. Thank you!`;
+
+          const customerEmail = await findCustomerEmail(service, transfer.customer_phone, business_id);
+          await sendOrEmail({
+            supabase: service,
+            sender: resolved.sender,
             to: transfer.customer_phone,
-            text: `✅ *Payment Confirmed!*\n\n💰 ${amountFormatted}\n🔑 Ref: *${transfer.reference_code}*\n🏢 ${biz?.name || 'Business'}\n\nYour booking is confirmed. Thank you!`,
+            text: messageText,
+            businessName: bizName,
+            alwaysEmail: true,
+            email: customerEmail ? {
+              address: customerEmail,
+              subject: `Payment Confirmed - ${bizName}`,
+              html: businessNotificationEmail({
+                businessName: bizName,
+                title: 'Payment Confirmed',
+                message: 'Your bank transfer has been verified and your booking is confirmed. Thank you!',
+                details: {
+                  'Amount': amountFormatted,
+                  'Reference': transfer.reference_code,
+                },
+              }).html,
+            } : null,
           });
         }
       } catch (notifyErr) {

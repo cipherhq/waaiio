@@ -4,6 +4,8 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 
 export async function POST(request: NextRequest) {
   try {
@@ -85,7 +87,28 @@ export async function POST(request: NextRequest) {
             sent = r.success !== false;
           } catch { /* template failed */ }
         }
-        if (!sent) await resolved.sender.sendText({ to: phone, text: msg });
+        if (!sent) {
+          const customerEmail = await findCustomerEmail(supabase, phone, businessId);
+          let emailOpt: { address: string; subject: string; html: string } | null = null;
+          if (customerEmail) {
+            const tmpl = businessNotificationEmail({
+              businessName: bizName,
+              title: 'A Spot Has Opened Up!',
+              message: `Hi ${name}! Great news — a spot has opened up at ${bizName}. Would you like to book?`,
+            });
+            emailOpt = { address: customerEmail, subject: tmpl.subject, html: tmpl.html };
+          }
+
+          await sendOrEmail({
+            supabase,
+            sender: resolved.sender,
+            to: phone,
+            text: msg,
+            email: emailOpt,
+            businessName: bizName,
+            alwaysEmail: true,
+          });
+        }
 
         await supabase
           .from('waitlist_entries')

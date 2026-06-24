@@ -4,6 +4,8 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { authenticateRequest } from '@/lib/api-auth';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 
 const STATUS_MESSAGES: Record<string, string> = {
   processing: 'Your order *{ref}* from *{biz}* is now being prepared.',
@@ -92,7 +94,29 @@ export async function POST(request: NextRequest) {
             sent = tmplResult.success !== false;
           } catch { /* template failed, try text */ }
         }
-        if (!sent) await sender.sendText({ to: phone, text: message });
+        if (!sent) {
+          const customerEmail = await findCustomerEmail(supabase, phone, businessId);
+          let emailOpt: { address: string; subject: string; html: string } | null = null;
+          if (customerEmail) {
+            const tmpl = businessNotificationEmail({
+              businessName: bizName,
+              title: 'Order Status Update',
+              message,
+              details: { 'Order Reference': order.reference_code, Status: status },
+            });
+            emailOpt = { address: customerEmail, subject: tmpl.subject, html: tmpl.html };
+          }
+
+          await sendOrEmail({
+            supabase,
+            sender,
+            to: phone,
+            text: message,
+            email: emailOpt,
+            businessName: bizName,
+            alwaysEmail: true,
+          });
+        }
         notified = true;
       } catch (err) {
         logger.error('[ORDER-STATUS] WhatsApp notification error:', err);

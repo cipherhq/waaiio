@@ -3,6 +3,8 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(24);
@@ -62,18 +64,56 @@ async function sendWhatsAppMessage(
       }
     }
 
-    // Fallback to plain text (works within 24h conversation window)
+    // Fallback: use sendOrEmail for WhatsApp text + email dual delivery
     if (!sent) {
-      try {
-        const result = await resolved.sender.sendText({ to: cleanPhone, text: message });
-        sent = result.success !== false;
-        if (sent && result.messageId) messageId = result.messageId;
-      } catch (waErr) {
-        logger.warn(`[CONTRACT] sendText also failed for ${cleanPhone}:`, waErr);
+      const customerEmail = await findCustomerEmail(service, cleanPhone, businessId);
+      let emailOpt: { address: string; subject: string; html: string } | null = null;
+      if (customerEmail) {
+        const tmpl = businessNotificationEmail({
+          businessName: templateParams?.businessName || 'Business',
+          title: 'Document for Signature',
+          message: `You have a document to sign: ${templateParams?.title || 'Untitled'}`,
+          details: { Document: templateParams?.title || '', Expires: 'in 72 hours' },
+          ctaLabel: 'Sign Document',
+          ctaUrl: templateParams?.signUrl,
+        });
+        emailOpt = { address: customerEmail, subject: tmpl.subject, html: tmpl.html };
       }
+
+      const result = await sendOrEmail({
+        supabase: service,
+        sender: resolved.sender,
+        to: cleanPhone,
+        text: message,
+        email: emailOpt,
+        businessName: templateParams?.businessName,
+        alwaysEmail: true,
+      });
+      sent = result.whatsapp === 'sent';
     }
   } else {
-    logger.warn(`[CONTRACT] No WhatsApp channel found for business ${businessId} (country: ${countryCode}). Message NOT delivered to ${cleanPhone}.`);
+    // No WhatsApp channel — try email-only as last resort
+    const customerEmail = await findCustomerEmail(service, cleanPhone, businessId);
+    if (customerEmail && templateParams) {
+      const emailPayload = businessNotificationEmail({
+        businessName: templateParams.businessName,
+        title: 'Document for Signature',
+        message: `You have a document to sign: ${templateParams.title}`,
+        details: { Document: templateParams.title, Expires: 'in 72 hours' },
+        ctaLabel: 'Sign Document',
+        ctaUrl: templateParams.signUrl,
+      });
+      try {
+        const { sendEmail } = await import('@/lib/email/client');
+        await sendEmail({ to: customerEmail, subject: emailPayload.subject, html: emailPayload.html });
+        sent = true;
+        logger.info(`[CONTRACT] Email-only delivery to ${customerEmail} (no WhatsApp channel)`);
+      } catch (emailErr) {
+        logger.error(`[CONTRACT] Email fallback also failed for ${customerEmail}:`, emailErr);
+      }
+    } else {
+      logger.warn(`[CONTRACT] No WhatsApp channel found for business ${businessId} (country: ${countryCode}). Message NOT delivered to ${cleanPhone}.`);
+    }
   }
 
   return { messageId, delivered: sent };

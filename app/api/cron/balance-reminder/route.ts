@@ -6,6 +6,8 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { logger } from '@/lib/logger';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
@@ -92,10 +94,12 @@ export async function GET(request: NextRequest) {
         }
 
         const phone = r.guest_phone.startsWith('+') ? r.guest_phone.slice(1) : r.guest_phone;
+        const businessName = biz?.name || 'the property';
+        const customerName = r.guest_name || 'there';
         const lines = [
           `💰 *Balance Reminder*`,
           '',
-          `Hi ${r.guest_name || 'there'}! Your check-in at *${biz?.name || 'the property'}* is tomorrow.`,
+          `Hi ${customerName}! Your check-in at *${businessName}* is tomorrow.`,
           '',
           `Remaining balance: *${formatCurrency(balance, cc)}*`,
           `Ref: *${r.reference_code}*`,
@@ -105,8 +109,36 @@ export async function GET(request: NextRequest) {
         }
         lines.push('', `Contact us if you have questions!`);
 
-        await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
-        sent++;
+        // Look up customer email for dual delivery
+        const customerEmail = await findCustomerEmail(supabase, r.guest_phone, r.business_id);
+        const emailPayload = customerEmail
+          ? (() => {
+              const details: Record<string, string> = {
+                'Remaining Balance': formatCurrency(balance, cc),
+                'Reference': r.reference_code || 'N/A',
+                'Check-in': tomorrowStr,
+              };
+              const { subject, html } = businessNotificationEmail({
+                businessName,
+                title: 'Payment Reminder',
+                message: `Hi ${customerName}! Your check-in at ${businessName} is tomorrow. Please settle the remaining balance before your arrival.`,
+                details,
+                ...(payLink ? { ctaLabel: 'Pay Now', ctaUrl: payLink } : {}),
+              });
+              return { address: customerEmail, subject, html };
+            })()
+          : null;
+
+        const result = await sendOrEmail({
+          supabase,
+          sender: resolved.sender,
+          to: phone,
+          text: lines.join('\n'),
+          email: emailPayload,
+          businessName,
+          alwaysEmail: true,
+        });
+        if (result.whatsapp === 'sent' || result.email === 'sent') sent++;
       } catch (err) {
         logger.error('[BALANCE-REMINDER] Send error:', err);
       }
@@ -175,10 +207,12 @@ export async function GET(request: NextRequest) {
         }
 
         const phone = b.guest_phone.startsWith('+') ? b.guest_phone.slice(1) : b.guest_phone;
+        const businessName = biz?.name || 'the business';
+        const customerName = b.guest_name || 'there';
         const lines = [
           `💰 *Balance Reminder*`,
           '',
-          `Hi ${b.guest_name || 'there'}! Your appointment at *${biz?.name || 'the business'}* is tomorrow.`,
+          `Hi ${customerName}! Your appointment at *${businessName}* is tomorrow.`,
           '',
           `Remaining balance: *${formatCurrency(balance, cc)}*`,
           `Ref: *${b.reference_code}*`,
@@ -188,8 +222,36 @@ export async function GET(request: NextRequest) {
         }
         lines.push('', `Contact us if you have questions!`);
 
-        await resolved.sender.sendText({ to: phone, text: lines.join('\n') });
-        sent++;
+        // Look up customer email for dual delivery
+        const customerEmail = await findCustomerEmail(supabase, b.guest_phone, b.business_id);
+        const emailPayload = customerEmail
+          ? (() => {
+              const details: Record<string, string> = {
+                'Remaining Balance': formatCurrency(balance, cc),
+                'Reference': b.reference_code || 'N/A',
+                'Appointment Date': tomorrowStr,
+              };
+              const { subject, html } = businessNotificationEmail({
+                businessName,
+                title: 'Payment Reminder',
+                message: `Hi ${customerName}! Your appointment at ${businessName} is tomorrow. Please settle the remaining balance before your visit.`,
+                details,
+                ...(payLink ? { ctaLabel: 'Pay Now', ctaUrl: payLink } : {}),
+              });
+              return { address: customerEmail, subject, html };
+            })()
+          : null;
+
+        const result = await sendOrEmail({
+          supabase,
+          sender: resolved.sender,
+          to: phone,
+          text: lines.join('\n'),
+          email: emailPayload,
+          businessName,
+          alwaysEmail: true,
+        });
+        if (result.whatsapp === 'sent' || result.email === 'sent') sent++;
       } catch (err) {
         logger.error('[BALANCE-REMINDER] Send error:', err);
       }

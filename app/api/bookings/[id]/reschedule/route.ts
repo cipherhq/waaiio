@@ -2,7 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { authenticateRequest } from '@/lib/api-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { sendEmail } from '@/lib/email/client';
+import { sendOrEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
 import { notifyWaitlistOnSlotOpen } from '@/lib/waitlist/auto-notify';
 
@@ -138,7 +139,7 @@ export async function POST(
     });
     const displayTime = newTime.slice(0, 5);
 
-    // Send WhatsApp notification
+    // Send reschedule notification via WhatsApp (with email fallback/dual-delivery)
     if (booking.guest_phone) {
       try {
         const resolver = new ChannelResolver(service);
@@ -148,7 +149,7 @@ export async function POST(
             ? booking.guest_phone.slice(1)
             : booking.guest_phone;
 
-          const message = [
+          const messageText = [
             `*Booking Rescheduled*`,
             '',
             `Your booking at *${bizName}* has been rescheduled to *${displayDate}* at *${displayTime}*.`,
@@ -158,35 +159,31 @@ export async function POST(
             'If you have any questions, please reply to this message.',
           ].join('\n');
 
-          await resolved.sender.sendText({ to: phone, text: message });
+          await sendOrEmail({
+            supabase: service,
+            sender: resolved.sender,
+            to: phone,
+            text: messageText,
+            businessName: bizName,
+            alwaysEmail: true,
+            email: booking.guest_email ? {
+              address: booking.guest_email,
+              subject: `Booking Rescheduled - ${bizName}`,
+              html: businessNotificationEmail({
+                businessName: bizName,
+                title: 'Booking Rescheduled',
+                message: `Hi ${booking.guest_name || 'there'}, your booking has been rescheduled.`,
+                details: {
+                  'New Date': displayDate,
+                  'New Time': displayTime,
+                  'Reference': booking.reference_code,
+                },
+              }).html,
+            } : null,
+          });
         }
       } catch (err) {
-        logger.error('[RESCHEDULE] WhatsApp notification error:', err);
-      }
-    }
-
-    // Send email notification
-    if (booking.guest_email) {
-      try {
-        await sendEmail({
-          to: booking.guest_email,
-          subject: `Booking Rescheduled - ${bizName}`,
-          html: `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-              <h2 style="color: #6C2BD9;">Booking Rescheduled</h2>
-              <p>Hi ${booking.guest_name || 'there'},</p>
-              <p>Your booking at <strong>${bizName}</strong> has been rescheduled.</p>
-              <div style="background: #f9f5ff; border-radius: 8px; padding: 16px; margin: 16px 0;">
-                <p style="margin: 4px 0;"><strong>New Date:</strong> ${displayDate}</p>
-                <p style="margin: 4px 0;"><strong>New Time:</strong> ${displayTime}</p>
-                <p style="margin: 4px 0;"><strong>Reference:</strong> ${booking.reference_code}</p>
-              </div>
-              <p>If you have any questions, please contact us.</p>
-            </div>
-          `,
-        });
-      } catch (err) {
-        logger.error('[RESCHEDULE] Email notification error:', err);
+        logger.error('[RESCHEDULE] Notification error:', err);
       }
     }
 

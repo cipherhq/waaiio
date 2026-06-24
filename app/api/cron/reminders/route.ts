@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
-import { bookingReminderEmail } from '@/lib/email/templates';
+import { bookingReminderEmail, businessNotificationEmail } from '@/lib/email/templates';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,16 +18,6 @@ export async function GET(request: NextRequest) {
   const resolver = new ChannelResolver(supabase);
   let remindersSent = 0;
   let whatsappSent = 0;
-
-  // Helper: send WhatsApp message to a phone via the business's channel
-  async function sendWhatsApp(businessId: string, phone: string, text: string): Promise<boolean> {
-    try {
-      const resolved = await resolver.resolveByBusinessId(businessId);
-      if (!resolved) return false;
-      await resolved.sender.sendText({ to: phone.replace(/^\+/, ''), text });
-      return true;
-    } catch { return false; }
-  }
 
   // Get all businesses with their reminder config and tier
   const { data: businesses } = await supabase
@@ -89,19 +80,42 @@ export async function GET(request: NextRequest) {
       const serviceName = (booking as any).services?.name || 'your appointment';
       const customerName = booking.guest_name || 'there';
 
-      // Send WhatsApp reminder
+      // Send WhatsApp reminder + email (dual delivery)
       if (booking.guest_phone) {
         const timeLabel = booking.time || '';
         const hoursLabel = hoursAhead >= 24 ? 'tomorrow' : `in ${hoursAhead} hours`;
         const waMsg = `Hi ${customerName}! Just a reminder — your ${serviceName} at *${businessName}* is ${hoursLabel}${timeLabel ? ` at ${timeLabel}` : ''}.\n\nRef: *${booking.reference_code || ''}*\n\nSee you there! 🙏`;
-        const sent = await sendWhatsApp(booking.business_id, booking.guest_phone, waMsg);
-        if (sent) whatsappSent++;
-      }
 
-      // Send email reminder
-      if (email) {
-        const { subject, html, from } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
-        await sendEmail({ to: email, subject, html, from }).catch(() => {});
+        // Look up email if not already available
+        if (!email) {
+          email = await findCustomerEmail(supabase, booking.guest_phone, booking.business_id);
+        }
+
+        const resolved = await resolver.resolveByBusinessId(booking.business_id);
+        if (resolved) {
+          const emailPayload = email
+            ? (() => {
+                const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
+                return { address: email!, subject, html };
+              })()
+            : null;
+
+          const result = await sendOrEmail({
+            supabase,
+            sender: resolved.sender,
+            to: booking.guest_phone.replace(/^\+/, ''),
+            text: waMsg,
+            email: emailPayload,
+            businessName,
+            alwaysEmail: true,
+          });
+          if (result.whatsapp === 'sent') whatsappSent++;
+          if (result.email === 'sent') remindersSent++;
+        }
+      } else if (email) {
+        // No phone — email only
+        const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
+        await sendEmail({ to: email, subject, html }).catch(() => {});
         remindersSent++;
       }
     }
@@ -117,10 +131,42 @@ export async function GET(request: NextRequest) {
 
   for (const res of reservations || []) {
     let email = (res as any).guest_email;
-    if (email) {
-      const bizName = (res as any).businesses?.name || 'Your stay';
-      const { subject, html, from } = bookingReminderEmail(bizName, res.guest_name || 'Guest', 'your stay', res.check_in, '', res.reference_code || '');
-      await sendEmail({ to: email, subject, html, from }).catch(() => {});
+    const bizName = (res as any).businesses?.name || 'Your stay';
+    const guestName = res.guest_name || 'Guest';
+
+    // Look up email if not already available
+    if (!email && res.guest_phone) {
+      email = await findCustomerEmail(supabase, res.guest_phone, res.business_id);
+    }
+
+    if (res.guest_phone) {
+      const waMsg = `Hi ${guestName}! Just a reminder — your check-in at *${bizName}* is tomorrow.\n\nRef: *${res.reference_code || ''}*\n\nSee you there! 🙏`;
+
+      const resolved = await resolver.resolveByBusinessId(res.business_id);
+      if (resolved) {
+        const emailPayload = email
+          ? (() => {
+              const { subject, html } = bookingReminderEmail(bizName, guestName, 'your stay', res.check_in, '', res.reference_code || '');
+              return { address: email!, subject, html };
+            })()
+          : null;
+
+        const result = await sendOrEmail({
+          supabase,
+          sender: resolved.sender,
+          to: res.guest_phone.replace(/^\+/, ''),
+          text: waMsg,
+          email: emailPayload,
+          businessName: bizName,
+          alwaysEmail: true,
+        });
+        if (result.whatsapp === 'sent') whatsappSent++;
+        if (result.email === 'sent') remindersSent++;
+      }
+    } else if (email) {
+      // No phone — email only
+      const { subject, html } = bookingReminderEmail(bizName, guestName, 'your stay', res.check_in, '', res.reference_code || '');
+      await sendEmail({ to: email, subject, html }).catch(() => {});
       remindersSent++;
     }
   }
@@ -198,15 +244,44 @@ export async function GET(request: NextRequest) {
         party.venue ? `📍 ${party.venue}` : '',
       ].filter(Boolean).join('\n');
 
-      const sent = await sendWhatsApp(party.business_id, guest.guest_phone, message);
-      if (sent) {
-        whatsappSent++;
-        // Mark reminder sent
-        await supabase
-          .from('event_invites')
-          .update({ reminder_sent: true })
-          .eq('party_id', party.id)
-          .eq('guest_phone', guest.guest_phone);
+      const resolved = await resolver.resolveByBusinessId(party.business_id);
+      if (resolved) {
+        // Look up guest email for dual delivery
+        const guestEmail = await findCustomerEmail(supabase, guest.guest_phone, party.business_id);
+        const emailPayload = guestEmail
+          ? (() => {
+              const { subject, html } = businessNotificationEmail({
+                businessName: party.name,
+                title: 'Event Reminder',
+                message: party.followup_message,
+                details: {
+                  'Date': dateLabel,
+                  ...(party.venue ? { 'Venue': party.venue } : {}),
+                },
+              });
+              return { address: guestEmail, subject, html };
+            })()
+          : null;
+
+        const result = await sendOrEmail({
+          supabase,
+          sender: resolved.sender,
+          to: guest.guest_phone.replace(/^\+/, ''),
+          text: message,
+          email: emailPayload,
+          businessName: party.name,
+          alwaysEmail: true,
+        });
+
+        if (result.whatsapp === 'sent' || result.email === 'sent') {
+          whatsappSent++;
+          // Mark reminder sent
+          await supabase
+            .from('event_invites')
+            .update({ reminder_sent: true })
+            .eq('party_id', party.id)
+            .eq('guest_phone', guest.guest_phone);
+        }
       }
     }
   }

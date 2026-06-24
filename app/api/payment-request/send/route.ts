@@ -3,15 +3,12 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
-
-/** Escape user-supplied strings for safe HTML interpolation */
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -139,14 +136,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Send WhatsApp message
+    // Build email HTML for payment request
+    const paymentEmailTemplate = businessNotificationEmail({
+      businessName: biz.name,
+      title: 'Payment Request',
+      message: description || `You have a payment request from ${biz.name}.`,
+      details: {
+        'Amount': formatCurrency(amount, cc),
+        ...(description ? { 'Description': description } : {}),
+      },
+      ctaLabel: 'Pay Now',
+      ctaUrl: paymentUrl,
+    });
+    const emailSubject = `Payment Request from ${biz.name} — ${formatCurrency(amount, cc)}`;
+
+    // Send WhatsApp message (with email fallback for cold numbers)
     if (effectiveSendVia === 'whatsapp' || effectiveSendVia === 'both') {
       const resolver = new ChannelResolver(serviceClient);
       const resolved = await resolver.resolveByBusinessId(businessId);
 
       if (resolved) {
         const toPhone = phone.startsWith('+') ? phone.slice(1) : phone;
-        const message = [
+        const messageText = [
           `💳 *Payment Request*`,
           '',
           `from *${biz.name}*`,
@@ -157,31 +168,31 @@ export async function POST(request: NextRequest) {
           paymentUrl,
         ].filter(Boolean).join('\n');
 
-        try {
-          await resolved.sender.sendText({ to: toPhone, text: message });
-        } catch (sendErr) {
-          logger.error('[PAYMENT-REQUEST] WhatsApp send failed:', sendErr);
-        }
+        // Use provided email or look up from customer profile
+        const fallbackEmail = email || await findCustomerEmail(serviceClient, phone, businessId);
+
+        await sendOrEmail({
+          supabase: serviceClient,
+          sender: resolved.sender,
+          to: toPhone,
+          text: messageText,
+          businessName: biz.name,
+          alwaysEmail: true,
+          email: fallbackEmail ? {
+            address: fallbackEmail,
+            subject: emailSubject,
+            html: paymentEmailTemplate.html,
+          } : null,
+        });
       }
     }
 
-    // Send email
-    if ((effectiveSendVia === 'email' || effectiveSendVia === 'both') && email) {
+    // Send email-only (when sendVia is 'email' and no WhatsApp was attempted)
+    if (effectiveSendVia === 'email' && email) {
       await sendEmail({
         to: email,
-        subject: `Payment Request from ${biz.name} — ${formatCurrency(amount, cc)}`,
-        html: `
-          <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
-            <h2 style="color: #333;">Payment Request</h2>
-            <p>from <strong>${esc(biz.name)}</strong></p>
-            <div style="background: #f9f9f9; border-radius: 8px; padding: 20px; margin: 20px 0;">
-              <p style="font-size: 24px; font-weight: bold; color: #333; margin: 0;">${formatCurrency(amount, cc)}</p>
-              ${description ? `<p style="color: #666; margin-top: 8px;">${esc(description)}</p>` : ''}
-            </div>
-            <a href="${paymentUrl}" style="display: inline-block; background: #6C2BD9; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: bold;">Pay Now</a>
-            <p style="color: #999; font-size: 12px; margin-top: 24px;">Powered by Waaiio</p>
-          </div>
-        `,
+        subject: emailSubject,
+        html: paymentEmailTemplate.html,
       }).catch(err => logger.error('[PAYMENT-REQUEST] Email error:', err));
     }
 

@@ -778,3 +778,34 @@ export function dataBreachNotificationEmail(
     `),
   };
 }
+
+// ─── Generic notification (for proactive messages that need email fallback) ──
+
+/**
+ * Generic business notification email — used as email fallback/dual-delivery
+ * when sending proactive WhatsApp messages (reminders, confirmations, alerts).
+ */
+export function businessNotificationEmail(opts: {
+  businessName: string;
+  title: string;
+  message: string;
+  details?: Record<string, string>;
+  ctaLabel?: string;
+  ctaUrl?: string;
+  businessLogoUrl?: string;
+  whitelabel?: boolean;
+}) {
+  const detailRows = opts.details
+    ? Object.entries(opts.details).map(([k, v]) => kv(k, esc(v))).join('')
+    : '';
+
+  return {
+    subject: `${opts.title} — ${opts.businessName}`,
+    html: wrap(`
+      ${h(esc(opts.title))}
+      ${p(esc(opts.message))}
+      ${detailRows ? table(detailRows) : ''}
+      ${opts.ctaLabel && opts.ctaUrl ? btn(opts.ctaLabel, opts.ctaUrl) : ''}
+    `, { businessName: opts.businessName, logoUrl: opts.businessLogoUrl, whitelabel: opts.whitelabel }),
+  };
+}

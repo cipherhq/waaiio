@@ -6,6 +6,8 @@ import { rateLimitResponse } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
@@ -156,9 +158,28 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Fallback: send as formatted text
+        // Fallback: send via sendOrEmail (WhatsApp + email fallback/dual delivery)
         if (!sent) {
-          await sender.sendText({ to: phone, text: formattedText });
+          const customerEmail = await findCustomerEmail(service, phone, business_id);
+          let emailOpt: { address: string; subject: string; html: string } | null = null;
+          if (customerEmail) {
+            const tmpl = businessNotificationEmail({
+              businessName: business.name,
+              title: 'Broadcast Message',
+              message: formattedText,
+            });
+            emailOpt = { address: customerEmail, subject: tmpl.subject, html: tmpl.html };
+          }
+
+          await sendOrEmail({
+            supabase: service,
+            sender,
+            to: phone,
+            text: formattedText,
+            email: emailOpt,
+            businessName: business.name,
+            alwaysEmail: true,
+          });
         }
 
         await service.from('notifications').insert({

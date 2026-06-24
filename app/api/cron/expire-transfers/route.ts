@@ -3,6 +3,8 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
+import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { businessNotificationEmail } from '@/lib/email/templates';
 
 /**
  * POST /api/cron/expire-transfers
@@ -20,7 +22,7 @@ export async function POST(request: NextRequest) {
     // Fetch expired pending transfers
     const { data: expired, error: fetchErr } = await service
       .from('pending_transfers')
-      .select('id, booking_id, order_id, customer_phone, business_id, reference_code')
+      .select('id, booking_id, order_id, customer_phone, business_id, reference_code, businesses(name)')
       .eq('status', 'pending')
       .lt('expires_at', now);
 
@@ -66,15 +68,40 @@ export async function POST(request: NextRequest) {
           .in('status', ['pending']);
       }
 
-      // Notify customer via WhatsApp
+      // Notify customer via WhatsApp + email fallback
       if (transfer.customer_phone && transfer.business_id) {
         try {
           const resolver = new ChannelResolver(service);
           const resolved = await resolver.resolveByBusinessId(transfer.business_id);
           if (resolved) {
-            await resolved.sender.sendText({
+            const waText = `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and your booking has been cancelled.\n\nSend *Hi* to start a new booking.`;
+
+            // Look up customer email for fallback/dual delivery
+            const bizName = (transfer as any).businesses?.name || 'the business';
+            const customerEmail = await findCustomerEmail(service, transfer.customer_phone, transfer.business_id);
+            const emailPayload = customerEmail
+              ? (() => {
+                  const { subject, html } = businessNotificationEmail({
+                    businessName: bizName,
+                    title: 'Transfer Expired',
+                    message: `Your bank transfer (Ref: ${transfer.reference_code || 'N/A'}) has expired. The payment window has closed and your booking has been cancelled.`,
+                    details: {
+                      'Reference': transfer.reference_code || 'N/A',
+                      'Status': 'Expired',
+                    },
+                  });
+                  return { address: customerEmail, subject, html };
+                })()
+              : null;
+
+            await sendOrEmail({
+              supabase: service,
+              sender: resolved.sender,
               to: transfer.customer_phone,
-              text: `⏰ Your bank transfer (Ref: *${transfer.reference_code || 'N/A'}*) has expired. The payment window has closed and your booking has been cancelled.\n\nSend *Hi* to start a new booking.`,
+              text: waText,
+              email: emailPayload,
+              businessName: bizName,
+              alwaysEmail: true,
             });
           }
         } catch (notifyErr) {
