@@ -13,10 +13,11 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { reference, business_id: bodyBusinessId, plan: bodyPlan } = body;
+    const { reference, business_id: bodyBusinessId, plan: bodyPlan, billing_interval: bodyBillingInterval } = body;
 
     let businessId: string | undefined;
     let plan: string | undefined;
+    let billingInterval: 'month' | 'year' = 'month';
     let amountSmallest = 0; // amount in smallest currency unit (kobo/cents)
     let gateway: string = 'none';
     let currency: string = 'NGN';
@@ -62,6 +63,7 @@ export async function POST(request: NextRequest) {
       const metadata = session.metadata as Record<string, string> | undefined;
       businessId = metadata?.business_id || bodyBusinessId;
       plan = metadata?.plan || bodyPlan;
+      billingInterval = (metadata?.billing_interval || bodyBillingInterval || 'month') === 'year' ? 'year' : 'month';
       amountSmallest = session.amount_total || 0;
       gateway = 'stripe';
       currency = (session.currency || 'usd').toUpperCase();
@@ -119,6 +121,7 @@ export async function POST(request: NextRequest) {
       const metadata = data.data.metadata as Record<string, string> | undefined;
       businessId = metadata?.business_id || bodyBusinessId;
       plan = metadata?.plan || bodyPlan;
+      billingInterval = (metadata?.billing_interval || bodyBillingInterval || 'month') === 'year' ? 'year' : 'month';
       amountSmallest = data.data.amount || 0;
       gateway = 'paystack';
       currency = (data.data.currency || 'NGN').toUpperCase();
@@ -159,7 +162,7 @@ export async function POST(request: NextRequest) {
 
     const tier = PRICING_TIERS[plan as SubscriptionTier] || PRICING_TIERS.growth;
     const periodEnd = new Date();
-    periodEnd.setDate(periodEnd.getDate() + 30);
+    periodEnd.setDate(periodEnd.getDate() + (billingInterval === 'year' ? 365 : 30));
 
     // Determine action: upgrade vs renewal
     const previousTier = ownerCheck.subscription_tier || 'free';
@@ -183,10 +186,11 @@ export async function POST(request: NextRequest) {
       upsertData.paystack_customer_code = null;
       upsertData.stripe_subscription_id = stripeSubscriptionId || null;
       upsertData.stripe_customer_id = stripeCustomerId || null;
-      upsertData.billing_interval = 'month';
+      upsertData.billing_interval = billingInterval;
     } else if (gateway === 'paystack') {
       upsertData.stripe_subscription_id = null;
       upsertData.stripe_customer_id = null;
+      upsertData.billing_interval = billingInterval;
     } else {
       // Free tier: clear both
       upsertData.paystack_subscription_code = null;

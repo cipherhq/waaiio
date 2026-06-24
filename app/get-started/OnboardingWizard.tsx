@@ -218,6 +218,7 @@ function OnboardingWizard() {
   useCategoryConfig(); // trigger DB load for category templates
   const router = useRouter();
   const preselectedPlan = getQueryParam('plan') as SubscriptionTier | null;
+  const billingInterval = getQueryParam('billing') === 'annual' ? 'year' : 'month';
   const successBusinessId = getQueryParam('business_id');
   const successStep = getQueryParam('step');
 
@@ -523,6 +524,7 @@ function OnboardingWizard() {
           reference: reference || undefined,
           business_id: bid || successBusinessId || businessId,
           plan: selectedPlan,
+          billing_interval: billingInterval,
         }),
       });
       const data = await res.json();
@@ -838,7 +840,7 @@ function OnboardingWizard() {
       const verifyRes = await fetch('/api/onboarding/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: registerData.business_id, plan: 'free' }),
+        body: JSON.stringify({ business_id: registerData.business_id, plan: 'free', billing_interval: billingInterval }),
       });
       const verifyData = await verifyRes.json();
       if (verifyData.bot_code) {
@@ -895,7 +897,7 @@ function OnboardingWizard() {
         const verifyRes = await fetch('/api/onboarding/verify', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ business_id: data.business_id, plan: 'free' }),
+          body: JSON.stringify({ business_id: data.business_id, plan: 'free', billing_interval: billingInterval }),
         });
         const verifyData = await verifyRes.json();
         if (verifyData.bot_code) {
@@ -910,7 +912,7 @@ function OnboardingWizard() {
         const payRes = await fetch('/api/onboarding/subscribe', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ business_id: data.business_id, plan: selectedPlan }),
+          body: JSON.stringify({ business_id: data.business_id, plan: selectedPlan, billing_interval: billingInterval }),
         });
         const payData = await payRes.json();
         if (!payRes.ok) { setError(payData.message || 'Payment initialization failed'); return; }
@@ -933,7 +935,7 @@ function OnboardingWizard() {
       const res = await fetch('/api/onboarding/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: businessId, plan: selectedPlan }),
+        body: JSON.stringify({ business_id: businessId, plan: selectedPlan, billing_interval: billingInterval }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.message || 'Payment initialization failed'); return; }
@@ -955,7 +957,7 @@ function OnboardingWizard() {
       const res = await fetch('/api/onboarding/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: businessId, plan: 'free' }),
+        body: JSON.stringify({ business_id: businessId, plan: 'free', billing_interval: billingInterval }),
       });
       const data = await res.json();
       if (data.bot_code) {
@@ -1191,6 +1193,7 @@ function OnboardingWizard() {
                 category={category}
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
+                billingInterval={billingInterval}
                 setStep={setStep}
               />
             )}
@@ -1205,6 +1208,7 @@ function OnboardingWizard() {
                 selectedCountry={selectedCountry}
                 requiredPlan={requiredPlan}
                 localTiers={localTiers}
+                billingInterval={billingInterval}
                 setStep={setStep}
               />
             )}

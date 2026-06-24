@@ -13,6 +13,7 @@ export function StepPlan({
   selectedCountry,
   requiredPlan,
   localTiers,
+  billingInterval,
   setStep,
 }: StepPlanProps) {
   return (
@@ -70,7 +71,11 @@ export function StepPlan({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.growth?.name || 'Pro')}</h3>
-              <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+              {billingInterval === 'year' ? (
+                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Math.round((Number(localTiers?.growth?.price) || 0) * 12 * 0.8), selectedCountry))}<span className="text-sm font-normal text-gray-400">/year</span> <span className="text-xs font-medium text-green-600">Save 20%</span></p>
+              ) : (
+                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+              )}
             </div>
             <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'growth' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
               {selectedPlan === 'growth' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
@@ -81,7 +86,7 @@ export function StepPlan({
             <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Everything in Starter</li>
             <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Automated reminders — reduce no-shows by 60%</li>
             <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Loyalty points &amp; referral program — customers come back</li>
-            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {String(localTiers?.growth?.feePercentage ?? 1.5)}% fees</li>
+            <li className="flex items-center gap-2"><span className="text-green-500">&#10003;</span> Up to 500 bookings/month &middot; Lower {String(localTiers?.growth?.feePercentage ?? 1.5)}% fees{billingInterval === 'year' ? ' · Billed annually' : ''}</li>
             <li className="flex items-center gap-2"><span className="text-brand">&#9733;</span> <span className="font-medium text-gray-700">Connect your own WhatsApp number</span></li>
           </ul>
         </button>
@@ -94,7 +99,11 @@ export function StepPlan({
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.business?.name || 'Premium')}</h3>
-              <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+              {billingInterval === 'year' ? (
+                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Math.round((Number(localTiers?.business?.price) || 0) * 12 * 0.8), selectedCountry))}<span className="text-sm font-normal text-gray-400">/year</span> <span className="text-xs font-medium text-green-600">Save 20%</span></p>
+              ) : (
+                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
+              )}
             </div>
             <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 ${selectedPlan === 'business' ? 'border-brand bg-brand' : 'border-gray-300'}`}>
               {selectedPlan === 'business' && <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}

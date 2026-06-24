@@ -105,7 +105,7 @@ export default function PricingPage() {
                 description={TIER_FEATURES.growth.description}
                 highlight
                 features={tiers.growth.features}
-                cta={{ label: 'Get Started', href: '/get-started?plan=growth', gold: true }}
+                cta={{ label: 'Get Started', href: isAnnual ? '/get-started?plan=growth&billing=annual' : '/get-started?plan=growth', gold: true }}
                 country={country}
               />
               <TierCard
@@ -115,7 +115,7 @@ export default function PricingPage() {
                 priceNote={isAnnual ? '/mo billed annually' : '/month'}
                 description={TIER_FEATURES.business.description}
                 features={tiers.business.features}
-                cta={{ label: 'Get Started', href: '/get-started?plan=business' }}
+                cta={{ label: 'Get Started', href: isAnnual ? '/get-started?plan=business&billing=annual' : '/get-started?plan=business' }}
                 country={country}
               />
             </div>

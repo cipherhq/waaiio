@@ -17,6 +17,7 @@ export function StepFeatures({
   category,
   requiredPlan,
   localTiers,
+  billingInterval,
   setStep,
 }: StepFeaturesProps) {
   return (
@@ -307,9 +308,17 @@ export function StepFeatures({
               {requiredPlan === 'free' ? (
                 <span className="text-green-600 font-medium">Free plan — no monthly fee, {String(localTiers?.free?.feePercentage ?? 2)}% per transaction</span>
               ) : requiredPlan === 'growth' ? (
-                <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}/mo, {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
+                billingInterval === 'year' ? (
+                  <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Math.round((Number(localTiers?.growth?.price) || 0) * 12 * 0.8), selectedCountry))}/year (save 20%), {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
+                ) : (
+                  <span className="text-blue-600 font-medium">Requires Pro plan — {String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}/mo, {String(localTiers?.growth?.feePercentage ?? 1.5)}% per transaction</span>
+                )
               ) : (
-                <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}/mo, {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
+                billingInterval === 'year' ? (
+                  <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Math.round((Number(localTiers?.business?.price) || 0) * 12 * 0.8), selectedCountry))}/year (save 20%), {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
+                ) : (
+                  <span className="text-brand-600 font-medium">Requires Premium plan — {String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}/mo, {String(localTiers?.business?.feePercentage ?? 1)}% per transaction</span>
+                )
               )}
             </p>
           </div>
