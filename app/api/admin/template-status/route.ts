@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import { verifyCronAuth } from '@/lib/cron-auth';
 
 export async function GET(request: NextRequest) {
@@ -6,7 +7,7 @@ export async function GET(request: NextRequest) {
   if (authError) {
     const token = request.nextUrl.searchParams.get('token');
     const valid = process.env.INTERNAL_API_TOKEN;
-    if (!token || !valid || token !== valid) return authError;
+    if (!token || !valid || token.length !== valid.length || !timingSafeEqual(Buffer.from(token), Buffer.from(valid))) return authError;
   }
 
   const wabaId = process.env.META_CLOUD_WABA_ID;

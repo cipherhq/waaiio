@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import { provisionTemplates } from '@/lib/channels/provision-templates';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { createClient } from '@/lib/supabase/server';
@@ -12,7 +13,9 @@ export async function GET(request: NextRequest) {
   // Auth: cron secret OR admin session OR internal token query param
   const internalToken = request.nextUrl.searchParams.get('token');
   const validInternalToken = process.env.INTERNAL_API_TOKEN;
-  const hasInternalAuth = internalToken && validInternalToken && internalToken === validInternalToken;
+  const hasInternalAuth = internalToken && validInternalToken
+    && internalToken.length === validInternalToken.length
+    && timingSafeEqual(Buffer.from(internalToken), Buffer.from(validInternalToken));
 
   if (!hasInternalAuth) {
     const cronAuth = verifyCronAuth(request);

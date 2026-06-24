@@ -22,9 +22,9 @@ export default function PricingPage() {
   const avgTransaction: Record<CountryCode, number> = { NG: 5000, US: 40, GB: 35, CA: 45, GH: 50 };
   const avgTx = avgTransaction[country] || 40;
   const feeEstimates = {
-    free: Math.round(billingVolume * (2.5 / 100) * avgTx + billingVolume * tiers.free.feeFlat),
-    growth: Math.round(billingVolume * (1.5 / 100) * avgTx + billingVolume * tiers.growth.feeFlat),
-    business: Math.round(billingVolume * (1.0 / 100) * avgTx + billingVolume * tiers.business.feeFlat),
+    free: Math.round(billingVolume * (TIER_FEATURES.free.feePercentage / 100) * avgTx + billingVolume * tiers.free.feeFlat),
+    growth: Math.round(billingVolume * (TIER_FEATURES.growth.feePercentage / 100) * avgTx + billingVolume * tiers.growth.feeFlat),
+    business: Math.round(billingVolume * (TIER_FEATURES.business.feePercentage / 100) * avgTx + billingVolume * tiers.business.feeFlat),
   };
 
   return (

@@ -86,7 +86,7 @@
     },
     {
       "path": "/api/cron/expire-transfers",
-      "schedule": "*/15 * * * *"
+      "schedule": "3,18,33,48 * * * *"
     },
     {
       "path": "/api/cron/platform-fee-invoices",

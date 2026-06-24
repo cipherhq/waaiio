@@ -221,7 +221,7 @@ export const COUNTRIES: Record<CountryCode, CountryConfig> = {
 // Total cost to business = waaiio fee + gateway fee
 // Flat fees below are LEGACY and set to 0 in PRICING_TIERS — kept for COUNTRY_PRICING only
 const COUNTRY_PRICING: Record<string, Record<SubscriptionTier, { price: number; feeFlat: number }>> = {
-  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 19_999, feeFlat: 50 }, business: { price: 59_999, feeFlat: 75 } },
+  NG: { free: { price: 0, feeFlat: 150 }, growth: { price: 20_000, feeFlat: 50 }, business: { price: 60_000, feeFlat: 75 } },
   US: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 20, feeFlat: 0.25 }, business: { price: 45, feeFlat: 0.35 } },
   GB: { free: { price: 0, feeFlat: 0.35 }, growth: { price: 16, feeFlat: 0.20 }, business: { price: 35, feeFlat: 0.25 } },
   CA: { free: { price: 0, feeFlat: 0.50 }, growth: { price: 25, feeFlat: 0.25 }, business: { price: 55, feeFlat: 0.35 } },

@@ -215,6 +215,15 @@ export class FlowExecutor {
     const CANCEL_WORDS = ['stop', 'quit', 'exit', 'end', 'annuler', 'arreter', 'dake', 'dawó', 'gyae'];
     const RESTART_WORDS = ['start over', 'restart', 'reset', 'recommencer', 'tun bẹrẹ', 'start again'];
     if (CANCEL_WORDS.includes(lowerInput)) {
+      // Clean up any pending bank transfers before killing session
+      const transferRef = session.session_data?.bank_transfer_reference;
+      if (transferRef) {
+        await this.supabase
+          .from('pending_transfers')
+          .update({ status: 'cancelled' })
+          .eq('reference_code', transferRef as string)
+          .eq('status', 'pending');
+      }
       const cancelMsg = await this.maybeTranslate('Cancelled. Send *Hi* to start over.', session);
       session.conversation_log.push({ role: 'bot', content: cancelMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);
@@ -223,6 +232,15 @@ export class FlowExecutor {
       return;
     }
     if (RESTART_WORDS.includes(lowerInput)) {
+      // Clean up any pending bank transfers before killing session
+      const transferRef = session.session_data?.bank_transfer_reference;
+      if (transferRef) {
+        await this.supabase
+          .from('pending_transfers')
+          .update({ status: 'cancelled' })
+          .eq('reference_code', transferRef as string)
+          .eq('status', 'pending');
+      }
       const restartMsg = await this.maybeTranslate('No problem! Send *Hi* to start over.', session);
       session.conversation_log.push({ role: 'bot', content: restartMsg, timestamp: new Date().toISOString() });
       await this.persistConversationLog(session.id, session.conversation_log);

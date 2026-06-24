@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -94,7 +95,7 @@ export async function handleOnboardingComplete(
       const { data: collision } = await supabase
         .from('businesses')
         .select('id')
-        .or(`slug.eq.${trySlug},bot_code.eq.${tryCode}`)
+        .or(`slug.eq.${sanitizeFilterValue(trySlug)},bot_code.eq.${sanitizeFilterValue(tryCode)}`)
         .limit(1)
         .maybeSingle();
 

@@ -766,7 +766,7 @@ export const reservationFlow: FlowDefinition = {
 
               await ctx.supabase.from('pending_transfers').insert({
                 business_id: ctx.business!.id,
-                booking_id: reservation.id,
+                reservation_id: reservation.id,
                 customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
                 customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
                 expected_amount: Math.round(payableAmount * 100),
@@ -984,6 +984,7 @@ export const reservationFlow: FlowDefinition = {
           body: "Please complete your payment using the link sent above.\n\nYour confirmation will arrive automatically after payment.",
           buttons: [
             { id: 'i_paid', title: "I've Paid" },
+            { id: 'retry_payment', title: 'Get New Link' },
             { id: 'go_back', title: 'Cancel' },
           ],
         }];
@@ -991,6 +992,10 @@ export const reservationFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const text = input.toLowerCase();
         const d = ctx.session.session_data;
+
+        if (text === 'retry_payment') {
+          return { valid: true, data: { _retry_payment: true } };
+        }
 
         if ((text === 'cancel' || text === 'go_back')) {
           const reservationId = d.reservation_id as string;
@@ -1241,7 +1246,12 @@ export const reservationFlow: FlowDefinition = {
 
         return { valid: false, errorMessage: "Tap *I've Paid* after completing payment, or *Cancel* to cancel." };
       },
-      async next() {
+      async next(ctx: FlowContext) {
+        const d = ctx.session.session_data;
+        if (d._retry_payment) {
+          delete d._retry_payment;
+          return 'create_reservation'; // regenerate payment link
+        }
         return null;
       },
     },

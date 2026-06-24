@@ -78,6 +78,28 @@ export async function PATCH(
         return NextResponse.json({ error: 'Failed to reject transfer' }, { status: 500 });
       }
 
+      // Notify customer via WhatsApp that their transfer was rejected
+      if (transfer.customer_phone) {
+        try {
+          const resolver = new ChannelResolver(service);
+          const resolved = await resolver.resolveByBusinessId(business_id);
+          if (resolved) {
+            const { data: biz } = await service
+              .from('businesses')
+              .select('name')
+              .eq('id', business_id)
+              .single();
+            const rejectionReason = reason || 'No reason provided';
+            await resolved.sender.sendText({
+              to: transfer.customer_phone,
+              text: `❌ Your bank transfer (Ref: *${transfer.reference_code}*) was not verified by *${biz?.name || 'the business'}*.\nReason: ${rejectionReason}\n\nPlease try again or use the online payment link. Send *Hi* to start over.`,
+            });
+          }
+        } catch (notifyErr) {
+          logger.error('[PENDING_TRANSFERS] Rejection notification error:', notifyErr);
+        }
+      }
+
       return NextResponse.json({ success: true, status: 'rejected' });
     }
 

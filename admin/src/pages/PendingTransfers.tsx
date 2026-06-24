@@ -156,13 +156,88 @@ export default function PendingTransfers() {
 
       // Update related booking/order/invoice status
       if (selected.booking_id) {
-        await adminDb.from('bookings').update({ status: 'confirmed' }).eq('id', selected.booking_id);
+        await adminDb.from('bookings').update({
+          deposit_status: 'paid',
+          status: 'confirmed',
+          confirmed_at: new Date().toISOString(),
+        }).eq('id', selected.booking_id);
       }
       if (selected.order_id) {
-        await adminDb.from('orders').update({ status: 'confirmed' }).eq('id', selected.order_id);
+        await adminDb.from('orders').update({
+          status: 'confirmed',
+          paid_at: new Date().toISOString(),
+        }).eq('id', selected.order_id);
       }
       if (selected.invoice_id) {
-        await adminDb.from('invoices').update({ status: 'paid' }).eq('id', selected.invoice_id);
+        await adminDb.from('invoices').update({
+          status: 'paid',
+          paid_at: new Date().toISOString(),
+        }).eq('id', selected.invoice_id);
+      }
+
+      // Insert payment record (matches dashboard pending-transfers API behavior)
+      await adminDb.from('payments').insert({
+        business_id: selected.business_id,
+        amount: selected.expected_amount,
+        currency: selected.currency || 'NGN',
+        status: 'success',
+        payment_method: 'bank_transfer',
+        gateway: 'direct',
+        booking_id: selected.booking_id || null,
+        order_id: selected.order_id || null,
+        invoice_id: selected.invoice_id || null,
+        customer_phone: selected.customer_phone || null,
+        customer_name: selected.customer_name || null,
+        reference: selected.reference_code || null,
+        metadata: {
+          pending_transfer_id: selected.id,
+          confirmed_by: adminSession.userId,
+          confirmed_by_admin: true,
+          proof_type: selected.proof_type,
+        },
+      });
+
+      // Insert platform fee record for analytics (zero fee for direct transfers)
+      const { data: bizTier } = await adminDb
+        .from('businesses')
+        .select('subscription_tier')
+        .eq('id', selected.business_id)
+        .single();
+
+      await adminDb.from('platform_fees').insert({
+        business_id: selected.business_id,
+        booking_id: selected.booking_id || null,
+        invoice_id: selected.invoice_id || null,
+        order_id: selected.order_id || null,
+        transaction_amount: selected.expected_amount,
+        fee_percentage: 0,
+        fee_flat: 0,
+        fee_total: 0,
+        gateway_fee: 0,
+        tier: bizTier?.subscription_tier || 'free',
+        is_direct_transfer: true,
+      });
+
+      // Best-effort WhatsApp notification to customer
+      if (selected.customer_phone) {
+        try {
+          const apiUrl = import.meta.env.VITE_API_URL || '';
+          if (apiUrl) {
+            await fetch(`${apiUrl}/api/admin/notify-transfer-confirmed`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                business_id: selected.business_id,
+                customer_phone: selected.customer_phone,
+                amount: selected.expected_amount,
+                currency: selected.currency || 'NGN',
+                reference_code: selected.reference_code,
+              }),
+            }).catch(() => { /* best-effort — ignore failures */ });
+          }
+        } catch {
+          // Best-effort — notification failure should not block confirmation
+        }
       }
 
       await logAudit({

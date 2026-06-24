@@ -236,6 +236,11 @@ export async function POST(request: NextRequest) {
 
     // ── Platform subscription recurring billing events ──
 
+    // Flag to prevent double-processing of invoice.paid events
+    // The first invoice.paid block handles both platform AND customer recurring subscriptions.
+    // The second block (below) is a legacy duplicate for customer recurring — skip if already handled.
+    let invoicePaidHandled = false;
+
     // Check if a Stripe subscription ID belongs to a platform subscription
     async function findPlatformSubscription(stripeSubId: string) {
       const { data } = await supabase
@@ -314,6 +319,7 @@ export async function POST(request: NextRequest) {
           }
 
           logger.info(`[STRIPE WEBHOOK] Platform subscription renewed: ${subscriptionId} for business ${platformSub.business_id}`);
+          invoicePaidHandled = true;
         } else {
           // Not a platform subscription — check if it's a customer recurring subscription
           const { data: customerSub } = await supabase
@@ -453,6 +459,7 @@ export async function POST(request: NextRequest) {
             }
 
             logger.info(`[STRIPE WEBHOOK] Customer recurring charge processed: ${subscriptionId}, amount: ${chargeAmount}`);
+            invoicePaidHandled = true;
           }
         }
       }
@@ -590,8 +597,8 @@ export async function POST(request: NextRequest) {
 
     // ── Recurring customer subscription events ──
 
-    // Stripe recurring invoice paid
-    if (event === 'invoice.paid') {
+    // Stripe recurring invoice paid (skip if already handled by the platform subscription block above)
+    if (event === 'invoice.paid' && !invoicePaidHandled) {
       const subscriptionId = data.subscription as string;
       const amountPaid = (data.amount_paid as number) / 100; // cents to dollars
       const currency = (data.currency as string)?.toUpperCase() || 'USD';
