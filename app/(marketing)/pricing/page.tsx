@@ -7,6 +7,7 @@ import AnimatedSection from '@/components/marketing/AnimatedSection';
 import { formatCurrency, getPricingTiers, TIER_FEATURES, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { loadCountries, getCountryList, type CountryRow } from '@/lib/countries';
+import { getAnnualDiscountSync } from '@/lib/platformSettings';
 
 export default function PricingPage() {
   const [country, setCountry] = useState<CountryCode>('NG');
@@ -14,6 +15,7 @@ export default function PricingPage() {
   const [billingVolume, setBillingVolume] = useState(200);
   const [countryList, setCountryList] = useState<CountryRow[]>(getCountryList());
   const tiers = getPricingTiers(country);
+  const { multiplier: annualMultiplier, percentage: annualPct } = getAnnualDiscountSync();
 
   useEffect(() => {
     loadCountries().then(() => setCountryList(getCountryList()));
@@ -77,7 +79,7 @@ export default function PricingPage() {
                 <div className="absolute top-0.5 h-6 w-6 rounded-full bg-white shadow-md transition-all duration-200" style={{ left: isAnnual ? '30px' : '2px' }} />
               </button>
               <span className={`text-sm font-medium ${isAnnual ? 'text-gray-900' : 'text-gray-400'}`}>
-                Annual <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">Save 20%</span>
+                Annual <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-bold text-green-700">Save {annualPct}%</span>
               </span>
             </div>
 
@@ -100,7 +102,7 @@ export default function PricingPage() {
               <TierCard
                 tier="growth"
                 name={TIER_FEATURES.growth.marketingName}
-                price={formatCurrency(isAnnual ? Math.round(tiers.growth.price * 0.8) : tiers.growth.price, country)}
+                price={formatCurrency(isAnnual ? Math.round(tiers.growth.price * annualMultiplier) : tiers.growth.price, country)}
                 priceNote={isAnnual ? '/mo billed annually' : '/month'}
                 description={TIER_FEATURES.growth.description}
                 highlight
@@ -111,7 +113,7 @@ export default function PricingPage() {
               <TierCard
                 tier="business"
                 name={TIER_FEATURES.business.marketingName}
-                price={formatCurrency(isAnnual ? Math.round(tiers.business.price * 0.8) : tiers.business.price, country)}
+                price={formatCurrency(isAnnual ? Math.round(tiers.business.price * annualMultiplier) : tiers.business.price, country)}
                 priceNote={isAnnual ? '/mo billed annually' : '/month'}
                 description={TIER_FEATURES.business.description}
                 features={tiers.business.features}

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { PRICING_TIERS, getPricingTiers, formatCurrency, type SubscriptionTier, type CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
+import { getAnnualDiscount } from '@/lib/platformSettings';
 
 const PLAN_PAGE_SLUGS: Record<string, Record<string, string | undefined>> = {
   month: {
@@ -21,13 +22,12 @@ const STRIPE_ANNUAL_PRICE_IDS: Record<string, string | undefined> = {
 
 type BillingInterval = 'month' | 'year';
 const VALID_INTERVALS: BillingInterval[] = ['month', 'year'];
-const ANNUAL_DISCOUNT = 0.8; // 20% off
-
 const VALID_PLANS: SubscriptionTier[] = ['growth', 'business'];
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
+    const { multiplier: ANNUAL_DISCOUNT } = await getAnnualDiscount({ useServiceClient: true });
     const { data: { user } } = await supabase.auth.getUser();
 
     if (!user) {

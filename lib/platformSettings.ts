@@ -35,6 +35,8 @@ export interface PlatformSettings {
   conversation_limits: Record<SubscriptionTier, number>;
   trial_days: number;
   booking_defaults: BookingDefaultsConfig;
+  /** Annual billing discount percentage (e.g., 20 = 20% off). Admin-configurable. */
+  annual_discount_percentage: number;
 }
 
 // ── Sentinel Utility ──
@@ -77,6 +79,7 @@ function buildFallback(): PlatformSettings {
     conversation_limits: { ...CONVERSATION_LIMITS },
     trial_days: TRIAL_DAYS,
     booking_defaults: { ...BOOKING_DEFAULTS, reminderHours: [...BOOKING_DEFAULTS.reminderHours] },
+    annual_discount_percentage: 20,
   };
 }
 
@@ -107,7 +110,7 @@ export async function loadPlatformSettings(
     const { data, error } = await supabase
       .from('platform_settings')
       .select('key, value')
-      .in('key', ['pricing_tiers', 'broadcast_limits', 'conversation_limits', 'trial_days', 'booking_defaults']);
+      .in('key', ['pricing_tiers', 'broadcast_limits', 'conversation_limits', 'trial_days', 'booking_defaults', 'annual_discount_percentage']);
 
     if (error) throw error;
 
@@ -130,6 +133,9 @@ export async function loadPlatformSettings(
       booking_defaults: map.has('booking_defaults')
         ? (map.get('booking_defaults') as BookingDefaultsConfig)
         : fallback.booking_defaults,
+      annual_discount_percentage: map.has('annual_discount_percentage')
+        ? (map.get('annual_discount_percentage') as number)
+        : fallback.annual_discount_percentage,
     };
     cacheTime = Date.now();
     return cache;
@@ -142,6 +148,23 @@ export async function loadPlatformSettings(
 /** Sync: return cached settings or hardcoded fallback (never fetches) */
 export function getPlatformSettingsSync(): PlatformSettings {
   return cache ?? buildFallback();
+}
+
+/**
+ * Get annual discount multiplier (e.g., 0.8 for 20% off).
+ * Reads from platform_settings (admin-configurable).
+ * Use sync version for client-side, async for server-side.
+ */
+export function getAnnualDiscountSync(): { multiplier: number; percentage: number } {
+  const settings = getPlatformSettingsSync();
+  const pct = settings.annual_discount_percentage;
+  return { multiplier: (100 - pct) / 100, percentage: pct };
+}
+
+export async function getAnnualDiscount(opts?: { useServiceClient?: boolean }): Promise<{ multiplier: number; percentage: number }> {
+  const settings = await loadPlatformSettings(opts);
+  const pct = settings.annual_discount_percentage;
+  return { multiplier: (100 - pct) / 100, percentage: pct };
 }
 
 /** Clear cache — call after admin edits to platform_settings */

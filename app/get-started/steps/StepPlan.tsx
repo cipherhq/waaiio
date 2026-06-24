@@ -3,6 +3,7 @@
 import React from 'react';
 import { formatCurrency } from '@/lib/constants';
 import { CAPABILITY_TIER_REQUIREMENTS } from '@/lib/capabilities/types';
+import { getAnnualDiscountSync } from '@/lib/platformSettings';
 import type { StepPlanProps } from './types';
 
 export function StepPlan({
@@ -72,7 +73,7 @@ export function StepPlan({
             <div>
               <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.growth?.name || 'Pro')}</h3>
               {billingInterval === 'year' ? (
-                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Math.round((Number(localTiers?.growth?.price) || 0) * 12 * 0.8), selectedCountry))}<span className="text-sm font-normal text-gray-400">/year</span> <span className="text-xs font-medium text-green-600">Save 20%</span></p>
+                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Math.round((Number(localTiers?.growth?.price) || 0) * 12 * getAnnualDiscountSync().multiplier), selectedCountry))}<span className="text-sm font-normal text-gray-400">/year</span> <span className="text-xs font-medium text-green-600">Save {getAnnualDiscountSync().percentage}%</span></p>
               ) : (
                 <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.growth?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
               )}
@@ -100,7 +101,7 @@ export function StepPlan({
             <div>
               <h3 className="text-lg font-bold text-gray-900">{String(localTiers?.business?.name || 'Premium')}</h3>
               {billingInterval === 'year' ? (
-                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Math.round((Number(localTiers?.business?.price) || 0) * 12 * 0.8), selectedCountry))}<span className="text-sm font-normal text-gray-400">/year</span> <span className="text-xs font-medium text-green-600">Save 20%</span></p>
+                <p className="text-2xl font-bold text-brand">{String(formatCurrency(Math.round((Number(localTiers?.business?.price) || 0) * 12 * getAnnualDiscountSync().multiplier), selectedCountry))}<span className="text-sm font-normal text-gray-400">/year</span> <span className="text-xs font-medium text-green-600">Save {getAnnualDiscountSync().percentage}%</span></p>
               ) : (
                 <p className="text-2xl font-bold text-brand">{String(formatCurrency(Number(localTiers?.business?.price) || 0, selectedCountry))}<span className="text-sm font-normal text-gray-400">/mo</span></p>
               )}
