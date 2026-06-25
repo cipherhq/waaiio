@@ -153,7 +153,12 @@ const navSections: { label: string; items: NavItem[] }[] = [
   },
 ];
 
-export function AdminSidebar() {
+interface AdminSidebarProps {
+  mobileOpen?: boolean;
+  onClose?: () => void;
+}
+
+export function AdminSidebar({ mobileOpen, onClose }: AdminSidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const session = useAdminSession();
@@ -168,7 +173,20 @@ export function AdminSidebar() {
   }
 
   return (
-    <nav className="w-64 h-screen bg-white border-r border-gray-200 flex flex-col shrink-0">
+    <>
+      {/* Backdrop overlay for mobile */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/30 z-30 lg:hidden"
+          onClick={onClose}
+        />
+      )}
+      <nav className={`
+        w-64 h-screen bg-white border-r border-gray-200 flex flex-col shrink-0
+        fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-in-out
+        lg:relative lg:translate-x-0
+        ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
+      `}>
       {/* Logo */}
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center gap-3">
@@ -196,7 +214,7 @@ export function AdminSidebar() {
                 return (
                   <button
                     key={item.path}
-                    onClick={() => navigate(item.path)}
+                    onClick={() => { navigate(item.path); onClose?.(); }}
                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition cursor-pointer ${
                       active
                         ? 'bg-brand-50 border border-brand-100'
@@ -239,5 +257,6 @@ export function AdminSidebar() {
         </button>
       </div>
     </nav>
+    </>
   );
 }

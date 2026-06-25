@@ -367,7 +367,7 @@ export default function PendingTransfers() {
       </div>
 
       {/* Summary cards */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-5">
+      <div className="mt-6 grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         <div className="rounded-xl border border-yellow-100 bg-yellow-50 p-4">
           <p className="text-xs font-medium text-gray-500">Pending ({pendingItems.length})</p>
           <p className="mt-1 text-xl font-bold text-gray-900">{pendingDisplay}</p>
@@ -414,7 +414,7 @@ export default function PendingTransfers() {
           value={searchQuery}
           onChange={e => { setSearchQuery(e.target.value); setPage(1); }}
           placeholder="Search business, customer, or reference..."
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none w-64"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none w-full sm:w-64"
         />
 
         <input

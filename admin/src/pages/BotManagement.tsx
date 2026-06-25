@@ -243,7 +243,7 @@ export default function BotManagement() {
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(1); }}
           placeholder="Search phone, business, or message..."
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none w-64"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 focus:border-brand focus:outline-none w-full sm:w-64"
         />
         <select
           value={statusFilter}

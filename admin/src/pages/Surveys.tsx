@@ -121,7 +121,7 @@ export default function Surveys() {
           value={search}
           onChange={e => { setSearch(e.target.value); setPage(1); }}
           placeholder="Search by title or business..."
-          className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-64"
+          className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-full sm:w-64"
         />
         <select
           value={statusFilter}
@@ -136,7 +136,7 @@ export default function Surveys() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">

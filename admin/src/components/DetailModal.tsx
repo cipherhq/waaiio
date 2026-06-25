@@ -13,7 +13,7 @@ export function DetailModal({ open, onClose, title, children, wide }: DetailModa
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
-      <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-6 shadow-xl`}>
+      <div className={`w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto rounded-2xl bg-white p-4 sm:p-6 shadow-xl`}>
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -36,9 +36,9 @@ export function DetailModal({ open, onClose, title, children, wide }: DetailModa
 
 export function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex justify-between">
-      <span className="text-gray-500">{label}</span>
-      <span className="text-gray-900 font-medium">{value ?? '—'}</span>
+    <div className="flex justify-between gap-2">
+      <span className="text-gray-500 shrink-0">{label}</span>
+      <span className="text-gray-900 font-medium break-all text-right">{value ?? '—'}</span>
     </div>
   );
 }
