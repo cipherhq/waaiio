@@ -8,7 +8,7 @@ import { useDashboard, useCapabilities, useIsReseller } from './DashboardProvide
 import { createClient } from '@/lib/supabase/client';
 import { APP_NAME } from '@/lib/constants';
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
-import type { CapabilityId } from '@/lib/capabilities/types';
+import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { ThemeToggle } from './ThemeToggle';
 import { useChatUnreadCount } from '@/hooks/useChatUnreadCount';
 import { useAlertUnreadCount } from '@/hooks/useAlertUnreadCount';
@@ -255,7 +255,7 @@ const navItems: NavItem[] = [
     href: '/dashboard/payments/pending',
     label: 'Pending Transfers',
     icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4',
-    capabilities: ['payment'],
+    capabilities: ['payment', 'ordering', 'ticketing', 'giving'],
     section: 'money',
   },
   {
@@ -312,6 +312,7 @@ const navItems: NavItem[] = [
     href: '/dashboard/parties',
     label: 'Parties',
     icon: 'M21 15.546c-.523 0-1.046.151-1.5.454a2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0 2.704 2.704 0 00-3 0 2.704 2.704 0 01-3 0A1.75 1.75 0 003 15.546V12a9 9 0 0118 0v3.546zM12 3v2m6.364 1.636l-1.414 1.414M21 12h-2M5 12H3m3.05-4.95L4.636 5.636',
+    capabilities: ['ticketing'],
     section: 'engage',
   },
   {
@@ -556,6 +557,30 @@ export function Sidebar() {
     essentialItems.push(item);
   }
 
+  // Split moreItems into "available on current tier" vs "requires upgrade"
+  const tierRank: Record<string, number> = { free: 0, growth: 1, business: 2 };
+  const currentTierRank = tierRank[business.subscription_tier || 'free'] ?? 0;
+
+  const availableToAdd: NavItem[] = [];
+  const requiresUpgrade: NavItem[] = [];
+
+  for (const item of moreItems) {
+    if (!item.capabilities || item.capabilities.length === 0) {
+      availableToAdd.push(item);
+      continue;
+    }
+    // Check if ANY of the item's capabilities are available on the current tier
+    const canActivate = item.capabilities.some(cap => {
+      const requiredTier = CAPABILITY_TIER_REQUIREMENTS[cap];
+      return requiredTier ? tierRank[requiredTier] <= currentTierRank : true;
+    });
+    if (canActivate) {
+      availableToAdd.push(item);
+    } else {
+      requiresUpgrade.push(item);
+    }
+  }
+
   // Group essential items by section — for events category, promote Parties to 'main'
   const sections = new Map<string, typeof navItems>();
   for (const item of essentialItems) {
@@ -775,14 +800,14 @@ export function Sidebar() {
           </div>
         ))}
 
-        {/* More Features — collapsed by default */}
-        {moreItems.length > 0 && (
+        {/* More Features — split by tier availability */}
+        {(availableToAdd.length > 0 || requiresUpgrade.length > 0) && (
           <div className="mt-4">
             <button
               onClick={() => setShowMore(!showMore)}
               className="flex w-full items-center justify-between px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400"
             >
-              <span>More Features</span>
+              <span>Add Features</span>
               <svg
                 className={`h-4 w-4 transition ${showMore ? 'rotate-180' : ''}`}
                 fill="none"
@@ -794,7 +819,10 @@ export function Sidebar() {
             </button>
             {showMore && (
               <div className="space-y-0.5">
-                {moreItems.map((item) => (
+                {availableToAdd.length > 0 && (
+                  <p className="px-3 py-1 text-[10px] font-medium uppercase tracking-wider text-green-500">Available to Add</p>
+                )}
+                {availableToAdd.map((item) => (
                   <Link
                     key={item.href}
                     href={item.href}
@@ -822,6 +850,26 @@ export function Sidebar() {
                     <span className="flex-1">{getLabel(item)}</span>
                   </Link>
                 ))}
+                {requiresUpgrade.length > 0 && (
+                  <>
+                    <p className="px-3 pt-3 pb-1 text-[10px] font-medium uppercase tracking-wider text-amber-500">Upgrade to Unlock</p>
+                    {requiresUpgrade.map((item) => (
+                      <Link
+                        key={item.href}
+                        href="/dashboard/billing"
+                        onClick={() => setMobileOpen(false)}
+                        title={`Upgrade to unlock ${item.label}`}
+                        className="flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-medium text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+                      >
+                        <svg className="h-5 w-5 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d={item.icon} />
+                        </svg>
+                        <span className="flex-1">{getLabel(item)}</span>
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">PRO</span>
+                      </Link>
+                    ))}
+                  </>
+                )}
               </div>
             )}
           </div>
