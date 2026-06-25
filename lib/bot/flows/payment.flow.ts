@@ -13,6 +13,7 @@ import { getAuthorization, createPlan as createPaystackPlan, createSubscription 
 import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import { getCardToken, createPlan as createFlutterwavePlan, createSubscription as createFlutterwaveSubscription } from '@/lib/payments/flutterwave-recurring';
 import { randomBytes } from 'crypto';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
@@ -331,7 +332,7 @@ export const paymentFlow: FlowDefinition = {
               currency: getCurrencyCode(cc),
               reference_code: transferRef,
               status: 'pending',
-              expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+              expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
             });
 
             await ctx.supabase

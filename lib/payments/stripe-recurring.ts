@@ -74,7 +74,9 @@ export async function createRecurringCheckout(opts: {
 
   // Stripe Connect split
   if (opts.stripeAccountId) {
-    const feePercent = opts.platformFeePercent ?? 2.5;
+    const { loadPlatformSettings } = await import('@/lib/platformSettings');
+    const psSettings = await loadPlatformSettings({ useServiceClient: true });
+    const feePercent = opts.platformFeePercent ?? psSettings.default_platform_fee_percent;
     const feeAmount = Math.round(amountInCents * feePercent / 100);
     params['subscription_data[application_fee_percent]'] = String(feePercent);
     params['subscription_data[transfer_data][destination]'] = opts.stripeAccountId;

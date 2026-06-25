@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -72,7 +73,8 @@ export async function GET(request: NextRequest) {
         .eq('is_active', true)
         .maybeSingle();
 
-      const pct = payoutAccount?.platform_percentage ?? 2.5;
+      const settings = await loadPlatformSettings({ useServiceClient: true });
+      const pct = payoutAccount?.platform_percentage ?? settings.default_platform_fee_percent;
       totalFees = Math.round(gross * (pct / 100));
     } else {
       const { data: fees } = await supabase

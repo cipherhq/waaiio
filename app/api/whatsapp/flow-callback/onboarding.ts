@@ -5,6 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 /**
  * Process a completed WhatsApp Flows onboarding submission.
@@ -71,8 +72,9 @@ export async function handleOnboardingComplete(
       .select('id', { count: 'exact', head: true })
       .eq('owner_id', userId)
       .in('status', ['active', 'pending']);
-    if ((bizCount || 0) >= 20) {
-      return { success: false, error: 'Maximum number of businesses reached (20).' };
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    if ((bizCount || 0) >= settings.max_businesses_per_user) {
+      return { success: false, error: `Maximum number of businesses reached (${settings.max_businesses_per_user}).` };
     }
 
     // 3. Generate slug and bot_code with collision handling

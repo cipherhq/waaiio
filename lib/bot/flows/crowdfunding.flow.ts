@@ -9,6 +9,7 @@ import { handlePostCompletion } from './shared/post-completion';
 import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
@@ -401,7 +402,7 @@ const donationPaymentStep: FlowStepConfig = {
         currency: getCurrencyCode(country),
         reference_code: transferRef,
         status: 'pending',
-        expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+        expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
       });
 
       await ctx.supabase

@@ -5,6 +5,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(24);
@@ -178,7 +179,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Monthly conversation limit reached (${convLimit.used}/${convLimit.limit}). Upgrade for more.` }, { status: 403 });
     }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const expiresAt = new Date(Date.now() + settings.contract_signing_hours * 60 * 60 * 1000).toISOString();
 
     // Replace template placeholders in document content
     let finalContent = document_content || null;

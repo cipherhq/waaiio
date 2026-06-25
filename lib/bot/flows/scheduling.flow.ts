@@ -12,6 +12,7 @@ import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewBooking, notifyOwnerNewPayment } from './shared/notify-owner';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { randomBytes } from 'crypto';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
@@ -2395,7 +2396,7 @@ export const schedulingFlow: FlowDefinition = {
                 currency: getCurrencyCode(cc2),
                 reference_code: transferRef,
                 status: 'pending',
-                expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+                expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
               });
 
               await ctx.supabase

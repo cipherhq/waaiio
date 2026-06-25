@@ -8,6 +8,7 @@ import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { randomBytes } from 'crypto';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 // ── Invoice List ──
 const invoiceListStep: FlowStepConfig = {
@@ -321,7 +322,7 @@ const invoicePayStep: FlowStepConfig = {
           currency: getCurrencyCode(cc),
           reference_code: transferRef,
           status: 'pending',
-          expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
         });
 
         await ctx.supabase

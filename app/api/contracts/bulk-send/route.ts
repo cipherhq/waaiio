@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 const CONTRACT_TEMPLATE_NAME = process.env.WHATSAPP_CONTRACT_TEMPLATE || 'document_signature_request';
 
@@ -50,7 +51,8 @@ export async function POST(request: NextRequest) {
 
     const service = createServiceClient();
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const expiresAt = new Date(Date.now() + settings.contract_signing_hours * 60 * 60 * 1000).toISOString();
 
     // Replace template placeholders
     let finalContent = document_content || null;

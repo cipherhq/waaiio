@@ -8,6 +8,7 @@ import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { generateInvoicePdf, type InvoicePdfData } from '@/lib/pdf/invoice-pdf-generator';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(48);
@@ -119,7 +120,8 @@ export async function POST(request: NextRequest) {
     }
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
     const token = generateToken();
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const expiresAt = new Date(Date.now() + settings.invoice_expiry_days * 24 * 60 * 60 * 1000).toISOString();
 
     // Update invoice with token and status
     await service

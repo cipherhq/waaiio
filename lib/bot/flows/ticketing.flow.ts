@@ -13,6 +13,7 @@ import type { SubscriptionTier } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { randomBytes } from 'crypto';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 export const ticketingFlow: FlowDefinition = {
   type: 'ticketing',
@@ -552,7 +553,7 @@ export const ticketingFlow: FlowDefinition = {
                 currency: getCurrencyCode(cc),
                 reference_code: transferRef,
                 status: 'pending',
-                expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+                expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
               });
 
               await ctx.supabase

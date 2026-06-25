@@ -13,6 +13,7 @@ import { loadCategories, getAllCategoryKeys } from '@/lib/categoryConfig';
 import { initCapabilities } from '@/lib/capabilities/service';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { sendEmail } from '@/lib/email/client';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 import { welcomeEmail, businessRegisteredEmail } from '@/lib/email/templates';
 import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
@@ -37,8 +38,9 @@ export async function POST(request: NextRequest) {
       .select('id', { count: 'exact', head: true })
       .eq('owner_id', user.id)
       .in('status', ['active', 'pending']);
-    if ((bizCount || 0) >= 20) {
-      return NextResponse.json({ message: 'Maximum number of businesses reached (20). Contact support to increase.' }, { status: 400 });
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    if ((bizCount || 0) >= settings.max_businesses_per_user) {
+      return NextResponse.json({ message: `Maximum number of businesses reached (${settings.max_businesses_per_user}). Contact support to increase.` }, { status: 400 });
     }
 
     await loadCountries();

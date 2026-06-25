@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 function generateToken(): string {
   const tokenBytes = new Uint8Array(24);
@@ -110,7 +111,8 @@ export async function POST(request: NextRequest) {
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-    const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const expiresAt = new Date(Date.now() + settings.contract_signing_hours * 60 * 60 * 1000).toISOString();
 
     // Check if this is a multi-signer contract
     const { data: signers } = await service

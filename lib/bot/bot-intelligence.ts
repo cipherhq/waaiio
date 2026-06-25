@@ -1,5 +1,7 @@
 // ── Types ──────────────────────────────────────────────
 
+import { getPlatformSettingsSync } from '@/lib/platformSettings';
+
 /** @deprecated Intents are now handled via bot_keywords table */
 export type BotIntent =
   | 'greeting'
@@ -173,8 +175,9 @@ export class BotIntelligenceService {
       this.abuseMap.set(phone, record);
     }
 
-    // Reset count if 5 min gap
-    if (now - record.lastGibberish > 5 * 60 * 1000) {
+    const softMinutes = getPlatformSettingsSync().abuse_cooldown_soft_minutes;
+    // Reset count if soft cooldown gap
+    if (now - record.lastGibberish > softMinutes * 60 * 1000) {
       record.gibberishCount = 0;
     }
 
@@ -182,7 +185,7 @@ export class BotIntelligenceService {
     record.lastGibberish = now;
 
     if (record.gibberishCount >= 5) {
-      record.cooldownUntil = now + 5 * 60 * 1000; // 5 min soft timeout
+      record.cooldownUntil = now + softMinutes * 60 * 1000; // soft timeout
       return {
         timeout: true,
         warn: false,
@@ -215,7 +218,8 @@ export class BotIntelligenceService {
     record.lastProfanity = now;
 
     if (record.profanityCount >= 5) {
-      record.cooldownUntil = now + 30 * 60 * 1000; // 30 min cooldown
+      const hardMinutes = getPlatformSettingsSync().abuse_cooldown_hard_minutes;
+      record.cooldownUntil = now + hardMinutes * 60 * 1000; // hard cooldown
       return {
         timeout: true,
         warn: false,

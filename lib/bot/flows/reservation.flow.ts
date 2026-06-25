@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { randomBytes } from 'crypto';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -773,7 +774,7 @@ export const reservationFlow: FlowDefinition = {
                 currency: getCurrencyCode(cc),
                 reference_code: transferRef,
                 status: 'pending',
-                expires_at: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(),
+                expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
               });
 
               await ctx.supabase

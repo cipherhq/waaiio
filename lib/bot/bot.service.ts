@@ -13,6 +13,7 @@ import { getCategoryLabels } from '@/lib/categoryConfig';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { parseSmartIntent, parseSmartIntentHybrid, matchServiceFromKeywords, buildAcknowledgment } from './smart-intent';
 import { translateBotResponse, detectLanguage, getLanguageName, setTranslationContext } from './translate';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 import { checkAIFeature, isLanguageAllowed } from './ai-tier-guard';
 import { getCustomerHistory, buildReturnGreeting } from './customer-intelligence';
 // fuzzy-match utils moved to handlers/bot-code-detection.ts
@@ -66,7 +67,8 @@ export class BotService {
     logger.debug('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
 
     // Pre-check 0: Per-phone rate limit (prevents bot spam burning AI/WhatsApp credits)
-    const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, 20, 60_000); // 20 messages per minute per phone
+    const botSettings = await loadPlatformSettings({ useServiceClient: true });
+    const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
     if (!phoneRateLimit.allowed) {
       logger.warn(`[BOT] Rate limited phone ${from} — ${phoneRateLimit.remaining} remaining`);
       return; // Silently drop — don't even send a response (saves WhatsApp outbound cost)

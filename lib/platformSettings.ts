@@ -37,6 +37,30 @@ export interface PlatformSettings {
   booking_defaults: BookingDefaultsConfig;
   /** Annual billing discount percentage (e.g., 20 = 20% off). Admin-configurable. */
   annual_discount_percentage: number;
+  /** Hours before a pending bank transfer expires (default: 4) */
+  transfer_expiry_hours: number;
+  /** Days a new business must wait before payouts are eligible (default: 7) */
+  payout_cooling_period_days: number;
+  /** Minimum payout amount per country in local currency minor units */
+  minimum_payout: Record<string, number>;
+  /** Max transactions per day before flagging for fraud review (default: 50) */
+  fraud_velocity_threshold: number;
+  /** Default platform fee percentage when no tier-specific override exists (default: 2.5) */
+  default_platform_fee_percent: number;
+  /** Bot messages allowed per phone per minute (default: 20) */
+  bot_rate_limit_per_minute: number;
+  /** Max businesses a single user can create (default: 20) */
+  max_businesses_per_user: number;
+  /** Minimum OCR confidence to accept a receipt match (default: 0.7) */
+  ocr_confidence_threshold: number;
+  /** Days before an invoice token expires (default: 30) */
+  invoice_expiry_days: number;
+  /** Hours before a contract signing link expires (default: 72) */
+  contract_signing_hours: number;
+  /** Minutes for soft abuse cooldown after gibberish (default: 5) */
+  abuse_cooldown_soft_minutes: number;
+  /** Minutes for hard abuse cooldown after profanity (default: 30) */
+  abuse_cooldown_hard_minutes: number;
 }
 
 // ── Sentinel Utility ──
@@ -80,6 +104,18 @@ function buildFallback(): PlatformSettings {
     trial_days: TRIAL_DAYS,
     booking_defaults: { ...BOOKING_DEFAULTS, reminderHours: [...BOOKING_DEFAULTS.reminderHours] },
     annual_discount_percentage: 20,
+    transfer_expiry_hours: 4,
+    payout_cooling_period_days: 7,
+    minimum_payout: { NG: 5000, US: 2500, GB: 2000, CA: 2500, GH: 50 },
+    fraud_velocity_threshold: 50,
+    default_platform_fee_percent: 2.5,
+    bot_rate_limit_per_minute: 20,
+    max_businesses_per_user: 20,
+    ocr_confidence_threshold: 0.7,
+    invoice_expiry_days: 30,
+    contract_signing_hours: 72,
+    abuse_cooldown_soft_minutes: 5,
+    abuse_cooldown_hard_minutes: 30,
   };
 }
 
@@ -110,7 +146,14 @@ export async function loadPlatformSettings(
     const { data, error } = await supabase
       .from('platform_settings')
       .select('key, value')
-      .in('key', ['pricing_tiers', 'broadcast_limits', 'conversation_limits', 'trial_days', 'booking_defaults', 'annual_discount_percentage']);
+      .in('key', [
+        'pricing_tiers', 'broadcast_limits', 'conversation_limits', 'trial_days',
+        'booking_defaults', 'annual_discount_percentage',
+        'transfer_expiry_hours', 'payout_cooling_period_days', 'minimum_payout',
+        'fraud_velocity_threshold', 'default_platform_fee_percent', 'bot_rate_limit_per_minute',
+        'max_businesses_per_user', 'ocr_confidence_threshold', 'invoice_expiry_days',
+        'contract_signing_hours', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes',
+      ]);
 
     if (error) throw error;
 
@@ -136,6 +179,42 @@ export async function loadPlatformSettings(
       annual_discount_percentage: map.has('annual_discount_percentage')
         ? (map.get('annual_discount_percentage') as number)
         : fallback.annual_discount_percentage,
+      transfer_expiry_hours: map.has('transfer_expiry_hours')
+        ? (map.get('transfer_expiry_hours') as number)
+        : fallback.transfer_expiry_hours,
+      payout_cooling_period_days: map.has('payout_cooling_period_days')
+        ? (map.get('payout_cooling_period_days') as number)
+        : fallback.payout_cooling_period_days,
+      minimum_payout: map.has('minimum_payout')
+        ? (map.get('minimum_payout') as Record<string, number>)
+        : fallback.minimum_payout,
+      fraud_velocity_threshold: map.has('fraud_velocity_threshold')
+        ? (map.get('fraud_velocity_threshold') as number)
+        : fallback.fraud_velocity_threshold,
+      default_platform_fee_percent: map.has('default_platform_fee_percent')
+        ? (map.get('default_platform_fee_percent') as number)
+        : fallback.default_platform_fee_percent,
+      bot_rate_limit_per_minute: map.has('bot_rate_limit_per_minute')
+        ? (map.get('bot_rate_limit_per_minute') as number)
+        : fallback.bot_rate_limit_per_minute,
+      max_businesses_per_user: map.has('max_businesses_per_user')
+        ? (map.get('max_businesses_per_user') as number)
+        : fallback.max_businesses_per_user,
+      ocr_confidence_threshold: map.has('ocr_confidence_threshold')
+        ? (map.get('ocr_confidence_threshold') as number)
+        : fallback.ocr_confidence_threshold,
+      invoice_expiry_days: map.has('invoice_expiry_days')
+        ? (map.get('invoice_expiry_days') as number)
+        : fallback.invoice_expiry_days,
+      contract_signing_hours: map.has('contract_signing_hours')
+        ? (map.get('contract_signing_hours') as number)
+        : fallback.contract_signing_hours,
+      abuse_cooldown_soft_minutes: map.has('abuse_cooldown_soft_minutes')
+        ? (map.get('abuse_cooldown_soft_minutes') as number)
+        : fallback.abuse_cooldown_soft_minutes,
+      abuse_cooldown_hard_minutes: map.has('abuse_cooldown_hard_minutes')
+        ? (map.get('abuse_cooldown_hard_minutes') as number)
+        : fallback.abuse_cooldown_hard_minutes,
     };
     cacheTime = Date.now();
     return cache;

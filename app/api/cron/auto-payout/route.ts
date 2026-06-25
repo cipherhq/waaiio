@@ -6,6 +6,7 @@ import { verifyCronAuth } from '@/lib/cron-auth';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { sendEmail } from '@/lib/email/client';
 import { payoutFailedEmail } from '@/lib/email/templates';
+import { loadPlatformSettings } from '@/lib/platformSettings';
 
 /**
  * GET /api/cron/auto-payout
@@ -25,22 +26,10 @@ import { payoutFailedEmail } from '@/lib/email/templates';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const COOLING_PERIOD_DAYS = 7;
 const AUTO_APPROVE_LIMIT_NGN = 500_000; // ₦500,000 max auto-approve
 const AUTO_APPROVE_LIMIT_USD = 1_000;   // $1,000 max auto-approve
-const VELOCITY_THRESHOLD = 50;           // max transactions per day
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
-
-// Minimum payout thresholds per country (in local currency)
-const MINIMUM_PAYOUT: Record<string, number> = {
-  NG: 5000,  // ₦5,000
-  GH: 50,    // GH₵50
-  US: 25,    // $25
-  GB: 20,    // £20
-  CA: 25,    // CA$25
-  KE: 2500,  // KSh2,500
-};
 
 export async function GET(request: NextRequest) {
   const authError = verifyCronAuth(request);
@@ -53,6 +42,11 @@ export async function GET(request: NextRequest) {
   let transferred = 0;
 
   try {
+    const settings = await loadPlatformSettings({ useServiceClient: true });
+    const COOLING_PERIOD_DAYS = settings.payout_cooling_period_days;
+    const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
+    const MINIMUM_PAYOUT = settings.minimum_payout;
+
     // Calculate period: last full week (Monday to Sunday)
     const now = new Date();
     const periodEnd = new Date(now);
