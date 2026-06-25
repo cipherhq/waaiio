@@ -4,6 +4,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
 import { checkOptInBatch } from '@/lib/security/check-optin';
 import { logger } from '@/lib/logger';
+import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
 
 const RATE_LIMIT_MAP = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_MAX = 50;
@@ -295,10 +296,44 @@ export async function POST(request: NextRequest) {
             results.push({ phone, status: 'email_sent', note: 'Guest not on WhatsApp — invite sent via email with opt-in link' });
           } catch (emailErr) {
             logger.error(`[INVITE] Email fallback failed for ${guestEmail}:`, emailErr);
-            results.push({ phone, status: 'needs_optin', note: 'Share the invite link with this guest.', error: inviteLink });
+            // Email failed — try SMS for NG/GH
+            if (isSmsEligible(phone)) {
+              const smsMsg = `You're invited to ${inviteTarget.name}! RSVP: ${inviteLink}`;
+              const smsRes = await sendSms({ to: phone, message: smsMsg, from: (hostName || 'Waaiio').slice(0, 11) });
+              if (smsRes.sent) {
+                results.push({ phone, status: 'sms_sent', note: 'Email failed — invite sent via SMS' });
+              } else {
+                results.push({ phone, status: 'needs_optin', note: 'Share the invite link with this guest.', error: inviteLink });
+              }
+            } else {
+              results.push({ phone, status: 'needs_optin', note: 'Share the invite link with this guest.', error: inviteLink });
+            }
+          }
+        } else if (isSmsEligible(phone)) {
+          // No email — try SMS for NG/GH numbers
+          const smsMessage = [
+            `You're Invited!`,
+            hostName ? `${hostName} invites you to:` : '',
+            inviteTarget.name,
+            inviteTarget.date ? formatInviteDate(inviteTarget.date) : '',
+            inviteTarget.venue ? `At ${inviteTarget.venue}` : '',
+            '',
+            `RSVP: ${inviteLink}`,
+          ].filter(Boolean).join('\n');
+
+          const smsResult = await sendSms({ to: phone, message: smsMessage, from: (hostName || business?.name || 'Waaiio').slice(0, 11) });
+          if (smsResult.sent) {
+            results.push({ phone, status: 'sms_sent', note: 'Guest not on WhatsApp or email — invite sent via SMS' });
+          } else {
+            results.push({
+              phone,
+              status: 'needs_optin',
+              note: 'Could not reach guest via WhatsApp, email, or SMS. Share the invite link.',
+              error: inviteLink,
+            });
           }
         } else {
-          // No email, no WhatsApp opt-in — host must share link
+          // No email, not NG/GH — host must share link
           results.push({
             phone,
             status: 'needs_optin',
