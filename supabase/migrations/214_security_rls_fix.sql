@@ -16,10 +16,12 @@ CREATE POLICY "security_events_service_all" ON security_events
 DROP POLICY IF EXISTS "security_sessions_user_select" ON security_sessions;
 
 -- Users should only see their own sessions
+DROP POLICY IF EXISTS "Users view own sessions" ON security_sessions;
 CREATE POLICY "Users view own sessions" ON security_sessions
   FOR SELECT USING (user_id = auth.uid());
 
 -- Users should only see their own security events
+DROP POLICY IF EXISTS "Users view own events" ON security_events;
 CREATE POLICY "Users view own events" ON security_events
   FOR SELECT USING (user_id = auth.uid());
 
