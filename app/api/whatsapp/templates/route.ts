@@ -11,8 +11,18 @@ import { logger } from '@/lib/logger';
  */
 export async function GET(request: NextRequest) {
   try {
+    // Try cookie-based auth first, then Bearer token (admin panel is cross-origin)
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    let { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      const authHeader = request.headers.get('Authorization');
+      const token = authHeader?.replace('Bearer ', '');
+      if (token) {
+        const service = createServiceClient();
+        const { data } = await service.auth.getUser(token);
+        user = data?.user || null;
+      }
+    }
     if (!user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
@@ -68,7 +78,16 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    let { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      const authHeader = request.headers.get('Authorization');
+      const token = authHeader?.replace('Bearer ', '');
+      if (token) {
+        const svc = createServiceClient();
+        const { data } = await svc.auth.getUser(token);
+        user = data?.user || null;
+      }
+    }
     if (!user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }
@@ -137,7 +156,16 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    let { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      const authHeader = request.headers.get('Authorization');
+      const token = authHeader?.replace('Bearer ', '');
+      if (token) {
+        const svc = createServiceClient();
+        const { data } = await svc.auth.getUser(token);
+        user = data?.user || null;
+      }
+    }
     if (!user) {
       return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
     }

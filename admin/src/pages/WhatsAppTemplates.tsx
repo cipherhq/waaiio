@@ -14,6 +14,7 @@ import {
   Clock,
   XCircle,
 } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 /* ─── Types ─── */
 
@@ -95,6 +96,12 @@ export default function WhatsAppTemplates() {
 
   const apiUrl = import.meta.env.VITE_API_URL || '';
 
+  async function getAuthHeaders(): Promise<Record<string, string>> {
+    const { data } = await supabase.auth.getSession();
+    const token = data?.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
   async function loadTemplates() {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -102,7 +109,8 @@ export default function WhatsAppTemplates() {
     setError('');
 
     try {
-      const res = await fetch(`${apiUrl}/api/whatsapp/templates`);
+      const headers = await getAuthHeaders();
+      const res = await fetch(`${apiUrl}/api/whatsapp/templates`, { headers });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.message || `Failed to load: ${res.status}`);
@@ -169,9 +177,10 @@ export default function WhatsAppTemplates() {
         });
       }
 
+      const authHeaders = await getAuthHeaders();
       const res = await fetch(`${apiUrl}/api/whatsapp/templates`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
         body: JSON.stringify({
           template: {
             name: form.name,
@@ -204,8 +213,10 @@ export default function WhatsAppTemplates() {
     setError('');
 
     try {
+      const delHeaders = await getAuthHeaders();
       const res = await fetch(`${apiUrl}/api/whatsapp/templates?name=${encodeURIComponent(name)}`, {
         method: 'DELETE',
+        headers: delHeaders,
       });
 
       if (!res.ok) {
