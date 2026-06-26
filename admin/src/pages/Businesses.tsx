@@ -638,6 +638,16 @@ export default function Businesses() {
             ))}
 
             <DetailRow label="Flow Type" value={selected.flow_type} />
+            {selectedCaps.length > 0 && (
+              <div className="py-2">
+                <span className="text-sm text-gray-500">Capabilities</span>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {selectedCaps.map((cap: string) => (
+                    <span key={cap} className="inline-block rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand capitalize">{cap.replace(/_/g, ' ')}</span>
+                  ))}
+                </div>
+              </div>
+            )}
             <DetailRow label="Country" value={selected.country_code} />
             <DetailRow label="Phone" value={selected.phone} />
             <DetailRow label="Payout Mode" value={selected.payout_mode === 'direct_split' ? 'Direct Split' : 'Platform Managed'} />
