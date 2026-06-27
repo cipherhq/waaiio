@@ -64,6 +64,7 @@ import ResellerFinancials from './pages/ResellerFinancials';
 import ResellerPayouts from './pages/ResellerPayouts';
 import PendingTransfers from './pages/PendingTransfers';
 import FeeInvoices from './pages/FeeInvoices';
+import AdminPermissions from './pages/AdminPermissions';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -126,6 +127,7 @@ export const router = createBrowserRouter([
       { path: 'platform-settings', element: <RoleGuard roles={['admin']}><PlatformSettings /></RoleGuard> },
       { path: 'audit-log', element: <RoleGuard roles={['admin']}><AuditLog /></RoleGuard> },
       { path: 'system-health', Component: SystemHealth },
+      { path: 'permissions', element: <RoleGuard roles={['admin']}><AdminPermissions /></RoleGuard> },
     ],
   },
   { path: '*', element: <Navigate to="/dashboard" replace /> },

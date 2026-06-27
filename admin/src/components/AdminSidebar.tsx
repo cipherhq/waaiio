@@ -149,6 +149,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: Settings, label: 'Platform Settings', path: '/platform-settings', roles: ['admin'] },
       { icon: ScrollText, label: 'Audit Log', path: '/audit-log', roles: ['admin'] },
       { icon: Activity, label: 'System Health', path: '/system-health', roles: ['admin'] },
+      { icon: ShieldCheck, label: 'Permissions', path: '/permissions', roles: ['admin'] },
     ],
   },
 ];
