@@ -4,12 +4,35 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService, type CreateTemplateInput } from '@/lib/channels/meta-cloud';
 import { logger } from '@/lib/logger';
 
+function corsHeaders(origin?: string | null) {
+  const allowedOrigins = [
+    process.env.ADMIN_ORIGIN || 'https://admin.waaiio.com',
+    'http://localhost:8083',
+  ];
+  const allowed = origin && allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  return {
+    'Access-Control-Allow-Origin': allowed,
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+}
+
+export async function OPTIONS(request: NextRequest) {
+  return NextResponse.json({}, { headers: corsHeaders(request.headers.get('origin')) });
+}
+
+/** Wrap response with CORS headers */
+function jsonWithCors(body: unknown, init?: { status?: number }, origin?: string | null) {
+  return NextResponse.json(body, { ...init, headers: corsHeaders(origin) });
+}
+
 /**
  * GET /api/whatsapp/templates?business_id=xxx
  * List message templates for a business's WABA (or the shared WABA if no dedicated channel).
  * Admin callers can pass ?waba_id=xxx&access_token=xxx directly.
  */
 export async function GET(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     // Try cookie-based auth first, then Bearer token (admin panel is cross-origin)
     const supabase = await createClient();
@@ -24,7 +47,7 @@ export async function GET(request: NextRequest) {
       }
     }
     if (!user) {
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+      return jsonWithCors({ message: 'Unauthorized' }, { status: 401 }, origin);
     }
 
     const { searchParams } = new URL(request.url);
@@ -35,10 +58,8 @@ export async function GET(request: NextRequest) {
     let meta: MetaCloudService;
 
     if (directWabaId && directToken) {
-      // Admin direct access to a specific WABA
       meta = new MetaCloudService({ accessToken: directToken, phoneNumberId: '', wabaId: directWabaId });
     } else if (businessId) {
-      // Look up the business's dedicated channel
       const service = createServiceClient();
       const { data: channel } = await service
         .from('whatsapp_channels')
@@ -51,22 +72,17 @@ export async function GET(request: NextRequest) {
       if (channel?.waba_id && channel?.meta_access_token) {
         meta = new MetaCloudService({ accessToken: channel.meta_access_token, phoneNumberId: '', wabaId: channel.waba_id });
       } else {
-        // Fall back to shared WABA
         meta = new MetaCloudService();
       }
     } else {
-      // Default: shared WABA
       meta = new MetaCloudService();
     }
 
     const result = await meta.getTemplates();
-    return NextResponse.json(result);
+    return jsonWithCors(result, undefined, origin);
   } catch (error) {
     logger.error('[TEMPLATES] GET error:', error);
-    return NextResponse.json(
-      { message: 'Internal server error' },
-      { status: 500 },
-    );
+    return jsonWithCors({ message: 'Internal server error' }, { status: 500 }, origin);
   }
 }
 
@@ -76,6 +92,7 @@ export async function GET(request: NextRequest) {
  * Body: { business_id?, waba_id?, access_token?, template: CreateTemplateInput }
  */
 export async function POST(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const supabase = await createClient();
     let { data: { user } } = await supabase.auth.getUser();
@@ -89,7 +106,7 @@ export async function POST(request: NextRequest) {
       }
     }
     if (!user) {
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+      return jsonWithCors({ message: 'Unauthorized' }, { status: 401 }, origin);
     }
 
     const body = await request.json();
@@ -101,18 +118,11 @@ export async function POST(request: NextRequest) {
     };
 
     if (!template?.name || !template?.language || !template?.category || !template?.components?.length) {
-      return NextResponse.json(
-        { message: 'Missing required template fields: name, language, category, components' },
-        { status: 400 },
-      );
+      return jsonWithCors({ message: 'Missing required template fields: name, language, category, components' }, { status: 400 }, origin);
     }
 
-    // Validate template name: lowercase, underscores only, max 512 chars
     if (!/^[a-z][a-z0-9_]*$/.test(template.name) || template.name.length > 512) {
-      return NextResponse.json(
-        { message: 'Template name must be lowercase letters, numbers, and underscores only' },
-        { status: 400 },
-      );
+      return jsonWithCors({ message: 'Template name must be lowercase letters, numbers, and underscores only' }, { status: 400 }, origin);
     }
 
     let meta: MetaCloudService;
@@ -139,13 +149,10 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await meta.createTemplate(template);
-    return NextResponse.json(result);
+    return jsonWithCors(result, undefined, origin);
   } catch (error) {
     logger.error('[TEMPLATES] POST error:', error);
-    return NextResponse.json(
-      { message: 'Internal server error' },
-      { status: 500 },
-    );
+    return jsonWithCors({ message: 'Internal server error' }, { status: 500 }, origin);
   }
 }
 
@@ -154,6 +161,7 @@ export async function POST(request: NextRequest) {
  * Delete a message template by name.
  */
 export async function DELETE(request: NextRequest) {
+  const origin = request.headers.get('origin');
   try {
     const supabase = await createClient();
     let { data: { user } } = await supabase.auth.getUser();
@@ -167,7 +175,7 @@ export async function DELETE(request: NextRequest) {
       }
     }
     if (!user) {
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+      return jsonWithCors({ message: 'Unauthorized' }, { status: 401 }, origin);
     }
 
     const { searchParams } = new URL(request.url);
@@ -177,7 +185,7 @@ export async function DELETE(request: NextRequest) {
     const directToken = searchParams.get('access_token');
 
     if (!name) {
-      return NextResponse.json({ message: 'Template name is required' }, { status: 400 });
+      return jsonWithCors({ message: 'Template name is required' }, { status: 400 }, origin);
     }
 
     let meta: MetaCloudService;
@@ -204,12 +212,9 @@ export async function DELETE(request: NextRequest) {
     }
 
     const result = await meta.deleteTemplate(name);
-    return NextResponse.json(result);
+    return jsonWithCors(result, undefined, origin);
   } catch (error) {
     logger.error('[TEMPLATES] DELETE error:', error);
-    return NextResponse.json(
-      { message: 'Internal server error' },
-      { status: 500 },
-    );
+    return jsonWithCors({ message: 'Internal server error' }, { status: 500 }, origin);
   }
 }
