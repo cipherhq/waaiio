@@ -21,24 +21,32 @@ interface GroupDef {
 
 const GROUPS: GroupDef[] = [
   {
-    label: 'Website Content',
-    keys: ['hero_content', 'contact_emails', 'social_links', 'default_greetings'],
+    label: 'Pricing & Fees',
+    keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'platform_fee_percentage', 'annual_discount_percentage', 'default_platform_fee_percent'],
   },
   {
-    label: 'Pricing & Fees',
-    keys: ['pricing_tiers', 'conversation_limits', 'broadcast_limits', 'trial_days', 'platform_fee_percentage'],
+    label: 'Payments & Payouts',
+    keys: ['transfer_expiry_hours', 'payout_cooling_period_days', 'minimum_payout', 'fraud_velocity_threshold', 'invoice_expiry_days'],
+  },
+  {
+    label: 'Bot & Automation',
+    keys: ['bot_rate_limit_per_minute', 'ocr_confidence_threshold', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes', 'max_bot_sessions_per_business', 'contract_signing_hours'],
+  },
+  {
+    label: 'Business Limits',
+    keys: ['max_businesses_per_user', 'booking_defaults'],
   },
   {
     label: 'WhatsApp',
     keys: ['whatsapp_shared_numbers'],
   },
   {
-    label: 'Directory',
-    keys: ['directory_featured', 'directory_hidden'],
+    label: 'Website Content',
+    keys: ['hero_content', 'contact_emails', 'social_links', 'default_greetings'],
   },
   {
-    label: 'Booking Defaults',
-    keys: ['booking_defaults', 'max_bot_sessions_per_business'],
+    label: 'Directory',
+    keys: ['directory_featured', 'directory_hidden'],
   },
   {
     label: 'Countries & Currencies',
@@ -346,6 +354,7 @@ export default function PlatformSettings() {
 
   // Delete state
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState(GROUPS[0].label);
 
   async function loadData() {
     setLoading(true);
@@ -592,19 +601,37 @@ export default function PlatformSettings() {
         </div>
       )}
 
-      {/* Grouped Settings Cards */}
-      <div className="mt-6 space-y-6">
+      {/* Tab Navigation */}
+      <div className="mt-6 flex flex-wrap gap-1 border-b border-gray-200 pb-0">
         {groupOrder.map(groupLabel => {
           const items = grouped[groupLabel];
           if (!items || items.length === 0) return null;
+          const isActive = activeTab === groupLabel;
+          return (
+            <button
+              key={groupLabel}
+              onClick={() => setActiveTab(groupLabel)}
+              className={`px-3 py-2 text-sm font-medium rounded-t-lg transition ${
+                isActive
+                  ? 'bg-white border border-gray-200 border-b-white text-brand -mb-px'
+                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              {groupLabel}
+              <span className={`ml-1.5 text-xs ${isActive ? 'text-brand' : 'text-gray-400'}`}>{items.length}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Active Tab Content */}
+      <div className="mt-0 space-y-0">
+        {(() => {
+          const items = grouped[activeTab];
+          if (!items || items.length === 0) return <p className="py-8 text-center text-sm text-gray-400">No settings in this group</p>;
 
           return (
-            <div key={groupLabel} className="rounded-xl border border-gray-200 bg-white">
-              <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-5 py-3 rounded-t-xl">
-                <Settings className="h-4 w-4 text-gray-400" />
-                <h2 className="text-sm font-semibold text-gray-700">{groupLabel}</h2>
-                <span className="ml-auto text-xs text-gray-400">{items.length} setting{items.length !== 1 ? 's' : ''}</span>
-              </div>
+            <div className="rounded-b-xl border border-t-0 border-gray-200 bg-white">
 
               <div className="divide-y divide-gray-50">
                 {items.map(setting => {
@@ -665,8 +692,10 @@ export default function PlatformSettings() {
               </div>
             </div>
           );
-        })}
+        })()}
+      </div>
 
+      <div className="mt-6">
         {settings.length === 0 && (
           <div className="rounded-xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
             No platform settings found. Click "Add Setting" to create one.
