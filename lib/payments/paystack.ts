@@ -98,7 +98,10 @@ export class PaystackGateway implements PaymentGateway {
       });
 
       const data = await response.json();
-      if (!data.status) return null;
+      if (!data.status) {
+        logger.error('[PAYSTACK] Initialize failed:', data.message || JSON.stringify(data));
+        throw new Error(data.message || 'Payment gateway rejected the request');
+      }
 
       const { data: payment } = await opts.supabase.from('payments').insert({
         booking_id: opts.bookingId || null,

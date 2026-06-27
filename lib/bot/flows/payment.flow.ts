@@ -423,7 +423,14 @@ export const paymentFlow: FlowDefinition = {
           ];
         }
 
-        return [{ type: 'text', text: "We couldn't set up your payment right now. Send *Hi* to start over." }];
+        // Payment initialization failed — show helpful error based on likely cause
+        const cc2 = (ctx.business?.country_code || 'NG') as CountryCode;
+        const minAmounts: Record<string, number> = { NG: 50, GH: 1, US: 1, GB: 1, CA: 1 };
+        const minAmount = minAmounts[cc2] || 1;
+        if (amount < minAmount) {
+          return [{ type: 'text', text: `The minimum payment amount is ${formatCurrency(minAmount, cc2)}. Please send *Hi* to try again with a higher amount.` }];
+        }
+        return [{ type: 'text', text: "We couldn't set up your payment right now. Please send *Hi* to try again." }];
       },
       async validate(input: string): Promise<ValidationResult> {
         if (input === 'accept_terms') {

@@ -266,7 +266,6 @@ export async function initializePayment(
     const err = error as Error;
     console.error('[PAYMENT] initializePayment THREW:', err.message);
     console.error('[PAYMENT] Stack:', err.stack?.split('\n').slice(0, 6).join(' | '));
-    // Store error for debug endpoint
     (globalThis as Record<string, unknown>).__lastPaymentError = { message: err.message, stack: err.stack?.split('\n').slice(0, 6) };
     return null;
   }
