@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { supabase, adminDb } from '@/lib/supabase';
+import { loadCountries, getCountryCurrencyMap } from '@/lib/countries';
 import { Building2, DollarSign, Clock, Users, LifeBuoy, Bot, CalendarDays, AlertTriangle, ShieldAlert, BadgeCheck, Flag, Zap, CreditCard, BrainCircuit, Bell, Globe, MessageCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -18,8 +19,6 @@ interface ActionAlert {
   color: string;
   path: string;
 }
-
-const countryToCur: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -47,7 +46,13 @@ export default function Dashboard() {
   const [revenueCountry, setRevenueCountry] = useState<string>('all');
   const [revenueSummary, setRevenueSummary] = useState<{ fees: Record<string, number>; volume: Record<string, number>; count: number }>({ fees: {}, volume: {}, count: 0 });
   const [revenueLoading, setRevenueLoading] = useState(false);
+  const [countryToCur, setCountryToCur] = useState<Record<string, string>>({ US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' });
   const revenueCountryLabels: Record<string, string> = { NG: 'Nigeria', US: 'United States', CA: 'Canada', GB: 'United Kingdom', GH: 'Ghana' };
+
+  // Load countries on mount (populates the currency map from DB)
+  useEffect(() => {
+    loadCountries().then(() => setCountryToCur(getCountryCurrencyMap()));
+  }, []);
 
   // Load revenue summary when period changes
   useEffect(() => {

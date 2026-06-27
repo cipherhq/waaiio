@@ -61,6 +61,8 @@ export interface PlatformSettings {
   abuse_cooldown_soft_minutes: number;
   /** Minutes for hard abuse cooldown after profanity (default: 30) */
   abuse_cooldown_hard_minutes: number;
+  /** Monthly payout limits per verification level (in local currency minor units) */
+  payout_verification_limits: Record<string, number>;
 }
 
 // ── Sentinel Utility ──
@@ -116,6 +118,7 @@ function buildFallback(): PlatformSettings {
     contract_signing_hours: 72,
     abuse_cooldown_soft_minutes: 5,
     abuse_cooldown_hard_minutes: 30,
+    payout_verification_limits: { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 },
   };
 }
 
@@ -153,6 +156,7 @@ export async function loadPlatformSettings(
         'fraud_velocity_threshold', 'default_platform_fee_percent', 'bot_rate_limit_per_minute',
         'max_businesses_per_user', 'ocr_confidence_threshold', 'invoice_expiry_days',
         'contract_signing_hours', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes',
+        'payout_verification_limits',
       ]);
 
     if (error) throw error;
@@ -215,6 +219,9 @@ export async function loadPlatformSettings(
       abuse_cooldown_hard_minutes: map.has('abuse_cooldown_hard_minutes')
         ? (map.get('abuse_cooldown_hard_minutes') as number)
         : fallback.abuse_cooldown_hard_minutes,
+      payout_verification_limits: map.has('payout_verification_limits')
+        ? (map.get('payout_verification_limits') as Record<string, number>)
+        : fallback.payout_verification_limits,
     };
     cacheTime = Date.now();
     return cache;

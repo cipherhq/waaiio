@@ -3,6 +3,7 @@ import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
+import { loadCountries, getCountryCurrencyDetailMap } from '@/lib/countries';
 
 interface PayoutRecord {
   id: string;
@@ -109,7 +110,10 @@ export default function Payouts() {
     }
   }
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    // Load countries cache first so formatMoney uses DB-driven currency map
+    loadCountries().then(() => loadData());
+  }, []);
 
   // Filter payouts by tab, search, and date range
   const displayPayouts = payouts.filter(p => {
@@ -612,7 +616,8 @@ function formatDate(d: string) {
   return new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-const CURRENCY_MAP: Record<string, { code: string; locale: string }> = {
+// Fallback currency map — overridden by getCountryCurrencyDetailMap() once countries load
+const CURRENCY_MAP_FALLBACK: Record<string, { code: string; locale: string }> = {
   NG: { code: 'NGN', locale: 'en-NG' },
   US: { code: 'USD', locale: 'en-US' },
   GB: { code: 'GBP', locale: 'en-GB' },
@@ -623,7 +628,8 @@ const CURRENCY_MAP: Record<string, { code: string; locale: string }> = {
 };
 
 function formatMoney(amount: number, countryCode?: string): string {
-  const cc = CURRENCY_MAP[countryCode || 'NG'] || CURRENCY_MAP.NG;
+  const detailMap = getCountryCurrencyDetailMap();
+  const cc = detailMap[countryCode || 'NG'] || CURRENCY_MAP_FALLBACK[countryCode || 'NG'] || CURRENCY_MAP_FALLBACK.NG;
   const fractionDigits = ['NGN', 'GHS', 'KES'].includes(cc.code) ? 0 : 2;
   return new Intl.NumberFormat(cc.locale, { style: 'currency', currency: cc.code, minimumFractionDigits: fractionDigits }).format(amount);
 }

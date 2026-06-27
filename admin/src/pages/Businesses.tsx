@@ -150,23 +150,35 @@ export default function Businesses() {
   const [selectedProducts, setSelectedProducts] = useState<Array<{ id: string; name: string; price: number | null; stock: number | null; is_active: boolean }>>([]);
   const [showServices, setShowServices] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+  // Payout verification limits from platform_settings (single source of truth)
+  const [payoutVerificationLimits, setPayoutVerificationLimits] = useState<Record<string, number>>({ unverified: 0, basic: 500000, standard: 2000000, full: 999999999 });
   const perPage = 20;
 
   async function loadData() {
-    const { data } = await adminDb
-      .from('businesses')
-      .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels')
-      .order('created_at', { ascending: false });
+    const [bizRes, chRes, limitsRes] = await Promise.all([
+      adminDb
+        .from('businesses')
+        .select('id, name, slug, bot_code, category, flow_type, country_code, subscription_tier, payout_mode, status, phone, city, neighborhood, created_at, verification_level, verification_status, payout_limit_monthly, assigned_channel_id, custom_fee_percentage, custom_fee_flat, payment_channels')
+        .order('created_at', { ascending: false }),
+      adminDb
+        .from('whatsapp_channels')
+        .select('id, phone_number, display_name, country_code')
+        .eq('is_active', true)
+        .order('country_code'),
+      adminDb
+        .from('platform_settings')
+        .select('value')
+        .eq('key', 'payout_verification_limits')
+        .single(),
+    ]);
 
-    setBusinesses(data || []);
+    setBusinesses(bizRes.data || []);
+    setChannels(chRes.data || []);
 
-    // Load available WhatsApp channels
-    const { data: chData } = await adminDb
-      .from('whatsapp_channels')
-      .select('id, phone_number, display_name, country_code')
-      .eq('is_active', true)
-      .order('country_code');
-    setChannels(chData || []);
+    // Load payout verification limits from DB (fall back to hardcoded defaults)
+    if (limitsRes.data?.value && typeof limitsRes.data.value === 'object') {
+      setPayoutVerificationLimits(limitsRes.data.value as Record<string, number>);
+    }
 
     setLoading(false);
   }
@@ -763,14 +775,14 @@ export default function Businesses() {
                       disabled={selected.verification_level === level}
                       onClick={async () => {
                         if (!confirm(`Set verification to "${level}" for ${selected.name}?`)) return;
-                        const limits: Record<string, number> = { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 };
+                        const limitForLevel = payoutVerificationLimits[level] ?? 0;
                         await adminDb.from('businesses').update({
                           verification_level: level,
                           verification_status: level === 'unverified' ? 'unverified' : 'verified',
-                          payout_limit_monthly: limits[level] || 0,
+                          payout_limit_monthly: limitForLevel,
                         }).eq('id', selected.id);
                         await logAudit({ action: 'set_verification', entity_type: 'business', entity_id: selected.id, details: { level, previous: selected.verification_level } });
-                        setSelected({ ...selected, verification_level: level, verification_status: level === 'unverified' ? 'unverified' : 'verified', payout_limit_monthly: limits[level] || 0 });
+                        setSelected({ ...selected, verification_level: level, verification_status: level === 'unverified' ? 'unverified' : 'verified', payout_limit_monthly: limitForLevel });
                       }}
                       className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                         selected.verification_level === level

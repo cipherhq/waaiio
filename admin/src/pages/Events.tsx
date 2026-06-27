@@ -6,6 +6,7 @@ import { StatusBadge } from '@/components/StatusBadge';
 import { DetailModal, DetailRow } from '@/components/DetailModal';
 import { fmtDate, fmtDateTime, fmtCurrency } from '@/lib/formatters';
 import { logAudit } from '@/lib/auditLog';
+import { loadCountries, getCountryCurrencyMap } from '@/lib/countries';
 
 interface Event {
   id: string;
@@ -72,8 +73,9 @@ export default function Events() {
         : { data: [] };
 
       const bizMap = new Map((bizData || []).map(b => [b.id, b.name]));
-      const COUNTRY_CUR: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS' };
-      const bizCurrencyMap = new Map((bizData || []).map(b => [b.id, COUNTRY_CUR[b.country_code] || 'NGN']));
+      await loadCountries();
+      const countryCurMap = getCountryCurrencyMap();
+      const bizCurrencyMap = new Map((bizData || []).map(b => [b.id, countryCurMap[b.country_code] || 'NGN']));
       setBusinesses(
         (bizData || []).map(b => ({ id: b.id, name: b.name })).sort((a, b) => a.name.localeCompare(b.name))
       );

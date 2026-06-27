@@ -42,8 +42,8 @@ interface AuditLogEntry {
 
 type TabId = 'subscriptions' | 'catalog' | 'analytics';
 
-// ── Tier Catalog (local constant — admin can't import from Next.js lib/) ──
-const TIER_CATALOG = {
+// ── Tier Catalog — hardcoded fallback, overridden by platform_settings at runtime ──
+const TIER_CATALOG_FALLBACK: Record<string, TierCatalogEntry> = {
   free: {
     marketingName: 'Starter',
     internalName: 'free',
@@ -87,9 +87,9 @@ const TIER_CATALOG = {
     internalName: 'business',
     feePercentage: 1.5,
     feeFlat: 75,
-    maxBookings: Infinity,
+    maxBookings: 999999999,
     whitelabel: true,
-    broadcastLimits: { maxBroadcasts: Infinity, maxRecipients: Infinity },
+    broadcastLimits: { maxBroadcasts: 999999999, maxRecipients: 999999999 },
     capabilities: [
       { id: 'scheduling', label: 'Scheduling', icon: '\ud83d\udcc5' },
       { id: 'payment', label: 'Payments', icon: '\ud83d\udcb3' },
@@ -109,7 +109,25 @@ const TIER_CATALOG = {
       { id: 'crowdfunding', label: 'Crowdfunding', icon: '\u2764\ufe0f' },
     ],
   },
-} as const;
+};
+
+interface TierCatalogEntry {
+  marketingName: string;
+  internalName: string;
+  feePercentage: number;
+  feeFlat: number;
+  maxBookings: number;
+  whitelabel: boolean;
+  broadcastLimits: { maxBroadcasts: number; maxRecipients: number };
+  capabilities: Array<{ id: string; label: string; icon: string }>;
+}
+
+const INFINITY_SENTINEL = 999999999;
+
+/** Convert DB sentinel 999999999 to JS Infinity for display */
+function toDisplay(val: number): number {
+  return val >= INFINITY_SENTINEL ? Infinity : val;
+}
 
 const TIERS = ['free', 'growth', 'business'] as const;
 type TierKey = (typeof TIERS)[number];
@@ -136,6 +154,9 @@ export default function Subscriptions() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
 
+  // Tier catalog — loaded from platform_settings, falls back to hardcoded defaults
+  const [tierCatalog, setTierCatalog] = useState<Record<string, TierCatalogEntry>>(TIER_CATALOG_FALLBACK);
+
   const loadingRef = useRef(false);
 
   async function loadData() {
@@ -144,6 +165,38 @@ export default function Subscriptions() {
     setLoading(true);
 
     try {
+      // Load tier catalog from platform_settings
+      const { data: settingsData } = await adminDb
+        .from('platform_settings')
+        .select('key, value')
+        .in('key', ['pricing_tiers', 'broadcast_limits']);
+
+      if (settingsData?.length) {
+        const settingsMap = new Map(settingsData.map((r: { key: string; value: unknown }) => [r.key, r.value]));
+        const pricingTiers = settingsMap.get('pricing_tiers') as Record<string, { feePercentage: number; feeFlat: number; maxBookings: number; whitelabel: boolean }> | undefined;
+        const broadcastLimits = settingsMap.get('broadcast_limits') as Record<string, { maxBroadcasts: number; maxRecipients: number }> | undefined;
+
+        if (pricingTiers) {
+          const merged: Record<string, TierCatalogEntry> = {};
+          for (const tier of TIERS) {
+            const fallback = TIER_CATALOG_FALLBACK[tier];
+            const dbTier = pricingTiers[tier];
+            const dbBroadcast = broadcastLimits?.[tier];
+            merged[tier] = {
+              marketingName: fallback.marketingName,
+              internalName: fallback.internalName,
+              feePercentage: dbTier?.feePercentage ?? fallback.feePercentage,
+              feeFlat: dbTier?.feeFlat ?? fallback.feeFlat,
+              maxBookings: dbTier?.maxBookings ?? fallback.maxBookings,
+              whitelabel: dbTier?.whitelabel ?? fallback.whitelabel,
+              broadcastLimits: dbBroadcast ?? fallback.broadcastLimits,
+              capabilities: fallback.capabilities,
+            };
+          }
+          setTierCatalog(merged);
+        }
+      }
+
       const { data: subData, error } = await adminDb
         .from('subscriptions')
         .select('*, businesses(name, category)')
@@ -409,7 +462,7 @@ export default function Subscriptions() {
     }
     return {
       tier,
-      label: TIER_CATALOG[tier].marketingName,
+      label: tierCatalog[tier].marketingName,
       total: subs.length,
       active: activeSubs.length,
       trial: subs.filter(s => s.status === 'trial').length,
@@ -587,7 +640,7 @@ export default function Subscriptions() {
       {activeTab === 'catalog' && (
         <div className="mt-6 grid gap-6 lg:grid-cols-3">
           {TIERS.map(tier => {
-            const cat = TIER_CATALOG[tier];
+            const cat = tierCatalog[tier];
             return (
               <div key={tier} className="rounded-xl border border-gray-200 bg-white p-6">
                 <div className="flex items-center gap-3">
@@ -605,13 +658,13 @@ export default function Subscriptions() {
                   <div className="flex justify-between">
                     <span className="text-gray-500">Max Bookings</span>
                     <span className="font-medium text-gray-900">
-                      {cat.maxBookings === Infinity ? 'Unlimited' : cat.maxBookings}
+                      {toDisplay(cat.maxBookings) === Infinity ? 'Unlimited' : cat.maxBookings}
                     </span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">Broadcasts / mo</span>
                     <span className="font-medium text-gray-900">
-                      {cat.broadcastLimits.maxBroadcasts === Infinity
+                      {toDisplay(cat.broadcastLimits.maxBroadcasts) === Infinity
                         ? 'Unlimited'
                         : cat.broadcastLimits.maxBroadcasts === 0
                           ? 'None'
@@ -858,7 +911,7 @@ export default function Subscriptions() {
                     >
                       {TIERS.map(t => (
                         <option key={t} value={t}>
-                          {TIER_CATALOG[t].marketingName} ({t})
+                          {tierCatalog[t].marketingName} ({t})
                         </option>
                       ))}
                     </select>
