@@ -32,9 +32,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // Cloudflare Turnstile verification (if configured)
+    // Cloudflare Turnstile verification (enforced when configured)
     const turnstileSecret = process.env.TURNSTILE_SECRET_KEY;
-    if (turnstileSecret && body.turnstileToken) {
+    if (turnstileSecret) {
+      if (!body.turnstileToken) {
+        return NextResponse.json({ error: 'Verification required. Please complete the check and try again.' }, { status: 403 });
+      }
       const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -1,22 +1,63 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
+
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '';
 
 export function ContactForm() {
   const [form, setForm] = useState({ name: '', email: '', subject: '', message: '' });
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [turnstileToken, setTurnstileToken] = useState('');
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const honeypotRef = useRef<HTMLInputElement>(null);
+
+  // Load Turnstile widget if site key is configured
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY || !turnstileRef.current) return;
+
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileLoad';
+    script.async = true;
+
+    (window as unknown as Record<string, unknown>).onTurnstileLoad = () => {
+      if (turnstileRef.current && (window as unknown as Record<string, unknown>).turnstile) {
+        (window as unknown as { turnstile: { render: (el: HTMLElement, opts: Record<string, unknown>) => void } }).turnstile.render(turnstileRef.current, {
+          sitekey: TURNSTILE_SITE_KEY,
+          callback: (token: string) => setTurnstileToken(token),
+          'expired-callback': () => setTurnstileToken(''),
+          theme: 'light',
+        });
+      }
+    };
+
+    document.head.appendChild(script);
+    return () => { script.remove(); };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatus('sending');
     setErrorMsg('');
 
+    // If Turnstile is configured but no token, block submission
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      setStatus('error');
+      setErrorMsg('Please complete the verification check.');
+      return;
+    }
+
     try {
       const res = await fetch('/api/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          // Honeypot — invisible to humans, bots fill it
+          website: honeypotRef.current?.value || '',
+          // Turnstile token
+          turnstileToken: turnstileToken || undefined,
+        }),
       });
 
       if (!res.ok) {
@@ -83,6 +124,12 @@ export function ContactForm() {
         </div>
       </div>
 
+      {/* Honeypot — hidden from humans, bots fill it */}
+      <div className="absolute -left-[9999px]" aria-hidden="true">
+        <label htmlFor="website">Website</label>
+        <input ref={honeypotRef} id="website" type="text" name="website" tabIndex={-1} autoComplete="off" />
+      </div>
+
       <div>
         <label htmlFor="subject" className="block text-sm font-medium text-gray-700">
           Subject
@@ -111,6 +158,11 @@ export function ContactForm() {
           placeholder="Tell us how we can help..."
         />
       </div>
+
+      {/* Turnstile widget — only renders if site key is configured */}
+      {TURNSTILE_SITE_KEY && (
+        <div ref={turnstileRef} className="mt-2" />
+      )}
 
       {status === 'error' && (
         <p className="text-sm text-red-600">{errorMsg || 'Something went wrong. Please try again.'}</p>
