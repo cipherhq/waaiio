@@ -87,25 +87,55 @@ export const ticketingFlow: FlowDefinition = {
           .eq('business_id', ctx.business!.id)
           .single();
 
-        if (!event) return { valid: false, errorMessage: 'I didn\'t find that event. Try typing the event name or tap an option from the list.' };
+        // Fallback: fuzzy match by name (user typed event name or partial match)
+        let matched = event || null;
+        if (!matched) {
+          const { data: allEvents } = await ctx.supabase
+            .from('events')
+            .select('id, name, date, time, venue, price, total_tickets, tickets_sold, max_per_order, image_url')
+            .eq('business_id', ctx.business!.id)
+            .in('status', ['published'])
+            .gte('date', new Date().toISOString().split('T')[0])
+            .order('date')
+            .limit(10);
 
-        const available = event.total_tickets - event.tickets_sold;
+          if (allEvents && allEvents.length > 0) {
+            const norm = input.toLowerCase().trim();
+            // Exact name match
+            matched = allEvents.find(e => e.name.toLowerCase() === norm) || null;
+            // Partial match (input contains event name or vice versa)
+            if (!matched) {
+              matched = allEvents.find(e =>
+                norm.includes(e.name.toLowerCase()) || e.name.toLowerCase().includes(norm)
+              ) || null;
+            }
+            // Numbered selection (user types "1", "2", etc.)
+            if (!matched && /^\d+$/.test(norm)) {
+              const idx = parseInt(norm, 10) - 1;
+              if (idx >= 0 && idx < allEvents.length) matched = allEvents[idx];
+            }
+          }
+        }
+
+        if (!matched) return { valid: false, errorMessage: 'I didn\'t find that event. Try typing the event name or tap an option from the list.' };
+
+        const available = matched.total_tickets - matched.tickets_sold;
         if (available <= 0) {
-          return { valid: false, errorMessage: `Sorry, ${event.name} is sold out! 😞` };
+          return { valid: false, errorMessage: `Sorry, ${matched.name} is sold out! 😞` };
         }
 
         return {
           valid: true,
           data: {
-            event_id: event.id,
-            event_name: event.name,
-            event_date: event.date,
-            event_time: event.time,
-            event_venue: event.venue,
-            event_price: event.price,
+            event_id: matched.id,
+            event_name: matched.name,
+            event_date: matched.date,
+            event_time: matched.time,
+            event_venue: matched.venue,
+            event_price: matched.price,
             event_available: available,
-            event_max_per_order: event.max_per_order,
-            event_image_url: event.image_url || null,
+            event_max_per_order: matched.max_per_order,
+            event_image_url: matched.image_url || null,
           },
         };
       },
@@ -177,7 +207,20 @@ export const ticketingFlow: FlowDefinition = {
         }
 
         const types = ctx.session.session_data._ticket_types as Array<{ id: string; name: string; price: number; total_tickets: number; tickets_sold: number }>;
-        const selected = types?.find(t => t.id === input);
+        let matched = types?.find(t => t.id === input) || null;
+
+        // Fallback: fuzzy match by name (user typed ticket type name or partial match)
+        if (!matched && types && types.length > 0) {
+          const lower = input.toLowerCase().trim();
+          matched = types.find(t => t.name.toLowerCase() === lower) || null;
+          if (!matched) matched = types.find(t => t.name.toLowerCase().includes(lower) || lower.includes(t.name.toLowerCase())) || null;
+          if (!matched && /^\d+$/.test(lower)) {
+            const idx = parseInt(lower, 10) - 1;
+            if (idx >= 0 && idx < types.length) matched = types[idx];
+          }
+        }
+
+        const selected = matched;
         if (!selected) return { valid: false, errorMessage: 'I didn\'t find that ticket type. Try typing the name (e.g. *VIP*, *Regular*) or tap an option.' };
 
         const available = selected.total_tickets - selected.tickets_sold;

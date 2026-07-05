@@ -56,7 +56,7 @@ describe('Payment Flow', () => {
         const chain: Record<string, any> = {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockReturnThis(),
-          single: vi.fn().mockResolvedValue({
+          maybeSingle: vi.fn().mockResolvedValue({
             data: {
               id: 'svc1',
               name: 'Tithe',
@@ -85,7 +85,10 @@ describe('Payment Flow', () => {
         const chain: Record<string, any> = {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockReturnThis(),
-          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          neq: vi.fn().mockReturnThis(),
+          is: vi.fn().mockReturnThis(),
+          order: vi.fn().mockResolvedValue({ data: [], error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
         };
         return chain;
       });

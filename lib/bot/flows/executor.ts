@@ -314,7 +314,8 @@ export class FlowExecutor {
     const INTENT_FILLABLE_STEPS = new Set([
       'select_date', 'select_time', 'select_service', 'select_staff',
       'select_party_size', 'select_quantity', 'select_location',
-      'select_capability',
+      'select_capability', 'select_event', 'select_ticket_type',
+      'select_checkin', 'select_checkout',
     ]);
 
     // Map of which field each step "owns" — don't inject into the current step's field

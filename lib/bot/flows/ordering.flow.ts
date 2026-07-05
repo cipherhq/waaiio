@@ -864,7 +864,13 @@ export const orderingFlow: FlowDefinition = {
         return messages;
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
-        const qty = parseInt(input, 10);
+        let qty = parseInt(input, 10);
+        // Try natural language extraction if bare parseInt failed ("3 jollof rice", "order 2")
+        if (isNaN(qty) && !/^\d+$/.test(input.trim())) {
+          const { extractEntitiesOnly } = await import('@/lib/bot/smart-intent');
+          const entities = extractEntitiesOnly(input);
+          if (entities.quantity) qty = entities.quantity;
+        }
         if (isNaN(qty) || qty < 1 || qty > 9999) {
           return { valid: false, errorMessage: 'Please enter a valid number.' };
         }

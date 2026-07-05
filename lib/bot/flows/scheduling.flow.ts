@@ -142,6 +142,7 @@ export const schedulingFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // First try exact ID match (list postback)
         const { data: location } = await ctx.supabase
           .from('business_locations')
           .select('id, name')
@@ -150,14 +151,39 @@ export const schedulingFlow: FlowDefinition = {
           .eq('is_active', true)
           .maybeSingle();
 
-        if (!location) {
-          return { valid: false, errorMessage: 'I didn\'t find that location. Please tap one from the list, or type the location name.' };
+        if (location) {
+          return {
+            valid: true,
+            data: { location_id: location.id, _location_name: location.name },
+          };
         }
 
-        return {
-          valid: true,
-          data: { location_id: location.id, _location_name: location.name },
-        };
+        // Fuzzy fallback: match by name (exact, substring) or numbered selection
+        const { data: allLocations } = await ctx.supabase
+          .from('business_locations')
+          .select('id, name')
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true)
+          .order('is_primary', { ascending: false });
+
+        if (allLocations && allLocations.length > 0) {
+          const lower = input.trim().toLowerCase();
+          // Numbered selection (1, 2, 3…)
+          const numIdx = parseInt(input.trim(), 10) - 1;
+          if (!isNaN(numIdx) && numIdx >= 0 && numIdx < allLocations.length) {
+            const matched = allLocations[numIdx];
+            return { valid: true, data: { location_id: matched.id, _location_name: matched.name } };
+          }
+          // Exact name match (case-insensitive)
+          let matched = allLocations.find(l => l.name.toLowerCase() === lower);
+          // Substring match
+          if (!matched) matched = allLocations.find(l => l.name.toLowerCase().includes(lower) || lower.includes(l.name.toLowerCase()));
+          if (matched) {
+            return { valid: true, data: { location_id: matched.id, _location_name: matched.name } };
+          }
+        }
+
+        return { valid: false, errorMessage: 'I didn\'t find that location. Please tap one from the list, or type the location name.' };
       },
       async next() { return 'select_service'; },
     },
@@ -1364,7 +1390,13 @@ export const schedulingFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
         const maxQty = (meta.max_party_size as number) || getMaxQuantity(ctx.business?.category || 'restaurant');
-        const size = parseInt(input, 10);
+        let size = parseInt(input, 10);
+        // Try natural language extraction if bare parseInt failed ("for 3 guests", "table for 4", "we are 5")
+        if (isNaN(size) && !/^\d+$/.test(input.trim())) {
+          const { extractEntitiesOnly } = await import('@/lib/bot/smart-intent');
+          const entities = extractEntitiesOnly(input);
+          if (entities.quantity) size = entities.quantity;
+        }
         if (isNaN(size) || size < 1 || size > maxQty) {
           return { valid: false, errorMessage: `Please enter a number between 1 and ${maxQty}.` };
         }

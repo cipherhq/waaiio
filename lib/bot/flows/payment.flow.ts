@@ -64,25 +64,77 @@ export const paymentFlow: FlowDefinition = {
         }];
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
+        // First try exact ID match (list postback)
         const { data: service } = await ctx.supabase
           .from('services')
           .select('id, name, billing_type, recurring_interval, price')
           .eq('id', input)
           .eq('business_id', ctx.business!.id)
-          .single();
+          .maybeSingle();
 
-        if (!service) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
+        if (service) {
+          return {
+            valid: true,
+            data: {
+              service_id: service.id,
+              service_name: service.name,
+              service_billing_type: service.billing_type || 'one_time',
+              service_recurring_interval: service.recurring_interval || null,
+              service_price: service.price || 0,
+            },
+          };
+        }
 
-        return {
-          valid: true,
-          data: {
-            service_id: service.id,
-            service_name: service.name,
-            service_billing_type: service.billing_type || 'one_time',
-            service_recurring_interval: service.recurring_interval || null,
-            service_price: service.price || 0,
-          },
-        };
+        // Fuzzy fallback: match by name (exact, substring) or numbered selection
+        const isGiving = ctx.session.session_data.active_capability === 'giving';
+        let allQuery = ctx.supabase
+          .from('services')
+          .select('id, name, billing_type, recurring_interval, price')
+          .eq('business_id', ctx.business!.id)
+          .eq('is_active', true);
+        if (isGiving) {
+          allQuery = allQuery.eq('service_type', 'giving');
+        } else {
+          allQuery = allQuery.neq('service_type', 'giving');
+        }
+        const { data: allServices } = await allQuery.order('sort_order');
+
+        if (allServices && allServices.length > 0) {
+          const lower = input.trim().toLowerCase();
+          // Numbered selection (1, 2, 3…)
+          const numIdx = parseInt(input.trim(), 10) - 1;
+          if (!isNaN(numIdx) && numIdx >= 0 && numIdx < allServices.length) {
+            const matched = allServices[numIdx];
+            return {
+              valid: true,
+              data: {
+                service_id: matched.id,
+                service_name: matched.name,
+                service_billing_type: matched.billing_type || 'one_time',
+                service_recurring_interval: matched.recurring_interval || null,
+                service_price: matched.price || 0,
+              },
+            };
+          }
+          // Exact name match (case-insensitive)
+          let matched = allServices.find(s => s.name.toLowerCase() === lower);
+          // Substring match
+          if (!matched) matched = allServices.find(s => s.name.toLowerCase().includes(lower) || lower.includes(s.name.toLowerCase()));
+          if (matched) {
+            return {
+              valid: true,
+              data: {
+                service_id: matched.id,
+                service_name: matched.name,
+                service_billing_type: matched.billing_type || 'one_time',
+                service_recurring_interval: matched.recurring_interval || null,
+                service_price: matched.price || 0,
+              },
+            };
+          }
+        }
+
+        return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
       },
       async next() { return 'enter_amount'; },
     },
@@ -115,7 +167,13 @@ export const paymentFlow: FlowDefinition = {
       },
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         const cleaned = input.replace(/[\u20a6\u00a3$,\s]/g, '');
-        const amount = parseFloat(cleaned);
+        let amount = parseFloat(cleaned);
+        // Try natural language extraction if raw parse failed ("about five thousand", "pay 5k")
+        if (isNaN(amount)) {
+          const { extractEntitiesOnly } = await import('@/lib/bot/smart-intent');
+          const entities = extractEntitiesOnly(input);
+          if (entities.amount) amount = entities.amount;
+        }
         if (isNaN(amount) || amount < 1) {
           return { valid: false, errorMessage: 'Please enter a valid amount.' };
         }
@@ -845,10 +903,14 @@ export const paymentFlow: FlowDefinition = {
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
-        const text = input.toLowerCase();
+        const text = input.toLowerCase().trim();
         if (text === 'monthly') return { valid: true, data: { recurring_frequency: 'monthly' } };
         if (text === 'weekly') return { valid: true, data: { recurring_frequency: 'weekly' } };
-        if (text === 'no_thanks' || text === 'no') return { valid: true, data: { recurring_frequency: 'none' } };
+        if (
+          text === 'no_thanks' || text === 'no' ||
+          text === 'no thanks' || text === 'no thank you' ||
+          text === 'nah' || text === 'nope'
+        ) return { valid: true, data: { recurring_frequency: 'none' } };
         return { valid: false, errorMessage: 'Please choose *Monthly*, *Weekly*, or *No thanks*.' };
       },
       async next(ctx: FlowContext) {

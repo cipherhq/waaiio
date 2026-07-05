@@ -88,6 +88,46 @@ export const reservationFlow: FlowDefinition = {
           if (service) match = { ...service, deposit_amount: service.deposit_amount || 0 };
         }
 
+        // Fallback: fuzzy match by name (user typed property name or partial match)
+        if (!match) {
+          // Try properties table first
+          const { data: allProperties } = await ctx.supabase
+            .from('properties')
+            .select('id, name, price, deposit_amount')
+            .eq('business_id', ctx.business!.id)
+            .eq('is_active', true);
+
+          let listings: Array<{ id: string; name: string; price: number; deposit_amount: number }> = (allProperties || []).map(p => ({ ...p, deposit_amount: p.deposit_amount || 0 }));
+
+          // Fall back to services if no properties
+          if (listings.length === 0) {
+            const { data: allServices } = await ctx.supabase
+              .from('services')
+              .select('id, name, price, deposit_amount')
+              .eq('business_id', ctx.business!.id)
+              .eq('is_active', true)
+              .neq('service_type', 'giving');
+            listings = (allServices || []).map(s => ({ ...s, deposit_amount: s.deposit_amount || 0 }));
+          }
+
+          if (listings.length > 0) {
+            const norm = input.toLowerCase().trim();
+            // Exact name match
+            match = listings.find(p => p.name.toLowerCase() === norm) || null;
+            // Partial match (input contains name or vice versa)
+            if (!match) {
+              match = listings.find(p =>
+                norm.includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(norm)
+              ) || null;
+            }
+            // Numbered selection (user types "1", "2", etc.)
+            if (!match && /^\d+$/.test(norm)) {
+              const idx = parseInt(norm, 10) - 1;
+              if (idx >= 0 && idx < listings.length) match = listings[idx];
+            }
+          }
+        }
+
         if (!match) return { valid: false, errorMessage: 'That option is not available. Tap one of the choices above.' };
 
         return {
@@ -225,11 +265,42 @@ export const reservationFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         let dateStr = input;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-          const parsed = new Date(input);
-          if (isNaN(parsed.getTime())) {
-            return { valid: false, errorMessage: 'Please tap one of the date options.' };
+          // Natural language date parsing
+          const lower = input.toLowerCase().trim();
+          const now = new Date();
+          let nlDateStr: string | null = null;
+
+          if (/\b(today|2day|todey)\b/.test(lower)) {
+            nlDateStr = now.toISOString().split('T')[0];
+          } else if (/\b(tomorrow|2moro|2morrow|tmrw|tmr|2mr|2mrw)\b/.test(lower)) {
+            const d = new Date(now); d.setDate(d.getDate() + 1);
+            nlDateStr = d.toISOString().split('T')[0];
+          } else if (/\bnext\s*week\b/.test(lower)) {
+            const d = new Date(now); d.setDate(d.getDate() + 7);
+            nlDateStr = d.toISOString().split('T')[0];
+          } else if (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i.test(lower)) {
+            const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+            const dayMatch = lower.match(/\b(sun|mon|tue|wed|thu|fri|sat)\w*/i);
+            if (dayMatch) {
+              const target = dayMap[dayMatch[1].slice(0, 3).toLowerCase()];
+              if (target !== undefined) {
+                const d = new Date(now);
+                const diff = (target - d.getDay() + 7) % 7 || 7;
+                d.setDate(d.getDate() + diff);
+                nlDateStr = d.toISOString().split('T')[0];
+              }
+            }
           }
-          dateStr = parsed.toISOString().split('T')[0];
+
+          if (nlDateStr) {
+            dateStr = nlDateStr;
+          } else {
+            const parsed = new Date(input);
+            if (isNaN(parsed.getTime())) {
+              return { valid: false, errorMessage: 'Please tap one of the date options.' };
+            }
+            dateStr = parsed.toISOString().split('T')[0];
+          }
         }
 
         const selected = new Date(dateStr + 'T00:00');
@@ -322,11 +393,42 @@ export const reservationFlow: FlowDefinition = {
       async validate(input: string, ctx: FlowContext): Promise<ValidationResult> {
         let dateStr = input;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-          const parsed = new Date(input);
-          if (isNaN(parsed.getTime())) {
-            return { valid: false, errorMessage: 'Please tap one of the date options.' };
+          // Natural language date parsing
+          const lower = input.toLowerCase().trim();
+          const now = new Date();
+          let nlDateStr: string | null = null;
+
+          if (/\b(today|2day|todey)\b/.test(lower)) {
+            nlDateStr = now.toISOString().split('T')[0];
+          } else if (/\b(tomorrow|2moro|2morrow|tmrw|tmr|2mr|2mrw)\b/.test(lower)) {
+            const d = new Date(now); d.setDate(d.getDate() + 1);
+            nlDateStr = d.toISOString().split('T')[0];
+          } else if (/\bnext\s*week\b/.test(lower)) {
+            const d = new Date(now); d.setDate(d.getDate() + 7);
+            nlDateStr = d.toISOString().split('T')[0];
+          } else if (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i.test(lower)) {
+            const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+            const dayMatch = lower.match(/\b(sun|mon|tue|wed|thu|fri|sat)\w*/i);
+            if (dayMatch) {
+              const target = dayMap[dayMatch[1].slice(0, 3).toLowerCase()];
+              if (target !== undefined) {
+                const d = new Date(now);
+                const diff = (target - d.getDay() + 7) % 7 || 7;
+                d.setDate(d.getDate() + diff);
+                nlDateStr = d.toISOString().split('T')[0];
+              }
+            }
           }
-          dateStr = parsed.toISOString().split('T')[0];
+
+          if (nlDateStr) {
+            dateStr = nlDateStr;
+          } else {
+            const parsed = new Date(input);
+            if (isNaN(parsed.getTime())) {
+              return { valid: false, errorMessage: 'Please tap one of the date options.' };
+            }
+            dateStr = parsed.toISOString().split('T')[0];
+          }
         }
 
         const checkInStr = ctx.session.session_data.check_in as string;
