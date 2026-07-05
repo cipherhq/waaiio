@@ -242,8 +242,8 @@ const selectCapabilityStep: FlowStepConfig = {
         }
         // Keyword-based intent matching
         if (!capId) {
-          if (/\b(book|appoint|schedule|reserv)\b/i.test(input)) {
-            capId = userFacing.find(c => c === 'scheduling' || c === 'reservation') || null;
+          if (/\b(book|appoint|schedule|reserv|table\s*for|dinner|lunch|brunch|seat|dine)\b/i.test(input)) {
+            capId = userFacing.find(c => c === 'table_reservation') || userFacing.find(c => c === 'scheduling' || c === 'appointment' || c === 'reservation') || null;
           } else if (/\b(give|tithe?|offer|donat|sadaqah|zakat|pay\s*tithe?|pay\s*offer|pay\s*seed)\b/i.test(input)) {
             // Prioritize giving over payment — "pay tithe" should go to giving, not payment
             capId = userFacing.find(c => c === 'giving') || userFacing.find(c => c === 'payment') || null;

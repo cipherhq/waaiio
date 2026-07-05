@@ -32,6 +32,7 @@ const BOOKING_PATTERNS = [
   // Service-specific (implies booking across industries)
   /\b(barb|haircut|cut\s*hair|trim|shave|braid|perm|manicure|pedicure|massage|facial|consult|checkup|check[\s-]*up)\b/i,
   /\b(room|lodge|hotel|stay|check[\s-]*in|parking|park\s*my\s*car)\b/i,
+  /\b(table\s*for|dinner|lunch|brunch|dine|seat|reserv.*table)\b/i,
   /\b(viewing|inspect|tour)\b.*\b(house|flat|apartment|property)\b/i,
   /\b(gym|workout|exercise|fitness|train)\b/i,
   /\b(vet|veterinary|my\s*dog|my\s*cat|my\s*pet)\b/i,
