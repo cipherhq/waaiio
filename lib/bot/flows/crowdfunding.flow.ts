@@ -18,19 +18,24 @@ const selectCampaignStep: FlowStepConfig = {
     if (!ctx.business) return [{ type: 'text', text: 'Something went wrong on our end. Send *Hi* to start over.' }];
 
     const today = new Date().toISOString().split('T')[0];
+    // Query only columns that exist — allow_after_end_date/allow_after_goal_met
+    // may not exist if migration 199 hasn't been run yet
     const { data: allCampaigns } = await ctx.supabase
       .from('campaigns')
-      .select('id, title, description, goal_amount, raised_amount, donor_count, end_date, allow_after_end_date, allow_after_goal_met')
+      .select('id, title, description, goal_amount, raised_amount, donor_count, end_date')
       .eq('business_id', ctx.business.id)
       .eq('status', 'active')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(20);
 
-    // Filter: exclude campaigns past end date (unless allow_after_end_date)
-    // and campaigns that met their goal (unless allow_after_goal_met)
+    // Filter: exclude campaigns past end date or that met their goal
+    // Default to allowing donations (true) if toggle columns don't exist
     const campaigns = (allCampaigns || []).filter(c => {
-      if (c.end_date && c.end_date < today && !c.allow_after_end_date) return false;
-      if (c.goal_amount > 0 && c.raised_amount >= c.goal_amount && !c.allow_after_goal_met) return false;
+      const allowAfterEnd = (c as Record<string, unknown>).allow_after_end_date ?? true;
+      const allowAfterGoal = (c as Record<string, unknown>).allow_after_goal_met ?? true;
+      if (c.end_date && c.end_date < today && !allowAfterEnd) return false;
+      if (c.goal_amount > 0 && c.raised_amount >= c.goal_amount && !allowAfterGoal) return false;
       return true;
     }).slice(0, 10);
 
@@ -86,10 +91,12 @@ const selectCampaignStep: FlowStepConfig = {
 
     // Re-check eligibility (campaign state may have changed)
     const todayStr = new Date().toISOString().split('T')[0];
-    if (campaign.end_date && campaign.end_date < todayStr && !campaign.allow_after_end_date) {
+    const allowAfterEnd = (campaign as Record<string, unknown>).allow_after_end_date ?? true;
+    const allowAfterGoal = (campaign as Record<string, unknown>).allow_after_goal_met ?? true;
+    if (campaign.end_date && campaign.end_date < todayStr && !allowAfterEnd) {
       return { valid: false, errorMessage: 'This campaign has ended and is no longer accepting donations.' };
     }
-    if (campaign.goal_amount > 0 && campaign.raised_amount >= campaign.goal_amount && !campaign.allow_after_goal_met) {
+    if (campaign.goal_amount > 0 && campaign.raised_amount >= campaign.goal_amount && !allowAfterGoal) {
       return { valid: false, errorMessage: 'This campaign has reached its goal and is no longer accepting donations. Thank you!' };
     }
 
@@ -103,7 +110,7 @@ const selectCampaignStep: FlowStepConfig = {
         campaign_donors: campaign.donor_count,
         campaign_min_donation: campaign.min_donation ?? null,
         campaign_max_donation: campaign.max_donation ?? null,
-        campaign_allow_after_goal_met: campaign.allow_after_goal_met ?? true,
+        campaign_allow_after_goal_met: allowAfterGoal,
       },
     };
   },
