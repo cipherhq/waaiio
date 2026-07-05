@@ -182,7 +182,8 @@ function extractTime(text: string): { specific: string | null; preference: 'morn
   }
 
   // "by 3" / "at 3" / "around 3" (assume PM if 1-7)
-  const byMatch = lower.match(/\b(?:by|at|around|for)\s+(\d{1,2})(?:\s*o'?clock)?\b(?!\s*(?:people|person|guest|pax|am|pm))/);
+  // Exclude "for N" — ambiguous (usually party size, not time). Only "at/by/around" imply time.
+  const byMatch = lower.match(/\b(?:by|at|around)\s+(\d{1,2})(?:\s*o'?clock)?\b(?!\s*(?:people|person|guest|pax|am|pm))/);
   if (byMatch) {
     let h = parseInt(byMatch[1]);
     if (h >= 1 && h <= 7) h += 12; // assume PM
@@ -217,6 +218,14 @@ function extractQuantity(text: string): number | null {
   // Pidgin: "we dey 4" / "we are 4" / "we be 4"
   const pidginMatch = lower.match(/\bwe\s+(?:dey|are|be)\s+(\d+)\b/);
   if (pidginMatch) return Math.min(parseInt(pidginMatch[1]), 20);
+
+  // "for 6 at 8pm" / "for 4 tomorrow" / "for 3" at end of string
+  // (bare "for N" when followed by time marker, date word, or end — implies party size in booking context)
+  const bareForMatch = lower.match(/\bfor\s+(\d{1,2})\s*(?:$|(?=\s*(?:at|by|around|on|tomorrow|today|next|this|mon|tue|wed|thu|fri|sat|sun)))/);
+  if (bareForMatch) {
+    const n = parseInt(bareForMatch[1]);
+    if (n >= 1 && n <= 20) return n;
+  }
 
   // Word numbers: "for two", "for three"
   const wordNums: Record<string, number> = {
