@@ -420,6 +420,27 @@ function extractServiceKeywords(text: string): string[] {
   return [...new Set(keywords)]; // deduplicate
 }
 
+// ── Lightweight entity-only extraction (no intent, no LLM, no PostHog) ──
+
+export function extractEntitiesOnly(text: string): {
+  date: string | null;
+  specificTime: string | null;
+  timePreference: 'morning' | 'afternoon' | 'evening' | null;
+  quantity: number | null;
+  amount: number | null;
+  serviceKeywords: string[];
+} {
+  const timeResult = extractTime(text);
+  return {
+    date: extractDate(text),
+    specificTime: timeResult.specific,
+    timePreference: timeResult.preference,
+    quantity: extractQuantity(text),
+    amount: extractAmount(text),
+    serviceKeywords: extractServiceKeywords(text),
+  };
+}
+
 // ── Main parser ──────────────────────────────────────────
 
 export function parseSmartIntent(text: string): SmartParseResult {

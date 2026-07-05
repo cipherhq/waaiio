@@ -771,25 +771,28 @@ export const schedulingFlow: FlowDefinition = {
         if (quickDateMatch) {
           dateStr = quickDateMatch[1];
         } else if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-          // Natural language date parsing
+          // Natural language date parsing — tolerant of surrounding text (e.g., "tomorrow at 6pm")
           const lower = input.toLowerCase().trim();
           const now = new Date();
-          if (lower === 'today') {
+          if (/\b(today|2day|todey)\b/.test(lower)) {
             dateStr = now.toISOString().split('T')[0];
-          } else if (lower === 'tomorrow' || lower === 'tmr' || lower === 'tmrw') {
+          } else if (/\b(tomorrow|2moro|2morrow|tmrw|tmr|2mr|2mrw)\b/.test(lower)) {
             const tmr = new Date(now); tmr.setDate(tmr.getDate() + 1);
             dateStr = tmr.toISOString().split('T')[0];
-          } else if (lower === 'next week') {
+          } else if (/\bnext\s*week\b/.test(lower)) {
             const nw = new Date(now); nw.setDate(nw.getDate() + 7);
             dateStr = nw.toISOString().split('T')[0];
-          } else if (/^(mon|tue|wed|thu|fri|sat|sun)/i.test(lower)) {
+          } else if (/^(mon|tue|wed|thu|fri|sat|sun)/i.test(lower) || /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower)) {
             const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
-            const target = dayMap[lower.slice(0, 3).toLowerCase()];
-            if (target !== undefined) {
-              const d = new Date(now);
-              const diff = (target - d.getDay() + 7) % 7 || 7;
-              d.setDate(d.getDate() + diff);
-              dateStr = d.toISOString().split('T')[0];
+            const dayMatch = lower.match(/\b(sun|mon|tue|wed|thu|fri|sat)\w*/i);
+            if (dayMatch) {
+              const target = dayMap[dayMatch[1].slice(0, 3).toLowerCase()];
+              if (target !== undefined) {
+                const d = new Date(now);
+                const diff = (target - d.getDay() + 7) % 7 || 7;
+                d.setDate(d.getDate() + diff);
+                dateStr = d.toISOString().split('T')[0];
+              }
             }
           } else {
             const parsed = new Date(input);
@@ -1005,8 +1008,31 @@ export const schedulingFlow: FlowDefinition = {
           return { valid: true, data: { _time_action: 'cancel' } };
         }
 
+        // Extract time from rich text (e.g., "6pm for 5 people" → "6pm")
+        let timeInput = input.trim();
+        if (!/^\d{2}:\d{2}$/.test(timeInput) && !/^time_/.test(timeInput)) {
+          // Not a postback — try to extract time from natural text
+          const richTimeMatch = timeInput.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)\b/i);
+          const rich24Match = timeInput.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+          const richByMatch = timeInput.match(/\b(?:by|at|around)\s+(\d{1,2})(?:\s*o'?clock)?\b(?!\s*(?:people|person|guest|pax|am|pm))/i);
+          if (richTimeMatch) {
+            let hours = parseInt(richTimeMatch[1]);
+            const minutes = richTimeMatch[2] || '00';
+            const period = richTimeMatch[3].replace(/\./g, '').toLowerCase();
+            if (period === 'pm' && hours < 12) hours += 12;
+            if (period === 'am' && hours === 12) hours = 0;
+            timeInput = `${hours.toString().padStart(2, '0')}:${minutes}`;
+          } else if (rich24Match) {
+            timeInput = `${rich24Match[1].padStart(2, '0')}:${rich24Match[2]}`;
+          } else if (richByMatch) {
+            let h = parseInt(richByMatch[1]);
+            if (h >= 1 && h <= 7) h += 12;
+            if (h >= 8 && h <= 23) timeInput = `${h.toString().padStart(2, '0')}:00`;
+          }
+        }
+
         // Accept HH:MM, HH:MM AM/PM, "10am", "2pm", "2:30pm"
-        let normalizedTime = input.trim();
+        let normalizedTime = timeInput;
         const ampmMatch = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i.exec(normalizedTime);
         if (ampmMatch) {
           let h = parseInt(ampmMatch[1], 10);

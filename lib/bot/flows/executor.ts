@@ -310,6 +310,51 @@ export class FlowExecutor {
       return;
     }
 
+    // ── Mid-flow entity extraction: pre-fill future steps from rich text ──
+    const INTENT_FILLABLE_STEPS = new Set([
+      'select_date', 'select_time', 'select_service', 'select_staff',
+      'select_party_size', 'select_quantity', 'select_location',
+      'select_capability',
+    ]);
+
+    // Map of which field each step "owns" — don't inject into the current step's field
+    const STEP_OWNS_FIELD: Record<string, string> = {
+      'select_date': 'date',
+      'select_time': 'time',
+      'select_party_size': 'party_size',
+      'select_quantity': 'party_size',
+    };
+
+    let pendingEntities: Record<string, unknown> = {};
+    if (INTENT_FILLABLE_STEPS.has(stepId) && input.split(/\s+/).length >= 2) {
+      const { extractEntitiesOnly } = await import('@/lib/bot/smart-intent');
+      const entities = extractEntitiesOnly(input);
+      const ownedField = STEP_OWNS_FIELD[stepId];
+      const activeCap = session.session_data.active_capability as string | undefined;
+
+      if (entities.date && !session.session_data.date && ownedField !== 'date') {
+        pendingEntities.date = entities.date;
+      }
+      if (entities.specificTime && !session.session_data.time && ownedField !== 'time') {
+        pendingEntities.time = entities.specificTime;
+      }
+      if (entities.timePreference && !session.session_data._time_preference) {
+        pendingEntities._time_preference = entities.timePreference;
+      }
+      if (entities.quantity && !session.session_data.party_size && ownedField !== 'party_size') {
+        // Only inject party_size for booking-related capabilities
+        if (['scheduling', 'appointment', 'table_reservation', 'reservation'].includes(activeCap || '')) {
+          pendingEntities.party_size = entities.quantity;
+        }
+      }
+      if (entities.amount && !session.session_data.amount) {
+        // Only inject amount for payment-related capabilities
+        if (['payment', 'giving', 'invoice', 'crowdfunding'].includes(activeCap || '')) {
+          pendingEntities.amount = entities.amount;
+        }
+      }
+    }
+
     // Validate input
     const result = await step.validate(input, ctx);
 
@@ -335,6 +380,10 @@ export class FlowExecutor {
     // Merge data into session
     if (result.data) {
       Object.assign(session.session_data, result.data);
+    }
+    // After validate succeeds, merge pending entities into session_data
+    if (Object.keys(pendingEntities).length > 0) {
+      Object.assign(session.session_data, pendingEntities);
     }
     await this.supabase
       .from('bot_sessions')
