@@ -525,7 +525,7 @@ export default function DashboardOverview() {
 
       {/* WhatsApp Link Card */}
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+        <div className={allComplete ? "lg:col-span-2" : "lg:col-span-3"}>
           <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-gradient-to-br from-green-50 to-white dark:from-green-900/20 dark:to-gray-800 p-6">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-whatsapp/10">
