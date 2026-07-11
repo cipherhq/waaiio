@@ -117,11 +117,11 @@ export default async function DashboardLayout({
           <DashboardProvider business={businessWithCaps} userId={user.id} isReseller={isReseller}>
             <div data-dashboard className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
-              <ImpersonationBanner businessName={impersonatedBusinessName} />
-              <AlertBanner />
               <Sidebar />
               <IdleTimeout />
               <main className="flex-1 overflow-y-auto md:ml-64">
+                <ImpersonationBanner businessName={impersonatedBusinessName} />
+                <AlertBanner />
                 <div className="fixed right-4 top-4 z-40 md:right-6 md:top-4">
                   <NotificationBell />
                 </div>
@@ -207,10 +207,10 @@ export default async function DashboardLayout({
     <DashboardProvider business={businessWithCaps} userId={user.id} allBusinesses={allBusinessesList} isReseller={isReseller}>
       <div data-dashboard className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
               <a href="#main-content" className="skip-link">Skip to content</a>
-        <AlertBanner />
         <Sidebar />
         <IdleTimeout />
         <main className="flex-1 overflow-y-auto md:ml-64">
+          <AlertBanner />
           <div id="main-content" className="relative mx-auto max-w-7xl px-4 pt-16 pb-6 md:pt-6 md:pb-6 sm:px-6 lg:px-8 dark:text-gray-100">
             <div className="mb-2 flex h-8 items-center justify-end md:absolute md:right-6 md:top-4 md:mb-0">
               <NotificationBell />
