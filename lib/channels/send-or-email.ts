@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from './message-sender';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
+import { sendSms, isSmsEligible } from '@/lib/sms/bulksms-ng';
 
 interface SendOrEmailOpts {
   supabase: SupabaseClient;
@@ -17,11 +18,14 @@ interface SendOrEmailOpts {
   businessName?: string;
   /** If true, send email alongside WhatsApp (not just as fallback) */
   alwaysEmail?: boolean;
+  /** If true, attempt SMS as final fallback when both WhatsApp and email fail (NG/GH only) */
+  smsFallback?: boolean;
 }
 
 interface SendOrEmailResult {
   whatsapp: 'sent' | 'failed';
   email: 'sent' | 'skipped' | 'failed' | 'no_address';
+  sms?: 'sent' | 'failed' | 'skipped' | 'not_eligible';
 }
 
 /**
@@ -67,8 +71,23 @@ export async function sendOrEmail(opts: SendOrEmailOpts): Promise<SendOrEmailRes
     }
   }
 
-  // 3. Log if both failed
-  if (result.whatsapp === 'failed' && (result.email === 'failed' || result.email === 'no_address')) {
+  // 3. SMS fallback — attempt when both WhatsApp and email failed (NG/GH only)
+  if (opts.smsFallback && result.whatsapp === 'failed' && (result.email === 'failed' || result.email === 'no_address')) {
+    if (isSmsEligible(to)) {
+      // Truncate to SMS limit (160 chars) and strip WhatsApp formatting
+      const smsText = text.replace(/\*/g, '').replace(/_/g, '').slice(0, 160);
+      const smsResult = await sendSms({ to, message: smsText });
+      result.sms = smsResult.sent ? 'sent' : 'failed';
+      if (smsResult.sent) {
+        logger.info(`[SEND_OR_EMAIL] SMS fallback succeeded for ${to}`);
+      } else {
+        logger.error(`[SEND_OR_EMAIL] All channels failed for ${to}: WA, email, SMS`);
+      }
+    } else {
+      result.sms = 'not_eligible';
+      logger.error(`[SEND_OR_EMAIL] Both WhatsApp and email failed for ${to} (${opts.businessName || 'unknown business'}). SMS not eligible (non-NG/GH).`);
+    }
+  } else if (result.whatsapp === 'failed' && (result.email === 'failed' || result.email === 'no_address')) {
     logger.error(`[SEND_OR_EMAIL] Both WhatsApp and email failed for ${to} (${opts.businessName || 'unknown business'}). Message lost.`);
   }
 

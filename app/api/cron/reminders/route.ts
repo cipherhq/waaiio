@@ -115,6 +115,7 @@ export async function GET(request: NextRequest) {
             email: emailPayload,
             businessName,
             alwaysEmail: true,
+            smsFallback: true,
           });
           if (result.whatsapp === 'sent') whatsappSent++;
           if (result.email === 'sent') remindersSent++;
@@ -174,6 +175,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName: bizName,
           alwaysEmail: true,
+          smsFallback: true,
         });
         if (result.whatsapp === 'sent') whatsappSent++;
         if (result.email === 'sent') remindersSent++;
@@ -231,6 +233,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName: bizName,
           alwaysEmail: true,
+          smsFallback: true,
         });
         if (result.whatsapp === 'sent') whatsappSent++;
         if (result.email === 'sent') remindersSent++;
@@ -320,6 +323,7 @@ export async function GET(request: NextRequest) {
           email: emailPayload,
           businessName: party.name,
           alwaysEmail: true,
+          smsFallback: true,
         });
 
         if (result.whatsapp === 'sent' || result.email === 'sent') {

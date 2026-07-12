@@ -253,6 +253,34 @@ export class FlowExecutor {
       return;
     }
 
+    // Language switching escape hatch: "switch to yoruba" / "speak hausa" / "parle français"
+    const langSwitchMatch = lowerInput.match(/\b(?:switch\s+to|speak|change\s+(?:to|language\s+to)|use)\s+(pidgin|yoruba|igbo|hausa|twi|french|spanish|english|français|español)\b/i);
+    if (langSwitchMatch) {
+      const langMap: Record<string, string> = {
+        pidgin: 'pcm', yoruba: 'yo', igbo: 'ig', hausa: 'ha', twi: 'tw',
+        french: 'fr', français: 'fr', spanish: 'es', español: 'es', english: 'en',
+      };
+      const targetLang = langMap[langSwitchMatch[1].toLowerCase()];
+      if (targetLang) {
+        const { getLanguageName } = await import('@/lib/bot/translate');
+        if (targetLang === 'en') {
+          session.session_data._detected_language = undefined;
+          await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+          await this.sendText(from, 'Switched to English. ✅');
+        } else {
+          session.session_data._detected_language = targetLang;
+          await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+          const { translateBotResponse } = await import('@/lib/bot/translate');
+          const msg = await translateBotResponse(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang);
+          await this.sendText(from, msg);
+        }
+        // Re-prompt current step in new language
+        const retryMsgs = await step.prompt(ctx);
+        await this.sendMessages(from, retryMsgs, session);
+        return;
+      }
+    }
+
     // Global escalation escape hatch: "talk to human" works at any step
     const escalationPattern = /\b(talk|speak|chat)\s+(to|with)\s+(a\s+)?(human|agent|person|staff|someone)\b|\b(live\s+(agent|chat|support))\b|\b(customer\s+service)\b|\b(i\s+need\s+(a\s+)?(human|agent|help))\b/i;
     if (escalationPattern.test(lowerInput) && business) {
