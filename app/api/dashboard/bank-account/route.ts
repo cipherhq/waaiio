@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
     // Verify ownership and get tier
     const { data: business } = await supabase
       .from('businesses')
-      .select('id, subscription_tier')
+      .select('id, subscription_tier, country_code')
       .eq('id', business_id)
       .eq('owner_id', user.id)
       .maybeSingle();
@@ -99,9 +99,15 @@ export async function POST(request: NextRequest) {
     }
     if (!account_number || typeof account_number !== 'string') {
       errors.push('account_number is required');
-    } else if (!/^\d{10}$/.test(account_number)) {
-      // 10 digits for NG accounts
-      errors.push('account_number must be exactly 10 digits');
+    } else {
+      const cc = business.country_code || 'NG';
+      const minLen = cc === 'GH' ? 10 : 10;
+      const maxLen = cc === 'GH' ? 16 : 10;
+      if (!/^\d+$/.test(account_number) || account_number.length < minLen || account_number.length > maxLen) {
+        errors.push(minLen === maxLen
+          ? `account_number must be exactly ${minLen} digits`
+          : `account_number must be ${minLen}–${maxLen} digits`);
+      }
     }
 
     if (errors.length > 0) {
@@ -179,7 +185,7 @@ export async function PUT(request: NextRequest) {
     // Verify ownership
     const { data: business } = await supabase
       .from('businesses')
-      .select('id')
+      .select('id, country_code')
       .eq('id', existing.business_id)
       .eq('owner_id', user.id)
       .maybeSingle();
@@ -190,8 +196,15 @@ export async function PUT(request: NextRequest) {
 
     // Validate optional fields
     const errors: string[] = [];
-    if (account_number !== undefined && (typeof account_number !== 'string' || !/^\d{10}$/.test(account_number))) {
-      errors.push('account_number must be exactly 10 digits');
+    if (account_number !== undefined) {
+      const cc = business.country_code || 'NG';
+      const minLen = cc === 'GH' ? 10 : 10;
+      const maxLen = cc === 'GH' ? 16 : 10;
+      if (typeof account_number !== 'string' || !/^\d+$/.test(account_number) || account_number.length < minLen || account_number.length > maxLen) {
+        errors.push(minLen === maxLen
+          ? `account_number must be exactly ${minLen} digits`
+          : `account_number must be ${minLen}–${maxLen} digits`);
+      }
     }
     if (bank_name !== undefined && (typeof bank_name !== 'string' || bank_name.trim().length === 0)) {
       errors.push('bank_name must be a non-empty string');

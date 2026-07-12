@@ -351,27 +351,30 @@ export const paymentFlow: FlowDefinition = {
           businessId: ctx.business?.id,
         });
 
+        // Check if business qualifies for direct bank transfer option
+        // Requires: NG/GH country, growth/business tier, active default bank account, amount >= minimum
+        let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
+        const tier = ctx.business?.subscription_tier || 'free';
+        const ps = await loadPlatformSettings({ useServiceClient: true });
+        const minBankTransfer = ps.minimum_bank_transfer[cc] ?? 10000;
+        const qualifiesForBankTransfer =
+          (cc === 'NG' || cc === 'GH') &&
+          (tier === 'growth' || tier === 'business') &&
+          amount >= minBankTransfer;
+
+        if (qualifiesForBankTransfer) {
+          const { data: ba } = await ctx.supabase
+            .from('business_bank_accounts')
+            .select('bank_name, account_number, account_name')
+            .eq('business_id', ctx.business!.id)
+            .eq('is_active', true)
+            .eq('is_default', true)
+            .maybeSingle();
+          bankAccount = ba;
+        }
+
         if (paymentResult) {
           d.payment_reference = paymentResult.reference;
-
-          // Check if business qualifies for direct bank transfer option
-          // Requires: NG/GH country, growth/business tier, active default bank account, amount >= 10,000 base currency
-          let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-          const tier = ctx.business?.subscription_tier || 'free';
-          const qualifiesForBankTransfer =
-            (cc === 'NG' || cc === 'GH') &&
-            (tier === 'growth' || tier === 'business');
-
-          if (qualifiesForBankTransfer) {
-            const { data: ba } = await ctx.supabase
-              .from('business_bank_accounts')
-              .select('bank_name, account_number, account_name')
-              .eq('business_id', ctx.business!.id)
-              .eq('is_active', true)
-              .eq('is_default', true)
-              .maybeSingle();
-            bankAccount = ba;
-          }
 
           if (bankAccount) {
             // Generate unique transfer reference
@@ -390,7 +393,7 @@ export const paymentFlow: FlowDefinition = {
               currency: getCurrencyCode(cc),
               reference_code: transferRef,
               status: 'pending',
-              expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+              expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
             });
 
             await ctx.supabase
@@ -481,7 +484,66 @@ export const paymentFlow: FlowDefinition = {
           ];
         }
 
-        // Payment initialization failed — show helpful error based on likely cause
+        // Payment gateway failed — but bank transfer may still be available
+        if (bankAccount) {
+          const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+          d.bank_transfer_reference = transferRef;
+          d.bank_transfer_offered = true;
+          d.bank_transfer_amount = amount;
+
+          await ctx.supabase.from('pending_transfers').insert({
+            business_id: ctx.business!.id,
+            booking_id: booking.id,
+            customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+            customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+            expected_amount: Math.round(amount * 100),
+            currency: getCurrencyCode(cc),
+            reference_code: transferRef,
+            status: 'pending',
+            expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+          });
+
+          await ctx.supabase
+            .from('bot_sessions')
+            .update({ session_data: d, current_step: 'await_payment' })
+            .eq('id', ctx.session.id);
+
+          const paymentLines = [
+            `🏦 *Bank Transfer Payment*`,
+            '',
+            `${getCategoryLabels(ctx.business?.category || 'church').confirmationEmoji} ${ctx.business?.name}`,
+            `📌 ${d.service_name as string}`,
+            `💰 ${formatCurrency(amount, cc)}`,
+            `🔑 Ref: *${booking.reference_code}*`,
+            '',
+            `Transfer to:`,
+            `Bank: ${bankAccount.bank_name}`,
+            `Account: ${bankAccount.account_number}`,
+            `Name: ${bankAccount.account_name}`,
+            `Amount: ${formatCurrency(amount, cc)}`,
+            `Reference/Narration: *${transferRef}*`,
+            '',
+            `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+            `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+          ];
+
+          return [
+            {
+              type: 'text',
+              text: paymentLines.join('\n'),
+            },
+            {
+              type: 'buttons',
+              body: 'Tap below after transferring:',
+              buttons: [
+                { id: 'sent_transfer', title: "I've Sent Transfer" },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            },
+          ];
+        }
+
+        // No payment option available — show error
         const cc2 = (ctx.business?.country_code || 'NG') as CountryCode;
         const minAmounts: Record<string, number> = { NG: 50, GH: 1, US: 1, GB: 1, CA: 1 };
         const minAmount = minAmounts[cc2] || 1;

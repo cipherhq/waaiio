@@ -25,6 +25,24 @@ const NIGERIAN_BANKS = [
   'Jaiz Bank', 'Kuda', 'OPay', 'PalmPay', 'Moniepoint',
 ] as const;
 
+const GHANAIAN_BANKS = [
+  'GCB Bank', 'Ecobank Ghana', 'Absa Ghana', 'Standard Chartered Ghana',
+  'Fidelity Bank Ghana', 'Zenith Bank Ghana', 'CAL Bank', 'Access Bank Ghana',
+  'Republic Bank', 'First National Bank Ghana', 'Consolidated Bank Ghana',
+  'UBA Ghana', 'Stanbic Bank Ghana', 'Prudential Bank', 'ADB Ghana',
+  'MTN MoMo', 'Vodafone Cash', 'AirtelTigo Money',
+] as const;
+
+const BANK_LIST_BY_COUNTRY: Record<string, readonly string[]> = {
+  NG: NIGERIAN_BANKS,
+  GH: GHANAIAN_BANKS,
+};
+
+const ACCOUNT_NUMBER_LENGTH: Record<string, { min: number; max: number }> = {
+  NG: { min: 10, max: 10 },
+  GH: { min: 10, max: 16 },
+};
+
 interface BankAccount {
   id: string;
   bank_name: string;
@@ -87,11 +105,17 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
     else setLoading(false);
   }, [business.id, isFreeTier]);
 
+  const cc = business.country_code || 'NG';
+  const acctLimits = ACCOUNT_NUMBER_LENGTH[cc] || ACCOUNT_NUMBER_LENGTH.NG;
+  const bankList = BANK_LIST_BY_COUNTRY[cc] || NIGERIAN_BANKS;
+
   function validate(): boolean {
     const errs: typeof errors = {};
     if (!bankName) errs.bank = 'Please select a bank.';
-    if (!accountNumber || accountNumber.length !== 10 || !/^\d{10}$/.test(accountNumber)) {
-      errs.number = 'Account number must be exactly 10 digits.';
+    if (!accountNumber || !/^\d+$/.test(accountNumber) || accountNumber.length < acctLimits.min || accountNumber.length > acctLimits.max) {
+      errs.number = acctLimits.min === acctLimits.max
+        ? `Account number must be exactly ${acctLimits.min} digits.`
+        : `Account number must be ${acctLimits.min}–${acctLimits.max} digits.`;
     }
     if (!accountName || accountName.trim().length < 3) {
       errs.name = 'Account name must be at least 3 characters.';
@@ -313,7 +337,7 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
                       className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-brand ${errors.bank ? 'border-red-300' : 'border-gray-200'}`}
                     >
                       <option value="">Select a bank</option>
-                      {NIGERIAN_BANKS.map((bank) => (
+                      {bankList.map((bank) => (
                         <option key={bank} value={bank}>{bank}</option>
                       ))}
                     </select>
@@ -328,16 +352,16 @@ function BankAccountSection({ business, openSections, toggleSection, saving, set
                       inputMode="numeric"
                       value={accountNumber}
                       onChange={(e) => {
-                        const cleaned = e.target.value.replace(/\D/g, '').slice(0, 10);
+                        const cleaned = e.target.value.replace(/\D/g, '').slice(0, acctLimits.max);
                         setAccountNumber(cleaned);
                         setErrors((prev) => ({ ...prev, number: undefined }));
                       }}
-                      placeholder="0123456789"
-                      maxLength={10}
+                      placeholder={cc === 'GH' ? '0012345678901' : '0123456789'}
+                      maxLength={acctLimits.max}
                       className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-brand font-mono ${errors.number ? 'border-red-300' : 'border-gray-200'}`}
                     />
-                    {accountNumber && accountNumber.length < 10 && (
-                      <p className="mt-1 text-xs text-gray-400">{accountNumber.length}/10 digits</p>
+                    {accountNumber && accountNumber.length < acctLimits.min && (
+                      <p className="mt-1 text-xs text-gray-400">{accountNumber.length}/{acctLimits.min} digits</p>
                     )}
                     {errors.number && <p className="mt-1 text-xs text-red-500">{errors.number}</p>}
                   </div>
