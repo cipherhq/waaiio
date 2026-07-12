@@ -64,7 +64,7 @@ cd admin && npm run dev  # Admin panel (port 8083)
 - **Database:** Supabase (PostgreSQL + Auth + Storage + Realtime)
 - **WhatsApp:** Meta Cloud API (premium) + Gupshup (shared numbers)
 - **Payments:** Paystack (NG/GH), Stripe (US/GB/CA), Flutterwave, Square
-- **AI:** Anthropic Claude (intent detection), OpenAI Whisper (voice transcription)
+- **AI:** Anthropic Claude (intent detection + voice transcription via Haiku 4.5)
 - **Email:** Resend
 - **Analytics:** PostHog
 - **Monitoring:** Sentry

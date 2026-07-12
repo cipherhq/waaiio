@@ -2594,7 +2594,7 @@ export const orderingFlow: FlowDefinition = {
             items: cart,
             totalAmount: total,
             deliveryAddress: (d.delivery_address as string) || undefined,
-          }).catch(err => console.error('[ORDERING] Owner notification error:', err));
+          }).catch(err => logger.error('[ORDERING] Owner notification error:', err));
         }
 
         // Increment promo code usage
@@ -2812,13 +2812,13 @@ export const orderingFlow: FlowDefinition = {
               p_variant_id: item.variant_id,
               qty: item.quantity,
             });
-            if (stockErr) console.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
+            if (stockErr) logger.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
           } else {
             const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
               p_product_id: item.product_id,
               qty: item.quantity,
             });
-            if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
+            if (stockErr) logger.error('[ORDERING] decrement_stock error:', stockErr.message);
           }
         }
 
@@ -2835,7 +2835,7 @@ export const orderingFlow: FlowDefinition = {
             amountPaid: total,
             serviceName: cart.map(i => i.variant_label ? `${i.name} (${i.variant_label})` : i.name).join(', '),
             referenceCode: order.reference_code,
-          }).catch(err => console.error('[ORDERING] Post-completion error:', err));
+          }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
         }
 
         const orderTips = '\n\n💡 *What you can do:*\n• Type *my orders* to track your order status\n• Type *receipt* to get your receipt\n• Type *Hi* to place another order';
@@ -3006,14 +3006,14 @@ export const orderingFlow: FlowDefinition = {
               customerName: custName,
               items: cart,
               totalAmount: expectedAmount,
-            }).catch(err => console.error('[ORDERING] Transfer notify error:', err));
+            }).catch(err => logger.error('[ORDERING] Transfer notify error:', err));
 
             createNotification(ctx.supabase, {
               businessId: ctx.business.id,
               type: 'transfer_proof_received',
               channel: 'whatsapp',
               body: `Transfer proof received from ${custName} for ${formatCurrency(expectedAmount, cc)} order (${itemsSummary}). Ref: ${transferRef}. Confirm in Dashboard → Pending Transfers.`,
-            }).catch(err => console.error('[ORDERING] Transfer notification error:', err));
+            }).catch(err => logger.error('[ORDERING] Transfer notification error:', err));
           }
 
           const ocrHint = ocrMatches ? `\n\n🤖 _Our AI verified your receipt — amount and reference match._` : '';
@@ -3106,13 +3106,13 @@ export const orderingFlow: FlowDefinition = {
                   p_variant_id: item.variant_id,
                   qty: item.quantity,
                 });
-                if (stockErr) console.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
+                if (stockErr) logger.error('[ORDERING] decrement_variant_stock error:', stockErr.message);
               } else {
                 const { error: stockErr } = await ctx.supabase.rpc('decrement_stock', {
                   p_product_id: item.product_id,
                   qty: item.quantity,
                 });
-                if (stockErr) console.error('[ORDERING] decrement_stock error:', stockErr.message);
+                if (stockErr) logger.error('[ORDERING] decrement_stock error:', stockErr.message);
               }
             }
 
@@ -3152,7 +3152,7 @@ export const orderingFlow: FlowDefinition = {
                 transactionAmount: totalAmount,
                 tier,
                 isInTrial,
-              }).catch(err => console.error('[ORDERING] Platform fee error:', err));
+              }).catch(err => logger.error('[ORDERING] Platform fee error:', err));
             }
 
             // Post-completion: loyalty, feedback, referral, auto-receipt
@@ -3169,7 +3169,7 @@ export const orderingFlow: FlowDefinition = {
                 amountPaid: totalAmount,
                 serviceName: cart.map(i => i.variant_label ? `${i.name} (${i.variant_label})` : i.name).join(', '),
                 referenceCode: sd.reference_code as string,
-              }).catch(err => console.error('[ORDERING] Post-completion error:', err));
+              }).catch(err => logger.error('[ORDERING] Post-completion error:', err));
 
               // Fire payment_received rule (non-blocking)
               const pmtSendMsg = async (to: string, txt: string) => {
