@@ -16,6 +16,7 @@ import { checkBankTransferEligibility, createPendingTransfer, formatBankTransfer
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { createServiceClient } from '@/lib/supabase/service';
 import { getPlatformFees } from '@/lib/getPlatformFees';
+import { calculateLtvTier } from '@/lib/bot/customer-intelligence';
 
 export const paymentFlow: FlowDefinition = {
   type: 'payment',
@@ -739,16 +740,21 @@ export const paymentFlow: FlowDefinition = {
                 .maybeSingle();
 
               if (existing) {
+                const newTotalSpent = (existing.total_spent || 0) + amount;
+                const newTotalVisits = (existing.total_visits || 0) + 1;
+                const ltvTier = calculateLtvTier(newTotalSpent, newTotalVisits);
                 await ctx.supabase
                   .from('customer_profiles')
                   .update({
                     name: name || undefined,
-                    total_visits: (existing.total_visits || 0) + 1,
-                    total_spent: (existing.total_spent || 0) + amount,
+                    total_visits: newTotalVisits,
+                    total_spent: newTotalSpent,
+                    ltv_tier: ltvTier,
                     last_seen_at: now,
                   })
                   .eq('id', existing.id);
               } else {
+                const ltvTier = calculateLtvTier(amount, 1);
                 await ctx.supabase
                   .from('customer_profiles')
                   .insert({
@@ -757,6 +763,7 @@ export const paymentFlow: FlowDefinition = {
                     name,
                     total_visits: 1,
                     total_spent: amount,
+                    ltv_tier: ltvTier,
                     first_seen_at: now,
                     last_seen_at: now,
                   });

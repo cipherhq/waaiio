@@ -7,6 +7,17 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-09
 
+### Feature: Customer LTV tier scoring
+- `supabase/migrations/227_customer_ltv_tier.sql` — Adds `ltv_tier` VARCHAR(20) DEFAULT 'new' column to `customer_profiles` with index.
+- `lib/bot/customer-intelligence.ts` — Added `calculateLtvTier(totalSpent, totalVisits)` function. Tiers: vip (>=500,000 minor units), regular (>=3 visits), new.
+- `lib/bot/customer-intelligence.ts` — Added `ltvTier` to `CustomerHistory` interface and `getCustomerHistory` return.
+- `lib/bot/customer-intelligence.ts` — Updated `buildReturnGreeting` to show VIP-specific greeting ("Great to see you again").
+- `lib/bot/flows/shared/post-completion.ts` — Recalculates and stores `ltv_tier` after each payment.
+- `lib/bot/flows/payment.flow.ts` — Calculates and stores `ltv_tier` on customer_profiles upsert.
+- `lib/bot/bot.service.ts` — VIP customers get enhanced greeting in quick rebook flow. Stores ltvTier in session data.
+- Affects: Bot greeting personalization, customer_profiles table. Requires migration 227.
+- Could break: Nothing — additive column with default value. Existing profiles default to 'new'.
+
 ### Feature: Bot refund request capability
 - `lib/bot/handlers/refund-request.ts` — New inline handler. Looks up customer's recent paid bookings by phone, shows list, collects reason, inserts into `refund_requests` table (status=pending), notifies business owner via email/WhatsApp + system notification.
 - `lib/bot/handlers/keyword-actions.ts` — Added `request_refund` action in `navigate_step` case. Creates new session with `refund_select` step.

@@ -5,6 +5,7 @@ export interface CustomerHistory {
   isReturning: boolean;
   totalVisits: number;
   totalSpent: number;
+  ltvTier: LtvTier;
   lastServiceName: string | null;
   lastServiceId: string | null;
   lastFlowType: string | null;  // 'scheduling', 'payment', 'ticketing', etc.
@@ -28,6 +29,7 @@ export async function getCustomerHistory(
     isReturning: false,
     totalVisits: 0,
     totalSpent: 0,
+    ltvTier: 'new',
     lastServiceName: null,
     lastServiceId: null,
     lastFlowType: null,
@@ -121,6 +123,7 @@ export async function getCustomerHistory(
       isReturning: true,
       totalVisits,
       totalSpent,
+      ltvTier: calculateLtvTier(totalSpent, totalVisits),
       lastServiceName,
       lastServiceId: lastBooking.service_id || lastBooking.appointment_id || null,
       lastFlowType: lastBooking.flow_type || null,
@@ -138,6 +141,10 @@ export async function getCustomerHistory(
 
 /**
  * Build a personalized returning customer message.
+ * Greeting varies by LTV tier:
+ * - VIP: "Welcome back, [name]! Great to see you again."
+ * - Regular: "Welcome back, [name]!"
+ * - New: standard greeting (returns null)
  */
 export function buildReturnGreeting(
   customerName: string | null,
@@ -149,10 +156,18 @@ export function buildReturnGreeting(
   const name = customerName ? customerName.split(' ')[0] : '';
   const parts: string[] = [];
 
-  if (name) {
-    parts.push(`Welcome back, *${name}*! 👋`);
+  if (history.ltvTier === 'vip') {
+    if (name) {
+      parts.push(`Welcome back, *${name}*! Great to see you again. 👋`);
+    } else {
+      parts.push('Welcome back! Great to see you again. 👋');
+    }
   } else {
-    parts.push('Welcome back! 👋');
+    if (name) {
+      parts.push(`Welcome back, *${name}*! 👋`);
+    } else {
+      parts.push('Welcome back! 👋');
+    }
   }
 
   if (history.lastServiceName && history.daysSinceLastVisit !== null) {
@@ -202,6 +217,27 @@ export function calculateChurnRisk(history: CustomerHistory): number {
   if (history.loyaltyPoints && history.loyaltyPoints > 0) risk -= 10;
 
   return Math.max(0, Math.min(100, risk));
+}
+
+/**
+ * LTV tier types for customer segmentation.
+ */
+export type LtvTier = 'vip' | 'regular' | 'new';
+
+/**
+ * Calculate LTV tier based on spending and visit frequency.
+ * - vip: total_spent >= 500,000 (minor units, e.g. ₦5,000 in kobo)
+ * - regular: total_visits >= 3
+ * - new: everyone else
+ */
+export function calculateLtvTier(
+  totalSpent: number,
+  totalVisits: number,
+  _firstVisitAt?: string | null,
+): LtvTier {
+  if (totalSpent >= 500_000) return 'vip';
+  if (totalVisits >= 3) return 'regular';
+  return 'new';
 }
 
 /**

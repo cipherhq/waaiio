@@ -1019,6 +1019,7 @@ export class BotService {
           if (custHistory.isReturning) {
             session.session_data._customer_history = {
               totalVisits: custHistory.totalVisits,
+              ltvTier: custHistory.ltvTier,
               lastServiceId: custHistory.lastServiceId,
               lastServiceName: custHistory.lastServiceName,
               lastFlowType: custHistory.lastFlowType,
@@ -1034,9 +1035,14 @@ export class BotService {
             const rebookServiceId = custHistory.lastServiceId || custHistory.favoriteServiceId;
 
             if (rebookServiceName && rebookServiceId) {
+              const isVip = custHistory.ltvTier === 'vip';
               const rebookMsg = customerName
-                ? `Welcome back, ${customerName}! 👋`
-                : 'Welcome back! 👋';
+                ? isVip
+                  ? `Welcome back, ${customerName}! Great to see you again. 👋`
+                  : `Welcome back, ${customerName}! 👋`
+                : isVip
+                  ? 'Welcome back! Great to see you again. 👋'
+                  : 'Welcome back! 👋';
 
               // Determine giving vs booking by checking service_type on the actual service
               // This is more reliable than lastFlowType which can be wrong for giving categories

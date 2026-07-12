@@ -7,6 +7,7 @@ import { generateReceiptPdf } from '@/lib/pdf/receipt-generator';
 import { getCurrencySymbol, PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
+import { calculateLtvTier } from '@/lib/bot/customer-intelligence';
 
 interface PostCompletionParams {
   supabase: SupabaseClient;
@@ -91,15 +92,27 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
           .update({ last_seen_at: new Date().toISOString(), name: customerName || undefined })
           .eq('id', existing.id);
       }
+      // Recalculate LTV tier after payment
+      const { data: updatedProfile } = await supabase.from('customer_profiles')
+        .select('total_spent, total_visits, first_seen_at')
+        .eq('id', existing.id)
+        .maybeSingle();
+      if (updatedProfile) {
+        const tier = calculateLtvTier(updatedProfile.total_spent || 0, updatedProfile.total_visits || 0, updatedProfile.first_seen_at);
+        await supabase.from('customer_profiles').update({ ltv_tier: tier }).eq('id', existing.id);
+      }
     } else {
       // Create new
+      const newTotalSpent = amountPaid || 0;
+      const newLtvTier = calculateLtvTier(newTotalSpent, 1);
       await supabase.from('customer_profiles').insert({
         business_id: businessId,
         phone: phoneWithPlus,
         name: customerName || null,
         total_bookings: 1,
         total_visits: 1,
-        total_spent: amountPaid || 0,
+        total_spent: newTotalSpent,
+        ltv_tier: newLtvTier,
         last_seen_at: new Date().toISOString(),
         first_seen_at: new Date().toISOString(),
       });
