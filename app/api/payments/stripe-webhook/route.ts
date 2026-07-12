@@ -10,6 +10,7 @@ import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import type { SubscriptionTier } from '@/lib/constants';
 import { processSuccessfulPayment } from '@/lib/payments/process-success';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
+import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
 
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
 
@@ -604,6 +605,18 @@ export async function POST(request: NextRequest) {
       const currency = (data.currency as string)?.toUpperCase() || 'USD';
 
       if (subscriptionId) {
+        // Check if subscription is paused — skip processing if so
+        const { data: pausedSub } = await supabase
+          .from('customer_subscriptions')
+          .select('id')
+          .eq('gateway_subscription_code', subscriptionId)
+          .eq('status', 'paused')
+          .maybeSingle();
+
+        if (pausedSub) {
+          logger.info(`[STRIPE WEBHOOK] Skipping charge for paused subscription: ${subscriptionId}`);
+        }
+
         const { data: subs } = await supabase
           .from('customer_subscriptions')
           .select('*')
@@ -769,7 +782,7 @@ export async function POST(request: NextRequest) {
       if (subscriptionId) {
         const { data: subs } = await supabase
           .from('customer_subscriptions')
-          .select('id, failure_count, business_id, user_id')
+          .select('id, failure_count, business_id, user_id, customer_phone, customer_name, amount, currency, service_id')
           .eq('gateway_subscription_code', subscriptionId)
           .in('status', ['active', 'past_due']);
 
@@ -804,6 +817,23 @@ export async function POST(request: NextRequest) {
               message: `Recurring Stripe payment failed (attempt ${newFailCount}). ${newFailCount >= 3 ? 'Subscription is now past due.' : 'We will retry.'}`,
               metadata: { subscriptionId: sub.id, failureCount: newFailCount, gateway: 'stripe' },
             });
+          }
+
+          // Notify customer via WhatsApp about the failed charge
+          if (sub.customer_phone && sub.business_id) {
+            try {
+              await notifyCustomerChargeFailed(supabase, {
+                subscriptionId: sub.id,
+                businessId: sub.business_id,
+                customerPhone: sub.customer_phone,
+                amount: sub.amount,
+                currency: sub.currency || 'USD',
+                serviceId: sub.service_id,
+                gateway: 'stripe',
+              });
+            } catch (notifyErr) {
+              logger.error('[STRIPE RECURRING] Customer failure notification error:', notifyErr);
+            }
           }
         }
       }

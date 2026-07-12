@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { createServiceClient } from '@/lib/supabase/service';
 import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib/payments/webhook-handler';
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
+import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
 import { createAlert } from '@/lib/alerts/create-alert';
 import { getPlatformFees } from '@/lib/getPlatformFees';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
@@ -250,6 +251,18 @@ export async function POST(request: NextRequest) {
       const custCode = customerData?.customer_code;
 
       if (authCode || custCode) {
+        // Check if this charge is for a paused subscription — skip if so
+        let pausedCheckQuery = supabase
+          .from('customer_subscriptions')
+          .select('id')
+          .eq('status', 'paused');
+        if (authCode) pausedCheckQuery = pausedCheckQuery.eq('authorization_code', authCode);
+        else if (custCode) pausedCheckQuery = pausedCheckQuery.eq('gateway_customer_code', custCode);
+        const { data: pausedSubs } = await pausedCheckQuery;
+        if (pausedSubs && pausedSubs.length > 0) {
+          logger.info(`[PAYSTACK WEBHOOK] Skipping charge for paused subscription(s): ${pausedSubs.map(s => s.id).join(', ')}`);
+        }
+
         // Find matching customer_subscription by authorization or customer code
         let subQuery = supabase
           .from('customer_subscriptions')
@@ -423,7 +436,7 @@ export async function POST(request: NextRequest) {
       if (custCode && !isWhatsAppSub) {
         const { data: subs } = await supabase
           .from('customer_subscriptions')
-          .select('id, failure_count, business_id, user_id')
+          .select('id, failure_count, business_id, user_id, customer_phone, customer_name, amount, currency, service_id')
           .eq('gateway_customer_code', custCode)
           .in('status', ['active', 'past_due']);
 
@@ -460,6 +473,23 @@ export async function POST(request: NextRequest) {
               message: `Recurring payment failed (attempt ${newFailCount}). ${newFailCount >= 3 ? 'Subscription is now past due.' : 'We will retry.'}`,
               metadata: { subscriptionId: sub.id, failureCount: newFailCount, gateway: 'paystack' },
             });
+          }
+
+          // Notify customer via WhatsApp about the failed charge
+          if (sub.customer_phone && sub.business_id) {
+            try {
+              await notifyCustomerChargeFailed(supabase, {
+                subscriptionId: sub.id,
+                businessId: sub.business_id,
+                customerPhone: sub.customer_phone,
+                amount: sub.amount,
+                currency: sub.currency || 'NGN',
+                serviceId: sub.service_id,
+                gateway: 'paystack',
+              });
+            } catch (notifyErr) {
+              logger.error('[PAYSTACK RECURRING] Customer failure notification error:', notifyErr);
+            }
           }
         }
       }
