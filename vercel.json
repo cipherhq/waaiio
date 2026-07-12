@@ -91,6 +91,10 @@
     {
       "path": "/api/cron/platform-fee-invoices",
       "schedule": "17 9 1 * *"
+    },
+    {
+      "path": "/api/cron/subscription-reminders",
+      "schedule": "30 8 * * *"
     }
   ]
 }
