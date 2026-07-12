@@ -152,6 +152,13 @@ export const paymentFlow: FlowDefinition = {
         // Skip if smart intent pre-filled an amount (e.g., "pay tithe 5000")
         const preAmount = ctx.session.session_data.amount as number;
         if (preAmount && preAmount >= 1) {
+          const meta = (ctx.business?.metadata || {}) as Record<string, unknown>;
+          const maxPaymentAmount = (meta.max_payment_amount as number) || 10_000_000;
+          if (preAmount > maxPaymentAmount) {
+            // Pre-filled amount exceeds max — don't skip, let user re-enter
+            ctx.session.session_data.amount = undefined;
+            return false;
+          }
           return true;
         }
         return false;

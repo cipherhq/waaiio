@@ -12,6 +12,7 @@ import { checkConversationLimit, trackOutboundMessage, getConversationLimitMessa
 import { loadOverrides, evaluateBranchConditions, type StepOverride } from '@/lib/bot/step-overrides';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import { logDropoff } from '@/lib/bot/flow-analytics';
 
 export class FlowExecutor {
   private currentBusinessId: string | null = null;
@@ -101,6 +102,7 @@ export class FlowExecutor {
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.sendText(from, errMsg);
       await this.deactivateSession(session.id);
+      logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'error' });
       return;
     }
 
@@ -229,6 +231,7 @@ export class FlowExecutor {
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
       await this.sendText(from, cancelMsg);
+      logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'cancelled', capability: session.session_data?.active_capability as string });
       return;
     }
     if (RESTART_WORDS.includes(lowerInput)) {
@@ -246,6 +249,7 @@ export class FlowExecutor {
       await this.persistConversationLog(session.id, session.conversation_log);
       await this.deactivateSession(session.id);
       await this.sendText(from, restartMsg);
+      logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'restarted', capability: session.session_data?.active_capability as string });
       return;
     }
 
@@ -414,8 +418,10 @@ export class FlowExecutor {
 
       if (!isCancellation && session.business_id) {
         await this.showPostCompletionMenu(from, session, ctx);
+        logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'completed', capability: sd.active_capability as string });
       } else {
         await this.deactivateSession(session.id);
+        logDropoff(this.supabase, { businessId: session.business_id || undefined, flowType, stepId, reason: 'cancelled', capability: sd.active_capability as string });
       }
     }
   }

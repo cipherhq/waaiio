@@ -5,6 +5,7 @@ import { bookingReminderEmail, businessNotificationEmail } from '@/lib/email/tem
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,7 +46,8 @@ export async function GET(request: NextRequest) {
     const targetTime = new Date(now.getTime() + hoursAhead * 60 * 60 * 1000);
     const targetDate = targetTime.toISOString().split('T')[0];
 
-    const { data: bookings } = await supabase
+    // Dedup: use reminder flag columns to skip already-sent reminders
+    let bookingsQuery = supabase
       .from('bookings')
       .select(`
         id, date, time, guest_name, guest_phone, guest_email,
@@ -55,6 +57,11 @@ export async function GET(request: NextRequest) {
       `)
       .eq('date', targetDate)
       .in('status', ['confirmed', 'pending']);
+
+    if (hoursAhead === 24) bookingsQuery = bookingsQuery.eq('reminder_24h_sent', false);
+    else if (hoursAhead === 2) bookingsQuery = bookingsQuery.eq('reminder_2h_sent', false);
+
+    const { data: bookings } = await bookingsQuery;
 
     for (const booking of bookings || []) {
       const bizHours = bizMap.get(booking.business_id) || [24, 2];
@@ -111,11 +118,19 @@ export async function GET(request: NextRequest) {
           });
           if (result.whatsapp === 'sent') whatsappSent++;
           if (result.email === 'sent') remindersSent++;
+
+          // Mark reminder as sent to prevent duplicates
+          const flagUpdate: Record<string, boolean> = {};
+          if (hoursAhead === 24) flagUpdate.reminder_24h_sent = true;
+          else if (hoursAhead === 2) flagUpdate.reminder_2h_sent = true;
+          if (Object.keys(flagUpdate).length > 0) {
+            await supabase.from('bookings').update(flagUpdate).eq('id', booking.id);
+          }
         }
       } else if (email) {
         // No phone — email only
         const { subject, html } = bookingReminderEmail(businessName, customerName, serviceName, booking.date, booking.time || '', booking.reference_code || '');
-        await sendEmail({ to: email, subject, html }).catch(() => {});
+        await sendEmail({ to: email, subject, html }).catch(err => logger.error('[REMINDERS] Email error:', err));
         remindersSent++;
       }
     }
@@ -181,14 +196,48 @@ export async function GET(request: NextRequest) {
   for (const event of tomorrowEvents || []) {
     const { data: tickets } = await supabase
       .from('event_tickets')
-      .select('guest_name, guest_phone')
+      .select('id, guest_name, guest_phone, guest_email, reminder_sent')
       .eq('event_id', event.id)
-      .eq('status', 'valid');
+      .eq('status', 'valid')
+      .eq('reminder_sent', false);
+
+    const bizName = (event as any).businesses?.name || 'Events';
+    const timeLabel = event.time ? ` at ${event.time}` : '';
+    const dateLabel = new Date(event.date + 'T00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
 
     for (const ticket of tickets || []) {
-      // We can only email if we had the email — for now just count
-      // WhatsApp reminders are handled by edge function
-      remindersSent++; // placeholder — WhatsApp template needed
+      if (!ticket.guest_phone) continue;
+
+      const limit = await checkConversationLimit(supabase, event.business_id);
+      if (!limit.allowed) continue;
+
+      const guestName = ticket.guest_name || 'there';
+      const waMsg = `Hi ${guestName}! Just a reminder — *${event.name}* is tomorrow${timeLabel}${event.venue ? ` at ${event.venue}` : ''}.\n\nHosted by *${bizName}*\n\nSee you there! 🎉`;
+
+      const resolved = await resolver.resolveByBusinessId(event.business_id);
+      if (resolved) {
+        const emailPayload = ticket.guest_email
+          ? (() => {
+              const { subject, html } = bookingReminderEmail(bizName, guestName, event.name, event.date, event.time || '', '');
+              return { address: ticket.guest_email!, subject, html };
+            })()
+          : null;
+
+        const result = await sendOrEmail({
+          supabase,
+          sender: resolved.sender,
+          to: ticket.guest_phone.replace(/^\+/, ''),
+          text: waMsg,
+          email: emailPayload,
+          businessName: bizName,
+          alwaysEmail: true,
+        });
+        if (result.whatsapp === 'sent') whatsappSent++;
+        if (result.email === 'sent') remindersSent++;
+
+        // Mark reminder as sent to prevent duplicates
+        await supabase.from('event_tickets').update({ reminder_sent: true }).eq('id', ticket.id);
+      }
     }
   }
 

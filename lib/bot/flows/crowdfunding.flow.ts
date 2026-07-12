@@ -214,8 +214,13 @@ const enterDonationAmountStep: FlowStepConfig = {
     if (!amount || isNaN(amount) || amount < minDonation) {
       return { valid: false, errorMessage: `Please enter a valid amount (minimum ${formatCurrency(minDonation, cc)}).` };
     }
-    if (maxDonation && amount > maxDonation) {
-      return { valid: false, errorMessage: `Maximum donation for this campaign is ${formatCurrency(maxDonation, cc)}.` };
+    // Platform-wide hard cap (prevents accidental huge entries)
+    const platformMax = 10_000_000;
+    const effectiveMax = maxDonation ? Math.min(maxDonation, platformMax) : platformMax;
+    if (amount > effectiveMax) {
+      return { valid: false, errorMessage: maxDonation
+        ? `Maximum donation for this campaign is ${formatCurrency(maxDonation, cc)}.`
+        : `Maximum amount is ${formatCurrency(platformMax, cc)}.` };
     }
 
     // Re-check goal in case it was reached while user was typing
