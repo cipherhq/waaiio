@@ -369,20 +369,17 @@ const donationPaymentStep: FlowStepConfig = {
       donorName,
     });
 
-    if (!result) {
-      return [{ type: 'text', text: 'Sorry, we could not create a payment link. Please try again later.' }];
-    }
-
     // Store reference for verification
-    sd.payment_reference = result.reference;
     sd.donation_ref_code = refCode;
     sd.donor_name = donorName;
 
     // Check if business qualifies for direct bank transfer
     const tier = ctx.business?.subscription_tier || 'free';
     let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
+    const ps = await loadPlatformSettings({ useServiceClient: true });
+    const minBankTransfer = ps.minimum_bank_transfer[country] ?? 10000;
 
-    if ((country === 'NG' || country === 'GH') && (tier === 'growth' || tier === 'business')) {
+    if ((country === 'NG' || country === 'GH') && (tier === 'growth' || tier === 'business') && amount >= minBankTransfer) {
       const { data: ba } = await ctx.supabase
         .from('business_bank_accounts')
         .select('bank_name, account_number, account_name')
@@ -392,6 +389,69 @@ const donationPaymentStep: FlowStepConfig = {
         .maybeSingle();
       bankAccount = ba;
     }
+
+    if (!result) {
+      // Payment gateway failed — but bank transfer may still be available
+      if (bankAccount) {
+        const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+        sd.bank_transfer_reference = transferRef;
+        sd.bank_transfer_offered = true;
+        sd.bank_transfer_amount = amount;
+
+        await ctx.supabase.from('pending_transfers').insert({
+          business_id: ctx.business!.id,
+          campaign_id: sd.campaign_id as string,
+          customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+          customer_name: donorName || 'Anonymous',
+          expected_amount: Math.round(amount * 100),
+          currency: getCurrencyCode(country),
+          reference_code: transferRef,
+          status: 'pending',
+          expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+        });
+
+        await ctx.supabase
+          .from('bot_sessions')
+          .update({ session_data: sd, current_step: 'await_donation_payment' })
+          .eq('id', ctx.session.id);
+
+        return [
+          {
+            type: 'text',
+            text: [
+              `🏦 *Bank Transfer Payment*`,
+              '',
+              `*Campaign:* ${sd.campaign_title}`,
+              `*Amount:* ${formatCurrency(amount, country)}`,
+              `*Ref:* ${refCode}`,
+              '',
+              `Transfer to:`,
+              `Bank: ${bankAccount.bank_name}`,
+              `Account: ${bankAccount.account_number}`,
+              `Name: ${bankAccount.account_name}`,
+              `Amount: ${formatCurrency(amount, country)}`,
+              `Reference/Narration: *${transferRef}*`,
+              '',
+              `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+              `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+            ].join('\n'),
+          },
+          {
+            type: 'buttons',
+            body: 'Tap below after transferring:',
+            buttons: [
+              { id: 'sent_transfer', title: "I've Sent Transfer" },
+              { id: 'go_back', title: 'Cancel' },
+            ],
+          },
+        ];
+      }
+
+      return [{ type: 'text', text: 'Sorry, we could not create a payment link. Please try again later.' }];
+    }
+
+    // Gateway succeeded — store payment reference
+    sd.payment_reference = result.reference;
 
     if (bankAccount) {
       // Dual-option: online + bank transfer
@@ -409,7 +469,7 @@ const donationPaymentStep: FlowStepConfig = {
         currency: getCurrencyCode(country),
         reference_code: transferRef,
         status: 'pending',
-        expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+        expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
       });
 
       await ctx.supabase

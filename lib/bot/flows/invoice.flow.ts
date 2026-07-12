@@ -241,16 +241,22 @@ const invoicePayStep: FlowStepConfig = {
         businessId: invoice.business_id,
       });
 
-      if (!result) {
-        return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
-      }
+      // Check if business qualifies for direct bank transfer
+      const tier = biz?.subscription_tier || 'free';
+      let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
+      const ps = await loadPlatformSettings({ useServiceClient: true });
+      const minBankTransfer = ps.minimum_bank_transfer[cc] ?? 10000;
 
-      // Update invoice status to viewed
-      await ctx.supabase
-        .from('invoices')
-        .update({ status: 'viewed' })
-        .eq('id', invoiceId)
-        .in('status', ['sent']); // Only update if still 'sent'
+      if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business') && invoice.total_amount >= minBankTransfer) {
+        const { data: ba } = await ctx.supabase
+          .from('business_bank_accounts')
+          .select('bank_name, account_number, account_name')
+          .eq('business_id', invoice.business_id)
+          .eq('is_active', true)
+          .eq('is_default', true)
+          .maybeSingle();
+        bankAccount = ba;
+      }
 
       // Notify owner that invoice payment link was sent (non-blocking)
       const { data: customerProfile } = await ctx.supabase
@@ -261,6 +267,78 @@ const invoicePayStep: FlowStepConfig = {
       const custName = customerProfile
         ? `${customerProfile.first_name || ''} ${customerProfile.last_name || ''}`.trim() || 'Customer'
         : 'Customer';
+
+      if (!result) {
+        // Payment gateway failed — but bank transfer may still be available
+        if (bankAccount) {
+          const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+          const sd = ctx.session.session_data;
+          sd._invoice_id = invoice.id;
+          sd._invoice_number = invoice.invoice_number;
+          sd._invoice_amount = invoice.total_amount;
+          sd._invoice_business_id = invoice.business_id;
+          sd._invoice_customer_name = custName;
+          sd.bank_transfer_reference = transferRef;
+          sd.bank_transfer_offered = true;
+          sd.bank_transfer_amount = invoice.total_amount;
+
+          await ctx.supabase.from('pending_transfers').insert({
+            business_id: invoice.business_id,
+            invoice_id: invoice.id,
+            customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+            customer_name: custName,
+            expected_amount: Math.round(invoice.total_amount * 100),
+            currency: getCurrencyCode(cc),
+            reference_code: transferRef,
+            status: 'pending',
+            expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+          });
+
+          await ctx.supabase
+            .from('bot_sessions')
+            .update({ session_data: sd, current_step: 'await_invoice_payment' })
+            .eq('id', ctx.session.id);
+
+          return [
+            {
+              type: 'text',
+              text: await ctx.t([
+                `🏦 *Bank Transfer Payment*`,
+                '',
+                `💳 Invoice ${invoice.invoice_number}`,
+                `💰 ${formatCurrency(invoice.total_amount, cc)}`,
+                '',
+                `Transfer to:`,
+                `Bank: ${bankAccount.bank_name}`,
+                `Account: ${bankAccount.account_number}`,
+                `Name: ${bankAccount.account_name}`,
+                `Amount: ${formatCurrency(invoice.total_amount, cc)}`,
+                `Reference/Narration: *${transferRef}*`,
+                '',
+                `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+                `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+              ].join('\n')),
+            },
+            {
+              type: 'buttons',
+              body: 'Tap below after transferring:',
+              buttons: [
+                { id: 'sent_transfer', title: "I've Sent Transfer" },
+                { id: 'go_back', title: 'Cancel' },
+              ],
+            },
+          ];
+        }
+
+        return [{ type: 'buttons', body: await ctx.t('We couldn\'t generate a payment link right now.'), buttons: [{ id: 'cap_invoice', title: 'Try Again' }, { id: 'cap_chat', title: 'Chat with Business' }] }];
+      }
+
+      // Update invoice status to viewed
+      await ctx.supabase
+        .from('invoices')
+        .update({ status: 'viewed' })
+        .eq('id', invoiceId)
+        .in('status', ['sent']); // Only update if still 'sent'
 
       notifyOwnerNewInvoicePayment({
         supabase: ctx.supabase,
@@ -291,21 +369,6 @@ const invoicePayStep: FlowStepConfig = {
       sd._invoice_business_id = invoice.business_id;
       sd._invoice_customer_name = custName;
 
-      // Check if business qualifies for direct bank transfer
-      const tier = biz?.subscription_tier || 'free';
-      let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-
-      if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business')) {
-        const { data: ba } = await ctx.supabase
-          .from('business_bank_accounts')
-          .select('bank_name, account_number, account_name')
-          .eq('business_id', invoice.business_id)
-          .eq('is_active', true)
-          .eq('is_default', true)
-          .maybeSingle();
-        bankAccount = ba;
-      }
-
       if (bankAccount) {
         // Dual-option: online + bank transfer
         const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
@@ -322,7 +385,7 @@ const invoicePayStep: FlowStepConfig = {
           currency: getCurrencyCode(cc),
           reference_code: transferRef,
           status: 'pending',
-          expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+          expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
         });
 
         await ctx.supabase

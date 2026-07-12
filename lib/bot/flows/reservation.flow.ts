@@ -842,23 +842,25 @@ export const reservationFlow: FlowDefinition = {
             businessId: ctx.business?.id,
           });
 
+          // Check if business qualifies for direct bank transfer
+          const tier = ctx.business?.subscription_tier || 'free';
+          let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
+          const ps = await loadPlatformSettings({ useServiceClient: true });
+          const minBankTransfer = ps.minimum_bank_transfer[cc] ?? 10000;
+
+          if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business') && payableAmount >= minBankTransfer) {
+            const { data: ba } = await ctx.supabase
+              .from('business_bank_accounts')
+              .select('bank_name, account_number, account_name')
+              .eq('business_id', ctx.business!.id)
+              .eq('is_active', true)
+              .eq('is_default', true)
+              .maybeSingle();
+            bankAccount = ba;
+          }
+
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
-
-            // Check if business qualifies for direct bank transfer
-            const tier = ctx.business?.subscription_tier || 'free';
-            let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-
-            if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business')) {
-              const { data: ba } = await ctx.supabase
-                .from('business_bank_accounts')
-                .select('bank_name, account_number, account_name')
-                .eq('business_id', ctx.business!.id)
-                .eq('is_active', true)
-                .eq('is_default', true)
-                .maybeSingle();
-              bankAccount = ba;
-            }
 
             if (bankAccount) {
               // Dual-option: online + bank transfer
@@ -876,7 +878,7 @@ export const reservationFlow: FlowDefinition = {
                 currency: getCurrencyCode(cc),
                 reference_code: transferRef,
                 status: 'pending',
-                expires_at: new Date(Date.now() + (await loadPlatformSettings({ useServiceClient: true })).transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+                expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
               });
 
               await ctx.supabase
@@ -977,6 +979,86 @@ export const reservationFlow: FlowDefinition = {
               },
             ];
           }
+
+          // Payment gateway failed — but bank transfer may still be available
+          if (bankAccount) {
+            const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+            d.bank_transfer_reference = transferRef;
+            d.bank_transfer_offered = true;
+            d.bank_transfer_amount = payableAmount;
+
+            await ctx.supabase.from('pending_transfers').insert({
+              business_id: ctx.business!.id,
+              reservation_id: reservation.id,
+              customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
+              customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              expected_amount: Math.round(payableAmount * 100),
+              currency: getCurrencyCode(cc),
+              reference_code: transferRef,
+              status: 'pending',
+              expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
+            });
+
+            await ctx.supabase
+              .from('bot_sessions')
+              .update({ session_data: d, current_step: 'reservation_payment' })
+              .eq('id', ctx.session.id);
+
+            const summary = getReservationConfirmationMessage({
+              businessName: ctx.business?.name || 'Business',
+              apartmentName: (d.service_name as string) || 'Apartment',
+              checkInLabel,
+              checkOutLabel,
+              nights,
+              nightlyRate,
+              guests: (d.guests as number) || 1,
+              totalAmount,
+              depositAmount,
+              referenceCode: reservation.reference_code,
+              countryCode: cc,
+              subscriptionTier: ctx.business?.subscription_tier,
+            });
+
+            return [
+              {
+                type: 'text',
+                text: [
+                  summary,
+                  '',
+                  `🏦 *Bank Transfer Payment*`,
+                  '',
+                  `💰 ${formatCurrency(payableAmount, cc)}`,
+                  `🔑 Ref: *${reservation.reference_code}*`,
+                  '',
+                  `Transfer to:`,
+                  `Bank: ${bankAccount.bank_name}`,
+                  `Account: ${bankAccount.account_number}`,
+                  `Name: ${bankAccount.account_name}`,
+                  `Amount: ${formatCurrency(payableAmount, cc)}`,
+                  `Reference/Narration: *${transferRef}*`,
+                  '',
+                  `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+                  `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+                ].join('\n'),
+              },
+              {
+                type: 'buttons',
+                body: 'Tap below after transferring:',
+                buttons: [
+                  { id: 'sent_transfer', title: "I've Sent Transfer" },
+                  { id: 'go_back', title: 'Cancel' },
+                ],
+              },
+            ];
+          }
+
+          // Payment initialization failed — show error
+          return [
+            {
+              type: 'text',
+              text: `Something went wrong setting up your payment. Send *Hi* to start over.`,
+            },
+          ];
         }
 
         // Create notification + notify owner via email/WhatsApp
