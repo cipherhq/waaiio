@@ -4,6 +4,7 @@ import { sendEmail } from '@/lib/email/client';
 import { newOrderEmail, newBookingOwnerEmail } from '@/lib/email/templates';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
+import { shouldNotify, type NotificationType } from './notifications';
 
 // ── Notification tier limits ──
 const WHATSAPP_NOTIFY_LIMITS: Record<string, number> = {
@@ -16,11 +17,13 @@ interface OwnerInfo {
   ownerEmail: string | null;
   ownerPhone: string | null;
   isDedicated: boolean;
-  // Notification preferences
+  // Notification preferences (from whatsapp_config)
   notifyEmail: boolean;
   notifySound: boolean;
   notifyWhatsApp: boolean;
   notifyWhatsAppPhone: string | null;
+  // Business metadata (for per-type notification_preferences)
+  businessMetadata: Record<string, unknown> | null;
 }
 
 // ── Helper: fetch owner info + notification preferences ──
@@ -30,7 +33,7 @@ interface OwnerInfo {
 async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string): Promise<OwnerInfo | null> {
   const { data: biz, error: bizError } = await supabase
     .from('businesses')
-    .select('phone, owner_id, wa_method, whatsapp_channel_id, subscription_tier, profiles:owner_id (email, phone)')
+    .select('phone, owner_id, wa_method, whatsapp_channel_id, subscription_tier, metadata, profiles:owner_id (email, phone)')
     .eq('id', businessId)
     .single();
 
@@ -104,7 +107,9 @@ async function fetchOwnerInfo(supabase: SupabaseClient, businessId: string): Pro
     }
   }
 
-  return { ownerEmail, ownerPhone, isDedicated, notifyEmail, notifySound, notifyWhatsApp, notifyWhatsAppPhone };
+  const businessMetadata = (biz.metadata as Record<string, unknown>) || null;
+
+  return { ownerEmail, ownerPhone, isDedicated, notifyEmail, notifySound, notifyWhatsApp, notifyWhatsAppPhone, businessMetadata };
 }
 
 interface CartItem {
@@ -133,13 +138,14 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
   const ownerInfo = await fetchOwnerInfo(supabase, businessId);
   if (!ownerInfo) return;
 
-  const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
+  const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone, businessMetadata } = ownerInfo;
+  const notifType: NotificationType = 'new_order';
   const cc = countryCode || 'NG';
   const formattedTotal = formatCurrency(totalAmount, cc);
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/orders`;
 
-  // Send email (if enabled)
-  if (notifyEmail && ownerEmail) {
+  // Send email (if enabled + preference allows)
+  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email')) {
     const { subject, html } = newOrderEmail({
       businessName,
       referenceCode,
@@ -154,8 +160,8 @@ export async function notifyOwnerNewOrder(opts: NotifyOwnerOpts): Promise<void> 
     );
   }
 
-  // Send WhatsApp (if enabled + within limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  // Send WhatsApp (if enabled + within limit + preference allows)
+  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp')) {
     const itemLines = items.map(i => {
       const label = i.variant_label ? `${i.name} (${i.variant_label})` : i.name;
       return `  • ${label} x${i.quantity}`;
@@ -343,11 +349,12 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
   const ownerInfo = await fetchOwnerInfo(supabase, businessId);
   if (!ownerInfo) return;
 
-  const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
+  const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone, businessMetadata } = ownerInfo;
+  const notifType: NotificationType = 'new_booking';
   const cc = countryCode || 'NG';
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/reservations`;
 
-  if (notifyEmail && ownerEmail) {
+  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email')) {
     const { subject, html } = newBookingOwnerEmail({
       businessName,
       referenceCode,
@@ -364,8 +371,8 @@ export async function notifyOwnerNewBooking(opts: NotifyBookingOpts): Promise<vo
     );
   }
 
-  // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  // Send WhatsApp (if enabled + within monthly limit + preference allows)
+  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp')) {
     const lines = [
       `📅 *New Booking!*`,
       '',
@@ -534,13 +541,14 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
   const ownerInfo = await fetchOwnerInfo(supabase, businessId);
   if (!ownerInfo) return;
 
-  const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone } = ownerInfo;
+  const { ownerEmail, notifyEmail, notifyWhatsApp, notifyWhatsAppPhone, businessMetadata } = ownerInfo;
+  const notifType: NotificationType = 'payment_received';
   const cc = countryCode || 'NG';
   const formattedAmount = formatCurrency(amount, cc);
   const dashboardUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/payments`;
 
-  // Send email (if enabled)
-  if (notifyEmail && ownerEmail) {
+  // Send email (if enabled + preference allows)
+  if (notifyEmail && ownerEmail && shouldNotify(businessMetadata, notifType, 'email')) {
     sendEmail({
       to: ownerEmail,
       subject: `New Payment from ${customerName} - ${businessName}`,
@@ -555,8 +563,8 @@ export async function notifyOwnerNewPayment(opts: NotifyPaymentOpts): Promise<vo
     }).catch(err => logger.error('[NOTIFY-OWNER] Payment email error:', err));
   }
 
-  // Send WhatsApp (if enabled + within monthly limit)
-  if (notifyWhatsApp && notifyWhatsAppPhone) {
+  // Send WhatsApp (if enabled + within monthly limit + preference allows)
+  if (notifyWhatsApp && notifyWhatsAppPhone && shouldNotify(businessMetadata, notifType, 'whatsapp')) {
     const lines = [
       `💳 *New Payment!*`,
       '',

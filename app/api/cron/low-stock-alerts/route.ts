@@ -4,6 +4,7 @@ import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { logger } from '@/lib/logger';
+import { shouldNotify } from '@/lib/bot/flows/shared/notifications';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
     .select(`
       id, name, stock_quantity, low_stock_threshold, metadata,
       business_id,
-      businesses:business_id (name, phone, owner_id, profiles:owner_id (phone, email))
+      businesses:business_id (name, phone, owner_id, metadata, profiles:owner_id (phone, email))
     `)
     .eq('is_active', true)
     .is('deleted_at', null)
@@ -43,6 +44,7 @@ export async function GET(request: NextRequest) {
       bizName: string;
       ownerPhone: string | null;
       ownerEmail: string | null;
+      bizMetadata: Record<string, unknown> | null;
       productIds: string[];
       items: Array<{ name: string; stock: number; threshold: number }>;
     }
@@ -58,6 +60,7 @@ export async function GET(request: NextRequest) {
       name: string;
       phone: string;
       owner_id: string;
+      metadata: Record<string, unknown> | null;
       profiles: { phone: string; email: string } | null;
     } | null;
     if (!biz) continue;
@@ -68,6 +71,7 @@ export async function GET(request: NextRequest) {
         bizName: biz.name,
         ownerPhone: biz.profiles?.phone || biz.phone || null,
         ownerEmail: biz.profiles?.email || null,
+        bizMetadata: biz.metadata || null,
         productIds: [],
         items: [],
       });
@@ -87,8 +91,8 @@ export async function GET(request: NextRequest) {
 
     let whatsappSent = false;
 
-    // Send WhatsApp via channel resolver
-    if (info.ownerPhone) {
+    // Send WhatsApp via channel resolver (if preference allows)
+    if (info.ownerPhone && shouldNotify(info.bizMetadata, 'low_stock', 'whatsapp')) {
       try {
         const resolved = await resolver.resolveByBusinessId(bizId);
         if (resolved) {
@@ -100,8 +104,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Send email to business owner
-    if (info.ownerEmail) {
+    // Send email to business owner (if preference allows)
+    if (info.ownerEmail && shouldNotify(info.bizMetadata, 'low_stock', 'email')) {
       const htmlItems = info.items
         .map(
           (p) =>

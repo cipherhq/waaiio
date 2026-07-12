@@ -7,6 +7,7 @@ import { IntegrationsTab } from '@/components/dashboard/settings/IntegrationsTab
 import { BusinessTab } from './tabs/BusinessTab';
 import { PaymentsTab } from './tabs/PaymentsTab';
 import { FeaturesTab } from './tabs/FeaturesTab';
+import { NotificationsTab } from './tabs/NotificationsTab';
 import { AccountTab } from './tabs/AccountTab';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 
@@ -21,11 +22,11 @@ export default function SettingsPage() {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const tab = params.get('tab');
-      if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'integrations' || tab === 'business') return tab;
+      if (tab === 'account' || tab === 'payments' || tab === 'features' || tab === 'integrations' || tab === 'notifications' || tab === 'business') return tab;
     }
     return 'business' as const;
   })();
-  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'integrations' | 'account'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'business' | 'payments' | 'features' | 'integrations' | 'notifications' | 'account'>(initialTab);
   const [openSections, setOpenSections] = useState<string[]>([initialTab === 'account' ? 'plan' : 'profile']);
   const toggleSection = (section: string) => {
     setOpenSections((prev) =>
@@ -96,6 +97,15 @@ export default function SettingsPage() {
             Integrations
           </button>
           <button
+            onClick={() => { setActiveTab('notifications'); setOpenSections(['notification_preferences']); }}
+            className={`flex shrink-0 items-center gap-2 rounded-md px-4 py-2.5 text-sm font-medium transition ${
+              activeTab === 'notifications' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            <svg aria-hidden="true" className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+            Notifications
+          </button>
+          <button
             onClick={() => {
               setActiveTab('account');
               setOpenSections(['plan']);
@@ -131,6 +141,11 @@ export default function SettingsPage() {
         <div className="mt-6 max-w-3xl">
           <IntegrationsTab businessId={business.id} subscriptionTier={business.subscription_tier || 'free'} />
         </div>
+      )}
+
+      {/* ═══ NOTIFICATIONS TAB ═══ */}
+      {activeTab === 'notifications' && (
+        <NotificationsTab {...tabProps} />
       )}
 
       {/* ═══ ACCOUNT TAB ═══ */}
