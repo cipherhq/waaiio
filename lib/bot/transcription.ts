@@ -1,29 +1,29 @@
-import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { logger } from '@/lib/logger';
 
-let client: OpenAI | null = null;
-function getClient(): OpenAI {
-  if (!client) client = new OpenAI();
+let client: Anthropic | null = null;
+function getClient(): Anthropic {
+  if (!client) client = new Anthropic();
   return client;
 }
 
-// In-memory cache: audioUrl hash → transcription
+// In-memory cache: cacheKey → transcription
 const cache = new Map<string, { text: string; expiry: number }>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 /**
- * Transcribe an audio buffer using OpenAI Whisper.
+ * Transcribe an audio buffer using Claude.
  * Returns the transcribed text, or null if transcription fails.
  *
- * Cost: ~$0.006/minute of audio (~$0.0015 per avg 15s voice message)
+ * Uses Claude's native audio input support — no separate Whisper API needed.
+ * Requires ANTHROPIC_API_KEY (already set for intent detection).
  */
 export async function transcribeAudio(
   audioBuffer: Buffer,
   mimeType: string = 'audio/ogg',
   cacheKey?: string,
 ): Promise<string | null> {
-  // Check API key
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY) {
     return null;
   }
 
@@ -36,25 +36,50 @@ export async function transcribeAudio(
   }
 
   try {
-    const openai = getClient();
+    const anthropic = getClient();
 
-    // Determine file extension from MIME type
-    const ext = mimeType.includes('ogg') ? 'ogg'
-      : mimeType.includes('webm') ? 'webm'
-      : mimeType.includes('mp4') ? 'mp4'
-      : mimeType.includes('mpeg') ? 'mp3'
-      : 'ogg';
+    // Map MIME types to Claude's supported audio media types
+    const mediaType = mimeType.includes('ogg') ? 'audio/ogg'
+      : mimeType.includes('webm') ? 'audio/webm'
+      : mimeType.includes('mp4') ? 'audio/mp4'
+      : mimeType.includes('mpeg') ? 'audio/mpeg'
+      : mimeType.includes('wav') ? 'audio/wav'
+      : 'audio/ogg';
 
-    // Create a File-like object for the API (convert Buffer to Uint8Array for compatibility)
-    const file = new File([new Uint8Array(audioBuffer)], `voice.${ext}`, { type: mimeType });
+    const base64Audio = audioBuffer.toString('base64');
 
-    const response = await openai.audio.transcriptions.create({
-      model: 'whisper-1',
-      file,
-      response_format: 'text',
+    // Audio content block is supported by the API but not yet in SDK types
+    const audioBlock = {
+      type: 'audio' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: mediaType,
+        data: base64Audio,
+      },
+    };
+
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            audioBlock as unknown as Anthropic.TextBlockParam,
+            {
+              type: 'text',
+              text: 'Transcribe this audio message exactly as spoken. Return ONLY the transcription, no commentary or labels. If the audio is empty or unintelligible, return an empty string.',
+            },
+          ],
+        },
+      ],
     });
 
-    const text = (typeof response === 'string' ? response : (response as unknown as { text?: string }).text || '').trim();
+    const text = response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+      .trim();
 
     if (!text) return null;
 
@@ -71,10 +96,10 @@ export async function transcribeAudio(
       }
     }
 
-    logger.info(`[AI-COST] whisper: audio_bytes=${audioBuffer.length} text_length=${text.length}`);
+    logger.info(`[AI-COST] claude-transcription: audio_bytes=${audioBuffer.length} text_length=${text.length}`);
     return text;
   } catch (error) {
-    logger.error('[TRANSCRIPTION] Whisper error:', (error as Error).message);
+    logger.error('[TRANSCRIPTION] Claude audio error:', (error as Error).message);
     return null;
   }
 }

@@ -597,8 +597,27 @@ const awaitInvoicePaymentStep: FlowStepConfig = {
       const verified = await verifyPayment(ctx.supabase, ref, cc);
 
       if (verified) {
+        const invoiceId = sd._invoice_id as string;
         const invoiceNum = sd._invoice_number as string;
         const amount = sd._invoice_amount as number;
+
+        // Atomic dedup: only proceed if invoice is not already paid
+        const { data: updated } = await ctx.supabase
+          .from('invoices')
+          .update({ status: 'paid', paid_at: new Date().toISOString() })
+          .eq('id', invoiceId)
+          .neq('status', 'paid')
+          .select('id')
+          .maybeSingle();
+
+        if (!updated) {
+          // Already paid (webhook or concurrent tap beat us)
+          await ctx.sender.sendText({
+            to: ctx.from,
+            text: await ctx.t(`✅ Payment for Invoice ${invoiceNum} was already confirmed. Thank you!`),
+          });
+          return { valid: true, data: { _action: 'already_confirmed' } };
+        }
 
         await ctx.sender.sendText({
           to: ctx.from,
