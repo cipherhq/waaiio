@@ -36,6 +36,7 @@ import { detectBotCode as _detectBotCode, detectBotCodeWithSuggestions as _detec
 import { executeKeywordAction as _executeKeywordAction } from './handlers/keyword-actions';
 import { handleChatHandoff as _handleChatHandoff, handleChatStart as _handleChatStart } from './handlers/chat-handoff';
 import { handleCardPinStep as _handleCardPinStep } from './handlers/saved-cards';
+import { handleRefundRequest as _handleRefundRequest } from './handlers/refund-request';
 
 import { HOME_PATTERN, handleEscapeHatch as _handleEscapeHatch } from './handlers/escape-hatches';
 import { handleGlobalQuery, isOrdersQuery } from './handlers/global-queries';
@@ -1677,6 +1678,10 @@ export class BotService {
       await this.handleOrderDetailAction(session, from, text);
       return;
     }
+    if (step === 'refund_select' || step === 'refund_reason') {
+      await this.handleRefundRequest(session, from, text);
+      return;
+    }
 
     // ── Welcome button postback handling ──
     const wbMatch = text.match(/^wb_(\d)$/i);
@@ -1829,6 +1834,10 @@ export class BotService {
 
   private async handleMyBookings(session: BotSession, from: string, input: string): Promise<void> {
     return _handleMyBookings(this.supabase, this.messageSender, this.sendText.bind(this), this.flowExecutor, session, from, input);
+  }
+
+  private async handleRefundRequest(session: BotSession, from: string, input: string): Promise<void> {
+    return _handleRefundRequest(this.supabase, this.messageSender, this.sendText.bind(this), session, from, input);
   }
 
   private async handleViewTicket(session: BotSession, from: string, ticketId: string): Promise<void> {

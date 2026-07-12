@@ -5,6 +5,19 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-09
+
+### Feature: Bot refund request capability
+- `lib/bot/handlers/refund-request.ts` — New inline handler. Looks up customer's recent paid bookings by phone, shows list, collects reason, inserts into `refund_requests` table (status=pending), notifies business owner via email/WhatsApp + system notification.
+- `lib/bot/handlers/keyword-actions.ts` — Added `request_refund` action in `navigate_step` case. Creates new session with `refund_select` step.
+- `lib/bot/bot.service.ts` — Added step routing for `refund_select` and `refund_reason` steps. Added `handleRefundRequest` private method.
+- `supabase/migrations/226_refund_keyword.sql` — Inserts system keyword regex matching "refund", "request refund", "i want a refund", etc.
+- Guards: Skips payments for events with `refund_policy='no_refund'`, skips already-fully-refunded payments, deduplicates pending requests for same payment_id.
+- Affects: Bot message handling. Customers can now type "refund" to request a refund via WhatsApp.
+- Could break: Nothing — new additive feature. Requires migration 226 to be run on remote.
+
+---
+
 ## 2026-06-21
 
 ### Pricing update: Direct transfers included in subscription

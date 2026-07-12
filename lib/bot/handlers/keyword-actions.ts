@@ -14,6 +14,7 @@ import { parseKeywordPayload } from '../keyword-service';
 import { capabilityToFirstStep } from './flow-routing';
 import { handleTransactionDocument } from './transaction-docs';
 import { handleMyBookings } from './my-bookings';
+import { handleRefundRequest } from './refund-request';
 
 /**
  * Execute the action from a unified keyword match.
@@ -184,6 +185,26 @@ export async function executeKeywordAction(
             }
           }
           await sendText(from, "This business doesn't have queue check-in enabled.");
+          return true;
+        }
+
+        if (action === 'request_refund') {
+          await supabase.from('bot_sessions').update({ is_active: false }).eq('id', session.id);
+          const refPhoneP = from.startsWith('+') ? from : `+${from}`;
+          const refPhoneN = from.startsWith('+') ? from.slice(1) : from;
+          const { data: refProfile } = await supabase.from('profiles').select('id').or(`phone.eq.${sanitizeFilterValue(refPhoneP)},phone.eq.${sanitizeFilterValue(refPhoneN)}`).limit(1).maybeSingle();
+          // Create a new session for the refund flow
+          const { data: refundSession } = await supabase.from('bot_sessions').insert({
+            whatsapp_number: from,
+            user_id: refProfile?.id || null,
+            business_id: session.business_id || null,
+            current_step: 'refund_select',
+            session_data: { ...session.session_data },
+            is_active: true,
+            expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          }).select().single();
+          if (!refundSession) { await sendText(from, 'Something went wrong on our end.'); return true; }
+          await handleRefundRequest(supabase, messageSender, sendText, refundSession as BotSession, from, '');
           return true;
         }
 
