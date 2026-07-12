@@ -30,6 +30,28 @@ const CATEGORY_GROUP_ICONS: Record<string, string> = {
   'Other': '\u2728',
 };
 
+const CATEGORY_GROUP_SUBTITLES: Record<string, string> = {
+  'Beauty & Wellness': 'Salons, spas, skincare',
+  'Health & Medical': 'Clinics, dentists, therapy',
+  'Food & Dining': 'Restaurants, cafés, catering',
+  'Food & Drink': 'Restaurants, cafés, catering',
+  'Delivery & Retail': 'Shops, stores, deliveries',
+  'Home & Auto Services': 'Repairs, cleaning, auto',
+  'Professional Services': 'Legal, finance, consulting',
+  'Hospitality': 'Hotels, shortlets, rentals',
+  'Events & Entertainment': 'Venues, shows, festivals',
+  'Faith & Community': 'Churches, mosques, groups',
+  'Fitness': 'Gyms, trainers, studios',
+  'Fitness & Wellness': 'Gyms, trainers, studios',
+  'Transport & Logistics': 'Rides, delivery, logistics',
+  'Education & Training': 'Schools, tutors, courses',
+  'Pet Services': 'Grooming, boarding, vets',
+  'Creative & Media': 'Photo, video, design',
+  'Real Estate & Property': 'Agents, listings, tours',
+  'Government & Public': 'Offices, permits, services',
+  'Other': 'Anything else',
+};
+
 export function StepCategory({
   selectedCountry,
   setSelectedCountry,
@@ -87,6 +109,9 @@ export function StepCategory({
               >
                 <span className="text-2xl">{CATEGORY_GROUP_ICONS[g.group] || '\u2728'}</span>
                 <span className="text-sm font-medium text-gray-700">{g.group}</span>
+                {CATEGORY_GROUP_SUBTITLES[g.group] && (
+                  <span className="text-[10px] text-gray-500">{CATEGORY_GROUP_SUBTITLES[g.group]}</span>
+                )}
               </button>
             ))}
           </div>
