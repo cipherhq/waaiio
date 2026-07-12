@@ -7,8 +7,7 @@ import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
-import { randomBytes } from 'crypto';
-import { loadPlatformSettings } from '@/lib/platformSettings';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 
 // ── Invoice List ──
 const invoiceListStep: FlowStepConfig = {
@@ -242,21 +241,12 @@ const invoicePayStep: FlowStepConfig = {
       });
 
       // Check if business qualifies for direct bank transfer
-      const tier = biz?.subscription_tier || 'free';
-      let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-      const ps = await loadPlatformSettings({ useServiceClient: true });
-      const minBankTransfer = ps.minimum_bank_transfer[cc] ?? 10000;
-
-      if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business') && invoice.total_amount >= minBankTransfer) {
-        const { data: ba } = await ctx.supabase
-          .from('business_bank_accounts')
-          .select('bank_name, account_number, account_name')
-          .eq('business_id', invoice.business_id)
-          .eq('is_active', true)
-          .eq('is_default', true)
-          .maybeSingle();
-        bankAccount = ba;
-      }
+      const { qualifies: _btQualifies, bankAccount, platformSettings: ps } = await checkBankTransferEligibility(ctx.supabase, {
+        businessId: invoice.business_id,
+        countryCode: cc,
+        subscriptionTier: biz?.subscription_tier || 'free',
+        amount: invoice.total_amount,
+      });
 
       // Notify owner that invoice payment link was sent (non-blocking)
       const { data: customerProfile } = await ctx.supabase
@@ -271,28 +261,25 @@ const invoicePayStep: FlowStepConfig = {
       if (!result) {
         // Payment gateway failed — but bank transfer may still be available
         if (bankAccount) {
-          const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
           const sd = ctx.session.session_data;
           sd._invoice_id = invoice.id;
           sd._invoice_number = invoice.invoice_number;
           sd._invoice_amount = invoice.total_amount;
           sd._invoice_business_id = invoice.business_id;
           sd._invoice_customer_name = custName;
+
+          const transferRef = await createPendingTransfer(ctx.supabase, {
+            businessId: invoice.business_id,
+            entityId: { invoice_id: invoice.id },
+            customerPhone: ctx.from,
+            customerName: custName,
+            amount: invoice.total_amount,
+            countryCode: cc,
+            transferExpiryHours: ps.transfer_expiry_hours,
+          });
           sd.bank_transfer_reference = transferRef;
           sd.bank_transfer_offered = true;
           sd.bank_transfer_amount = invoice.total_amount;
-
-          await ctx.supabase.from('pending_transfers').insert({
-            business_id: invoice.business_id,
-            invoice_id: invoice.id,
-            customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-            customer_name: custName,
-            expected_amount: Math.round(invoice.total_amount * 100),
-            currency: getCurrencyCode(cc),
-            reference_code: transferRef,
-            status: 'pending',
-            expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-          });
 
           await ctx.supabase
             .from('bot_sessions')
@@ -309,23 +296,13 @@ const invoicePayStep: FlowStepConfig = {
                 `💰 ${formatCurrency(invoice.total_amount, cc)}`,
                 '',
                 `Transfer to:`,
-                `Bank: ${bankAccount.bank_name}`,
-                `Account: ${bankAccount.account_number}`,
-                `Name: ${bankAccount.account_name}`,
-                `Amount: ${formatCurrency(invoice.total_amount, cc)}`,
-                `Reference/Narration: *${transferRef}*`,
-                '',
-                `⚠️ Use reference *${transferRef}* as your transfer narration.`,
-                `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+                formatBankTransferBlock(bankAccount, formatCurrency(invoice.total_amount, cc), transferRef),
               ].join('\n')),
             },
             {
               type: 'buttons',
               body: 'Tap below after transferring:',
-              buttons: [
-                { id: 'sent_transfer', title: "I've Sent Transfer" },
-                { id: 'go_back', title: 'Cancel' },
-              ],
+              buttons: [...BANK_ONLY_BUTTONS],
             },
           ];
         }
@@ -371,22 +348,18 @@ const invoicePayStep: FlowStepConfig = {
 
       if (bankAccount) {
         // Dual-option: online + bank transfer
-        const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+        const transferRef = await createPendingTransfer(ctx.supabase, {
+          businessId: invoice.business_id,
+          entityId: { invoice_id: invoice.id },
+          customerPhone: ctx.from,
+          customerName: custName,
+          amount: invoice.total_amount,
+          countryCode: cc,
+          transferExpiryHours: ps.transfer_expiry_hours,
+        });
         sd.bank_transfer_reference = transferRef;
         sd.bank_transfer_offered = true;
         sd.bank_transfer_amount = invoice.total_amount;
-
-        await ctx.supabase.from('pending_transfers').insert({
-          business_id: invoice.business_id,
-          invoice_id: invoice.id,
-          customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-          customer_name: custName,
-          expected_amount: Math.round(invoice.total_amount * 100),
-          currency: getCurrencyCode(cc),
-          reference_code: transferRef,
-          status: 'pending',
-          expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-        });
 
         await ctx.supabase
           .from('bot_sessions')
@@ -403,23 +376,13 @@ const invoicePayStep: FlowStepConfig = {
               result.url,
               '',
               `*Option 2 — Bank Transfer* 🏦`,
-              `Bank: ${bankAccount.bank_name}`,
-              `Account: ${bankAccount.account_number}`,
-              `Name: ${bankAccount.account_name}`,
-              `Amount: ${formatCurrency(invoice.total_amount, cc)}`,
-              `Reference: *${transferRef}*`,
-              '',
-              `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+              formatBankTransferBlock(bankAccount, formatCurrency(invoice.total_amount, cc), transferRef),
             ].join('\n')),
           },
           {
             type: 'buttons',
             body: "After paying, tap below:",
-            buttons: [
-              { id: 'i_paid_online', title: "I've Paid Online" },
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
-            ],
+            buttons: [...DUAL_OPTION_BUTTONS],
           },
         ];
       }

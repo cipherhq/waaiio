@@ -12,8 +12,7 @@ import { handlePostCompletion } from './shared/post-completion';
 import { getTermsPrompt } from './shared/terms';
 import { notifyOwnerNewBooking, notifyOwnerNewPayment } from './shared/notify-owner';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
-import { randomBytes } from 'crypto';
-import { loadPlatformSettings } from '@/lib/platformSettings';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { evaluateRules } from '@/lib/bot/automation/rules-engine';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { triggerSequences } from '@/lib/bot/automation/sequence-service';
@@ -2417,49 +2416,30 @@ export const schedulingFlow: FlowDefinition = {
           });
 
           // Check if business qualifies for direct bank transfer option
-          const tier = ctx.business?.subscription_tier || 'free';
           const cc2 = (ctx.business?.country_code || 'NG') as CountryCode;
-          const ps = await loadPlatformSettings({ useServiceClient: true });
-          const minBankTransfer = ps.minimum_bank_transfer[cc2] ?? 10000;
-          const qualifiesForBankTransfer =
-            (cc2 === 'NG' || cc2 === 'GH') &&
-            (tier === 'growth' || tier === 'business') &&
-            totalDeposit >= minBankTransfer;
-
-          let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-          if (qualifiesForBankTransfer) {
-            const { data: ba } = await ctx.supabase
-              .from('business_bank_accounts')
-              .select('bank_name, account_number, account_name')
-              .eq('business_id', ctx.business!.id)
-              .eq('is_active', true)
-              .eq('is_default', true)
-              .maybeSingle();
-            bankAccount = ba;
-          }
+          const { qualifies: _btQualifies, bankAccount, platformSettings: ps } = await checkBankTransferEligibility(ctx.supabase, {
+            businessId: ctx.business!.id,
+            countryCode: cc2,
+            subscriptionTier: ctx.business?.subscription_tier || 'free',
+            amount: totalDeposit,
+          });
 
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
 
             if (bankAccount) {
-              // Generate unique transfer reference
-              const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+              const transferRef = await createPendingTransfer(ctx.supabase, {
+                businessId: ctx.business!.id,
+                entityId: { booking_id: booking.id },
+                customerPhone: ctx.from,
+                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                amount: totalDeposit,
+                countryCode: cc2,
+                transferExpiryHours: ps.transfer_expiry_hours,
+              });
               d.bank_transfer_reference = transferRef;
               d.bank_transfer_offered = true;
               d.bank_transfer_amount = totalDeposit;
-
-              // Insert pending_transfer record (expected_amount in smallest unit — kobo)
-              await ctx.supabase.from('pending_transfers').insert({
-                business_id: ctx.business!.id,
-                booking_id: booking.id,
-                customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-                customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                expected_amount: Math.round(totalDeposit * 100),
-                currency: getCurrencyCode(cc2),
-                reference_code: transferRef,
-                status: 'pending',
-                expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-              });
 
               await ctx.supabase
                 .from('bot_sessions')
@@ -2484,14 +2464,7 @@ export const schedulingFlow: FlowDefinition = {
                 paymentResult.url,
                 '',
                 `*Option 2 — Bank Transfer* 🏦`,
-                `Bank: ${bankAccount.bank_name}`,
-                `Account: ${bankAccount.account_number}`,
-                `Name: ${bankAccount.account_name}`,
-                `Amount: ${formatCurrency(totalDeposit, cc2)}`,
-                `Reference/Narration: *${transferRef}*`,
-                '',
-                `⚠️ Use reference *${transferRef}* as your transfer narration.`,
-                `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+                formatBankTransferBlock(bankAccount, formatCurrency(totalDeposit, cc2), transferRef),
               ].filter(Boolean);
 
               return [
@@ -2502,11 +2475,7 @@ export const schedulingFlow: FlowDefinition = {
                 {
                   type: 'buttons',
                   body: 'Tap below after paying:',
-                  buttons: [
-                    { id: 'i_paid_online', title: "I've Paid Online" },
-                    { id: 'sent_transfer', title: "I've Sent Transfer" },
-                    { id: 'go_back', title: 'Cancel' },
-                  ],
+                  buttons: [...DUAL_OPTION_BUTTONS],
                 },
               ];
             }
@@ -2553,22 +2522,18 @@ export const schedulingFlow: FlowDefinition = {
 
           // Payment gateway failed — but bank transfer may still be available
           if (bankAccount) {
-            const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+            const transferRef = await createPendingTransfer(ctx.supabase, {
+              businessId: ctx.business!.id,
+              entityId: { booking_id: booking.id },
+              customerPhone: ctx.from,
+              customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              amount: totalDeposit,
+              countryCode: cc2,
+              transferExpiryHours: ps.transfer_expiry_hours,
+            });
             d.bank_transfer_reference = transferRef;
             d.bank_transfer_offered = true;
             d.bank_transfer_amount = totalDeposit;
-
-            await ctx.supabase.from('pending_transfers').insert({
-              business_id: ctx.business!.id,
-              booking_id: booking.id,
-              customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-              customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              expected_amount: Math.round(totalDeposit * 100),
-              currency: getCurrencyCode(cc2),
-              reference_code: transferRef,
-              status: 'pending',
-              expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-            });
 
             await ctx.supabase
               .from('bot_sessions')
@@ -2588,14 +2553,7 @@ export const schedulingFlow: FlowDefinition = {
               `🔑 Ref: *${booking.reference_code}*`,
               '',
               `Transfer to:`,
-              `Bank: ${bankAccount.bank_name}`,
-              `Account: ${bankAccount.account_number}`,
-              `Name: ${bankAccount.account_name}`,
-              `Amount: ${formatCurrency(totalDeposit, cc2)}`,
-              `Reference/Narration: *${transferRef}*`,
-              '',
-              `⚠️ Use reference *${transferRef}* as your transfer narration.`,
-              `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+              formatBankTransferBlock(bankAccount, formatCurrency(totalDeposit, cc2), transferRef),
             ].filter(Boolean);
 
             return [
@@ -2606,10 +2564,7 @@ export const schedulingFlow: FlowDefinition = {
               {
                 type: 'buttons',
                 body: 'Tap below after transferring:',
-                buttons: [
-                  { id: 'sent_transfer', title: "I've Sent Transfer" },
-                  { id: 'go_back', title: 'Cancel' },
-                ],
+                buttons: [...BANK_ONLY_BUTTONS],
               },
             ];
           }

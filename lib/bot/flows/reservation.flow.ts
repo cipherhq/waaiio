@@ -1,8 +1,7 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
-import { randomBytes } from 'crypto';
-import { loadPlatformSettings } from '@/lib/platformSettings';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -843,43 +842,30 @@ export const reservationFlow: FlowDefinition = {
           });
 
           // Check if business qualifies for direct bank transfer
-          const tier = ctx.business?.subscription_tier || 'free';
-          let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-          const ps = await loadPlatformSettings({ useServiceClient: true });
-          const minBankTransfer = ps.minimum_bank_transfer[cc] ?? 10000;
-
-          if ((cc === 'NG' || cc === 'GH') && (tier === 'growth' || tier === 'business') && payableAmount >= minBankTransfer) {
-            const { data: ba } = await ctx.supabase
-              .from('business_bank_accounts')
-              .select('bank_name, account_number, account_name')
-              .eq('business_id', ctx.business!.id)
-              .eq('is_active', true)
-              .eq('is_default', true)
-              .maybeSingle();
-            bankAccount = ba;
-          }
+          const { qualifies: _btQualifies, bankAccount, platformSettings: ps } = await checkBankTransferEligibility(ctx.supabase, {
+            businessId: ctx.business!.id,
+            countryCode: cc,
+            subscriptionTier: ctx.business?.subscription_tier || 'free',
+            amount: payableAmount,
+          });
 
           if (paymentResult) {
             d.payment_reference = paymentResult.reference;
 
             if (bankAccount) {
               // Dual-option: online + bank transfer
-              const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+              const transferRef = await createPendingTransfer(ctx.supabase, {
+                businessId: ctx.business!.id,
+                entityId: { reservation_id: reservation.id },
+                customerPhone: ctx.from,
+                customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+                amount: payableAmount,
+                countryCode: cc,
+                transferExpiryHours: ps.transfer_expiry_hours,
+              });
               d.bank_transfer_reference = transferRef;
               d.bank_transfer_offered = true;
               d.bank_transfer_amount = payableAmount;
-
-              await ctx.supabase.from('pending_transfers').insert({
-                business_id: ctx.business!.id,
-                reservation_id: reservation.id,
-                customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-                customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-                expected_amount: Math.round(payableAmount * 100),
-                currency: getCurrencyCode(cc),
-                reference_code: transferRef,
-                status: 'pending',
-                expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-              });
 
               await ctx.supabase
                 .from('bot_sessions')
@@ -913,23 +899,13 @@ export const reservationFlow: FlowDefinition = {
                     paymentResult.url,
                     '',
                     `*Option 2 — Bank Transfer* 🏦`,
-                    `Bank: ${bankAccount.bank_name}`,
-                    `Account: ${bankAccount.account_number}`,
-                    `Name: ${bankAccount.account_name}`,
-                    `Amount: ${formatCurrency(payableAmount, cc)}`,
-                    `Reference: *${transferRef}*`,
-                    '',
-                    `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+                    formatBankTransferBlock(bankAccount, formatCurrency(payableAmount, cc), transferRef),
                   ].join('\n'),
                 },
                 {
                   type: 'buttons',
                   body: "After paying, tap below:",
-                  buttons: [
-                    { id: 'i_paid_online', title: "I've Paid Online" },
-                    { id: 'sent_transfer', title: "I've Sent Transfer" },
-                    { id: 'go_back', title: 'Cancel' },
-                  ],
+                  buttons: [...DUAL_OPTION_BUTTONS],
                 },
               ];
             }
@@ -982,22 +958,18 @@ export const reservationFlow: FlowDefinition = {
 
           // Payment gateway failed — but bank transfer may still be available
           if (bankAccount) {
-            const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+            const transferRef = await createPendingTransfer(ctx.supabase, {
+              businessId: ctx.business!.id,
+              entityId: { reservation_id: reservation.id },
+              customerPhone: ctx.from,
+              customerName: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+              amount: payableAmount,
+              countryCode: cc,
+              transferExpiryHours: ps.transfer_expiry_hours,
+            });
             d.bank_transfer_reference = transferRef;
             d.bank_transfer_offered = true;
             d.bank_transfer_amount = payableAmount;
-
-            await ctx.supabase.from('pending_transfers').insert({
-              business_id: ctx.business!.id,
-              reservation_id: reservation.id,
-              customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-              customer_name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
-              expected_amount: Math.round(payableAmount * 100),
-              currency: getCurrencyCode(cc),
-              reference_code: transferRef,
-              status: 'pending',
-              expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-            });
 
             await ctx.supabase
               .from('bot_sessions')
@@ -1031,23 +1003,13 @@ export const reservationFlow: FlowDefinition = {
                   `🔑 Ref: *${reservation.reference_code}*`,
                   '',
                   `Transfer to:`,
-                  `Bank: ${bankAccount.bank_name}`,
-                  `Account: ${bankAccount.account_number}`,
-                  `Name: ${bankAccount.account_name}`,
-                  `Amount: ${formatCurrency(payableAmount, cc)}`,
-                  `Reference/Narration: *${transferRef}*`,
-                  '',
-                  `⚠️ Use reference *${transferRef}* as your transfer narration.`,
-                  `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+                  formatBankTransferBlock(bankAccount, formatCurrency(payableAmount, cc), transferRef),
                 ].join('\n'),
               },
               {
                 type: 'buttons',
                 body: 'Tap below after transferring:',
-                buttons: [
-                  { id: 'sent_transfer', title: "I've Sent Transfer" },
-                  { id: 'go_back', title: 'Cancel' },
-                ],
+                buttons: [...BANK_ONLY_BUTTONS],
               },
             ];
           }

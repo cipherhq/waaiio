@@ -1,7 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
-import { randomBytes } from 'crypto';
+import { checkBankTransferEligibility, createPendingTransfer, formatBankTransferBlock, BANK_ONLY_BUTTONS, DUAL_OPTION_BUTTONS } from './shared/bank-transfer';
 import { logger } from '@/lib/logger';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
@@ -10,7 +10,6 @@ import { handlePostCompletion } from './shared/post-completion';
 import { recordPlatformFee as _recordFee } from '@/lib/payments/process-success';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { getPoweredByFooter } from '@/lib/whitelabel';
-import { loadPlatformSettings } from '@/lib/platformSettings';
 
 const selectCampaignStep: FlowStepConfig = {
   id: 'select_campaign',
@@ -380,41 +379,28 @@ const donationPaymentStep: FlowStepConfig = {
     sd.donor_name = donorName;
 
     // Check if business qualifies for direct bank transfer
-    const tier = ctx.business?.subscription_tier || 'free';
-    let bankAccount: { bank_name: string; account_number: string; account_name: string } | null = null;
-    const ps = await loadPlatformSettings({ useServiceClient: true });
-    const minBankTransfer = ps.minimum_bank_transfer[country] ?? 10000;
-
-    if ((country === 'NG' || country === 'GH') && (tier === 'growth' || tier === 'business') && amount >= minBankTransfer) {
-      const { data: ba } = await ctx.supabase
-        .from('business_bank_accounts')
-        .select('bank_name, account_number, account_name')
-        .eq('business_id', ctx.business!.id)
-        .eq('is_active', true)
-        .eq('is_default', true)
-        .maybeSingle();
-      bankAccount = ba;
-    }
+    const { qualifies: _btQualifies, bankAccount, platformSettings: ps } = await checkBankTransferEligibility(ctx.supabase, {
+      businessId: ctx.business!.id,
+      countryCode: country,
+      subscriptionTier: ctx.business?.subscription_tier || 'free',
+      amount,
+    });
 
     if (!result) {
       // Payment gateway failed — but bank transfer may still be available
       if (bankAccount) {
-        const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+        const transferRef = await createPendingTransfer(ctx.supabase, {
+          businessId: ctx.business!.id,
+          entityId: { campaign_id: sd.campaign_id as string },
+          customerPhone: ctx.from,
+          customerName: donorName || 'Anonymous',
+          amount,
+          countryCode: country,
+          transferExpiryHours: ps.transfer_expiry_hours,
+        });
         sd.bank_transfer_reference = transferRef;
         sd.bank_transfer_offered = true;
         sd.bank_transfer_amount = amount;
-
-        await ctx.supabase.from('pending_transfers').insert({
-          business_id: ctx.business!.id,
-          campaign_id: sd.campaign_id as string,
-          customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-          customer_name: donorName || 'Anonymous',
-          expected_amount: Math.round(amount * 100),
-          currency: getCurrencyCode(country),
-          reference_code: transferRef,
-          status: 'pending',
-          expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-        });
 
         await ctx.supabase
           .from('bot_sessions')
@@ -432,23 +418,13 @@ const donationPaymentStep: FlowStepConfig = {
               `*Ref:* ${refCode}`,
               '',
               `Transfer to:`,
-              `Bank: ${bankAccount.bank_name}`,
-              `Account: ${bankAccount.account_number}`,
-              `Name: ${bankAccount.account_name}`,
-              `Amount: ${formatCurrency(amount, country)}`,
-              `Reference/Narration: *${transferRef}*`,
-              '',
-              `⚠️ Use reference *${transferRef}* as your transfer narration.`,
-              `After transferring, tap "I've Sent It" or send your receipt screenshot.`,
+              formatBankTransferBlock(bankAccount, formatCurrency(amount, country), transferRef),
             ].join('\n'),
           },
           {
             type: 'buttons',
             body: 'Tap below after transferring:',
-            buttons: [
-              { id: 'sent_transfer', title: "I've Sent Transfer" },
-              { id: 'go_back', title: 'Cancel' },
-            ],
+            buttons: [...BANK_ONLY_BUTTONS],
           },
         ];
       }
@@ -461,22 +437,18 @@ const donationPaymentStep: FlowStepConfig = {
 
     if (bankAccount) {
       // Dual-option: online + bank transfer
-      const transferRef = 'WA-' + randomBytes(3).toString('hex').toUpperCase().slice(0, 4);
+      const transferRef = await createPendingTransfer(ctx.supabase, {
+        businessId: ctx.business!.id,
+        entityId: { campaign_id: sd.campaign_id as string },
+        customerPhone: ctx.from,
+        customerName: donorName || 'Anonymous',
+        amount,
+        countryCode: country,
+        transferExpiryHours: ps.transfer_expiry_hours,
+      });
       sd.bank_transfer_reference = transferRef;
       sd.bank_transfer_offered = true;
       sd.bank_transfer_amount = amount;
-
-      await ctx.supabase.from('pending_transfers').insert({
-        business_id: ctx.business!.id,
-        campaign_id: sd.campaign_id as string,
-        customer_phone: ctx.from.startsWith('+') ? ctx.from : `+${ctx.from}`,
-        customer_name: donorName || 'Anonymous',
-        expected_amount: Math.round(amount * 100),
-        currency: getCurrencyCode(country),
-        reference_code: transferRef,
-        status: 'pending',
-        expires_at: new Date(Date.now() + ps.transfer_expiry_hours * 60 * 60 * 1000).toISOString(),
-      });
 
       await ctx.supabase
         .from('bot_sessions')
@@ -497,23 +469,13 @@ const donationPaymentStep: FlowStepConfig = {
             result.url,
             '',
             `*Option 2 — Bank Transfer* 🏦`,
-            `Bank: ${bankAccount.bank_name}`,
-            `Account: ${bankAccount.account_number}`,
-            `Name: ${bankAccount.account_name}`,
-            `Amount: ${formatCurrency(amount, country)}`,
-            `Reference: *${transferRef}*`,
-            '',
-            `⚠️ Use reference *${transferRef}* as your transfer narration.`,
+            formatBankTransferBlock(bankAccount, formatCurrency(amount, country), transferRef),
           ].join('\n'),
         },
         {
           type: 'buttons',
           body: "After paying, tap below:",
-          buttons: [
-            { id: 'i_paid_online', title: "I've Paid Online" },
-            { id: 'sent_transfer', title: "I've Sent Transfer" },
-            { id: 'go_back', title: 'Cancel' },
-          ],
+          buttons: [...DUAL_OPTION_BUTTONS],
         },
       ];
     }
