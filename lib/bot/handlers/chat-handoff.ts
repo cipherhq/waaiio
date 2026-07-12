@@ -40,7 +40,7 @@ export async function handleChatHandoff(
         .eq('business_id', session.business_id)
         .eq('customer_phone', from)
         .eq('status', 'open');
-    } catch { /* non-critical */ }
+    } catch (err) { logger.warn('[CHAT-HANDOFF] Non-critical chat operation failed:', err); }
     // Re-enter the bot from scratch so they get the menu
     return reenterBot(from, text, messageType, undefined, session.business_id);
   }
@@ -114,7 +114,7 @@ export async function handleChatHandoff(
           session_data: session.session_data,
         }).eq('id', session.id);
       }
-    } catch { /* non-critical */ }
+    } catch (err) { logger.warn('[CHAT-HANDOFF] Non-critical chat operation failed:', err); }
   }
 
   // ── Email notification for new chat (rate-limited: max 1 per 30 min per conversation) ──
@@ -138,14 +138,14 @@ export async function handleChatHandoff(
                  <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
                  <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
                  ${getPoweredByHtml(biz.subscription_tier)}`,
-        }).catch(() => {});
+        }).catch(err => logger.error('[CHAT-HANDOFF] Failed to send chat notification email:', err));
         session.session_data._last_chat_email_at = now;
         await supabase.from('bot_sessions').update({
           session_data: session.session_data,
         }).eq('id', session.id);
       }
     }
-  } catch { /* non-critical */ }
+  } catch (err) { logger.warn('[CHAT-HANDOFF] Chat email notification failed (non-critical):', err); }
 
   // Forward message to business owner's phone
   await forwardToBusinessOwner(session.business_id, from, handoffName, text);
@@ -179,7 +179,7 @@ export async function handleChatStart(
         .eq('business_id', session.business_id)
         .eq('customer_phone', from)
         .eq('status', 'open');
-    } catch { /* non-critical */ }
+    } catch (err) { logger.warn('[CHAT-HANDOFF] Non-critical chat operation failed:', err); }
     return reenterBot(from, text, messageType, undefined, session.business_id);
   }
 
@@ -273,7 +273,7 @@ export async function handleChatStart(
             return;
           }
         }
-      } catch { /* FAQ lookup failed, fall through to human chat */ }
+      } catch (err) { logger.warn('[CHAT-HANDOFF] FAQ lookup failed (falling through to human chat):', err); }
     }
 
     // ── Email notification for new chat (rate-limited: max 1 per 30 min per conversation) ──
@@ -297,14 +297,14 @@ export async function handleChatStart(
                    <blockquote style="border-left: 3px solid #6C2BD9; padding-left: 12px; color: #333;">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')}</blockquote>
                    <p><a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/dashboard/chat" style="color: #6C2BD9; font-weight: bold;">Reply in your dashboard</a></p>
                    ${getPoweredByHtml(bizForEmail.subscription_tier)}`,
-          }).catch(() => {});
+          }).catch(err => logger.error('[CHAT-HANDOFF] Failed to send chat notification email:', err));
           session.session_data._last_chat_email_at = nowMs;
           await supabase.from('bot_sessions').update({
             session_data: session.session_data,
           }).eq('id', session.id);
         }
       }
-    } catch { /* non-critical */ }
+    } catch (err) { logger.warn('[CHAT-HANDOFF] Non-critical chat operation failed:', err); }
 
     // Forward message to business owner's phone
     await forwardToBusinessOwner(session.business_id, from, customerName, text);

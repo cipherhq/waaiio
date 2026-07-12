@@ -6,6 +6,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 import { classifyWithLLM } from './llm-intent';
 import { logClassification } from './classification-logger';
 import { isFeatureEnabledServer, FLAGS } from '@/lib/posthog/flags';
@@ -508,7 +509,7 @@ export async function parseSmartIntentHybrid(
 
   // Check if LLM is enabled via feature flag (defaults to true if PostHog not configured)
   const llmEnabled = businessId
-    ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(() => true)
+    ? await isFeatureEnabledServer(FLAGS.LLM_INTENT_ENABLED, businessId).catch(err => { logger.warn('[SMART-INTENT] Feature flag check failed (defaulting to enabled):', err); return true; })
     : true;
 
   // Step 2: If regex found a confident intent with service keywords, use it
@@ -541,7 +542,7 @@ export async function parseSmartIntentHybrid(
 
     // Track AI usage (non-blocking)
     if (supabase && businessId) {
-      Promise.resolve(supabase.rpc('increment_ai_usage', { p_business_id: businessId, p_call_type: 'intent' })).catch(() => {});
+      Promise.resolve(supabase.rpc('increment_ai_usage', { p_business_id: businessId, p_call_type: 'intent' })).catch(err => logger.warn('[SMART-INTENT] Failed to increment AI usage:', err));
     }
 
     // Only use LLM result if confidence is reasonable
@@ -596,8 +597,8 @@ export async function parseSmartIntentHybrid(
     });
 
     return { ...merged, language: llmResult.language, llmUsed: true };
-  } catch {
-    // LLM failed — return regex result
+  } catch (err) {
+    logger.warn('[SMART-INTENT] LLM classification failed, using regex result:', err);
     return regexResult;
   }
 }

@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } fro
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
+import { logger } from '@/lib/logger';
 import { getTicketConfirmationMessage } from './shared/templates';
 import { getTermsPrompt } from './shared/terms';
 import { sendTicketsAfterPurchase } from './shared/send-tickets';
@@ -505,7 +506,7 @@ export const ticketingFlow: FlowDefinition = {
               channel: 'in_app',
               subject: 'Ticket limit approaching',
               body: `You've sold ${tierResult.current}/${tierResult.limit} tickets for this event. Upgrade for more.`,
-            }).catch(() => {});
+            }).catch(err => logger.error('[TICKETING] Failed to create tier limit notification:', err));
           }
         }
 

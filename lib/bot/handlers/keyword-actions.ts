@@ -329,7 +329,7 @@ export async function executeKeywordAction(
             subject: `Keyword hit: ${kw.keyword}`,
             emailHtml: `<p>${from} texted "${kw.keyword}". You now have ${responseCount || 1} response${(responseCount || 1) === 1 ? '' : 's'}.</p><p>View results in your dashboard.</p>${getPoweredByHtml(kwTier)}`,
             whatsappText: `🔑 *Keyword Hit*\n\n${from} texted "${kw.keyword}".\nTotal responses: ${responseCount || 1}\n\nView results in your dashboard.${getPoweredByFooter(kwTier)}`,
-          }).catch(() => {});
+          }).catch(err => logger.error('[KEYWORD-ACTIONS] Failed to notify owner of keyword hit:', err));
         }
 
         return true;

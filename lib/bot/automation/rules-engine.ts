@@ -183,7 +183,7 @@ async function executeAction(
             body: message,
             is_read: false,
           });
-        } catch { /* non-critical */ }
+        } catch (err) { logger.warn('[RULES-ENGINE] Failed to create notification (non-critical):', err); }
       }
       break;
     }

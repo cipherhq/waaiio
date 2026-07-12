@@ -66,6 +66,12 @@ export class BotService {
     const text = messageText.trim();
     logger.debug('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
 
+    // Pre-check: Input length cap (prevents regex timeout, LLM token burn, DoS)
+    if (text.length > 5000) {
+      logger.warn(`[BOT] Message too long from ${from}: ${text.length} chars`);
+      return; // Silently drop — excessively long messages are never legitimate
+    }
+
     // Pre-check 0: Per-phone rate limit (prevents bot spam burning AI/WhatsApp credits)
     const botSettings = await loadPlatformSettings({ useServiceClient: true });
     const phoneRateLimit = await checkRateLimitAsync(`bot:${from}`, botSettings.bot_rate_limit_per_minute, 60_000);
@@ -85,7 +91,7 @@ export class BotService {
         await this.sendText(from, "We're currently undergoing maintenance and will be back shortly. Please try again in a few minutes. 🙏");
         return;
       }
-    } catch {} // fail open
+    } catch (err) { logger.warn('[BOT] Maintenance mode check failed (fail open):', err); }
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
@@ -245,7 +251,7 @@ export class BotService {
             : party?.rsvp_no_message;
           if (customMsg) responseMsg = customMsg;
         }
-      } catch { /* use default */ }
+      } catch (err) { logger.warn('[BOT] Custom RSVP message lookup failed (using default):', err); }
 
       await this.sendText(from, `${responseMsg}${getPoweredByFooter(rsvpTier)}`);
 
@@ -279,9 +285,9 @@ export class BotService {
             subject: `RSVP: ${guestName} ${statusLabel} — ${eventName}`,
             emailHtml: `<div style="font-family:sans-serif;max-width:500px;margin:0 auto"><h2 style="color:#6C2BD9">New RSVP Response</h2><p>${guestName} has ${statusLabel} your invitation to <strong>${eventName}</strong>.</p>${getPoweredByHtml(rsvpTier)}</div>`,
             whatsappText: `📋 *RSVP Update*\n\n${guestName} has ${statusLabel} your invitation to *${eventName}*.${getPoweredByFooter(rsvpTier)}`,
-          }).catch(() => {});
+          }).catch(err => logger.error('[BOT] Failed to notify owner of RSVP response:', err));
         }
-      } catch { /* non-critical */ }
+      } catch (err) { logger.warn('[BOT] RSVP handling failed (non-critical):', err); }
 
       return;
     }
@@ -952,7 +958,7 @@ export class BotService {
               logger.error('[BOT] Language confirm send error:', err);
             }
           }
-        } catch { /* language detection failed — continue in English */ }
+        } catch (err) { logger.warn('[BOT] Language detection failed (continuing in English):', err); }
       }
 
       session = newSession as BotSession;

@@ -2,6 +2,7 @@ import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, Valida
 import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { analyzeReceipt, receiptMatchesExpected } from '@/lib/bot/receipt-ocr';
 import { randomBytes } from 'crypto';
+import { logger } from '@/lib/logger';
 import { notifyOwnerNewDonation } from './shared/notify-owner';
 import { createNotification } from './shared/notifications';
 import { checkTierLimit } from '@/lib/tier-limits';
@@ -344,7 +345,7 @@ const donationPaymentStep: FlowStepConfig = {
           channel: 'in_app',
           subject: 'Donation limit approaching',
           body: `You've received ${tierResult.current}/${tierResult.limit} donations this month. Upgrade for more.`,
-        }).catch(() => {});
+        }).catch(err => logger.error('[CROWDFUNDING] Failed to create tier limit notification:', err));
       }
     }
 

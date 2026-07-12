@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 
 export interface CustomerHistory {
   isReturning: boolean;
@@ -129,7 +130,8 @@ export async function getCustomerHistory(
       favoriteServiceId: favoriteId,
       loyaltyPoints: loyalty?.points_balance || null,
     };
-  } catch {
+  } catch (err) {
+    logger.warn('[CUSTOMER-INTELLIGENCE] Failed to load customer profile:', err);
     return empty;
   }
 }

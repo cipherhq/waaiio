@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import type { CapabilityId } from '@/lib/capabilities/types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { truncTitle } from '../utils/truncate';
 import { getCapabilityCustomLabels } from '@/lib/capabilities/service';
@@ -338,8 +339,8 @@ const selectCapabilityStep: FlowStepConfig = {
             await ctx.sender.sendText({ to: ctx.from, text: await ctx.t(ack) });
           }
         }
-      } catch {
-        // Non-fatal — flow continues normally without pre-fill
+      } catch (err) {
+        logger.warn('[CAPABILITY-SELECTION] Pre-fill failed (non-fatal):', err);
       }
     }
 

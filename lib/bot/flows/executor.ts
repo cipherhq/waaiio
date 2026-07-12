@@ -539,7 +539,7 @@ export class FlowExecutor {
       }
     }
     if (this.currentBusinessId) {
-      trackOutboundMessage(this.supabase, this.currentBusinessId).catch(() => {});
+      trackOutboundMessage(this.supabase, this.currentBusinessId).catch(err => logger.warn('[EXECUTOR] Failed to track outbound message:', err));
     }
   }
 

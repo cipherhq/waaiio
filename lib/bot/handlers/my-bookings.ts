@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import type { FlowExecutor } from '../flows/executor';
 import type { BotSession, BusinessRecord } from '../bot-types';
+import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import { handleTransactionDocument } from './transaction-docs';
 import { routeToMyAccountMenu } from './my-account-menu';
@@ -449,7 +450,7 @@ export async function handleModifyBooking(
           time: cancelledBooking.time || '',
           referenceCode: cancelledBooking.reference_code || '',
         }).catch(err => console.error('[BOT] Staff cancel notify error:', err));
-      }).catch(() => {});
+      }).catch(err => logger.error('[MY-BOOKINGS] Failed to import notify-staff module:', err));
     }
 
     await sendText(from, '❌ Booking cancelled.\n\nSend *Hi* to start over or *my bookings* to manage others.');

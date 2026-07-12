@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger } from '@/lib/logger';
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -75,7 +76,8 @@ function getCompiledRegex(pattern: string): RegExp | null {
       for (let i = 0; i < 50; i++) regexCache.delete(entries[i]);
     }
     return re;
-  } catch {
+  } catch (err) {
+    logger.warn('[KEYWORD-SERVICE] Failed to build regex for keyword:', err);
     return null;
   }
 }
@@ -240,8 +242,8 @@ export function matchUnifiedKeyword(text: string, keywords: UnifiedKeyword[]): U
 export function parseKeywordPayload(payload: string): Record<string, unknown> {
   try {
     return JSON.parse(payload);
-  } catch {
-    // Plain text payload — wrap as message
+  } catch (err) {
+    logger.warn('[KEYWORD-SERVICE] Payload JSON parse failed, treating as plain text:', err);
     return { message: payload };
   }
 }

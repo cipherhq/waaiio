@@ -59,7 +59,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
     ]);
     capabilities = caps;
     biz = (bizResult.data ?? null) as typeof biz;
-  } catch {
+  } catch (err) {
+    logger.warn('[POST-COMPLETION] Failed to load capabilities/business data:', err);
     return;
   }
 
@@ -103,8 +104,8 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         first_seen_at: new Date().toISOString(),
       });
     }
-  } catch {
-    // Non-critical — don't block the flow
+  } catch (err) {
+    logger.warn('[POST-COMPLETION] Referral handling failed (non-critical):', err);
   }
 
   // 0. Auto-receipt — send payment confirmation with receipt details
@@ -244,7 +245,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
       } else {
         loyaltyMsg += `\n\n${pointsUntilReward} more until ${rewardDesc}.`;
       }
-      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(() => {});
+      if (sender) t(loyaltyMsg).then(translated => sender.sendText({ to: customerPhone, text: translated })).catch(err => logger.error('[POST-COMPLETION] Failed to send loyalty message:', err));
     } catch (err) {
       logger.error('[POST-COMPLETION] Loyalty error:', err);
     }
@@ -259,7 +260,7 @@ export async function handlePostCompletion(params: PostCompletionParams): Promis
         .from(table)
         .update({ metadata: { feedback_requested: false, completed_at: new Date().toISOString() } })
         .eq('id', referenceId);
-    } catch { /* non-critical */ }
+    } catch (err) { logger.warn('[POST-COMPLETION] Failed to mark feedback requested (non-critical):', err); }
   }
 
   // 2.5. Sequences & Rules — trigger automation after completion

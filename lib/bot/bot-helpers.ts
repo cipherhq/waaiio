@@ -103,7 +103,7 @@ export async function forwardToBusinessOwner(
 
     // Track usage for billing
     await ctx.supabase.rpc('increment_chat_forwards', { p_business_id: businessId });
-  } catch {
-    // Non-critical — don't break the flow
+  } catch (err) {
+    logger.warn('[BOT-HELPERS] Chat forward tracking failed (non-critical):', err);
   }
 }

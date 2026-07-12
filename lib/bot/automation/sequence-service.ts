@@ -134,7 +134,7 @@ export async function processEnrollmentStep(
       await sendMessage(phone, message);
     }
     // Track outbound
-    trackOutboundMessage(supabase, enrollment.business_id).catch(() => {});
+    trackOutboundMessage(supabase, enrollment.business_id).catch(err => logger.warn('[SEQUENCE] Failed to track outbound message:', err));
   } catch (err) {
     logger.error('[SEQUENCE] Failed to send message:', err);
     // Don't advance — will retry next cycle

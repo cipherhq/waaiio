@@ -118,7 +118,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
   try {
     const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', businessId).single();
     subscriptionTier = bizTier?.subscription_tier || 'free';
-  } catch { subscriptionTier = 'free'; }
+  } catch (err) { logger.warn('[TICKETS] Failed to fetch subscription tier, defaulting to free:', err); subscriptionTier = 'free'; }
 
   // 3. Try to generate and send PDF (optional — may fail on serverless due to PDFKit fonts)
   try {
@@ -174,7 +174,7 @@ export async function sendTicketsAfterPurchase(opts: SendTicketsOptions): Promis
       } catch (err) {
         logger.error('[TICKETS] Ticket image send failed for', ticket.ticketCode, ':', err);
         // Text fallback
-        await sender.sendText({ to: phone, text: await t(caption) }).catch(() => {});
+        await sender.sendText({ to: phone, text: await t(caption) }).catch(err => logger.error('[TICKETS] Text fallback send failed:', err));
       }
     }
     logger.info('[TICKETS] WhatsApp ticket delivery complete for', phone, '| booking:', bookingId);

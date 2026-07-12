@@ -1963,8 +1963,8 @@ export const orderingFlow: FlowDefinition = {
               if (discountResult && discountResult > 0) {
                 volumeDiscountTotal += discountResult;
               }
-            } catch {
-              // Volume discount calculation failed — continue without
+            } catch (err) {
+              logger.warn('[ORDERING] Volume discount calculation failed, continuing without:', err);
             }
           }
         }
@@ -2432,7 +2432,7 @@ export const orderingFlow: FlowDefinition = {
               channel: 'in_app',
               subject: 'Order limit approaching',
               body: `You've used ${tierResult.current}/${tierResult.limit} orders this month. Upgrade for more.`,
-            }).catch(() => {});
+            }).catch(err => logger.error('[ORDERING] Failed to create tier limit notification:', err));
           }
         }
 

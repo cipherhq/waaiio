@@ -1,5 +1,6 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getLocale, type CountryCode } from '@/lib/constants';
+import { logger } from '@/lib/logger';
 import { getPoweredByFooter } from '@/lib/whitelabel';
 
 export const rsvpFlow: FlowDefinition = {
@@ -25,7 +26,7 @@ export const rsvpFlow: FlowDefinition = {
             dateLabel = new Date(eventDate + 'T00:00').toLocaleDateString(getLocale(cc), {
               weekday: 'long', day: 'numeric', month: 'long',
             });
-          } catch { /* keep raw date */ }
+          } catch (err) { logger.warn('[RSVP] Date formatting failed (keeping raw):', err); }
         }
 
         let timeLabel = eventTime;
@@ -35,7 +36,7 @@ export const rsvpFlow: FlowDefinition = {
             const dt = new Date();
             dt.setHours(parseInt(h, 10), parseInt(m, 10));
             timeLabel = dt.toLocaleTimeString(getLocale(cc), { hour: 'numeric', minute: '2-digit' });
-          } catch { /* keep raw time */ }
+          } catch (err) { logger.warn('[RSVP] Time formatting failed (keeping raw):', err); }
         }
 
         const lines = [
@@ -197,7 +198,7 @@ export const rsvpFlow: FlowDefinition = {
             dateLabel = new Date(eventDate + 'T00:00').toLocaleDateString(getLocale(cc), {
               weekday: 'long', day: 'numeric', month: 'long',
             });
-          } catch { /* keep raw */ }
+          } catch (err) { logger.warn('[RSVP] Date/time formatting failed (keeping raw):', err); }
         }
 
         let timeLabel = eventTime;
@@ -207,7 +208,7 @@ export const rsvpFlow: FlowDefinition = {
             const dt = new Date();
             dt.setHours(parseInt(h, 10), parseInt(m, 10));
             timeLabel = dt.toLocaleTimeString(getLocale(cc), { hour: 'numeric', minute: '2-digit' });
-          } catch { /* keep raw */ }
+          } catch (err) { logger.warn('[RSVP] Date/time formatting failed (keeping raw):', err); }
         }
 
         const totalGuests = 1 + plusOnes;

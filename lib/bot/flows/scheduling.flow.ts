@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { BOOKING_DEFAULTS, generateTimeSlots, formatCurrency, getLocale, getMaxQuantity, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { getCategoryLabels } from '@/lib/categoryConfig';
+import { logger } from '@/lib/logger';
 import { createWhatsAppUser, findUserByPhone } from './shared/user';
 import { initializePayment, verifyPayment, recordPlatformFee } from './shared/payment';
 import { truncTitle } from '../utils/truncate';
@@ -2170,7 +2171,7 @@ export const schedulingFlow: FlowDefinition = {
               channel: 'in_app',
               subject: 'Booking limit approaching',
               body: `You've used ${tierResult.current}/${tierResult.limit} bookings this month. Upgrade for more.`,
-            }).catch(() => {});
+            }).catch(err => logger.error('[SCHEDULING] Failed to create tier limit notification:', err));
           }
         }
 
@@ -2744,7 +2745,7 @@ export const schedulingFlow: FlowDefinition = {
             if (caps.includes('loyalty')) tips.push('Type *my points* to check your loyalty balance');
             if (caps.includes('referral')) tips.push('Type *refer* to invite friends and earn rewards');
             if (caps.includes('ordering')) tips.push('Type *order* to place an order');
-          } catch {}
+          } catch (err) { logger.warn('[SCHEDULING] Failed to load capabilities for tips:', err); }
         }
         const helpText = `\n\n💡 *What you can do:*\n${tips.map(t => `• ${t}`).join('\n')}`;
 
@@ -2761,7 +2762,7 @@ export const schedulingFlow: FlowDefinition = {
               duration_minutes: d.service_duration as number | undefined,
               reference_code: booking.reference_code,
             }).catch(err => console.error('[SCHEDULING] Calendar sync error:', err));
-          }).catch(() => {});
+          }).catch(err => logger.error('[SCHEDULING] Failed to import google-calendar module:', err));
         }
 
         // Add calendar links for date+time bookings (not drop-off services)

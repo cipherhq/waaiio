@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
+import { logger } from '@/lib/logger';
 import { dispatchWebhook } from '@/lib/webhooks/dispatcher';
 
 interface EscalateParams {
@@ -82,7 +83,7 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
       customer_name: customerName,
       escalated_from_step: currentStep,
     });
-  } catch { /* non-critical */ }
+  } catch (err) { logger.warn('[HANDOFF] Webhook dispatch failed (non-critical):', err); }
 
   // 6. Send WhatsApp notification to business owner if phone available
   try {
@@ -100,7 +101,7 @@ export async function escalateToHuman(params: EscalateParams): Promise<void> {
         text: `🔔 *Live chat request*\n\n${displayName} wants to speak with someone at ${businessName}.\n\nCheck your dashboard → Chat to respond.`,
       });
     }
-  } catch { /* non-critical */ }
+  } catch (err) { logger.warn('[HANDOFF] Owner WhatsApp notification failed (non-critical):', err); }
 }
 
 export async function resolveConversation(params: ResolveParams): Promise<void> {

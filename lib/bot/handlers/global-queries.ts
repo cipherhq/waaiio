@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MessageSender } from '@/lib/channels/message-sender';
 import type { FlowExecutor } from '../flows/executor';
+import { logger } from '@/lib/logger';
 import { getEnabledCapabilities } from '@/lib/capabilities/service';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 import type { BotSession, BusinessRecord } from '../bot-types';
@@ -156,7 +157,8 @@ export async function handleGlobalQuery(params: GlobalQueryParams): Promise<{ ha
       if (lat && lng && messageSender.sendLocation) {
         try {
           await messageSender.sendLocation({ to: from, latitude: lat, longitude: lng, name: biz.name, address: biz.address });
-        } catch {
+        } catch (err) {
+          logger.warn('[GLOBAL-QUERIES] Location send failed, falling back to text:', err);
           await sendText(from, `📍 *${biz.name}*\n${biz.address}`);
         }
       } else {

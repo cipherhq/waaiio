@@ -49,7 +49,7 @@ export async function translateBotResponse(
   }
 
   // Check feature flag (defaults to true if PostHog not configured)
-  const enabled = await isFeatureEnabledServer(FLAGS.BOT_TRANSLATION_ENABLED, language).catch(() => true);
+  const enabled = await isFeatureEnabledServer(FLAGS.BOT_TRANSLATION_ENABLED, language).catch(err => { logger.warn('[TRANSLATE] Feature flag check failed (defaulting to enabled):', err); return true; });
   if (!enabled) return text;
 
   // Skip very short messages or messages that are mostly formatting/emoji
@@ -106,7 +106,7 @@ export async function translateBotResponse(
     // Track AI usage for this business (non-blocking)
     if (_currentBusinessId && _currentSupabase) {
       const { incrementAIUsage } = await import('@/lib/bot/ai-tier-guard');
-      incrementAIUsage(_currentSupabase as any, _currentBusinessId, 'translation').catch(() => {});
+      incrementAIUsage(_currentSupabase as any, _currentBusinessId, 'translation').catch(err => logger.warn('[TRANSLATE] Failed to increment AI usage:', err));
     }
 
     // Re-insert original values into translated text
@@ -122,7 +122,8 @@ export async function translateBotResponse(
     }
 
     return translated;
-  } catch {
+  } catch (err) {
+    logger.warn('[TRANSLATE] Translation failed, returning original text:', err);
     return text;
   }
 }
@@ -175,7 +176,8 @@ export async function detectLanguage(text: string): Promise<string> {
 
     const code = response.content[0].type === 'text' ? response.content[0].text.trim().toLowerCase() : 'en';
     return SUPPORTED_LANGUAGES[code] ? code : 'en';
-  } catch {
+  } catch (err) {
+    logger.warn('[TRANSLATE] Language detection failed, defaulting to English:', err);
     return 'en';
   }
 }

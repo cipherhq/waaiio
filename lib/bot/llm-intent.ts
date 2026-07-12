@@ -115,7 +115,8 @@ export async function classifyWithLLM(
     }
 
     return result;
-  } catch {
+  } catch (err) {
+    logger.warn('[LLM-INTENT] Classification failed, returning empty:', err);
     return EMPTY_RESULT;
   }
 }

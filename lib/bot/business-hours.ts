@@ -3,6 +3,8 @@
  * a business's configured operating window for the current day.
  */
 
+import { logger } from '@/lib/logger';
+
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
 interface DaySchedule {
@@ -63,7 +65,8 @@ export function isWithinBusinessHours(hours: BusinessHours, timezone?: string): 
     const closeMinutes = closeH * 60 + closeM;
 
     return currentMinutes >= openMinutes && currentMinutes < closeMinutes;
-  } catch {
+  } catch (err) {
+    logger.warn('[BUSINESS-HOURS] Hours check failed (defaulting to open):', err);
     // If timezone is invalid or anything else goes wrong, default to "open"
     // so the bot doesn't accidentally block all messages
     return true;

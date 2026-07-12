@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowStepConfig, FlowContext, PromptMessage, ValidationResult } from './types';
 import { getCapabilityLabel } from './capability-selection.flow';
 import type { CapabilityId } from '@/lib/capabilities/types';
+import { logger } from '@/lib/logger';
 import { truncTitle } from '../utils/truncate';
 import { getPoweredByFooter, getPoweredByHtml } from '@/lib/whitelabel';
 
@@ -291,7 +292,7 @@ const surveyCompleteStep: FlowStepConfig = {
           subject: `Survey completed: ${surveyTitle}`,
           emailHtml: `<p>${displayName} completed your survey "${surveyTitle}". View responses in your dashboard.</p>${getPoweredByHtml(ctx.business.subscription_tier)}`,
           whatsappText: `📋 *Survey Response*\n\n${displayName} completed your survey "${surveyTitle}".\n\nView responses in your dashboard.${getPoweredByFooter(ctx.business.subscription_tier)}`,
-        }).catch(() => {});
+        }).catch(err => logger.error('[SURVEY] Failed to notify owner of survey completion:', err));
       }
     }
 
