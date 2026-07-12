@@ -1,7 +1,7 @@
 import type { FlowDefinition, FlowContext, PromptMessage, ValidationResult } from './types';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
-import { cancelSubscription as cancelPaystackSub } from '@/lib/payments/paystack-recurring';
-import { cancelSubscription as cancelStripeSub } from '@/lib/payments/stripe-recurring';
+import { cancelSubscription as cancelPaystackSub, enableSubscription as enablePaystackSub } from '@/lib/payments/paystack-recurring';
+import { cancelSubscription as cancelStripeSub, pauseSubscription as pauseStripeSub, resumeSubscription as resumeStripeSub } from '@/lib/payments/stripe-recurring';
 
 export const recurringManageFlow: FlowDefinition = {
   type: 'payment', // runs within payment flow type context
@@ -91,23 +91,45 @@ export const recurringManageFlow: FlowDefinition = {
       id: 'select_action',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const label = ctx.session.session_data._selected_sub_label as string;
+        const subId = ctx.session.session_data._selected_sub_id as string;
+
+        // Check current subscription status to show appropriate pause/resume option
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('status')
+          .eq('id', subId)
+          .single();
+
+        const isPaused = sub?.status === 'paused';
+        ctx.session.session_data._sub_is_paused = isPaused;
+
+        const buttons: Array<{ id: string; title: string }> = [];
+        if (isPaused) {
+          buttons.push({ id: 'resume_sub', title: 'Resume' });
+        } else {
+          buttons.push({ id: 'pause_sub', title: 'Pause' });
+        }
+        buttons.push({ id: 'cancel_sub', title: 'Cancel' });
+        buttons.push({ id: 'view_details', title: 'View Details' });
+
         return [{
           type: 'buttons',
-          body: `*${label}*\n\nWhat would you like to do?`,
-          buttons: [
-            { id: 'cancel_sub', title: 'Cancel' },
-            { id: 'view_details', title: 'View Details' },
-          ],
+          body: `*${label}*${isPaused ? ' (Paused)' : ''}\n\nWhat would you like to do?`,
+          buttons,
         }];
       },
       async validate(input: string): Promise<ValidationResult> {
         const text = input.toLowerCase();
         if (text === 'cancel_sub') return { valid: true, data: { _sub_action: 'cancel' } };
+        if (text === 'pause_sub') return { valid: true, data: { _sub_action: 'pause' } };
+        if (text === 'resume_sub') return { valid: true, data: { _sub_action: 'resume' } };
         if (text === 'view_details') return { valid: true, data: { _sub_action: 'details' } };
-        return { valid: false, errorMessage: 'Please choose *Cancel* or *View Details*.' };
+        return { valid: false, errorMessage: 'Please choose an option from the buttons.' };
       },
       async next(ctx: FlowContext) {
         if (ctx.session.session_data._sub_action === 'cancel') return 'confirm_cancel';
+        if (ctx.session.session_data._sub_action === 'pause') return 'confirm_pause';
+        if (ctx.session.session_data._sub_action === 'resume') return 'process_resume';
         // View details: show info and end
         const subId = ctx.session.session_data._selected_sub_id as string;
         const { data: sub } = await ctx.supabase
@@ -212,6 +234,169 @@ export const recurringManageFlow: FlowDefinition = {
           text: (cancelled
             ? '✅ Your recurring payment has been cancelled. You will no longer be charged automatically.'
             : '✅ Your recurring payment has been cancelled in our system. If you see any unexpected charges, please contact support.')
+            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+        }];
+      },
+      async validate(): Promise<ValidationResult> { return { valid: true }; },
+      async next() { return null; },
+    },
+
+    // ── Confirm Pause ──
+    {
+      id: 'confirm_pause',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const label = ctx.session.session_data._selected_sub_label as string;
+        return [{
+          type: 'buttons',
+          body: `Are you sure you want to pause *${label}*? You can resume anytime.`,
+          buttons: [
+            { id: 'yes_pause', title: 'Yes, Pause' },
+            { id: 'keep_active', title: 'No, Keep Active' },
+          ],
+        }];
+      },
+      async validate(input: string): Promise<ValidationResult> {
+        const text = input.toLowerCase();
+        if (text === 'yes_pause' || text === 'yes') return { valid: true, data: { _confirm_pause: true } };
+        if (text === 'keep_active' || text === 'no') return { valid: true, data: { _confirm_pause: false } };
+        return { valid: false, errorMessage: 'Please choose *Yes, Pause* or *No, Keep Active*.' };
+      },
+      async next(ctx: FlowContext) {
+        if (!ctx.session.session_data._confirm_pause) {
+          await ctx.sender.sendText({ to: ctx.from, text: await ctx.t('Your recurring payment is still active.') });
+          return null;
+        }
+        return 'process_pause';
+      },
+    },
+
+    // ── Process Pause ──
+    {
+      id: 'process_pause',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const subId = ctx.session.session_data._selected_sub_id as string;
+
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('id', subId)
+          .single();
+
+        if (!sub) {
+          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
+        }
+
+        // Pause on gateway
+        let paused = false;
+        try {
+          if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
+            paused = await pauseStripeSub(sub.gateway_subscription_code);
+          } else {
+            // Paystack doesn't have native pause — we just update DB status
+            // Webhook handler will skip charges for paused subscriptions
+            paused = true;
+          }
+        } catch (err) {
+          console.error('[RECURRING] Gateway pause error:', err);
+          paused = false;
+        }
+
+        if (!paused) {
+          return [{
+            type: 'text',
+            text: 'Something went wrong on our end. Please try again later or type *subscriptions* to retry.',
+          }];
+        }
+
+        // Update DB
+        await ctx.supabase
+          .from('customer_subscriptions')
+          .update({
+            status: 'paused',
+            paused_at: new Date().toISOString(),
+          })
+          .eq('id', subId);
+
+        // Load service name for confirmation
+        const { data: service } = sub.service_id
+          ? await ctx.supabase.from('services').select('name').eq('id', sub.service_id).single()
+          : { data: null };
+        const serviceName = service?.name || 'Payment';
+
+        return [{
+          type: 'text',
+          text: `✅ Your *${serviceName}* recurring payment has been paused. Type *subscriptions* to resume anytime.`
+            + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
+        }];
+      },
+      async validate(): Promise<ValidationResult> { return { valid: true }; },
+      async next() { return null; },
+    },
+
+    // ── Process Resume ──
+    {
+      id: 'process_resume',
+      async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
+        const subId = ctx.session.session_data._selected_sub_id as string;
+
+        const { data: sub } = await ctx.supabase
+          .from('customer_subscriptions')
+          .select('*')
+          .eq('id', subId)
+          .single();
+
+        if (!sub) {
+          return [{ type: 'text', text: 'Subscription not found. Send *Hi* to start over.' }];
+        }
+
+        // Resume on gateway
+        let resumed = false;
+        try {
+          if (sub.gateway === 'stripe' && sub.gateway_subscription_code) {
+            resumed = await resumeStripeSub(sub.gateway_subscription_code);
+          } else if (sub.gateway === 'paystack' && sub.gateway_subscription_code) {
+            // Re-enable the Paystack subscription
+            const metadata = (sub.metadata as Record<string, string>) || {};
+            const emailToken = (ctx.session.session_data._recurring_email_token as string) || metadata.email_token || '';
+            resumed = await enablePaystackSub(sub.gateway_subscription_code, emailToken);
+          } else {
+            // No gateway subscription — just update status
+            resumed = true;
+          }
+        } catch (err) {
+          console.error('[RECURRING] Gateway resume error:', err);
+          resumed = false;
+        }
+
+        if (!resumed) {
+          return [{
+            type: 'text',
+            text: 'Something went wrong on our end. Please try again later or type *subscriptions* to retry.',
+          }];
+        }
+
+        // Update DB
+        await ctx.supabase
+          .from('customer_subscriptions')
+          .update({
+            status: 'active',
+            paused_at: null,
+          })
+          .eq('id', subId);
+
+        // Load service name and next charge for confirmation
+        const { data: service } = sub.service_id
+          ? await ctx.supabase.from('services').select('name').eq('id', sub.service_id).single()
+          : { data: null };
+        const serviceName = service?.name || 'Payment';
+
+        const nextCharge = sub.next_charge_at
+          ? new Date(sub.next_charge_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+          : 'soon';
+
+        return [{
+          type: 'text',
+          text: `✅ Your *${serviceName}* recurring payment has been resumed. Next charge: ${nextCharge}.`
             + `\n\n💡 *What you can do:*\n• Type *subscriptions* to manage payments\n• Type *Hi* to start a new conversation`,
         }];
       },
