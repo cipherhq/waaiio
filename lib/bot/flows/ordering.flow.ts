@@ -122,9 +122,15 @@ export const orderingFlow: FlowDefinition = {
           return [{ type: 'text', text: 'Nothing available right now. Check back later!' }];
         }
 
-        // Initialize cart
-        if (!ctx.session.session_data.cart) {
+        // Initialize cart (with timestamp for expiry)
+        const CART_EXPIRY_MS = 2 * 60 * 60 * 1000; // 2 hours
+        const cartCreatedAt = ctx.session.session_data.cart_created_at as number | undefined;
+        if (!ctx.session.session_data.cart || (cartCreatedAt && Date.now() - cartCreatedAt > CART_EXPIRY_MS)) {
+          if (cartCreatedAt) {
+            logger.debug('[ORDERING] Cart expired, clearing stale cart');
+          }
           ctx.session.session_data.cart = [];
+          ctx.session.session_data.cart_created_at = Date.now();
         }
 
         const cc = (ctx.business.country_code || 'NG') as CountryCode;
@@ -1118,6 +1124,7 @@ export const orderingFlow: FlowDefinition = {
         }
 
         cart.push(cartItem);
+        if (!d.cart_created_at) d.cart_created_at = Date.now();
 
         // Clean up variant + multi-axis + addon session data
         delete d.current_variant_id;
@@ -1927,8 +1934,52 @@ export const orderingFlow: FlowDefinition = {
       id: 'review_order_summary',
       async prompt(ctx: FlowContext): Promise<PromptMessage[]> {
         const d = ctx.session.session_data;
-        const cart = (d.cart as CartItem[]) || [];
+        let cart = (d.cart as CartItem[]) || [];
         const cc = (ctx.business?.country_code || 'NG') as CountryCode;
+
+        // ── Cart validation: verify current prices and stock ──
+        if (cart.length > 0 && ctx.business) {
+          const productIds = [...new Set(cart.map(i => i.product_id))];
+          const { data: currentProducts } = await ctx.supabase
+            .from('products')
+            .select('id, name, price, stock_quantity, track_inventory, is_active, deleted_at')
+            .in('id', productIds);
+
+          const productMap = new Map((currentProducts || []).map(p => [p.id, p]));
+          const warnings: string[] = [];
+          const validCart: CartItem[] = [];
+
+          for (const item of cart) {
+            const current = productMap.get(item.product_id);
+            if (!current || !current.is_active || current.deleted_at) {
+              warnings.push(`❌ *${item.name}* is no longer available and was removed.`);
+              continue;
+            }
+            if (current.track_inventory && current.stock_quantity !== null && current.stock_quantity < item.quantity) {
+              if (current.stock_quantity <= 0) {
+                warnings.push(`❌ *${item.name}* is now out of stock and was removed.`);
+                continue;
+              }
+              item.quantity = current.stock_quantity;
+              warnings.push(`⚠️ *${item.name}* — only ${current.stock_quantity} left. Quantity adjusted.`);
+            }
+            if (!item.variant_id && current.price !== item.price) {
+              warnings.push(`💰 *${item.name}* price updated: ${formatCurrency(item.price, cc)} → ${formatCurrency(current.price, cc)}`);
+              item.price = current.price;
+            }
+            validCart.push(item);
+          }
+
+          if (warnings.length > 0) {
+            cart = validCart;
+            d.cart = cart;
+            if (cart.length === 0) {
+              return [{ type: 'text', text: warnings.join('\n') + '\n\nYour cart is now empty. Send *Hi* to start over.' }];
+            }
+            // Send warnings first, then continue to show updated summary
+            await ctx.sender.sendText({ to: ctx.from, text: warnings.join('\n') + '\n\n_Your order has been updated._' });
+          }
+        }
 
         // Calculate subtotal
         let subtotal = 0;
