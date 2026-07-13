@@ -111,12 +111,13 @@ export function OnboardingChecklist() {
       description: 'Get your own dedicated number so users can message you directly.',
       href: '/dashboard/whatsapp/connect',
       check: async () => {
+        // If business has a bot_code, it works on the shared number already
+        if (business.bot_code) return true;
         const supabase = createClient();
         const { count } = await supabase
           .from('whatsapp_channels')
           .select('id', { count: 'exact', head: true })
           .eq('business_id', business.id)
-          .eq('channel_type', 'dedicated')
           .eq('is_active', true);
         return (count || 0) > 0;
       },

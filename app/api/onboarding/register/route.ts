@@ -205,17 +205,23 @@ export async function POST(request: NextRequest) {
     }
 
     // Create WhatsApp config — prefer DB template greeting, then user-provided, then hardcoded
+    // Non-critical: if any of these fail, the business is already created and can be re-initialized later
     const templateGreeting = template?.default_greeting
       ? (template.default_greeting as string).replace(/\{\{name\}\}/g, name)
       : null;
     const defaultGreeting = bot_greeting || templateGreeting || getDefaultGreeting(name, category as BusinessCategoryKey);
-    await service.from('whatsapp_config').insert({
-      business_id: business.id,
-      bot_greeting: defaultGreeting,
-      bot_alias: bot_alias || null,
-      auto_confirm: true,
-      welcome_buttons: getDefaultWelcomeButtons(category as BusinessCategoryKey),
-    });
+    try {
+      const { error: configErr } = await service.from('whatsapp_config').insert({
+        business_id: business.id,
+        bot_greeting: defaultGreeting,
+        bot_alias: bot_alias || null,
+        auto_confirm: true,
+        welcome_buttons: getDefaultWelcomeButtons(category as BusinessCategoryKey),
+      });
+      if (configErr) logger.error('[ONBOARDING] whatsapp_config insert failed:', configErr);
+    } catch (err) {
+      logger.error('[ONBOARDING] whatsapp_config insert exception:', err);
+    }
 
     // NOTE: We intentionally do NOT auto-create sample services, appointments, or properties.
     // The business owner should add their own from the dashboard.
@@ -227,12 +233,16 @@ export async function POST(request: NextRequest) {
     // Priority: user-selected > template metadata > hardcoded defaults
     const templateCaps = (template?.metadata as Record<string, unknown>)?.default_capabilities as CapabilityId[] | undefined;
     const capsToInit = (capabilities as CapabilityId[] | undefined) || (templateCaps?.length ? templateCaps : undefined);
-    await initCapabilities(
-      service,
-      business.id,
-      category,
-      capsToInit,
-    );
+    try {
+      await initCapabilities(
+        service,
+        business.id,
+        category,
+        capsToInit,
+      );
+    } catch (err) {
+      logger.error('[ONBOARDING] initCapabilities failed:', err);
+    }
 
     // Create default canned responses if chat capability is enabled
     const enabledCaps = capabilities as CapabilityId[] | undefined;
@@ -244,12 +254,17 @@ export async function POST(request: NextRequest) {
         { title: 'How to book', message_text: 'I can help you get started. Would you like to proceed?', sort_order: 3 },
         { title: 'Follow up', message_text: 'Just following up on our conversation. Is there anything else I can help with?', sort_order: 4 },
       ];
-      await service.from('canned_responses').insert(
-        defaultCanned.map((cr) => ({
-          business_id: business.id,
-          ...cr,
-        })),
-      );
+      try {
+        const { error: cannedErr } = await service.from('canned_responses').insert(
+          defaultCanned.map((cr) => ({
+            business_id: business.id,
+            ...cr,
+          })),
+        );
+        if (cannedErr) logger.error('[ONBOARDING] canned_responses insert failed:', cannedErr);
+      } catch (err) {
+        logger.error('[ONBOARDING] canned_responses insert exception:', err);
+      }
     }
 
     // Update profile: role + owner name

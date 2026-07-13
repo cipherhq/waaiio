@@ -18,6 +18,7 @@ interface ChannelRecord {
   waba_id: string | null;
   phone_number_id: string | null;
   meta_access_token: string | null;
+  meta_token_expires_at: string | null;
 }
 
 export interface ResolvedChannel {
@@ -49,6 +50,17 @@ export class ChannelResolver {
    * Build the correct MessageSender for a channel based on its provider.
    */
   private buildResolved(channel: ChannelRecord): ResolvedChannel {
+    // Warn if dedicated channel token is expired or expiring soon
+    if (channel.channel_type === 'dedicated' && channel.meta_token_expires_at) {
+      const expiresAt = new Date(channel.meta_token_expires_at).getTime();
+      const now = Date.now();
+      if (expiresAt <= now) {
+        logger.error(`[CHANNEL] Token EXPIRED for channel ${channel.id} (business: ${channel.business_id}). Token expired at ${channel.meta_token_expires_at}`);
+      } else if (expiresAt - now < 7 * 24 * 60 * 60 * 1000) {
+        logger.warn(`[CHANNEL] Token expiring soon for channel ${channel.id} (business: ${channel.business_id}). Expires at ${channel.meta_token_expires_at}`);
+      }
+    }
+
     if (channel.provider === 'meta_cloud' && channel.phone_number_id) {
       let accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
       try {

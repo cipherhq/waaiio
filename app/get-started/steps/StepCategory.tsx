@@ -92,7 +92,7 @@ export function StepCategory({
               onClick={() => {
                 setCategory('events' as BusinessCategoryKey);
                 setSelectedCapabilities(CATEGORY_DEFAULT_CAPABILITIES['events'] || []);
-                setStep('details');
+                setStep('features');
               }}
               className="flex flex-col items-center gap-2 rounded-xl border-2 border-brand-200 bg-brand-50/30 px-3 py-4 text-center transition hover:border-brand hover:bg-brand-50"
             >
@@ -139,7 +139,7 @@ export function StepCategory({
                     const defaults = CATEGORY_DEFAULT_CAPABILITIES[key] || ['scheduling'];
                     setSelectedCapabilities([...defaults]);
                     setSelectedPlan('free');
-                    setStep('details');
+                    setStep('features');
                   }}
                   className="flex items-center gap-3 rounded-xl border-2 border-gray-200 bg-white px-3 py-3 text-left transition hover:border-brand hover:bg-brand-50/30"
                 >
@@ -157,7 +157,7 @@ export function StepCategory({
                 const defaults = CATEGORY_DEFAULT_CAPABILITIES[firstKey] || ['appointment', 'feedback', 'chat'];
                 setSelectedCapabilities([...defaults]);
                 setSelectedPlan('free');
-                setStep('details');
+                setStep('features');
               }}
               className="flex items-center gap-3 rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-left transition hover:border-brand hover:bg-brand-50/30"
             >

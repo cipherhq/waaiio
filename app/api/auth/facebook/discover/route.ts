@@ -42,6 +42,7 @@ export async function POST(request: NextRequest) {
 
     // 1. Get access token — either directly from JS SDK or via code exchange
     let accessToken: string;
+    let tokenExpiresAt: string | null = null;
 
     if (directToken) {
       // Direct token from FB.login (no code exchange needed)
@@ -63,10 +64,11 @@ export async function POST(request: NextRequest) {
       }
       const tokenData = await tokenRes.json();
       accessToken = tokenData.access_token;
+      // Capture token expiry from Facebook response
+      if (tokenData.expires_in) {
+        tokenExpiresAt = new Date(Date.now() + tokenData.expires_in * 1000).toISOString();
+      }
     }
-    const tokenExpiresAt = directToken
-      ? null // Direct tokens don't have expires_in in the response
-      : null; // Will be set if needed
 
     // 2. Use debug_token to discover which WABAs were shared
     const wabas: Array<{ id: string; name: string }> = [];
