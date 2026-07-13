@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -19,6 +19,7 @@ import { getCategoryList, getCategoryByKey, getCategoryGroups } from '@/lib/cate
 import { useCategoryConfig } from '@/hooks/useCategoryConfig';
 import { loadCountries, getCountryList, getCountry, type CountryRow } from '@/lib/countries';
 import { CATEGORY_DEFAULT_CAPABILITIES, CAPABILITIES, CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
+import { useOnboardingPersistence, clearOnboardingDraft, type OnboardingDraft } from '@/hooks/useOnboardingPersistence';
 import type { User } from '@supabase/supabase-js';
 import {
   StepAuth,
@@ -341,6 +342,56 @@ function OnboardingWizard() {
   // Success state
   const [successData, setSuccessData] = useState<{ bot_code: string; business_id: string } | null>(null);
 
+  // Draft restored indicator
+  const [showDraftRestored, setShowDraftRestored] = useState(false);
+
+  // ── Onboarding Persistence ──
+  const restoreDraft = useCallback((draft: OnboardingDraft) => {
+    setStep(draft.step);
+    setSelectedCountry(draft.selectedCountry);
+    setCity(draft.city);
+    setState(draft.state);
+    setZipCode(draft.zipCode);
+    setSelectedGroup(draft.selectedGroup);
+    setCategory(draft.category as BusinessCategoryKey | '');
+    setSelectedCapabilities(draft.selectedCapabilities);
+    setName(draft.businessName);
+    setFirstName(draft.firstName);
+    setLastName(draft.lastName);
+    setAddress(draft.address);
+    setBusinessPhone(draft.phone);
+    setEmail(draft.email);
+    setCustomBotCode(draft.customBotCode);
+    setSelectedPlan(draft.selectedPlan);
+    setWaMethod(draft.waMethod);
+    setShowDraftRestored(true);
+    // Auto-dismiss the indicator after 4 seconds
+    setTimeout(() => setShowDraftRestored(false), 4000);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const formStateForPersistence = useMemo(() => ({
+    step,
+    selectedCountry,
+    city,
+    state,
+    zipCode,
+    selectedGroup,
+    category,
+    selectedCapabilities,
+    businessName: name,
+    firstName,
+    lastName,
+    address,
+    phone: businessPhone,
+    email,
+    customBotCode,
+    selectedPlan,
+    waMethod,
+  }), [step, selectedCountry, city, state, zipCode, selectedGroup, category, selectedCapabilities, name, firstName, lastName, address, businessPhone, email, customBotCode, selectedPlan, waMethod]);
+
+  useOnboardingPersistence(user, formStateForPersistence, restoreDraft);
+
   // Category search computed values
   const allCategories = getCategoryList();
   const allCategoriesSorted = [...allCategories].filter(c => c.key !== 'other').sort((a, b) => a.label.localeCompare(b.label));
@@ -388,6 +439,13 @@ function OnboardingWizard() {
       success: 'onboarding_success',
     };
     ph.capture(stepMap[step], { step, category: category || undefined, country: selectedCountry });
+  }, [step]);
+
+  // Clear draft on successful completion
+  useEffect(() => {
+    if (step === 'success') {
+      clearOnboardingDraft();
+    }
   }, [step]);
 
   useEffect(() => {
@@ -1131,6 +1189,7 @@ function OnboardingWizard() {
                   type="button"
                   onClick={async () => {
                     if (confirm('Are you sure you want to cancel? Your progress will not be saved.')) {
+                      clearOnboardingDraft();
                       const supabase = createClient();
                       await supabase.auth.signOut();
                       window.location.href = '/';
@@ -1139,6 +1198,18 @@ function OnboardingWizard() {
                   className="text-xs text-gray-400 hover:text-red-500 transition"
                 >
                   Cancel &amp; Exit
+                </button>
+              </div>
+            )}
+
+            {showDraftRestored && (
+              <div className="mb-4 flex items-center gap-2 rounded-lg bg-brand-50 border border-brand-100 px-4 py-2.5 text-sm text-brand-700 animate-in fade-in slide-in-from-top-2 duration-300">
+                <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Your previous progress has been restored.</span>
+                <button onClick={() => setShowDraftRestored(false)} className="ml-auto text-brand-400 hover:text-brand-600">
+                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
             )}
