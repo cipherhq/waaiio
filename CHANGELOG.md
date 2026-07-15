@@ -14,6 +14,13 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### Feature: Smart QR Codes — deep-link to specific capabilities
+- `lib/bot/handlers/bot-code-detection.ts` — Added `parseDeepLink()` that splits `BOTCODE:capability` suffix. Returns `deepLinkCapability` in detection result. Only splits on last `:` and validates against all CapabilityId values. Fully backwards compatible — no suffix = works as before.
+- `lib/bot/bot.service.ts` — When `deepLinkCapability` is present AND the business has that capability enabled, overrides `firstStep` via `capabilityToFirstStep()` to skip the menu. Stores `_deep_link_capability` in session_data for flow context.
+- `app/dashboard/qr-code/page.tsx` — Template selection now auto-updates prefill text with deep-link suffix (e.g. "Scan to Pay" → `BOTCODE:payment`). Added giving template. Shows "Smart QR" hint when deep-link suffix is active. Manual edits to prefill text are preserved (not overridden by template changes).
+- **How it works:** QR encodes `wa.me/number?text=BOTCODE:payment` → bot parses `:payment` → customer lands directly in payment flow. No menu, no "How can I help you?"
+- **Affects:** Bot message entry point, QR code dashboard, all capability flows (via existing `capabilityToFirstStep`).
+
 ### UX: QR code as hero — onboarding side panel + success screen
 - `app/get-started/OnboardingWizard.tsx` — Side panel now tells the QR code story across every step: "One QR code. Any transaction." → "Your QR code will handle all of this" → "Almost ready to print" → "Print it. Stick it. You're open."
 - `app/get-started/steps/StepSuccess.tsx` — Complete redesign. QR code is now the hero (large, centered, downloadable as PNG). "Print this. Stick it anywhere." heading. "Where to put it" suggestions (counter, window, flyers, social media). Copy Link + Download QR buttons. Capability-aware action verb. WhatsApp test button is secondary outline style.

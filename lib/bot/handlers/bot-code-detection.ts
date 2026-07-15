@@ -1,6 +1,33 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { isAcronymOf, matchScore, phoneticMatch, phoneToCountry, detectCategoryIntent } from '../fuzzy-match';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
+import type { CapabilityId } from '@/lib/capabilities/types';
+
+/** All valid capability IDs for deep-link validation */
+const VALID_CAPABILITIES: ReadonlySet<string> = new Set<string>([
+  'scheduling', 'appointment', 'payment', 'ordering', 'ticketing', 'reservation',
+  'table_reservation', 'whatsapp_sign', 'crowdfunding', 'queue', 'feedback',
+  'loyalty', 'chat', 'waitlist', 'invoice', 'giving', 'broadcast', 'recurring',
+  'auto_reply', 'membership', 'survey', 'poll', 'referral', 'staff', 'reminders',
+  'reports', 'estimates', 'packages', 'class_booking', 'multi_location', 'waiver',
+]);
+
+/**
+ * Parse deep-link suffix from bot code text.
+ * "SALON-LOLA:payment" → { botCode: "SALON-LOLA", capability: "payment" }
+ * "SALON-LOLA" → { botCode: "SALON-LOLA", capability: undefined }
+ * "Hi" → { botCode: "Hi", capability: undefined }
+ */
+function parseDeepLink(text: string): { botCode: string; capability?: CapabilityId } {
+  const lastColon = text.lastIndexOf(':');
+  if (lastColon <= 0 || lastColon === text.length - 1) return { botCode: text };
+
+  const suffix = text.slice(lastColon + 1).toLowerCase();
+  if (VALID_CAPABILITIES.has(suffix)) {
+    return { botCode: text.slice(0, lastColon), capability: suffix as CapabilityId };
+  }
+  return { botCode: text };
+}
 
 /**
  * Simple bot code detection — returns just a business ID or null.
@@ -34,8 +61,13 @@ export async function detectBotCodeWithSuggestions(
   businessId: string | null;
   suggestions?: { id: string; name: string; bot_code: string }[];
   isCategory?: boolean;
+  deepLinkCapability?: CapabilityId;
 }> {
-  const normalizedText = text.toLowerCase().trim();
+  // Parse deep-link suffix (e.g. "SALON-LOLA:payment" → botCode + capability)
+  const { botCode: strippedText, capability: deepLinkCapability } = parseDeepLink(text.trim());
+  // If deep-link found, use the stripped bot code for detection
+  const effectiveText = deepLinkCapability ? strippedText : text;
+  const normalizedText = effectiveText.toLowerCase().trim();
 
   const FILLER_WORDS = new Set([
     // English greetings & pleasantries
@@ -82,7 +114,7 @@ export async function detectBotCodeWithSuggestions(
       .eq('status', 'active')
       .or(orFilter)
       .maybeSingle();
-    if (data) return { businessId: data.id };
+    if (data) return { businessId: data.id, deepLinkCapability };
   }
 
   // Skip advanced matching if the input is just common greetings/filler
@@ -123,7 +155,7 @@ export async function detectBotCodeWithSuggestions(
       );
 
       if (wideAcronyms.length === 1) {
-        return { businessId: wideAcronyms[0].id };
+        return { businessId: wideAcronyms[0].id, deepLinkCapability };
       }
       if (wideAcronyms.length > 1) {
         return {
@@ -132,7 +164,7 @@ export async function detectBotCodeWithSuggestions(
         };
       }
     } else if (acronymMatches.length === 1) {
-      return { businessId: acronymMatches[0].id };
+      return { businessId: acronymMatches[0].id, deepLinkCapability };
     } else {
       return {
         businessId: null,
@@ -182,7 +214,7 @@ export async function detectBotCodeWithSuggestions(
       // If the best match has score 0, it's a direct partial match -- auto-route
       if (scored.length === 1 || (scored[0].score <= 1 && scored.length > 1 && scored[1].score > scored[0].score + 1)) {
         // Very confident single best match
-        return { businessId: scored[0].id };
+        return { businessId: scored[0].id, deepLinkCapability };
       }
       // Return top matches as suggestions
       return {
@@ -207,7 +239,7 @@ export async function detectBotCodeWithSuggestions(
 
       if (singleWordMatches && singleWordMatches.length > 0) {
         if (singleWordMatches.length === 1) {
-          return { businessId: singleWordMatches[0].id };
+          return { businessId: singleWordMatches[0].id, deepLinkCapability };
         }
         return {
           businessId: null,

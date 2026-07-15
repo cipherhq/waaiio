@@ -16,7 +16,8 @@ const TEMPLATES = [
   { id: 'donate',    label: 'Scan to Donate',            subtitle: 'Support our cause',              color: '#D97706', emoji: '🤲', capabilities: ['crowdfunding'] },
   { id: 'queue',     label: 'Scan to Check In',          subtitle: 'Join the queue',                 color: '#0891B2', emoji: '✅', capabilities: ['queue'] },
   { id: 'waitlist',  label: 'Scan to Join Waitlist',     subtitle: 'Get notified when available',    color: '#7C3AED', emoji: '⏳', capabilities: ['waitlist'] },
-  { id: 'chat',      label: 'Scan to Chat',              subtitle: 'Chat with us on WhatsApp',       color: '#25D366', emoji: '💬', capabilities: [] },
+  { id: 'give',      label: 'Scan to Give',              subtitle: 'Tithes, offerings & donations',  color: '#059669', emoji: '🙏', capabilities: ['giving'] },
+  { id: 'chat',      label: 'Scan to Chat',              subtitle: 'Chat with us on WhatsApp',       color: '#25D366', emoji: '💬', capabilities: ['chat'] },
   { id: 'generic',   label: 'Scan to Get Started',       subtitle: 'Connect with us on WhatsApp',    color: '#111827', emoji: '📱', capabilities: [] },
 ] as const;
 
@@ -67,8 +68,24 @@ export default function QRCodePage() {
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateId>('generic');
   const [copied, setCopied] = useState(false);
   const [prefillText, setPrefillText] = useState(defaultPrefill);
+  const [prefillManuallyEdited, setPrefillManuallyEdited] = useState(false);
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
+
+  // When template changes, auto-update prefill text with deep-link suffix
+  function handleTemplateChange(templateId: TemplateId) {
+    setSelectedTemplate(templateId);
+    if (prefillManuallyEdited) return; // Don't override manual edits
+
+    const tmpl = TEMPLATES.find(t => t.id === templateId);
+    const cap = tmpl?.capabilities?.[0];
+    if (cap && isSharedNumber && business.bot_code) {
+      // Deep-link: "BOT-CODE:capability"
+      setPrefillText(`${business.bot_code}:${cap}`);
+    } else {
+      setPrefillText(defaultPrefill);
+    }
+  }
 
   const activeLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(prefillText)}`;
   const template = TEMPLATES.find(t => t.id === selectedTemplate) || TEMPLATES[TEMPLATES.length - 1];
@@ -283,14 +300,17 @@ export default function QRCodePage() {
               <input
                 type="text"
                 value={prefillText}
-                onChange={e => setPrefillText(e.target.value)}
+                onChange={e => { setPrefillText(e.target.value); setPrefillManuallyEdited(true); }}
                 placeholder="Hi"
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
               />
               <p className="mt-1 text-xs text-gray-400">This message auto-fills when customers open the link</p>
               {isSharedNumber && business.bot_code && (
                 <p className="mt-1 text-xs text-amber-600">
-                  Tip: Keep your bot code &quot;{business.bot_code}&quot; as the pre-filled message so customers get routed to your business automatically.
+                  {prefillText.includes(':')
+                    ? `Smart QR: Customers who scan will go straight to the ${prefillText.split(':').pop()} flow — no menu needed.`
+                    : `Tip: Keep your bot code "${business.bot_code}" as the pre-filled message so customers get routed to your business automatically.`
+                  }
                 </p>
               )}
             </div>
@@ -321,7 +341,7 @@ export default function QRCodePage() {
               {relevantTemplates.map(t => (
                 <button
                   key={t.id}
-                  onClick={() => setSelectedTemplate(t.id)}
+                  onClick={() => handleTemplateChange(t.id)}
                   className={`rounded-lg border p-3 text-left transition ${
                     selectedTemplate === t.id
                       ? 'border-brand bg-brand-50 ring-1 ring-brand/20'

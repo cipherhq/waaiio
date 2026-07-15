@@ -759,11 +759,13 @@ export class BotService {
 
       const [detection, profile] = await Promise.all([detectionPromise, profilePromise]);
 
+      let deepLinkCapability: string | undefined;
       if (detection) {
         businessId = detection.businessId;
         pendingSuggestions = detection.suggestions;
         isCategoryMatch = detection.isCategory || false;
-        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch);
+        deepLinkCapability = detection.deepLinkCapability;
+        logger.debug('[BOT] detectBotCode("' + text + '") →', businessId, 'suggestions:', pendingSuggestions?.length || 0, 'category:', isCategoryMatch, 'deepLink:', deepLinkCapability || 'none');
       }
 
       // Returning customer: check past history if no business resolved yet
@@ -894,12 +896,25 @@ export class BotService {
         }
       }
 
-      const firstStep = business
-        ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
-        : 'greeting';
+      // Deep-link: if QR code had a capability suffix (e.g. "SALON-LOLA:payment"),
+      // skip the capability menu and go straight to that flow — but only if the
+      // business actually has that capability enabled
+      let firstStep: string;
+      if (business && deepLinkCapability && capabilities.includes(deepLinkCapability as CapabilityId)) {
+        firstStep = this.capabilityToFirstStep(deepLinkCapability as CapabilityId);
+        logger.debug('[BOT] Deep-link → skipping menu, starting at:', firstStep);
+      } else {
+        firstStep = business
+          ? this.getFirstStepFromCapabilities(capabilities, business.flow_type)
+          : 'greeting';
+      }
 
       const sessionData: Record<string, unknown> = businessId && business
-        ? { business_id: businessId, business_name: business.name, business_category: business.category, capabilities, ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) }
+        ? {
+            business_id: businessId, business_name: business.name, business_category: business.category, capabilities,
+            ...(deepLinkCapability ? { _deep_link_capability: deepLinkCapability } : {}),
+            ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}),
+          }
         : { ...(inboundChannelId ? { _inbound_channel_id: inboundChannelId } : {}) };
 
       // Remove old inactive sessions for this phone+business to avoid unique constraint violation
@@ -1805,6 +1820,7 @@ export class BotService {
     businessId: string | null;
     suggestions?: { id: string; name: string; bot_code: string }[];
     isCategory?: boolean;
+    deepLinkCapability?: string;
   }> {
     return _detectBotCodeWithSuggestions(this.supabase, text, callerPhone, countryFilter);
   }
