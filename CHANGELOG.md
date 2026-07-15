@@ -14,6 +14,12 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### UX: QR code as hero — onboarding side panel + success screen
+- `app/get-started/OnboardingWizard.tsx` — Side panel now tells the QR code story across every step: "One QR code. Any transaction." → "Your QR code will handle all of this" → "Almost ready to print" → "Print it. Stick it. You're open."
+- `app/get-started/steps/StepSuccess.tsx` — Complete redesign. QR code is now the hero (large, centered, downloadable as PNG). "Print this. Stick it anywhere." heading. "Where to put it" suggestions (counter, window, flyers, social media). Copy Link + Download QR buttons. Capability-aware action verb. WhatsApp test button is secondary outline style.
+- **Design principle:** The QR code IS the product. Every sticker is a permanent ad that converts.
+- **Affects:** Onboarding success screen, side panel across all steps.
+
 ### UX: Reframe onboarding for local economies
 - `app/get-started/steps/StepCategory.tsx` — "Collect payments" is now the first outcome tile (was buried as "Make a payment or donation"). Rewritten to reflect WhatsApp-heavy economies: parking, school fees, market vendors, bills. "Sell tickets" now includes transport (bus tickets). Added 60+ Nigerian/local economy search aliases: "buka", "keke", "okada", "mama put", "barbing", "provision", "vulcanizer", etc. Reordered tiles: payments first, orders second (highest-impact use cases).
 - **Design principle:** Waaiio is local economy infrastructure, not just a business SaaS.
