@@ -23,6 +23,25 @@ const TEMPLATES = [
 
 type TemplateId = (typeof TEMPLATES)[number]['id'];
 
+type PosterSize = 'a4' | 'table' | 'sticker' | 'social';
+
+const POSTER_SIZES: Record<PosterSize, { width: number; height: number; name: string; label: string; description: string }> = {
+  a4:      { width: 2480, height: 3508, name: 'poster',     label: 'A4 Poster',    description: 'Door / wall size' },
+  table:   { width: 1200, height: 1600, name: 'table-tent', label: 'Table Tent',   description: 'Counter / table card' },
+  sticker: { width: 800,  height: 800,  name: 'sticker',    label: 'Sticker',      description: 'Square QR + label' },
+  social:  { width: 1080, height: 1080, name: 'social',     label: 'Social Media', description: 'Instagram / WhatsApp' },
+};
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
 export default function QRCodePage() {
   const business = useBusiness();
   const [channelPhone, setChannelPhone] = useState('');
@@ -72,23 +91,38 @@ export default function QRCodePage() {
   const posterRef = useRef<HTMLDivElement>(null);
   const qrOnlyRef = useRef<HTMLDivElement>(null);
 
+  // Customization state
+  const [customColor, setCustomColor] = useState('');
+  const [customSubtitle, setCustomSubtitle] = useState('');
+  const [customLabel, setCustomLabel] = useState('');
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+
+  const template = TEMPLATES.find(t => t.id === selectedTemplate) || TEMPLATES[TEMPLATES.length - 1];
+
+  // Derived effective values
+  const effectiveColor = customColor || template.color;
+  const effectiveSubtitle = customSubtitle || template.subtitle;
+  const effectiveLabel = customLabel || template.label;
+
   // When template changes, auto-update prefill text with deep-link suffix
   function handleTemplateChange(templateId: TemplateId) {
     setSelectedTemplate(templateId);
-    if (prefillManuallyEdited) return; // Don't override manual edits
+    setCustomColor('');
+    setCustomSubtitle('');
+    setCustomLabel('');
 
-    const tmpl = TEMPLATES.find(t => t.id === templateId);
-    const cap = tmpl?.capabilities?.[0];
-    if (cap && isSharedNumber && business.bot_code) {
-      // Deep-link: "BOT-CODE:capability"
-      setPrefillText(`${business.bot_code}:${cap}`);
-    } else {
-      setPrefillText(defaultPrefill);
+    if (!prefillManuallyEdited) {
+      const tmpl = TEMPLATES.find(t => t.id === templateId);
+      const cap = tmpl?.capabilities?.[0];
+      if (cap && isSharedNumber && business.bot_code) {
+        setPrefillText(`${business.bot_code}:${cap}`);
+      } else {
+        setPrefillText(defaultPrefill);
+      }
     }
   }
 
   const activeLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(prefillText)}`;
-  const template = TEMPLATES.find(t => t.id === selectedTemplate) || TEMPLATES[TEMPLATES.length - 1];
 
   // Filter templates to show relevant ones first (matching capabilities), then generic
   const relevantTemplates = TEMPLATES.filter(t =>
@@ -112,11 +146,10 @@ export default function QRCodePage() {
     a.click();
   }
 
-  // ── Download poster as high-res PNG (A4 door-size: 2480x3508 @ 300dpi) ──
-  function downloadPoster() {
-    // A4 at 300 DPI = 2480 x 3508 pixels — large enough to print and paste on a door
-    const width = 2480;
-    const height = 3508;
+  // ── Download poster as high-res PNG ──
+  async function downloadPoster(size: PosterSize = 'a4') {
+    const sizeConfig = POSTER_SIZES[size];
+    const { width, height } = sizeConfig;
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
@@ -125,127 +158,241 @@ export default function QRCodePage() {
 
     const cx = width / 2;
 
-    // ── Background ──
-    ctx.fillStyle = '#FFFFFF';
-    ctx.fillRect(0, 0, width, height);
+    // Try to load business logo
+    let logoImg: HTMLImageElement | null = null;
+    if (business.logo_url) {
+      try {
+        logoImg = await loadImage(business.logo_url);
+      } catch {
+        // Fall back to emoji
+      }
+    }
 
-    // ── Top color bar (30% of height) ──
-    const headerH = 1050;
-    ctx.fillStyle = template.color;
-    ctx.fillRect(0, 0, width, headerH);
-
-    // Business name
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 120px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(business.name || 'Your Business', cx, 350);
-
-    // Subtitle
-    ctx.font = '64px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillStyle = 'rgba(255,255,255,0.85)';
-    ctx.fillText(template.subtitle, cx, 500);
-
-    // Emoji (large)
-    ctx.font = '200px serif';
-    ctx.fillText(template.emoji, cx, 800);
-
-    // ── QR Code (large, centered) ──
     const qrCanvas = qrOnlyRef.current?.querySelector('canvas');
-    if (qrCanvas) {
-      const qrSize = 1000;
-      const qrX = (width - qrSize) / 2;
-      const qrY = headerH + 120;
 
-      // White card behind QR with shadow
+    if (size === 'sticker') {
+      // ── Sticker: minimal — white bg, QR centered, label below ──
       ctx.fillStyle = '#FFFFFF';
-      ctx.shadowColor = 'rgba(0,0,0,0.12)';
-      ctx.shadowBlur = 60;
-      ctx.shadowOffsetY = 12;
-      roundRect(ctx, qrX - 60, qrY - 60, qrSize + 120, qrSize + 120, 40);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.shadowOffsetY = 0;
+      ctx.fillRect(0, 0, width, height);
 
-      // Border around QR card
-      ctx.strokeStyle = '#E5E7EB';
-      ctx.lineWidth = 3;
-      roundRect(ctx, qrX - 60, qrY - 60, qrSize + 120, qrSize + 120, 40);
+      // QR code centered
+      if (qrCanvas) {
+        const qrSize = 500;
+        const qrX = (width - qrSize) / 2;
+        const qrY = (height - qrSize) / 2 - 60;
+        ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+      }
+
+      // Label below QR
+      ctx.fillStyle = effectiveColor;
+      ctx.font = 'bold 40px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(effectiveLabel, cx, height / 2 + 230);
+
+      // Business name small below
+      ctx.fillStyle = '#9CA3AF';
+      ctx.font = '28px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(business.name || 'Your Business', cx, height / 2 + 280);
+    } else if (size === 'social') {
+      // ── Social Media: colored bg, name, QR on white card, label ──
+      ctx.fillStyle = effectiveColor;
+      ctx.fillRect(0, 0, width, height);
+
+      // Business name at top
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 60px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(business.name || 'Your Business', cx, 120);
+
+      // Subtitle
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.font = '32px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(effectiveSubtitle, cx, 180);
+
+      // Logo or emoji
+      if (logoImg) {
+        const logoSize = 100;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, 280, logoSize / 2, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(logoImg, cx - logoSize / 2, 280 - logoSize / 2, logoSize, logoSize);
+        ctx.restore();
+      } else {
+        ctx.font = '80px serif';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillText(template.emoji, cx, 290);
+      }
+
+      // White card with QR
+      if (qrCanvas) {
+        const qrSize = 500;
+        const cardPad = 40;
+        const cardW = qrSize + cardPad * 2;
+        const cardH = qrSize + cardPad * 2;
+        const cardX = (width - cardW) / 2;
+        const cardY = 360;
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.shadowColor = 'rgba(0,0,0,0.15)';
+        ctx.shadowBlur = 30;
+        ctx.shadowOffsetY = 6;
+        roundRect(ctx, cardX, cardY, cardW, cardH, 24);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+
+        ctx.drawImage(qrCanvas, cardX + cardPad, cardY + cardPad, qrSize, qrSize);
+      }
+
+      // Label below QR
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText(effectiveLabel, cx, 960);
+
+      // WhatsApp label at bottom
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
+      ctx.fillText('WhatsApp', cx, 1040);
+    } else {
+      // ── Full layout: A4 and Table Tent ──
+      // Scale factor relative to A4
+      const scale = size === 'table' ? width / 2480 : 1;
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, width, height);
+
+      // Top color bar
+      const headerH = Math.round(1050 * scale);
+      ctx.fillStyle = effectiveColor;
+      ctx.fillRect(0, 0, width, headerH);
+
+      // Business name
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = `bold ${Math.round(120 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(business.name || 'Your Business', cx, Math.round(350 * scale));
+
+      // Subtitle
+      ctx.font = `${Math.round(64 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(effectiveSubtitle, cx, Math.round(500 * scale));
+
+      // Logo or Emoji (large)
+      if (logoImg) {
+        const logoSize = Math.round(200 * scale);
+        const logoY = Math.round(800 * scale);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, logoY, logoSize / 2, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.clip();
+        ctx.drawImage(logoImg, cx - logoSize / 2, logoY - logoSize / 2, logoSize, logoSize);
+        ctx.restore();
+      } else {
+        ctx.font = `${Math.round(200 * scale)}px serif`;
+        ctx.fillText(template.emoji, cx, Math.round(800 * scale));
+      }
+
+      // QR Code
+      if (qrCanvas) {
+        const qrSize = Math.round(1000 * scale);
+        const qrX = (width - qrSize) / 2;
+        const qrY = headerH + Math.round(120 * scale);
+
+        // White card behind QR with shadow
+        ctx.fillStyle = '#FFFFFF';
+        ctx.shadowColor = 'rgba(0,0,0,0.12)';
+        ctx.shadowBlur = Math.round(60 * scale);
+        ctx.shadowOffsetY = Math.round(12 * scale);
+        const pad = Math.round(60 * scale);
+        const rad = Math.round(40 * scale);
+        roundRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, rad);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetY = 0;
+
+        // Border
+        ctx.strokeStyle = '#E5E7EB';
+        ctx.lineWidth = Math.round(3 * scale);
+        roundRect(ctx, qrX - pad, qrY - pad, qrSize + pad * 2, qrSize + pad * 2, rad);
+        ctx.stroke();
+
+        ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
+      }
+
+      // Action label
+      const actionY = headerH + Math.round(1280 * scale);
+      ctx.fillStyle = effectiveColor;
+      ctx.font = `bold ${Math.round(100 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(effectiveLabel, cx, actionY);
+
+      // Divider
+      const divY = actionY + Math.round(80 * scale);
+      ctx.strokeStyle = '#D1D5DB';
+      ctx.lineWidth = Math.round(3 * scale);
+      ctx.beginPath();
+      ctx.moveTo(Math.round(400 * scale), divY);
+      ctx.lineTo(width - Math.round(400 * scale), divY);
       ctx.stroke();
 
-      ctx.drawImage(qrCanvas, qrX, qrY, qrSize, qrSize);
-    }
+      // Fallback text
+      const fallbackY = divY + Math.round(100 * scale);
+      ctx.fillStyle = '#6B7280';
+      ctx.font = `${Math.round(52 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.fillText('Or send a message to', cx, fallbackY);
 
-    // ── Action label (big & bold) ──
-    const actionY = headerH + 1280;
-    ctx.fillStyle = template.color;
-    ctx.font = 'bold 100px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(template.label, cx, actionY);
-
-    // ── Divider line ──
-    const divY = actionY + 80;
-    ctx.strokeStyle = '#D1D5DB';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(400, divY);
-    ctx.lineTo(width - 400, divY);
-    ctx.stroke();
-
-    // ── Fallback text ──
-    const fallbackY = divY + 100;
-    ctx.fillStyle = '#6B7280';
-    ctx.font = '52px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('Or send a message to', cx, fallbackY);
-
-    // Phone number (large)
-    ctx.fillStyle = '#111827';
-    ctx.font = 'bold 80px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText(phone || cleanPhone, cx, fallbackY + 120);
-
-    // WhatsApp label
-    ctx.fillStyle = '#25D366';
-    ctx.font = 'bold 48px -apple-system, BlinkMacSystemFont, sans-serif';
-    ctx.fillText('WhatsApp', cx, fallbackY + 200);
-
-    // ── Bottom bar — Powered by Waaiio (hidden for whitelabel) ──
-    if (!isWhitelabel) {
-      const footerH = 280;
-      const footerY = height - footerH;
-
-      // Footer background
+      // Phone number
       ctx.fillStyle = '#111827';
-      ctx.fillRect(0, footerY, width, footerH);
+      ctx.font = `bold ${Math.round(80 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.fillText(phone || cleanPhone, cx, fallbackY + Math.round(120 * scale));
 
-      // "Powered by" text
-      ctx.fillStyle = 'rgba(255,255,255,0.6)';
-      ctx.font = '40px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Powered by', cx, footerY + 90);
+      // WhatsApp label
+      ctx.fillStyle = '#25D366';
+      ctx.font = `bold ${Math.round(48 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+      ctx.fillText('WhatsApp', cx, fallbackY + Math.round(200 * scale));
 
-      // Waaiio logo text (large, bold, colored)
-      ctx.font = 'bold 80px -apple-system, BlinkMacSystemFont, sans-serif';
-      const parts = [
-        { text: 'wa', color: '#25D366' },
-        { text: 'ai', color: '#E5993E' },
-        { text: 'io', color: '#B5A3E0' },
-      ];
-      const fullWidth = ctx.measureText('waaiio').width;
-      let logoX = cx - fullWidth / 2;
-      for (const part of parts) {
-        ctx.fillStyle = part.color;
-        ctx.textAlign = 'left';
-        ctx.fillText(part.text, logoX, footerY + 190);
-        logoX += ctx.measureText(part.text).width;
+      // Footer (hidden for whitelabel)
+      if (!isWhitelabel) {
+        const footerH = Math.round(280 * scale);
+        const footerY = height - footerH;
+
+        ctx.fillStyle = '#111827';
+        ctx.fillRect(0, footerY, width, footerH);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.font = `${Math.round(40 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText('Powered by', cx, footerY + Math.round(90 * scale));
+
+        ctx.font = `bold ${Math.round(80 * scale)}px -apple-system, BlinkMacSystemFont, sans-serif`;
+        const parts = [
+          { text: 'wa', color: '#25D366' },
+          { text: 'ai', color: '#E5993E' },
+          { text: 'io', color: '#B5A3E0' },
+        ];
+        const fullWidth = ctx.measureText('waaiio').width;
+        let logoX = cx - fullWidth / 2;
+        for (const part of parts) {
+          ctx.fillStyle = part.color;
+          ctx.textAlign = 'left';
+          ctx.fillText(part.text, logoX, footerY + Math.round(190 * scale));
+          logoX += ctx.measureText(part.text).width;
+        }
+        ctx.textAlign = 'center';
       }
-      ctx.textAlign = 'center';
     }
 
-    // ── Download ──
+    // Download
     const url = canvas.toDataURL('image/png');
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${business.slug || 'poster'}-${template.id}-print.png`;
+    a.download = `${business.slug || 'poster'}-${template.id}-${sizeConfig.name}.png`;
     a.click();
   }
 
@@ -355,6 +502,57 @@ export default function QRCodePage() {
               ))}
             </div>
           </div>
+
+          {/* Brand Color */}
+          <div className="rounded-xl border border-gray-100 bg-white p-5">
+            <h2 className="text-sm font-semibold text-gray-900">Brand Color</h2>
+            <p className="mt-1 text-xs text-gray-400">Override the template color with your brand color</p>
+            <div className="mt-3 flex items-center gap-3">
+              <input
+                type="color"
+                value={effectiveColor}
+                onChange={e => setCustomColor(e.target.value)}
+                className="h-10 w-14 cursor-pointer rounded-lg border border-gray-200"
+              />
+              <span className="font-mono text-sm text-gray-500">{effectiveColor}</span>
+              {customColor && (
+                <button
+                  onClick={() => setCustomColor('')}
+                  className="text-xs text-brand hover:underline"
+                >
+                  Reset to template color
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Customize Text */}
+          <div className="rounded-xl border border-gray-100 bg-white p-5">
+            <h2 className="text-sm font-semibold text-gray-900">Customize Text</h2>
+            <p className="mt-1 text-xs text-gray-400">Edit the subtitle and call-to-action label on the poster</p>
+            <div className="mt-3 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">Subtitle</label>
+                <input
+                  type="text"
+                  value={customSubtitle}
+                  onChange={e => setCustomSubtitle(e.target.value)}
+                  placeholder={template.subtitle}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500">CTA Label</label>
+                <input
+                  type="text"
+                  value={customLabel}
+                  onChange={e => setCustomLabel(e.target.value)}
+                  placeholder={template.label}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* ── Right: Poster Preview ── */}
@@ -371,11 +569,19 @@ export default function QRCodePage() {
               {/* Color header */}
               <div
                 className="flex flex-col items-center justify-center px-6 py-8"
-                style={{ backgroundColor: template.color }}
+                style={{ backgroundColor: effectiveColor }}
               >
                 <h3 className="text-center text-xl font-bold text-white">{business.name}</h3>
-                <p className="mt-1 text-center text-sm text-white/80">{template.subtitle}</p>
-                <span className="mt-2 text-3xl">{template.emoji}</span>
+                <p className="mt-1 text-center text-sm text-white/80">{effectiveSubtitle}</p>
+                {business.logo_url ? (
+                  <img
+                    src={business.logo_url}
+                    alt={business.name || 'Business logo'}
+                    className="mt-2 h-16 w-16 rounded-full object-cover"
+                  />
+                ) : (
+                  <span className="mt-2 text-3xl">{template.emoji}</span>
+                )}
               </div>
 
               {/* QR code section */}
@@ -386,9 +592,9 @@ export default function QRCodePage() {
 
                 <p
                   className="mt-5 text-center text-lg font-bold"
-                  style={{ color: template.color }}
+                  style={{ color: effectiveColor }}
                 >
-                  {template.label}
+                  {effectiveLabel}
                 </p>
               </div>
 
@@ -407,13 +613,34 @@ export default function QRCodePage() {
               )}
             </div>
 
-            {/* Download button */}
-            <button
-              onClick={downloadPoster}
-              className="mt-4 w-full rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-white hover:bg-brand-600"
-            >
-              Download Poster (PNG)
-            </button>
+            {/* Download buttons */}
+            <div className="relative mt-4">
+              <button
+                onClick={() => setDownloadMenuOpen(!downloadMenuOpen)}
+                className="w-full rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-white hover:bg-brand-600"
+              >
+                Download Poster (PNG)
+              </button>
+              {downloadMenuOpen && (
+                <div className="absolute left-0 right-0 top-full z-10 mt-1 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-lg">
+                  {(Object.entries(POSTER_SIZES) as [PosterSize, typeof POSTER_SIZES[PosterSize]][]).map(([key, cfg]) => (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        setDownloadMenuOpen(false);
+                        downloadPoster(key);
+                      }}
+                      className="flex w-full items-center justify-between px-4 py-3 text-left text-sm hover:bg-gray-50"
+                    >
+                      <div>
+                        <p className="font-medium text-gray-900">{cfg.label}</p>
+                        <p className="text-xs text-gray-400">{cfg.description} ({cfg.width}x{cfg.height})</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <p className="mt-2 text-center text-xs text-gray-400">
               Print this and place it at your counter, storefront, or on flyers
             </p>

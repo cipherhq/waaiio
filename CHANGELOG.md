@@ -14,6 +14,15 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### Feature: QR code page full customization
+- `app/dashboard/qr-code/page.tsx` — Complete rewrite with 5 customization features:
+  1. **Custom brand color** — color picker overrides template default. "Reset" link to go back.
+  2. **Business logo on poster** — logo_url from business profile replaces emoji on both preview and downloaded poster. Loaded with crossOrigin for canvas. Falls back to emoji if no logo.
+  3. **Editable subtitle & CTA label** — text inputs with template defaults as placeholders. "Pay parking here" instead of "Make a quick payment". Resets when template changes.
+  4. **4 download sizes** — A4 Poster (2480x3508), Table Tent (1200x1600), Sticker (800x800 minimal), Social Media (1080x1080 square). Each has optimized layout.
+  5. **Live preview** — all customizations reflect instantly in the poster preview.
+- **Affects:** QR Code & Link dashboard page.
+
 ### Feature: Smart QR Codes — deep-link to specific capabilities
 - `lib/bot/handlers/bot-code-detection.ts` — Added `parseDeepLink()` that splits `BOTCODE:capability` suffix. Returns `deepLinkCapability` in detection result. Only splits on last `:` and validates against all CapabilityId values. Fully backwards compatible — no suffix = works as before.
 - `lib/bot/bot.service.ts` — When `deepLinkCapability` is present AND the business has that capability enabled, overrides `firstStep` via `capabilityToFirstStep()` to skip the menu. Stores `_deep_link_capability` in session_data for flow context.
