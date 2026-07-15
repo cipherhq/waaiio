@@ -65,15 +65,15 @@ const STEP_PANELS: Record<WizardStep, { title: string; subtitle: string; bullets
     visual: '\u{1F512}',
   },
   category: {
-    title: 'Tell us about your business',
-    subtitle: 'Select your country and industry to get started.',
-    bullets: ['Available in 5 countries', '40+ business categories', 'Industry-specific automation'],
-    visual: '\u{1F3ED}',
+    title: 'What do your customers need?',
+    subtitle: 'Pick the main thing your customers come to you for. We\'ll set up the right tools automatically.',
+    bullets: ['Available in 5 countries', 'We auto-configure based on your choice', 'Add more features anytime'],
+    visual: '\u{1F3AF}',
   },
   features: {
-    title: 'Pick your features',
-    subtitle: 'Choose exactly what your WhatsApp bot should do. You can always change this later.',
-    bullets: ['Only see what you need', 'Pre-selected based on your industry', 'Add or remove anytime from settings'],
+    title: 'Tailored to your customers',
+    subtitle: 'We\'ve picked the best features for your business. Review and adjust if needed.',
+    bullets: ['Pre-configured for your business type', 'Toggle features on or off', 'Change anytime from settings'],
     visual: '\u{2699}',
   },
   plan: {
@@ -1055,7 +1055,7 @@ function OnboardingWizard() {
 
   const steps: { key: WizardStep; label: string }[] = [
     { key: 'auth', label: 'Sign Up' },
-    { key: 'category', label: 'Industry' },
+    { key: 'category', label: 'Needs' },
     { key: 'details', label: 'Details' },
     { key: 'success', label: 'Live!' },
   ];

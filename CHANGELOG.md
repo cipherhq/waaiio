@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-14
 
+### UX: Value-first onboarding redesign
+- `app/get-started/steps/StepCategory.tsx` — Replaced 13-tile industry grid with 6 outcome-based tiles: "Book a time", "Order products", "Buy tickets", "Reserve a table/stay", "Make payments", "Request a service". Added search fallback for direct category lookup.
+- `app/get-started/steps/StepFeatures.tsx` — Changed header from "What should your bot do?" to "Here's what we'll set up for you" (confirmation framing).
+- `app/get-started/OnboardingWizard.tsx` — Updated side panel copy and step label from "Industry" to "Needs".
+- **Design principle:** Frame choices around what customers GET, not what the business IS.
+- **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
+
 ### UX: Spam/Junk folder notice on email verification
 - `app/get-started/steps/StepAuth.tsx` — Added hint below confirmation message: "Can't find the email? Check your Spam or Junk folder."
 - `app/(auth)/forgot-password/page.tsx` — Same spam/junk hint on password reset confirmation.

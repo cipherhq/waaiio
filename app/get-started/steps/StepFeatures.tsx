@@ -27,8 +27,8 @@ export function StepFeatures({
         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
         Back
       </button>
-      <h2 className="text-2xl font-bold text-gray-900">What should your bot do?</h2>
-      <p className="mt-1 text-sm text-gray-500">Pick the features you need. We&apos;ve pre-selected the most popular ones for your industry. You can always change this later in settings.</p>
+      <h2 className="text-2xl font-bold text-gray-900">Here&apos;s what we&apos;ll set up for you</h2>
+      <p className="mt-1 text-sm text-gray-500">We&apos;ve pre-selected features based on what your customers need. Toggle anything on or off — you can always change this later.</p>
 
       {/* Feature cards */}
       <div className="mt-6 space-y-3">
