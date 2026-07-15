@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   BUSINESS_CATEGORIES,
   type BusinessCategoryKey,
@@ -17,8 +17,11 @@ const CUSTOMER_OUTCOMES = [
     icon: '\uD83D\uDCC5',
     title: 'Book a time with me',
     desc: 'Customers pick a date and time to see you',
-    examples: 'Salons, clinics, gyms, consultants',
-    groups: ['Beauty & Wellness', 'Health & Medical', 'Fitness', 'Fitness & Wellness', 'Professional Services'],
+    examples: 'Salons, clinics, gyms, photographers, vets',
+    groups: [
+      'Beauty & Wellness', 'Health & Medical', 'Fitness', 'Fitness & Wellness',
+      'Professional Services', 'Pet Services', 'Creative & Media', 'Real Estate & Property',
+    ],
   },
   {
     id: 'order_products',
@@ -49,7 +52,7 @@ const CUSTOMER_OUTCOMES = [
     icon: '\uD83D\uDCB3',
     title: 'Make a payment or donation',
     desc: 'Collect fees, tithes, dues, or donations',
-    examples: 'Churches, schools, NGOs, parking',
+    examples: 'Churches, schools, NGOs, government',
     groups: ['Faith & Community', 'Education & Training', 'Government & Public'],
   },
   {
@@ -61,6 +64,140 @@ const CUSTOMER_OUTCOMES = [
     groups: ['Home & Auto Services', 'Transport', 'Transport & Logistics'],
   },
 ];
+
+/* ─── Search aliases: common words people type → matching category keys ─── */
+
+const SEARCH_ALIASES: Record<string, string[]> = {
+  // Medical / Health
+  'medical': ['clinic', 'dental', 'veterinary', 'therapy', 'optician', 'physiotherapy', 'medspa'],
+  'medicals': ['clinic', 'dental', 'veterinary', 'therapy', 'optician', 'physiotherapy', 'medspa'],
+  'hospital': ['clinic'],
+  'doctor': ['clinic', 'therapy'],
+  'health': ['clinic', 'dental', 'veterinary', 'therapy', 'optician', 'physiotherapy', 'medspa', 'gym', 'yoga'],
+  'nurse': ['clinic'],
+  'eye': ['optician'],
+  'physio': ['physiotherapy'],
+  'dentist': ['dental'],
+  'vet': ['veterinary'],
+  'pet': ['pet_grooming', 'dog_walking', 'pet_boarding', 'pet_training', 'veterinary'],
+  'dog': ['dog_walking', 'pet_grooming', 'pet_boarding', 'pet_training'],
+  'cat': ['pet_grooming', 'pet_boarding'],
+  'animal': ['veterinary', 'pet_grooming', 'pet_boarding'],
+  // Beauty
+  'beauty': ['salon', 'spa', 'mua', 'nail_tech', 'lash_tech', 'waxing', 'medspa'],
+  'hair': ['salon', 'barber'],
+  'nails': ['nail_tech'],
+  'lash': ['lash_tech'],
+  'lashes': ['lash_tech'],
+  'makeup': ['mua'],
+  'wax': ['waxing'],
+  // Food
+  'food': ['restaurant', 'cafe', 'bakery', 'catering', 'food_truck', 'food_delivery'],
+  'eat': ['restaurant', 'cafe', 'bar', 'lounge'],
+  'cook': ['restaurant', 'catering'],
+  'coffee': ['cafe'],
+  'cake': ['bakery'],
+  'bake': ['bakery'],
+  'drink': ['bar', 'lounge', 'cafe'],
+  // Services
+  'fix': ['mechanic', 'plumber', 'electrician', 'handyman', 'hvac'],
+  'repair': ['mechanic', 'plumber', 'electrician', 'handyman'],
+  'wash': ['laundry', 'car_wash'],
+  'clean': ['cleaning', 'laundry'],
+  'car': ['mechanic', 'car_wash', 'car_rental', 'driving_school', 'taxi'],
+  'auto': ['mechanic', 'car_wash'],
+  'home': ['cleaning', 'plumber', 'electrician', 'handyman', 'pest_control', 'hvac', 'landscaping'],
+  'garden': ['landscaping'],
+  'bug': ['pest_control'],
+  'pest': ['pest_control'],
+  // Education
+  'learn': ['school', 'tutor', 'language_school', 'training_academy'],
+  'teach': ['school', 'tutor', 'language_school', 'training_academy'],
+  'class': ['school', 'tutor', 'training_academy', 'yoga', 'pilates', 'dance', 'martial_arts'],
+  'course': ['training_academy', 'language_school'],
+  'child': ['daycare', 'school'],
+  'kids': ['daycare', 'school'],
+  'baby': ['daycare'],
+  'drive': ['driving_school', 'taxi'],
+  // Creative
+  'photo': ['photographer'],
+  'video': ['videographer'],
+  'music': ['music_studio', 'dj'],
+  'design': ['graphic_designer'],
+  'creative': ['photographer', 'videographer', 'dj', 'graphic_designer', 'content_creator'],
+  'media': ['photographer', 'videographer', 'content_creator', 'graphic_designer'],
+  // Real estate
+  'house': ['real_estate', 'property_manager'],
+  'property': ['real_estate', 'property_manager', 'mortgage_broker'],
+  'rent': ['shortlet', 'car_rental', 'property_manager'],
+  'apartment': ['real_estate', 'shortlet', 'property_manager'],
+  'land': ['real_estate'],
+  'mortgage': ['mortgage_broker'],
+  // Events
+  'party': ['events', 'event_services', 'dj'],
+  'wedding': ['events', 'event_services', 'photographer', 'videographer', 'catering', 'dj'],
+  'concert': ['events'],
+  'show': ['events', 'cinema'],
+  'movie': ['cinema'],
+  'film': ['cinema', 'videographer'],
+  // Faith
+  'church': ['church'],
+  'mosque': ['mosque'],
+  'tithe': ['church'],
+  'offering': ['church', 'mosque'],
+  'donate': ['ngo', 'crowdfunding_org', 'church'],
+  'charity': ['ngo', 'crowdfunding_org'],
+  'faith': ['church', 'mosque'],
+  'religion': ['church', 'mosque'],
+  'worship': ['church', 'mosque'],
+  // Fitness
+  'gym': ['gym'],
+  'fitness': ['gym', 'yoga', 'pilates', 'dance', 'martial_arts', 'bootcamp'],
+  'workout': ['gym', 'bootcamp'],
+  'exercise': ['gym', 'yoga', 'pilates', 'bootcamp'],
+  'yoga': ['yoga'],
+  'dance': ['dance'],
+  // Transport
+  'taxi': ['taxi'],
+  'ride': ['taxi'],
+  'delivery': ['food_delivery', 'courier', 'logistics'],
+  'ship': ['logistics'],
+  'shipping': ['logistics'],
+  'courier': ['courier'],
+  'bus': ['bus', 'transport'],
+  'train': ['bus'],
+  'travel': ['travel_agency', 'transport', 'bus'],
+  'move': ['moving'],
+  'moving': ['moving'],
+  // Hospitality
+  'hotel': ['hotel'],
+  'airbnb': ['shortlet'],
+  'stay': ['hotel', 'shortlet'],
+  'lodge': ['hotel'],
+  'book': ['hotel', 'shortlet', 'salon', 'barber', 'spa', 'clinic'],
+  // Government
+  'government': ['government'],
+  'parking': ['car_park'],
+  'park': ['car_park'],
+  'permit': ['government'],
+  // Professional
+  'lawyer': ['legal'],
+  'law': ['legal'],
+  'legal': ['legal'],
+  'notary': ['legal'],
+  'tax': ['accounting'],
+  'accounting': ['accounting'],
+  'consult': ['consultant'],
+  'security': ['security'],
+  'office': ['coworking', 'government'],
+  'cowork': ['coworking'],
+  // Misc
+  'tailor': ['tailor'],
+  'fashion': ['tailor'],
+  'sew': ['tailor'],
+  'print': ['printing'],
+  'funeral': ['funeral'],
+};
 
 export function StepCategory({
   selectedCountry,
@@ -89,17 +226,24 @@ export function StepCategory({
 
     const groups = getCategoryGroups();
     const matchedCategories: Array<{ key: string; label: string; icon: string; flow: string }> = [];
+    const seenKeys = new Set<string>();
 
     for (const group of groups) {
       if (outcome.groups.includes(group.group)) {
-        matchedCategories.push(...group.categories);
+        for (const cat of group.categories) {
+          if (!seenKeys.has(cat.key)) {
+            seenKeys.add(cat.key);
+            matchedCategories.push(cat);
+          }
+        }
       }
     }
 
     // Fallback: also check hardcoded BUSINESS_CATEGORIES
     if (matchedCategories.length === 0) {
       for (const cat of BUSINESS_CATEGORIES) {
-        if (outcome.groups.includes(cat.group)) {
+        if (outcome.groups.includes(cat.group) && !seenKeys.has(cat.key)) {
+          seenKeys.add(cat.key);
           matchedCategories.push(cat);
         }
       }
@@ -108,13 +252,55 @@ export function StepCategory({
     return matchedCategories;
   };
 
-  // Search across all categories
-  const searchResults = searchQuery.trim().length >= 2
-    ? allCategories.filter(c =>
-        c.label.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.key.toLowerCase().includes(searchQuery.toLowerCase())
-      )
-    : [];
+  // Smart search: matches label, key, group name, and aliases
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (q.length < 2) return [];
+
+    const matchedKeys = new Set<string>();
+    const results: Array<{ key: string; label: string; icon: string; flow: string }> = [];
+
+    // 1. Check alias map — match any word in the query
+    const words = q.split(/\s+/);
+    for (const word of words) {
+      const aliasKeys = SEARCH_ALIASES[word];
+      if (aliasKeys) {
+        for (const key of aliasKeys) matchedKeys.add(key);
+      }
+      // Also check partial alias matches (e.g. "medic" matches "medical")
+      for (const [alias, keys] of Object.entries(SEARCH_ALIASES)) {
+        if (alias.startsWith(word) || word.startsWith(alias)) {
+          for (const key of keys) matchedKeys.add(key);
+        }
+      }
+    }
+
+    // 2. Check category labels and keys (substring match)
+    for (const cat of allCategories) {
+      if (
+        cat.label.toLowerCase().includes(q) ||
+        cat.key.toLowerCase().includes(q)
+      ) {
+        matchedKeys.add(cat.key);
+      }
+    }
+
+    // 3. Check group names (so "medical" finds "Health & Medical" group)
+    for (const cat of BUSINESS_CATEGORIES) {
+      if (cat.group.toLowerCase().includes(q)) {
+        matchedKeys.add(cat.key);
+      }
+    }
+
+    // Build results from matched keys, preserving category list order
+    for (const cat of allCategories) {
+      if (matchedKeys.has(cat.key)) {
+        results.push(cat);
+      }
+    }
+
+    return results;
+  }, [searchQuery, allCategories]);
 
   return (
     <div>
@@ -165,7 +351,7 @@ export function StepCategory({
             }}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border-2 border-dashed border-brand-200 bg-brand-50/20 px-4 py-3 text-center transition hover:border-brand hover:bg-brand-50"
           >
-            <span className="text-lg">\uD83C\uDF89</span>
+            <span className="text-lg">{'\uD83C\uDF89'}</span>
             <span className="text-sm font-medium text-brand-700">Just planning a personal event or party?</span>
           </button>
 
@@ -179,12 +365,12 @@ export function StepCategory({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Or type your business type to search..."
+                placeholder="Or type what you do — e.g. salon, medical, laundry..."
                 className="w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-brand focus:bg-white focus:ring-2 focus:ring-brand-100"
               />
             </div>
             {searchResults.length > 0 && (
-              <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="mt-2 max-h-60 overflow-y-auto rounded-xl border border-gray-200 bg-white shadow-sm">
                 {searchResults.map(cat => (
                   <button
                     key={cat.key}
@@ -259,7 +445,6 @@ export function StepCategory({
               type="button"
               onClick={() => {
                 setCategory('other' as BusinessCategoryKey);
-                // Use first matching group's defaults
                 const filtered = getFilteredCategories(selectedOutcome);
                 const firstKey = filtered[0]?.key as BusinessCategoryKey || 'other';
                 const defaults = CATEGORY_DEFAULT_CAPABILITIES[firstKey] || ['appointment', 'feedback', 'chat'];

@@ -14,6 +14,10 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### Fix: Onboarding search + missing category groups
+- `app/get-started/steps/StepCategory.tsx` — Added smart search with 100+ keyword aliases (e.g. "medicals" → Clinic, Dental, etc.). Search now matches group names, partial words, and common synonyms. Added Pet Services, Creative & Media, Real Estate & Property to "Book a time" outcome. Updated search placeholder with examples.
+- **Affects:** Onboarding category search, outcome tile coverage.
+
 ### UX: Spam/Junk folder notice on email verification
 - `app/get-started/steps/StepAuth.tsx` — Added hint below confirmation message: "Can't find the email? Check your Spam or Junk folder."
 - `app/(auth)/forgot-password/page.tsx` — Same spam/junk hint on password reset confirmation.
