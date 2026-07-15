@@ -14,6 +14,11 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### UX: Reframe onboarding for local economies
+- `app/get-started/steps/StepCategory.tsx` — "Collect payments" is now the first outcome tile (was buried as "Make a payment or donation"). Rewritten to reflect WhatsApp-heavy economies: parking, school fees, market vendors, bills. "Sell tickets" now includes transport (bus tickets). Added 60+ Nigerian/local economy search aliases: "buka", "keke", "okada", "mama put", "barbing", "provision", "vulcanizer", etc. Reordered tiles: payments first, orders second (highest-impact use cases).
+- **Design principle:** Waaiio is local economy infrastructure, not just a business SaaS.
+- **Affects:** Onboarding outcome tiles, search aliases, tile ordering.
+
 ### Fix: Onboarding search + missing category groups
 - `app/get-started/steps/StepCategory.tsx` — Added smart search with 100+ keyword aliases (e.g. "medicals" → Clinic, Dental, etc.). Search now matches group names, partial words, and common synonyms. Added Pet Services, Creative & Media, Real Estate & Property to "Book a time" outcome. Updated search placeholder with examples.
 - **Affects:** Onboarding category search, outcome tile coverage.
