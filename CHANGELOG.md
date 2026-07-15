@@ -14,6 +14,14 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### Security: Fix Meta Embedded Signup — fail-fatal, token encryption, auto-refresh
+- `app/api/auth/facebook/callback/route.ts` — **Phone registration and WABA subscription are now fail-fatal.** If either fails, channel is deactivated (`is_active: false`) with error stored in `metadata`, and 422 returned to user with clear error message. Previously these failed silently and left "connected" channels that couldn't send or receive. Business profile + template provisioning remain non-fatal (nice-to-have).
+- `app/api/auth/facebook/callback/route.ts` — **Access token now encrypted** with AES-256-GCM via `encryptToken()` from `lib/encryption.ts` before storage. Channel resolver already calls `decryptToken()` on read. Requires `TOKEN_ENCRYPTION_KEY` env var.
+- `app/api/cron/refresh-meta-tokens/route.ts` — **New daily cron** (3:30 AM UTC) refreshes Meta access tokens expiring within 14 days. Calls Meta's `fb_exchange_token` endpoint, encrypts new token, updates DB. Processes sequentially for rate limit compliance. Doesn't deactivate channels on refresh failure (token may still be valid).
+- `vercel.json` — Added cron schedule for token refresh (staggered at :30 to avoid collision with cleanup at :00).
+- **What was broken:** (1) Channels created with failed registration/subscription looked "connected" but didn't work. (2) Tokens stored unencrypted. (3) Tokens expired after 60 days with no refresh — channels silently died.
+- **Affects:** Embedded Signup flow, all dedicated WhatsApp channels, token storage security.
+
 ### Feature: Web-based attendance check-in
 - `supabase/migrations/229_attendance_log.sql` — New `attendance_log` table with business_id, customer_name, phone, email, source (web/whatsapp/manual), checked_in_at. RLS: owners read/delete, service insert. Indexes on business+date and business+phone+date.
 - `app/checkin/[businessId]/page.tsx` — Public check-in page (no auth). Shows business name + logo, form with name (required), phone/email (optional). Detects same-day duplicate by phone. Success screen with WhatsApp CTA "Connect on WhatsApp for updates". Mobile-first design.

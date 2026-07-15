@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
+import { encryptToken } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
 
 /**
@@ -196,7 +197,7 @@ export async function POST(request: NextRequest) {
       channel_type: 'dedicated',
       waba_id,
       phone_number_id,
-      meta_access_token: longLivedToken,
+      meta_access_token: encryptToken(longLivedToken),
       meta_token_expires_at: tokenExpiresAt,
       display_name: displayName,
       quality_rating: qualityRating,
@@ -241,17 +242,69 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', business_id);
 
-    // ── Full automation chain (all non-fatal) ──
+    // ── Full automation chain ──
 
-    // 1. Register the phone number for Cloud API messaging
+    // 1. Register the phone number for Cloud API messaging — REQUIRED
     try {
       await cloudService.registerPhoneNumber();
       logger.debug('[FB-CALLBACK] Phone registered for Cloud API');
-    } catch (err) {
-      logger.error('[FB-CALLBACK] Phone registration warning:', err);
+    } catch (regErr) {
+      logger.error('[FB-CALLBACK] Phone registration FAILED:', regErr);
+      await service
+        .from('whatsapp_channels')
+        .update({
+          is_active: false,
+          metadata: { registration_error: String(regErr) },
+        })
+        .eq('id', channelId);
+      return NextResponse.json(
+        {
+          error: 'Phone registration failed. Please try again or contact support.',
+          channel_id: channelId,
+          recoverable: true,
+        },
+        { status: 422 }
+      );
     }
 
-    // 2. Auto-set WhatsApp Business Profile
+    // 2. Subscribe Waaiio app to receive webhooks from their WABA — REQUIRED
+    try {
+      const subRes = await fetch(
+        `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waba_id}/subscribed_apps`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${longLivedToken}` },
+        }
+      );
+      if (!subRes.ok) {
+        const subErrText = await subRes.text();
+        throw new Error(`Subscription failed: ${subRes.status} ${subErrText}`);
+      }
+      const subData = await subRes.json();
+      if (!subData.success) {
+        throw new Error(`Subscription returned success=false: ${JSON.stringify(subData)}`);
+      }
+      logger.debug('[FB-CALLBACK] Webhook subscription: ok');
+    } catch (subErr) {
+      logger.error('[FB-CALLBACK] WABA subscription FAILED:', subErr);
+      await service
+        .from('whatsapp_channels')
+        .update({
+          is_active: false,
+          metadata: { subscription_error: String(subErr) },
+        })
+        .eq('id', channelId);
+      return NextResponse.json(
+        {
+          error: 'WhatsApp webhook subscription failed. Please try again or contact support.',
+          channel_id: channelId,
+          recoverable: true,
+        },
+        { status: 422 }
+      );
+    }
+
+    // 3. Auto-set WhatsApp Business Profile (non-fatal)
     try {
       await cloudService.setBusinessProfile({
         about: `${business.name} — powered by Waaiio`,
@@ -264,22 +317,7 @@ export async function POST(request: NextRequest) {
       logger.error('[FB-CALLBACK] Business profile warning:', err);
     }
 
-    // 3. Subscribe Waaiio app to receive webhooks from their WABA
-    try {
-      const subRes = await fetch(
-        `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${waba_id}/subscribed_apps`,
-        {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${longLivedToken}` },
-        }
-      );
-      const subData = await subRes.json();
-      logger.debug('[FB-CALLBACK] Webhook subscription:', subData.success ? 'ok' : 'failed');
-    } catch (err) {
-      logger.error('[FB-CALLBACK] Webhook subscription warning:', err);
-    }
-
-    // 3. Auto-provision all Waaiio message templates on the business's WABA
+    // 4. Auto-provision all Waaiio message templates on the business's WABA (non-fatal)
     try {
       const { provisionTemplates } = await import('@/lib/channels/provision-templates');
       const templateResult = await provisionTemplates(waba_id, longLivedToken);
