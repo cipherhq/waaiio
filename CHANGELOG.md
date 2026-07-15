@@ -14,6 +14,17 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### Feature: Web-based attendance check-in
+- `supabase/migrations/229_attendance_log.sql` — New `attendance_log` table with business_id, customer_name, phone, email, source (web/whatsapp/manual), checked_in_at. RLS: owners read/delete, service insert. Indexes on business+date and business+phone+date.
+- `app/checkin/[businessId]/page.tsx` — Public check-in page (no auth). Shows business name + logo, form with name (required), phone/email (optional). Detects same-day duplicate by phone. Success screen with WhatsApp CTA "Connect on WhatsApp for updates". Mobile-first design.
+- `app/api/checkin/route.ts` — POST (public, rate limited 10/min): validates business, dedup check, inserts attendance, resolves WhatsApp link for response. GET (authenticated): returns attendance entries for business owner with date filter + pagination.
+- `app/dashboard/attendance/page.tsx` — Dashboard page showing today's count, date picker, attendance table (name, masked phone, time, source badge), manual add form, CSV export.
+- `components/dashboard/Sidebar.tsx` — Added Attendance nav item in manage section. No capability gate (universal feature).
+- `app/dashboard/qr-code/page.tsx` — Added "Scan to Check In" attendance template that generates web URL (`/checkin/{id}`) instead of WhatsApp deep-link. Renamed queue template to "Scan to Join Queue". Hides prefill text input when attendance template active.
+- `middleware.ts` — Added `/api/checkin` to CSRF exemption list for public form submission.
+- **How it works:** Business prints "Scan to Check In" QR → customer scans → web page loads → enters name → checked in (3 seconds). Success screen offers WhatsApp opt-in for follow-ups.
+- **Affects:** New public page, new API route, new dashboard page, QR code templates, sidebar navigation.
+
 ### Feature: QR code page full customization
 - `app/dashboard/qr-code/page.tsx` — Complete rewrite with 5 customization features:
   1. **Custom brand color** — color picker overrides template default. "Reset" link to go back.

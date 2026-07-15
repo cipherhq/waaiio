@@ -125,6 +125,7 @@ export async function middleware(request: NextRequest) {
     '/api/integrations/external-booking',
     '/api/partner/',
     '/api/invite-optin',
+    '/api/checkin',
     '/api/whatsapp/flow-data',
     '/api/whatsapp/flow-callback',
     '/api/pay-link/pay',

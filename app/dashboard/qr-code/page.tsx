@@ -14,7 +14,8 @@ const TEMPLATES = [
   { id: 'pay',       label: 'Scan to Pay',               subtitle: 'Make a quick payment',           color: '#2563EB', emoji: '💳', capabilities: ['payment'] },
   { id: 'ticket',    label: 'Scan to Buy Tickets',       subtitle: 'Get your tickets now',           color: '#DC2626', emoji: '🎟️', capabilities: ['ticketing'] },
   { id: 'donate',    label: 'Scan to Donate',            subtitle: 'Support our cause',              color: '#D97706', emoji: '🤲', capabilities: ['crowdfunding'] },
-  { id: 'queue',     label: 'Scan to Check In',          subtitle: 'Join the queue',                 color: '#0891B2', emoji: '✅', capabilities: ['queue'] },
+  { id: 'attendance', label: 'Scan to Check In',           subtitle: 'Mark your attendance',            color: '#0891B2', emoji: '✅', capabilities: [] },
+  { id: 'queue',     label: 'Scan to Join Queue',         subtitle: 'Join the walk-in queue',          color: '#0891B2', emoji: '🔢', capabilities: ['queue'] },
   { id: 'waitlist',  label: 'Scan to Join Waitlist',     subtitle: 'Get notified when available',    color: '#7C3AED', emoji: '⏳', capabilities: ['waitlist'] },
   { id: 'give',      label: 'Scan to Give',              subtitle: 'Tithes, offerings & donations',  color: '#059669', emoji: '🙏', capabilities: ['giving'] },
   { id: 'chat',      label: 'Scan to Chat',              subtitle: 'Chat with us on WhatsApp',       color: '#25D366', emoji: '💬', capabilities: ['chat'] },
@@ -122,7 +123,10 @@ export default function QRCodePage() {
     }
   }
 
-  const activeLink = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(prefillText)}`;
+  const isAttendanceTemplate = selectedTemplate === 'attendance';
+  const activeLink = isAttendanceTemplate
+    ? `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/checkin/${business.id}`
+    : `https://wa.me/${cleanPhone}?text=${encodeURIComponent(prefillText)}`;
 
   // Filter templates to show relevant ones first (matching capabilities), then generic
   const relevantTemplates = TEMPLATES.filter(t =>
@@ -438,7 +442,7 @@ export default function QRCodePage() {
         <div className="space-y-6">
           {/* WhatsApp Link */}
           <div className="rounded-xl border border-gray-100 bg-white p-5">
-            <h2 className="text-sm font-semibold text-gray-900">Your WhatsApp Link</h2>
+            <h2 className="text-sm font-semibold text-gray-900">{isAttendanceTemplate ? 'Your Check-In Link' : 'Your WhatsApp Link'}</h2>
             <p className="mt-1 text-xs text-gray-400">Share this link on your website, social media, or email</p>
             <div className="mt-3 flex gap-2">
               <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5">
@@ -456,25 +460,31 @@ export default function QRCodePage() {
               </button>
             </div>
 
-            <div className="mt-3">
-              <label className="mb-1 block text-xs font-medium text-gray-500">Pre-filled message</label>
-              <input
-                type="text"
-                value={prefillText}
-                onChange={e => { setPrefillText(e.target.value); setPrefillManuallyEdited(true); }}
-                placeholder="Hi"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
-              />
-              <p className="mt-1 text-xs text-gray-400">This message auto-fills when customers open the link</p>
-              {isSharedNumber && business.bot_code && (
-                <p className="mt-1 text-xs text-amber-600">
-                  {prefillText.includes(':')
-                    ? `Smart QR: Customers who scan will go straight to the ${prefillText.split(':').pop()} flow — no menu needed.`
-                    : `Tip: Keep your bot code "${business.bot_code}" as the pre-filled message so customers get routed to your business automatically.`
-                  }
-                </p>
-              )}
-            </div>
+            {isAttendanceTemplate ? (
+              <p className="mt-3 text-xs text-green-600">
+                This QR opens a web check-in form — customers enter their name and check in instantly. No WhatsApp needed.
+              </p>
+            ) : (
+              <div className="mt-3">
+                <label className="mb-1 block text-xs font-medium text-gray-500">Pre-filled message</label>
+                <input
+                  type="text"
+                  value={prefillText}
+                  onChange={e => { setPrefillText(e.target.value); setPrefillManuallyEdited(true); }}
+                  placeholder="Hi"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                />
+                <p className="mt-1 text-xs text-gray-400">This message auto-fills when customers open the link</p>
+                {isSharedNumber && business.bot_code && (
+                  <p className="mt-1 text-xs text-amber-600">
+                    {prefillText.includes(':')
+                      ? `Smart QR: Customers who scan will go straight to the ${prefillText.split(':').pop()} flow — no menu needed.`
+                      : `Tip: Keep your bot code "${business.bot_code}" as the pre-filled message so customers get routed to your business automatically.`
+                    }
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* QR Code Download (plain) */}
