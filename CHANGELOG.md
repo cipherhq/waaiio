@@ -5,6 +5,16 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-14
+
+### UX: Spam/Junk folder notice on email verification
+- `app/get-started/steps/StepAuth.tsx` — Added hint below confirmation message: "Can't find the email? Check your Spam or Junk folder."
+- `app/(auth)/forgot-password/page.tsx` — Same spam/junk hint on password reset confirmation.
+- `app/(auth)/login/page.tsx` — Updated error messages for unconfirmed email to mention Spam/Junk folders.
+- **Affects:** Signup flow, forgot-password flow, login error messages.
+
+---
+
 ## 2026-07-09
 
 ### Feature: Customer LTV tier scoring

@@ -54,6 +54,9 @@ export default function ForgotPasswordPage() {
               We sent a password reset link to <span className="font-medium text-gray-900">{email}</span>.
               Click the link to set a new password.
             </p>
+            <p className="mt-2 text-xs text-gray-500">
+              Can&apos;t find the email? Check your <span className="font-medium text-gray-700">Spam</span> or <span className="font-medium text-gray-700">Junk</span> folder.
+            </p>
             <button
               type="button"
               onClick={() => { setSent(false); setEmail(''); }}

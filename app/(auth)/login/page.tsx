@@ -44,9 +44,9 @@ function LoginForm() {
 
       if (signInError) {
         if (signInError.message.includes('Invalid login credentials')) {
-          setError('Invalid email or password. If you signed up recently, check your email for a confirmation link.');
+          setError('Invalid email or password. If you signed up recently, check your email for a confirmation link — it may be in your Spam or Junk folder.');
         } else if (signInError.message.includes('Email not confirmed')) {
-          setError('Please check your email and click the confirmation link before signing in.');
+          setError('Please check your email (including Spam/Junk folders) and click the confirmation link before signing in.');
         } else if (signInError.message.includes('rate limit')) {
           setError('Too many login attempts. Please wait a few minutes and try again.');
         } else {

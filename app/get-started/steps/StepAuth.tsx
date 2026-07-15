@@ -31,6 +31,9 @@ export function StepAuth({
             We sent a confirmation link to <span className="font-medium text-gray-900">{email}</span>.
             Click the link to verify your email and continue setup.
           </p>
+          <p className="mt-2 text-xs text-gray-500">
+            Can&apos;t find the email? Check your <span className="font-medium text-gray-700">Spam</span> or <span className="font-medium text-gray-700">Junk</span> folder.
+          </p>
           <button
             type="button"
             disabled={authLoading}
