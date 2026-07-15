@@ -43,6 +43,7 @@ import {
   Inbox,
   Landmark,
   FileSpreadsheet,
+  ScanLine,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -106,6 +107,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
     items: [
       { icon: FileText, label: 'Reports', path: '/reports', roles: ['admin', 'operations'] },
       { icon: ListOrdered, label: 'Queue Mgmt', path: '/queue-management', roles: ['admin', 'operations'] },
+      { icon: ScanLine, label: 'Engagement', path: '/engagement', roles: ['admin', 'operations'] },
     ],
   },
   {

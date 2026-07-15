@@ -14,6 +14,12 @@ If something breaks, check this log to find what changed and when.
 - **Design principle:** Frame choices around what customers GET, not what the business IS.
 - **Affects:** Onboarding flow step 2 (category selection), step 3 (features), side panel.
 
+### Admin: Engagement & Activity tracking page
+- `admin/src/pages/EngagementActivity.tsx` — New admin page surfacing QR scan activity from existing data. 4 summary cards (web check-ins today/week, bot sessions today, event scans today). 3 tabs: Check-ins (attendance_log entries with date filter), Top Businesses (aggregated activity ranking), Ticket Scans (event_tickets with scanned_at). All lazy-loaded per tab with pagination.
+- `admin/src/routes.tsx` — Added engagement route, gated to admin + operations roles.
+- `admin/src/components/AdminSidebar.tsx` — Added "Engagement" nav item with ScanLine icon.
+- **Affects:** Admin panel only. No new tables — reads from existing attendance_log, bot_sessions, event_tickets.
+
 ### Security: Fix Meta Embedded Signup — fail-fatal, token encryption, auto-refresh
 - `app/api/auth/facebook/callback/route.ts` — **Phone registration and WABA subscription are now fail-fatal.** If either fails, channel is deactivated (`is_active: false`) with error stored in `metadata`, and 422 returned to user with clear error message. Previously these failed silently and left "connected" channels that couldn't send or receive. Business profile + template provisioning remain non-fatal (nice-to-have).
 - `app/api/auth/facebook/callback/route.ts` — **Access token now encrypted** with AES-256-GCM via `encryptToken()` from `lib/encryption.ts` before storage. Channel resolver already calls `decryptToken()` on read. Requires `TOKEN_ENCRYPTION_KEY` env var.

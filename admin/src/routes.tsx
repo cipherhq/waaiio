@@ -49,6 +49,7 @@ import Countries from './pages/Countries';
 import RecurringPayments from './pages/RecurringPayments';
 import Reports from './pages/Reports';
 import QueueManagement from './pages/QueueManagement';
+import EngagementActivity from './pages/EngagementActivity';
 import Tickets from './pages/Tickets';
 import LLMClassifications from './pages/LLMClassifications';
 import Alerts from './pages/Alerts';
@@ -99,6 +100,7 @@ export const router = createBrowserRouter([
       { path: 'alerts', element: <RoleGuard roles={['admin', 'support', 'operations']}><Alerts /></RoleGuard> },
       { path: 'reports', element: <RoleGuard roles={['admin', 'operations']}><Reports /></RoleGuard> },
       { path: 'queue-management', element: <RoleGuard roles={['admin', 'operations']}><QueueManagement /></RoleGuard> },
+      { path: 'engagement', element: <RoleGuard roles={['admin', 'operations']}><EngagementActivity /></RoleGuard> },
       // Giving
       { path: 'giving', element: <RoleGuard roles={['admin', 'finance']}><Giving /></RoleGuard> },
       // Communication
