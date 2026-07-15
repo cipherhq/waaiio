@@ -194,6 +194,13 @@ export default function QRCodePage() {
       ctx.fillStyle = '#9CA3AF';
       ctx.font = '28px -apple-system, BlinkMacSystemFont, sans-serif';
       ctx.fillText(business.name || 'Your Business', cx, height / 2 + 280);
+
+      // Powered by Waaiio
+      if (!isWhitelabel) {
+        ctx.fillStyle = '#D1D5DB';
+        ctx.font = '18px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('Powered by Waaiio', cx, height - 30);
+      }
     } else if (size === 'social') {
       // ── Social Media: colored bg, name, QR on white card, label ──
       ctx.fillStyle = effectiveColor;
@@ -256,7 +263,14 @@ export default function QRCodePage() {
       // WhatsApp label at bottom
       ctx.fillStyle = '#FFFFFF';
       ctx.font = 'bold 28px -apple-system, BlinkMacSystemFont, sans-serif';
-      ctx.fillText('WhatsApp', cx, 1040);
+      ctx.fillText('WhatsApp', cx, 1020);
+
+      // Powered by Waaiio
+      if (!isWhitelabel) {
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '20px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('Powered by Waaiio', cx, 1060);
+      }
     } else {
       // ── Full layout: A4 and Table Tent ──
       // Scale factor relative to A4
