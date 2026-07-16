@@ -120,11 +120,26 @@ See `.env.example` for the full list. Categories:
 ## Testing
 
 ```bash
-npm run test          # ~339 unit tests, Vitest
-npm run test:e2e      # 42 E2E tests, Playwright
+npm run test          # 517+ unit tests, Vitest
+npm run test:e2e      # Playwright smoke tests
+npm run certify:local # Full production certification (see below)
 ```
 
 Bot-specific testing uses a harness at `lib/bot/__tests__/bot-harness.ts` with mock sender, mock DB, and conversation fixtures.
+
+### Local Production Certification
+
+Run all verification stages in order — lint, tests, builds, database, Playwright:
+
+```bash
+npm run certify:local              # Full run
+npm run certify:local -- --skip-install   # Skip npm ci (faster reruns)
+npm run certify:local -- --keep-services  # Don't stop Supabase after
+```
+
+Requires: Node.js 20+. Optional: Docker (for local Supabase DB tests), Playwright browsers (`npx playwright install chromium`).
+
+The script refuses to run if `NEXT_PUBLIC_SUPABASE_URL` points to production.
 
 ---
 
