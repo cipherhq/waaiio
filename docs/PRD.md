@@ -87,7 +87,7 @@ Customer taps payment link → Gateway checkout (Paystack/Stripe/Flutterwave/Squ
 - **Frontend:** Next.js 14 App Router, 67 dashboard pages, React 18, Tailwind CSS, Framer Motion
 - **Backend:** Next.js API routes (174 endpoints), Supabase PostgreSQL, Vercel serverless
 - **Admin Panel:** Separate Vite + React app (43 pages), role-gated sidebar
-- **Bot Engine:** WhatsApp via Meta Cloud API (premium) + Gupshup (shared), 17 flow files, step-based executor
+- **Bot Engine:** WhatsApp via Meta Cloud API, 17 flow files, step-based executor
 - **AI:** Anthropic Claude (intent detection, translation in 7 languages), OpenAI Whisper (voice transcription)
 - **Ace AI Setup Assistant:** 5-step wizard with image OCR (Claude Sonnet) and text extraction (Claude Haiku)
 
@@ -95,8 +95,7 @@ Customer taps payment link → Gateway checkout (Paystack/Stripe/Flutterwave/Squ
 
 | System | Purpose | Protocol |
 |--------|---------|----------|
-| Meta Cloud API | WhatsApp messaging (premium) | REST + Webhooks |
-| Gupshup | WhatsApp messaging (shared numbers) | REST + Webhooks |
+| Meta Cloud API | WhatsApp messaging | REST + Webhooks |
 | Paystack | Payments NG/GH | REST + Webhooks |
 | Stripe | Payments US/CA/UK | REST + Webhooks |
 | Flutterwave | Payments (alternative Africa) | REST + Webhooks |

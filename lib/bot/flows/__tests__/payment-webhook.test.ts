@@ -28,7 +28,7 @@ describe('Payment Webhook Safety', () => {
 
 describe('SendList Limits', () => {
   it('WhatsApp API limits are documented correctly', () => {
-    // These limits are enforced centrally in meta-cloud.ts and gupshup.ts
+    // These limits are enforced centrally in meta-cloud.ts
     // If they change, update the enforcement code
     const TITLE_MAX = 24;
     const DESCRIPTION_MAX = 72;

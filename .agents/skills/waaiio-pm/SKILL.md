@@ -58,7 +58,7 @@ A no-code WhatsApp + web automation platform for 89 business types across 16 ind
 - Next.js 14 + React 18 + Tailwind + Supabase + Vercel
 - 155 database migrations, 100+ tables, 295+ indexes, 100% RLS
 - bot.service.ts decomposed into 9 handler modules
-- WhatsApp via Meta Cloud API + Gupshup (shared numbers)
+- WhatsApp via Meta Cloud API
 - 5 payment gateways: Paystack (NG/GH), Stripe (US/CA/UK), Flutterwave, Square, PayPal
 - 283 unit tests, load tested at 100 concurrent users
 - CCPA + GDPR + NDPR + UK GDPR compliant

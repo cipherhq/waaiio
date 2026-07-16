@@ -6,7 +6,7 @@ Waaiio's WhatsApp bot is a multi-tenant, flow-based conversation engine supporti
 
 ```
 WhatsApp Message
-  → Gupshup/Meta Cloud Webhook
+  → Meta Cloud Webhook
     → Channel Resolver (shared vs dedicated number)
       → BotService.handleMessage()
         → Pre-checks (timeout, profanity)
@@ -21,7 +21,6 @@ WhatsApp Message
 
 | File | Purpose |
 |------|---------|
-| `app/api/webhook/whatsapp/route.ts` | Gupshup webhook entry point |
 | `app/api/webhook/meta-cloud/route.ts` | Meta Cloud API webhook |
 | `lib/bot/bot.service.ts` | Main bot orchestrator (~2000 lines) |
 | `lib/bot/flows/executor.ts` | Step-based flow execution engine |
@@ -34,7 +33,6 @@ WhatsApp Message
 | `lib/bot/standalone.service.ts` | Template rendering, business lookup |
 | `lib/bot/handoff.service.ts` | Human handoff (escalation) |
 | `lib/channels/channel-resolver.ts` | Resolves WhatsApp number → business + sender |
-| `lib/channels/gupshup.ts` | Gupshup API client |
 | `lib/channels/message-sender.ts` | Message sender interface |
 
 ## Flow System
@@ -75,7 +73,7 @@ interface FlowStep {
 
 Every step receives a `FlowContext` with:
 - `supabase` — Database client
-- `sender` — Message sender (Gupshup/Meta)
+- `sender` — Message sender (Meta Cloud)
 - `standalone` — Template/lookup service
 - `intelligence` — Profanity/abuse service
 - `from` — User's phone number

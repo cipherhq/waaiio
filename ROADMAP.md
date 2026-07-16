@@ -46,10 +46,6 @@
 - Per-business storage limits (Free: 100MB, Growth: 1GB, Premium: 10GB)
 - Check before file uploads
 
-### Gupshup Removal
-- Remove all Gupshup code, configs, and references
-- Clean up whatsapp_channels table (remove gupshup columns)
-
 ### AI Enhancements
 - Ace: help businesses with marketing copy
 - Ace: suggest optimal pricing based on category/location

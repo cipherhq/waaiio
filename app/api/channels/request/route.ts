@@ -5,7 +5,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 /**
  * POST /api/channels/request
  * Business owner requests a dedicated WhatsApp number.
- * This creates a pending request that an admin provisions via Gupshup,
+ * This creates a pending request that an admin provisions via Meta Cloud API,
  * then inserts the whatsapp_channels row and links it to the business.
  *
  * Body: { business_id: string, phone_number?: string, notes?: string }

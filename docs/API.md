@@ -22,14 +22,11 @@ Waaiio is a WhatsApp automation platform with 100+ API endpoints. All API routes
 
 ## Webhooks (Inbound)
 
-### `POST /api/webhook/whatsapp`
-Gupshup WhatsApp webhook. Receives incoming WhatsApp messages and routes them to the bot engine.
-- **Auth:** `GUPSHUP_WEBHOOK_SECRET` header verification
+### `POST /api/webhook/meta-cloud`
+Meta Cloud API WhatsApp webhook. Receives incoming WhatsApp messages and routes them to the bot engine.
+- **Auth:** `META_APP_SECRET` HMAC-SHA256 signature verification
 - **Dedup:** Atomic upsert on `processed_webhook_events` table
 - **Flow:** Parse payload → resolve channel → create BotService → handleMessage
-
-### `POST /api/webhook/meta-cloud`
-Meta Cloud API WhatsApp webhook. Alternative to Gupshup for businesses using their own WABA.
 
 ### `POST /api/payments/webhook`
 Paystack payment webhook. Handles `charge.success`, `charge.failed`, `subscription.create`, `invoice.payment_failed`, `subscription.not_renew`, `subscription.disable`.
@@ -227,7 +224,6 @@ See `.env.example` for the full list. Key variables:
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-side Supabase access |
 | `PAYSTACK_SECRET_KEY` | Paystack payment processing |
 | `STRIPE_SECRET_KEY` | Stripe payment processing |
-| `GUPSHUP_API_KEY` | WhatsApp messaging |
 | `ANTHROPIC_API_KEY` | LLM intent detection |
 | `SENTRY_DSN` | Error tracking |
 | `NEXT_PUBLIC_POSTHOG_KEY` | Analytics |

@@ -118,7 +118,7 @@ export async function middleware(request: NextRequest) {
   const isStateMutating = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method);
   const isApiRoute = request.nextUrl.pathname.startsWith('/api/');
   const webhookReceiverPaths = [
-    '/api/webhook/meta-cloud', '/api/webhook/whatsapp',
+    '/api/webhook/meta-cloud',
     '/api/webhooks/flutterwave', '/api/webhooks/paystack-transfer', '/api/webhooks/stripe-transfer',
     '/api/payments/stripe-webhook', '/api/payments/square-webhook', '/api/payments/paypal-webhook',
     '/api/payments/byo-webhook', '/api/payments/webhook',

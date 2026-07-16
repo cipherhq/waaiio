@@ -212,11 +212,6 @@ export default function PrivacyPolicyPage() {
                       <td className="py-2">Request logs, IP addresses</td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4">Gupshup</td>
-                      <td className="py-2 pr-4">WhatsApp Business API provider</td>
-                      <td className="py-2">Phone numbers, message content</td>
-                    </tr>
-                    <tr>
                       <td className="py-2 pr-4">Upstash</td>
                       <td className="py-2 pr-4">Rate limiting and caching</td>
                       <td className="py-2">IP addresses, request timestamps, rate limit counters</td>
