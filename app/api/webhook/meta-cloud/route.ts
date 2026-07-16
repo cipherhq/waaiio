@@ -383,171 +383,248 @@ export async function POST(request: NextRequest) {
           const source = msg.from;
           const msgLog = log.withContext({ from: source });
 
-          // Deduplicate ALL message types including orders
+          // Durable inbound event — store before processing
           const metaMsgId = msg.id;
           if (metaMsgId) {
-            const { data: dedupResult } = await supabase
+            const eventId = `meta-${metaMsgId}`;
+
+            // Atomically insert or fetch existing event
+            const { data: existing } = await supabase
               .from('processed_webhook_events')
-              .upsert(
-                { event_id: `meta-${metaMsgId}`, gateway: 'meta_cloud', event_type: msg.type || 'message', processed_at: new Date().toISOString() },
-                { onConflict: 'event_id', ignoreDuplicates: true }
-              )
-              .select('id');
-
-            if (!dedupResult || dedupResult.length === 0) {
-              // Already processed — skip this message
-              msgLog.debug('[META-WEBHOOK] Duplicate message skipped:', metaMsgId);
-              continue;
-            }
-          }
-
-          // ── Handle WhatsApp Catalog order messages ──
-          // When a customer adds items from the native WhatsApp catalog and submits,
-          // Meta sends a message with type === 'order'. This is a parallel path to
-          // the conversational ordering flow — both work independently.
-          if (msg.type === 'order' && msg.order?.product_items?.length) {
-            try {
-              await handleCatalogOrder(supabase, resolved, msg, source, msgLog);
-            } catch (orderErr) {
-              msgLog.error('[META-WEBHOOK] Catalog order handling failed:', orderErr);
-            }
-            continue; // Skip normal bot processing for order messages
-          }
-
-          // Extract text based on message type
-          let text = '';
-          let msgType = msg.type || 'text';
-
-          // Product inquiry: when customer taps "Message Business" on a catalog product,
-          // Meta may include context.referred_product — convert to a text inquiry
-          if (msg.context?.referred_product) {
-            const refProduct = msg.context.referred_product;
-            // Look up the product name for a nicer inquiry message
-            const { data: inquiryProduct } = await supabase
-              .from('products')
-              .select('name')
-              .eq('id', refProduct.product_retailer_id)
+              .select('id, status, attempts')
+              .eq('event_id', eventId)
               .maybeSingle();
-            text = inquiryProduct?.name
-              ? `I'm interested in ${inquiryProduct.name}`
-              : `I'm interested in product ${refProduct.product_retailer_id}`;
-          }
 
-          if (msg.type === 'text') {
-            text = msg.text?.body || text; // Keep referred_product text if no body
-          } else if (msg.type === 'interactive') {
-            if (msg.interactive?.type === 'button_reply') {
-              text = msg.interactive.button_reply?.id || msg.interactive.button_reply?.title || '';
-              msgType = 'button';
-            } else if (msg.interactive?.type === 'list_reply') {
-              text = msg.interactive.list_reply?.id || msg.interactive.list_reply?.title || '';
-              msgType = 'list';
-            }
-          }
-
-          // Handle audio messages: download from Meta, upload to Supabase Storage
-          let mediaUrl: string | undefined;
-          if (msg.type === 'audio' && msg.audio?.id) {
-            try {
-              // Use resolved.cloud (MetaCloudService) which has the DECRYPTED token.
-              // Do NOT read resolved.channel.meta_access_token directly — it's encrypted ciphertext.
-              if (!resolved.cloud) {
-                msgLog.error('[META-WEBHOOK] No MetaCloudService available for media download');
-                throw new Error('MetaCloudService not available');
+            if (existing) {
+              if (existing.status === 'completed') {
+                msgLog.debug('[META-WEBHOOK] Already completed, skipping:', metaMsgId);
+                continue;
               }
-              const media = await resolved.cloud.downloadMedia(msg.audio.id);
-              if (media) {
-                const audioBuffer = media.buffer;
-                const ext = (msg.audio.mime_type || 'audio/ogg').includes('ogg') ? 'ogg' : 'webm';
-                const storagePath = `chat-audio/${preResolvedBusinessId || 'unknown'}/${Date.now()}.${ext}`;
+              if (existing.status === 'processing') {
+                // Check if stale (>60s = likely crashed worker)
+                const { data: staleCheck } = await supabase
+                  .from('processed_webhook_events')
+                  .select('id')
+                  .eq('event_id', eventId)
+                  .eq('status', 'processing')
+                  .lt('last_attempted_at', new Date(Date.now() - 60_000).toISOString())
+                  .maybeSingle();
 
-                await supabase.storage
-                  .from('business-documents')
-                  .upload(storagePath, audioBuffer, {
-                    contentType: msg.audio.mime_type || 'audio/ogg',
-                    upsert: false,
-                  });
+                if (!staleCheck) {
+                  msgLog.debug('[META-WEBHOOK] Currently processing, skipping:', metaMsgId);
+                  continue;
+                }
+                // Stale — allow retry
+              }
+              // Failed or stale — retry: update to processing
+              await supabase
+                .from('processed_webhook_events')
+                .update({
+                  status: 'processing',
+                  attempts: (existing.attempts || 0) + 1,
+                  last_attempted_at: new Date().toISOString(),
+                })
+                .eq('event_id', eventId);
+            } else {
+              // New event — insert as processing
+              const { error: insertErr } = await supabase
+                .from('processed_webhook_events')
+                .insert({
+                  event_id: eventId,
+                  gateway: 'meta_cloud',
+                  event_type: msg.type || 'message',
+                  status: 'processing',
+                  attempts: 1,
+                  first_received_at: new Date().toISOString(),
+                  last_attempted_at: new Date().toISOString(),
+                });
 
-                const { data: urlData } = supabase.storage
-                  .from('business-documents')
-                  .getPublicUrl(storagePath);
-                mediaUrl = urlData.publicUrl;
+              if (insertErr) {
+                // Unique constraint = another worker beat us
+                msgLog.debug('[META-WEBHOOK] Event claimed by another worker:', metaMsgId);
+                continue;
+              }
+            }
 
-                // Transcribe audio with Whisper (tier-gated)
-                if (preResolvedBusinessId) {
-                  const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', preResolvedBusinessId).single();
-                  const tier = bizTier?.subscription_tier || 'free';
-                  const { allowed } = await checkAIFeature(supabase, preResolvedBusinessId, tier, 'voice_transcription');
+            // Process the message — wrap in try/catch for state updates
+            try {
+              // ── Handle WhatsApp Catalog order messages ──
+              // When a customer adds items from the native WhatsApp catalog and submits,
+              // Meta sends a message with type === 'order'. This is a parallel path to
+              // the conversational ordering flow — both work independently.
+              if (msg.type === 'order' && msg.order?.product_items?.length) {
+                await handleCatalogOrder(supabase, resolved, msg, source, msgLog);
+                // Mark completed after successful processing
+                await supabase
+                  .from('processed_webhook_events')
+                  .update({ status: 'completed', completed_at: new Date().toISOString() })
+                  .eq('event_id', eventId);
+                continue; // Skip normal bot processing for order messages
+              }
 
-                  if (allowed) {
-                    try {
-                      const transcript = await transcribeAudio(
-                        audioBuffer,
-                        msg.audio.mime_type || 'audio/ogg',
-                        `meta-${msg.id || source}`,
-                      );
-                      if (transcript) {
-                        text = transcript;
-                        await incrementAIUsage(supabase, preResolvedBusinessId, 'voice_transcription');
-                        msgLog.debug('[META-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
-                      }
-                    } catch (transcribeErr) {
-                      msgLog.error('[META-WEBHOOK] Transcription error:', transcribeErr);
-                    }
-                  } else {
-                    // Free tier: tell customer to type instead
-                    try {
-                      await resolved.sender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
-                    } catch { /* ignore */ }
-                  }
+              // Extract text based on message type
+              let text = '';
+              let msgType = msg.type || 'text';
+
+              // Product inquiry: when customer taps "Message Business" on a catalog product,
+              // Meta may include context.referred_product — convert to a text inquiry
+              if (msg.context?.referred_product) {
+                const refProduct = msg.context.referred_product;
+                // Look up the product name for a nicer inquiry message
+                const { data: inquiryProduct } = await supabase
+                  .from('products')
+                  .select('name')
+                  .eq('id', refProduct.product_retailer_id)
+                  .maybeSingle();
+                text = inquiryProduct?.name
+                  ? `I'm interested in ${inquiryProduct.name}`
+                  : `I'm interested in product ${refProduct.product_retailer_id}`;
+              }
+
+              if (msg.type === 'text') {
+                text = msg.text?.body || text; // Keep referred_product text if no body
+              } else if (msg.type === 'interactive') {
+                if (msg.interactive?.type === 'button_reply') {
+                  text = msg.interactive.button_reply?.id || msg.interactive.button_reply?.title || '';
+                  msgType = 'button';
+                } else if (msg.interactive?.type === 'list_reply') {
+                  text = msg.interactive.list_reply?.id || msg.interactive.list_reply?.title || '';
+                  msgType = 'list';
                 }
               }
-            } catch (err) {
-              msgLog.error('[META-WEBHOOK] Audio download/upload error:', err);
+
+              // Handle audio messages: download from Meta, upload to Supabase Storage
+              let mediaUrl: string | undefined;
+              if (msg.type === 'audio' && msg.audio?.id) {
+                try {
+                  // Use resolved.cloud (MetaCloudService) which has the DECRYPTED token.
+                  // Do NOT read resolved.channel.meta_access_token directly — it's encrypted ciphertext.
+                  if (!resolved.cloud) {
+                    msgLog.error('[META-WEBHOOK] No MetaCloudService available for media download');
+                    throw new Error('MetaCloudService not available');
+                  }
+                  const media = await resolved.cloud.downloadMedia(msg.audio.id);
+                  if (media) {
+                    const audioBuffer = media.buffer;
+                    const ext = (msg.audio.mime_type || 'audio/ogg').includes('ogg') ? 'ogg' : 'webm';
+                    const storagePath = `chat-audio/${preResolvedBusinessId || 'unknown'}/${Date.now()}.${ext}`;
+
+                    await supabase.storage
+                      .from('business-documents')
+                      .upload(storagePath, audioBuffer, {
+                        contentType: msg.audio.mime_type || 'audio/ogg',
+                        upsert: false,
+                      });
+
+                    const { data: urlData } = await supabase.storage
+                      .from('business-documents')
+                      .createSignedUrl(storagePath, 3600);
+                    mediaUrl = urlData?.signedUrl || '';
+
+                    // Transcribe audio with Whisper (tier-gated)
+                    if (preResolvedBusinessId) {
+                      const { data: bizTier } = await supabase.from('businesses').select('subscription_tier').eq('id', preResolvedBusinessId).single();
+                      const tier = bizTier?.subscription_tier || 'free';
+                      const { allowed } = await checkAIFeature(supabase, preResolvedBusinessId, tier, 'voice_transcription');
+
+                      if (allowed) {
+                        try {
+                          const transcript = await transcribeAudio(
+                            audioBuffer,
+                            msg.audio.mime_type || 'audio/ogg',
+                            `meta-${msg.id || source}`,
+                          );
+                          if (transcript) {
+                            text = transcript;
+                            await incrementAIUsage(supabase, preResolvedBusinessId, 'voice_transcription');
+                            msgLog.debug('[META-WEBHOOK] Voice transcribed, length:', transcript.length);
+                          }
+                        } catch (transcribeErr) {
+                          msgLog.error('[META-WEBHOOK] Transcription error:', transcribeErr);
+                        }
+                      } else {
+                        // Free tier: tell customer to type instead
+                        try {
+                          await resolved.sender.sendText({ to: source, text: getVoiceNotSupportedMessage() });
+                        } catch { /* ignore */ }
+                      }
+                    }
+                  }
+                } catch (err) {
+                  msgLog.error('[META-WEBHOOK] Audio download/upload error:', err);
+                }
+                if (!text) text = '[Voice message]';
+              }
+
+              // If the message is an unsupported media type (image/video/sticker/document/location)
+              // with no text, reply with guidance instead of silently skipping
+              const msgAny = msg as Record<string, unknown>;
+              if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
+                try {
+                  await resolved.sender.sendText({
+                    to: source,
+                    text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
+                  });
+                } catch { /* ignore send failure */ }
+                // Mark completed — we handled it (sent guidance reply)
+                await supabase
+                  .from('processed_webhook_events')
+                  .update({ status: 'completed', completed_at: new Date().toISOString() })
+                  .eq('event_id', eventId);
+                continue;
+              }
+
+              if (!source || (!text && !mediaUrl)) {
+                // Mark completed — nothing to process
+                await supabase
+                  .from('processed_webhook_events')
+                  .update({ status: 'completed', completed_at: new Date().toISOString() })
+                  .eq('event_id', eventId);
+                continue;
+              }
+
+              msgLog.debug('[META-WEBHOOK] source: ...', source.slice(-4), 'type:', msgType, 'textLen:', text.length, 'pnid:', phoneNumberId);
+
+              // Mark message as read immediately (blue ticks — shows business is active)
+              if (resolved.cloud && msg.id) {
+                resolved.cloud.markAsRead(msg.id).catch(() => {});
+              }
+
+              const standalone = new StandaloneService(supabase);
+              const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
+
+              msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
+              await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
+              msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
+
+              // Mark completed after successful processing
+              await supabase
+                .from('processed_webhook_events')
+                .update({ status: 'completed', completed_at: new Date().toISOString() })
+                .eq('event_id', eventId);
+            } catch (processingErr) {
+              // Mark failed — allows retry on next delivery
+              msgLog.error('[META-WEBHOOK] Processing failed:', processingErr);
+              await supabase
+                .from('processed_webhook_events')
+                .update({
+                  status: 'failed',
+                  last_error: String(processingErr).slice(0, 500),
+                  last_attempted_at: new Date().toISOString(),
+                })
+                .eq('event_id', eventId);
+              // Try to send error message to user so they know something went wrong
+              try {
+                await resolved.sender.sendText({
+                  to: source,
+                  text: 'Sorry, we encountered an error processing your message. Please try again.',
+                });
+              } catch (fallbackErr) {
+                msgLog.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
+              }
+              // Don't rethrow — continue processing other messages in the batch
             }
-            if (!text) text = '[Voice message]';
-          }
-
-          // If the message is an unsupported media type (image/video/sticker/document/location)
-          // with no text, reply with guidance instead of silently skipping
-          const msgAny = msg as Record<string, unknown>;
-          if (!text && !mediaUrl && source && (msg.image || msgAny.video || msgAny.sticker || msgAny.document || msgAny.location)) {
-            try {
-              await resolved.sender.sendText({
-                to: source,
-                text: "I can't process images or files yet. Please reply with text instead.\n\nType *Hi* to start over, *menu* to see options, or *cancel* to exit.",
-              });
-            } catch { /* ignore send failure */ }
-            continue;
-          }
-
-          if (!source || (!text && !mediaUrl)) continue;
-
-          msgLog.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
-
-          // Mark message as read immediately (blue ticks — shows business is active)
-          if (resolved.cloud && msg.id) {
-            resolved.cloud.markAsRead(msg.id).catch(() => {});
-          }
-
-          const standalone = new StandaloneService(supabase);
-          const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
-
-          try {
-            msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for', source, 'text:', text, 'preResolvedBiz:', preResolvedBusinessId);
-            await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
-            msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for', source);
-          } catch (botErr) {
-            msgLog.error('[META-WEBHOOK] Bot handling failed for', source, ':', (botErr as Error)?.message || botErr);
-            // Try to send error message to user so they know something went wrong
-            try {
-              await resolved.sender.sendText({
-                to: source,
-                text: 'Sorry, we encountered an error processing your message. Please try again.',
-              });
-            } catch (fallbackErr) {
-              msgLog.error('[META-WEBHOOK] Fallback error message also failed:', fallbackErr);
-            }
+            continue; // Move to next message
           }
 
         }

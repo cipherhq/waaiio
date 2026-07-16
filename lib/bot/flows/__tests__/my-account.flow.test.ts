@@ -9,7 +9,7 @@ describe('My Account Menu', () => {
     it('routes to my_account_menu when user selects cap_my_account', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
           session_data: { capabilities: ['scheduling', 'payment'], _is_returning: true },
         },
       });
@@ -26,7 +26,7 @@ describe('My Account Menu', () => {
     it('routes to my_account_menu for "my account" text input', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
           session_data: { capabilities: ['scheduling'], _is_returning: true },
         },
       });
@@ -44,7 +44,7 @@ describe('My Account Menu', () => {
       // With all capabilities enabled, should show all items
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu', version: 0,
           session_data: { capabilities: ['scheduling', 'ordering', 'giving', 'invoice', 'whatsapp_sign', 'loyalty', 'recurring', 'estimates'] },
         },
       });
@@ -59,7 +59,7 @@ describe('My Account Menu', () => {
     it('shows only relevant items when capabilities are limited', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_account_menu', version: 0,
           session_data: { capabilities: ['scheduling'] },
         },
       });
@@ -160,7 +160,7 @@ describe('My Account Menu', () => {
 
     it('prompt returns a message (list or text)', async () => {
       const ctx = createMockContext({
-        session: { id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_bookings', session_data: {} },
+        session: { id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_bookings', session_data: {}, version: 0 },
       });
       // Mock supabase to return empty results (no bookings)
       const mockChain = {
@@ -191,7 +191,7 @@ describe('My Account Menu', () => {
 
     it('prompt returns list, buttons, or text message', async () => {
       const ctx = createMockContext({
-        session: { id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_orders', session_data: {} },
+        session: { id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'my_orders', session_data: {}, version: 0 },
       });
       const messages = await step.prompt(ctx);
       expect(messages.length).toBeGreaterThan(0);

@@ -39,6 +39,7 @@ function buildCtx(
           ...overrides.sessionData,
         },
         conversation_log: [],
+        version: 0,
       },
       business,
       ...overrides,

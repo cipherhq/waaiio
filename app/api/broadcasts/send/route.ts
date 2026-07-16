@@ -141,6 +141,19 @@ export async function POST(request: NextRequest) {
 
     for (const phone of phones) {
       try {
+        // Check opt-out before sending promotional message
+        const { data: optedOut } = await service
+          .from('messaging_opt_outs')
+          .select('id')
+          .eq('phone', phone)
+          .is('resubscribed_at', null)
+          .maybeSingle();
+
+        if (optedOut) {
+          // Skip — customer opted out
+          continue;
+        }
+
         let sent = false;
 
         // Try template first (works outside 24h window)
@@ -154,7 +167,7 @@ export async function POST(request: NextRequest) {
             sent = true;
           } catch (templateErr) {
             // Template failed (not approved, not provisioned, etc.) — fall back to text
-            logger.warn(`[BROADCAST] Template "${template_name}" failed for ${phone}, falling back to text:`, (templateErr as Error).message);
+            logger.warn(`[BROADCAST] Template "${template_name}" failed for ...${phone.slice(-4)}, falling back to text:`, (templateErr as Error).message);
           }
         }
 
@@ -194,7 +207,7 @@ export async function POST(request: NextRequest) {
 
         sentCount++;
       } catch (err) {
-        logger.error(`[BROADCAST] Failed to send to ${phone}:`, err);
+        logger.error(`[BROADCAST] Failed to send to ...${phone.slice(-4)}:`, err);
         await service.from('notifications').insert({
           business_id,
           recipient_phone: phone,

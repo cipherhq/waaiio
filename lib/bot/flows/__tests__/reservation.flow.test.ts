@@ -64,7 +64,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_reservation',
+          current_step: 'create_reservation', version: 0,
           session_data: {
             _terms_cancelled: true,
             property_id: 'prop1',
@@ -117,7 +117,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_reservation',
+          current_step: 'create_reservation', version: 0,
           session_data: {
             // _terms_accepted is NOT set — if cancel check were after the gate,
             // the terms prompt would be returned instead of the cancel message.
@@ -170,7 +170,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_reservation',
+          current_step: 'create_reservation', version: 0,
           session_data: { _terms_accepted: true },
         },
       });
@@ -184,7 +184,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_reservation',
+          current_step: 'create_reservation', version: 0,
           session_data: { _terms_cancelled: true },
         },
       });
@@ -198,7 +198,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_reservation',
+          current_step: 'create_reservation', version: 0,
           session_data: {},
         },
       });
@@ -219,7 +219,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'select_apartment',
+          current_step: 'select_apartment', version: 0,
           session_data: {},
         },
         business: {
@@ -279,7 +279,7 @@ describe('Reservation Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_reservation',
+          current_step: 'create_reservation', version: 0,
           session_data: {
             _terms_accepted: true,
             _availability_checked: true,

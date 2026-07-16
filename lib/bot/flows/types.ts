@@ -72,6 +72,7 @@ export interface FlowContext {
     business_id: string | null;
     current_step: string;
     session_data: Record<string, unknown>;
+    version: number;
   };
   business: {
     id: string;

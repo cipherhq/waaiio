@@ -55,6 +55,7 @@ export function createMockContext(overrides: Partial<FlowContext> = {}): FlowCon
       business_id: 'test-business-id',
       current_step: '',
       session_data: {},
+      version: 0,
     },
     business: {
       id: 'test-business-id',

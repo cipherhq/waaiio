@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     const rawBody = await request.text();
-    log.debug('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
+    log.debug('[WEBHOOK] Received message', { bodyLength: rawBody.length });
 
     let body: Record<string, unknown>;
     // Gupshup may send URL-encoded form data instead of JSON
@@ -114,17 +114,17 @@ export async function POST(request: NextRequest) {
             .from('business-documents')
             .upload(storagePath, audioBuffer, { contentType, upsert: false });
 
-          const { data: urlData } = storageClient.storage
+          const { data: urlData } = await storageClient.storage
             .from('business-documents')
-            .getPublicUrl(storagePath);
-          mediaUrl = urlData.publicUrl;
+            .createSignedUrl(storagePath, 3600);
+          mediaUrl = urlData?.signedUrl || '';
 
           // Transcribe audio with Whisper
           try {
             const transcript = await transcribeAudio(audioBuffer, contentType, `gupshup-${source}-${Date.now()}`);
             if (transcript) {
               text = transcript;
-              log.debug('[GUPSHUP-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+              log.debug('[GUPSHUP-WEBHOOK] Voice transcribed, length:', transcript.length);
             }
           } catch (transcribeErr) {
             log.error('[GUPSHUP-WEBHOOK] Transcription error:', transcribeErr);
@@ -142,31 +142,75 @@ export async function POST(request: NextRequest) {
 
     // Enrich logger with sender phone once known
     const logMsg = source ? log.withContext({ from: source }) : log;
-    logMsg.debug('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
+    logMsg.debug('[WEBHOOK] source:', source.slice(-4), 'dest:', destination.slice(-4), 'msgType:', msgType);
 
     if (!source) {
       log.debug('[WEBHOOK] No source phone, skipping');
       return NextResponse.json({ status: 'ok', message: 'No source phone' });
     }
 
-    // Replay protection: check for duplicate message
-    // Use crypto hash as fallback ID when Gupshup doesn't provide messageId (survives retries)
+    // Durable inbound event — store before processing
     const rawMsgId = (body.messageId || (body.response as Record<string, unknown>)?.id) as string | undefined;
     const messageId = rawMsgId || `${source}-${text?.slice(0, 50)}-${body.timestamp || ''}`;
+    const eventId = `gupshup-${messageId}`;
     const supabaseForDedup = createServiceClient();
 
-    // Use INSERT ON CONFLICT for atomic dedup (no race condition)
-    const { data: inserted } = await supabaseForDedup
+    // Atomically insert or fetch existing event
+    const { data: existing } = await supabaseForDedup
       .from('processed_webhook_events')
-      .upsert(
-        { event_id: `gupshup-${messageId}`, gateway: 'gupshup', event_type: 'whatsapp_message', processed_at: new Date().toISOString() },
-        { onConflict: 'event_id', ignoreDuplicates: true },
-      )
-      .select('id');
+      .select('id, status, attempts')
+      .eq('event_id', eventId)
+      .maybeSingle();
 
-    if (!inserted || inserted.length === 0) {
-      logMsg.debug('[WEBHOOK] Duplicate message, skipping:', messageId);
-      return NextResponse.json({ success: true, duplicate: true });
+    if (existing) {
+      if (existing.status === 'completed') {
+        logMsg.debug('[WEBHOOK] Already completed, skipping:', messageId);
+        return NextResponse.json({ success: true, duplicate: true });
+      }
+      if (existing.status === 'processing') {
+        // Check if stale (>60s = likely crashed worker)
+        const { data: staleCheck } = await supabaseForDedup
+          .from('processed_webhook_events')
+          .select('id')
+          .eq('event_id', eventId)
+          .eq('status', 'processing')
+          .lt('last_attempted_at', new Date(Date.now() - 60_000).toISOString())
+          .maybeSingle();
+
+        if (!staleCheck) {
+          logMsg.debug('[WEBHOOK] Currently processing, skipping:', messageId);
+          return NextResponse.json({ success: true, processing: true });
+        }
+        // Stale — allow retry
+      }
+      // Failed or stale — retry: update to processing
+      await supabaseForDedup
+        .from('processed_webhook_events')
+        .update({
+          status: 'processing',
+          attempts: (existing.attempts || 0) + 1,
+          last_attempted_at: new Date().toISOString(),
+        })
+        .eq('event_id', eventId);
+    } else {
+      // New event — insert as processing
+      const { error: insertErr } = await supabaseForDedup
+        .from('processed_webhook_events')
+        .insert({
+          event_id: eventId,
+          gateway: 'gupshup',
+          event_type: 'whatsapp_message',
+          status: 'processing',
+          attempts: 1,
+          first_received_at: new Date().toISOString(),
+          last_attempted_at: new Date().toISOString(),
+        });
+
+      if (insertErr) {
+        // Unique constraint = another worker beat us
+        logMsg.debug('[WEBHOOK] Event claimed by another worker:', messageId);
+        return NextResponse.json({ success: true, duplicate: true });
+      }
     }
 
     // Create service instances
@@ -177,7 +221,12 @@ export async function POST(request: NextRequest) {
     // Resolve channel from destination phone — returns the correct MessageSender (Gupshup or MetaCloud)
     const resolved = destination ? await resolver.resolveByPhone(destination) : null;
     if (!resolved?.sender) {
-      log.warn('[WEBHOOK] No messaging channel found for destination phone:', destination);
+      log.warn('[WEBHOOK] No messaging channel found for destination phone: ...', destination.slice(-4));
+      // Mark completed — no channel to process with
+      await supabaseForDedup
+        .from('processed_webhook_events')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('event_id', eventId);
       return NextResponse.json({ status: 'ok', message: 'No channel configured' });
     }
     const sender = resolved.sender;
@@ -188,12 +237,35 @@ export async function POST(request: NextRequest) {
     const standalone = new StandaloneService(supabase);
     const bot = new BotService(supabase, sender as MessageSender, standalone, intelligenceSvc);
 
-    // Process message
-    await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId, mediaUrl);
+    // Process message — wrap in try/catch for state updates
+    try {
+      await bot.handleMessage(source, text, msgType, destination || undefined, preResolvedBusinessId, mediaUrl);
 
-    logMsg.debug('[WEBHOOK] Message processed successfully');
-    return NextResponse.json({ status: 'ok' });
+      // Mark completed after successful processing
+      await supabaseForDedup
+        .from('processed_webhook_events')
+        .update({ status: 'completed', completed_at: new Date().toISOString() })
+        .eq('event_id', eventId);
+
+      logMsg.debug('[WEBHOOK] Message processed successfully');
+      return NextResponse.json({ status: 'ok' });
+    } catch (processingErr) {
+      // Mark failed — allows retry on next delivery
+      logMsg.error('[WEBHOOK] Processing failed:', processingErr);
+      Sentry.captureException(processingErr);
+      await supabaseForDedup
+        .from('processed_webhook_events')
+        .update({
+          status: 'failed',
+          last_error: String(processingErr).slice(0, 500),
+          last_attempted_at: new Date().toISOString(),
+        })
+        .eq('event_id', eventId);
+      // Return 200 — event is durably stored, retryable
+      return NextResponse.json({ status: 'ok' });
+    }
   } catch (error) {
+    // Top-level catch: signature/parse failures before event was stored
     log.error('[WEBHOOK] Error:', error);
     Sentry.captureException(error);
     return NextResponse.json({ status: 'ok' }, { status: 200 });

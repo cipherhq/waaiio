@@ -65,7 +65,7 @@ export class BotService {
   ): Promise<void> {
     try {
     const text = messageText.trim();
-    logger.debug('[BOT] handleMessage from:', from, 'text:', text, 'type:', messageType, 'dest:', destinationPhone);
+    logger.debug('[BOT] handleMessage from: ...', from.slice(-4), 'type:', messageType, 'textLen:', text.length);
 
     // Pre-check: Input length cap (prevents regex timeout, LLM token burn, DoS)
     if (text.length > 5000) {
@@ -93,6 +93,36 @@ export class BotService {
         return;
       }
     } catch (err) { logger.warn('[BOT] Maintenance mode check failed (fail open):', err); }
+
+    // STOP/UNSUBSCRIBE compliance — check before any other processing
+    const STOP_WORDS = ['stop', 'unsubscribe', 'opt out', 'opt-out'];
+    const START_WORDS = ['start', 'subscribe', 'opt in', 'opt-in'];
+    const normalizedInput = text?.toLowerCase().trim() || '';
+
+    if (STOP_WORDS.includes(normalizedInput)) {
+      // Record opt-out
+      await this.supabase.from('messaging_opt_outs').upsert({
+        phone: from,
+        business_id: preResolvedBusinessId || null,
+        channel: 'whatsapp',
+        opt_out_type: 'all',
+        opted_out_at: new Date().toISOString(),
+      }, { onConflict: 'phone,business_id,channel' }).select();
+
+      await this.sendText(from, 'You have been unsubscribed. You will no longer receive promotional messages. Send START to resubscribe.');
+      return;
+    }
+
+    if (START_WORDS.includes(normalizedInput)) {
+      // Resubscribe
+      await this.supabase.from('messaging_opt_outs')
+        .update({ resubscribed_at: new Date().toISOString() })
+        .eq('phone', from)
+        .is('resubscribed_at', null);
+
+      await this.sendText(from, 'You have been resubscribed. You will receive messages again.');
+      return;
+    }
 
     // Pre-check 1: Timeout
     const timeoutCheck = this.intelligence.isTimedOut(from);
@@ -403,6 +433,7 @@ export class BotService {
               business_id: biz.id as string,
               current_step: 'rsvp_welcome',
               session_data: newSession.session_data as Record<string, unknown>,
+              version: (newSession as Record<string, unknown>).version as number ?? 0,
             },
             {
               id: biz.id as string,
@@ -1149,7 +1180,8 @@ export class BotService {
         // so the flow can skip already-answered steps.
         if (text && text.length > 2 && !isRestart) {
           try {
-            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null);
+            const bizTimezone = (waConfig?.business_hours as BusinessHours | undefined)?.timezone;
+            const parsed = await parseSmartIntentHybrid(text, business?.category || null, this.supabase, business?.id || null, bizTimezone);
 
             // Store detected language as pending — confirmation already sent during session creation
             if ('language' in parsed && parsed.language && parsed.language !== 'en' && !session.session_data._detected_language) {

@@ -39,6 +39,7 @@ export class FlowExecutor {
       current_step: string;
       session_data: Record<string, unknown>;
       conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>;
+      version: number;
     },
     business: {
       id: string;
@@ -158,10 +159,12 @@ export class FlowExecutor {
         }
         this.logPromptMessages(session, messages);
         // Persist session_data after prompt — flows may store state (e.g., item lists for validation)
-        await this.supabase
-          .from('bot_sessions')
-          .update({ session_data: session.session_data, conversation_log: session.conversation_log })
-          .eq('id', session.id);
+        const promptSaved = await this.casUpdateSession(session, {
+          current_step: session.current_step,
+          session_data: session.session_data,
+          conversation_log: session.conversation_log,
+        });
+        if (!promptSaved) return; // stale — another worker already advanced
         await this.sendMessages(from, messages, session);
       }
       return;
@@ -187,11 +190,12 @@ export class FlowExecutor {
         const prevStep = history[history.length - 1];
         session.session_data._step_history = history;
         session.current_step = prevStep;
-        await this.supabase.from('bot_sessions').update({
+        const backSaved = await this.casUpdateSession(session, {
           current_step: prevStep,
           session_data: session.session_data,
           conversation_log: session.conversation_log,
-        }).eq('id', session.id);
+        });
+        if (!backSaved) return; // stale — another worker already advanced
         // Re-prompt the previous step
         const prevStepDef = getFlowStep(resolvedFlowType as FlowType, prevStep)
           || getFlowStepAcrossFlows(prevStep)?.step || null;
@@ -265,11 +269,19 @@ export class FlowExecutor {
         const { getLanguageName } = await import('@/lib/bot/translate');
         if (targetLang === 'en') {
           session.session_data._detected_language = undefined;
-          await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+          const langSaved = await this.casUpdateSession(session, {
+            current_step: session.current_step,
+            session_data: session.session_data,
+          });
+          if (!langSaved) return;
           await this.sendText(from, 'Switched to English. ✅');
         } else {
           session.session_data._detected_language = targetLang;
-          await this.supabase.from('bot_sessions').update({ session_data: session.session_data }).eq('id', session.id);
+          const langSaved = await this.casUpdateSession(session, {
+            current_step: session.current_step,
+            session_data: session.session_data,
+          });
+          if (!langSaved) return;
           const { translateBotResponse } = await import('@/lib/bot/translate');
           const msg = await translateBotResponse(`Switched to ${getLanguageName(targetLang)}. ✅`, targetLang);
           await this.sendText(from, msg);
@@ -418,10 +430,12 @@ export class FlowExecutor {
     if (Object.keys(pendingEntities).length > 0) {
       Object.assign(session.session_data, pendingEntities);
     }
-    await this.supabase
-      .from('bot_sessions')
-      .update({ session_data: session.session_data, conversation_log: session.conversation_log })
-      .eq('id', session.id);
+    const validateSaved = await this.casUpdateSession(session, {
+      current_step: session.current_step,
+      session_data: session.session_data,
+      conversation_log: session.conversation_log,
+    });
+    if (!validateSaved) return; // stale — another worker already advanced
 
     // ── Branch conditions: check override-based branching before default next() ──
     let nextStepId: string | null = null;
@@ -455,21 +469,18 @@ export class FlowExecutor {
   }
 
   private async advanceToStep(
-    session: { id: string; session_data: Record<string, unknown>; user_id: string | null; business_id: string | null; current_step: string; conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }> },
+    session: { id: string; session_data: Record<string, unknown>; user_id: string | null; business_id: string | null; current_step: string; conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>; version: number },
     nextStepId: string,
     from: string,
     ctx: FlowContext,
   ): Promise<void> {
     session.current_step = nextStepId;
-    await this.supabase
-      .from('bot_sessions')
-      .update({
-        current_step: nextStepId,
-        session_data: session.session_data,
-        conversation_log: session.conversation_log || [],
-        expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      })
-      .eq('id', session.id);
+    const advanceSaved = await this.casUpdateSession(session, {
+      current_step: nextStepId,
+      session_data: session.session_data,
+      conversation_log: session.conversation_log || [],
+    });
+    if (!advanceSaved) return; // stale — another worker already advanced
 
     // Try primary flow, then cross-flow lookup
     const activeCap = session.session_data.active_capability as CapabilityId | undefined;
@@ -700,7 +711,7 @@ export class FlowExecutor {
    */
   private async showPostCompletionMenu(
     from: string,
-    session: { id: string; session_data: Record<string, unknown>; business_id: string | null },
+    session: { id: string; session_data: Record<string, unknown>; business_id: string | null; version: number },
     ctx: FlowContext,
   ): Promise<void> {
     const cap = (session.session_data.active_capability as string) || '';
@@ -748,11 +759,10 @@ export class FlowExecutor {
       : 'What would you like to do next?';
 
     // Keep session alive on post_completion step so buttons work
-    await this.supabase.from('bot_sessions').update({
+    await this.casUpdateSession(session, {
       current_step: 'post_completion',
       session_data: { ...session.session_data, _post_completion_cap: cap },
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 min timeout
-    }).eq('id', session.id);
+    });
 
     await this.sender.sendButtons({ to: from, body, buttons });
   }
@@ -779,5 +789,46 @@ export class FlowExecutor {
       case 'staff': return 'scheduling'; // staff enhances scheduling
       default: return 'scheduling';
     }
+  }
+
+  /**
+   * Compare-and-set session update. Returns true if the update succeeded,
+   * false if there was a version conflict (stale write).
+   * On success, bumps session.version locally.
+   */
+  private async casUpdateSession(
+    session: { id: string; version: number },
+    fields: {
+      current_step: string;
+      session_data: Record<string, unknown>;
+      conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>;
+      step_history?: string[];
+    },
+  ): Promise<boolean> {
+    const { data: casResult } = await this.supabase.rpc('update_session_cas', {
+      p_session_id: session.id,
+      p_expected_version: session.version ?? 0,
+      p_current_step: fields.current_step,
+      p_session_data: fields.session_data,
+      p_conversation_log: fields.conversation_log ?? null,
+      p_step_history: fields.step_history ?? null,
+    });
+
+    if (!casResult?.success) {
+      if (casResult?.reason === 'version_conflict') {
+        logger.warn('[EXECUTOR] Session version conflict — stale write rejected', {
+          sessionId: session.id,
+          expected: casResult.expected_version,
+          current: casResult.current_version,
+        });
+      } else {
+        logger.error('[EXECUTOR] Session CAS update failed:', casResult?.reason);
+      }
+      return false;
+    }
+
+    // Update local session object with new version
+    session.version = casResult.version;
+    return true;
   }
 }

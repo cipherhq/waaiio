@@ -29,6 +29,7 @@ function buildCtx(overrides: Record<string, unknown> = {}) {
       current_step: '',
       session_data: { capabilities: FIXTURES.capabilities.salon, ...overrides },
       conversation_log: [],
+      version: 0,
     },
     business: { ...FIXTURES.business, ...overrides },
   } as FlowContext;

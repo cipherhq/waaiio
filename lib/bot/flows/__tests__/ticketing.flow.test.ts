@@ -23,7 +23,7 @@ describe('Ticketing Flow', () => {
           id: 'sess-1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'process_tickets',
+          current_step: 'process_tickets', version: 0,
           session_data: {
             _terms_cancelled: true,
             ticket_quantity: 2,
@@ -72,7 +72,7 @@ describe('Ticketing Flow', () => {
     it('next: returns process_tickets for re-entry when terms accepted', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_tickets',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_tickets', version: 0,
           session_data: { _terms_accepted: true },
         },
       });
@@ -83,7 +83,7 @@ describe('Ticketing Flow', () => {
     it('next: returns process_tickets for re-entry when terms cancelled', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_tickets',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_tickets', version: 0,
           session_data: { _terms_cancelled: true },
         },
       });
@@ -94,7 +94,7 @@ describe('Ticketing Flow', () => {
     it('next: returns null when neither terms flag is set (normal completion)', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_tickets',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_tickets', version: 0,
           session_data: {},
         },
       });
@@ -124,7 +124,7 @@ describe('Ticketing Flow', () => {
           id: 'sess-1',
           user_id: null as any,
           business_id: 'b1',
-          current_step: 'process_tickets',
+          current_step: 'process_tickets', version: 0,
           session_data: {
             _terms_accepted: true,
             ticket_quantity: 2,

@@ -28,7 +28,7 @@ describe('Scheduling Flow', () => {
           id: 's1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'create_booking',
+          current_step: 'create_booking', version: 0,
           session_data: {
             date: '2026-06-01',
             time: '10:00',
