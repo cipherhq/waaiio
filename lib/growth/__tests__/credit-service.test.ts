@@ -1,0 +1,71 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { getBalance, reserveCredits, grantCredits } from '../credit-service';
+
+// Mock Supabase client
+function createMockSupabase(overrides: Record<string, unknown> = {}) {
+  const chain = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    gt: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null }),
+    insert: vi.fn().mockResolvedValue({ error: null }),
+    update: vi.fn().mockReturnThis(),
+  };
+
+  return {
+    from: vi.fn().mockReturnValue(chain),
+    rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
+    _chain: chain,
+    ...overrides,
+  } as unknown as Parameters<typeof getBalance>[0];
+}
+
+describe('Credit Service — getBalance', () => {
+  it('returns zero balance when no credits exist', async () => {
+    const supabase = createMockSupabase();
+    const chain = (supabase as any)._chain;
+    chain.or.mockResolvedValueOnce({ data: [] }); // credits query (after .or filter)
+    chain.in.mockResolvedValueOnce({ data: [] }); // reserved campaigns query
+
+    const balance = await getBalance(supabase, 'biz-123');
+    expect(balance.total).toBe(0);
+    expect(balance.available).toBe(0);
+    expect(balance.reserved).toBe(0);
+  });
+});
+
+describe('Credit Service — reserveCredits', () => {
+  it('fails when insufficient credits', async () => {
+    const supabase = createMockSupabase();
+    // Mock RPC to return insufficient credits
+    (supabase as any).rpc.mockResolvedValueOnce({
+      data: { success: false, reason: 'insufficient_credits', available: 0 },
+      error: null,
+    });
+
+    const result = await reserveCredits(supabase, 'biz-123', 'camp-1', 100);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Insufficient');
+  });
+});
+
+describe('Credit Service — grantCredits', () => {
+  it('inserts credit record and transaction', async () => {
+    const insertCalls: unknown[] = [];
+    const supabase = createMockSupabase();
+    const chain = (supabase as any)._chain;
+    chain.insert.mockImplementation((data: unknown) => {
+      insertCalls.push(data);
+      return Promise.resolve({ error: null });
+    });
+
+    const result = await grantCredits(supabase, 'biz-123', 'included', 100, 'subscription');
+    expect(result.success).toBe(true);
+    // Should have called insert twice (credit + transaction)
+    expect(insertCalls.length).toBe(2);
+  });
+});

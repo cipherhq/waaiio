@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "prepare": "husky"
+    "prepare": "husky",
+    "certify:local": "node scripts/certify-local.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
