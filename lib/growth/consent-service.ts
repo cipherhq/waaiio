@@ -38,19 +38,26 @@ export async function revokeConsent(supabase: SupabaseClient, params: {
   phone: string;
   businessId: string;
   channel: ConsentChannel;
+  purpose?: ConsentPurpose;
 }): Promise<{ success: boolean }> {
-  // Insert a revocation record (append-only, don't update existing)
-  const { error } = await supabase.from('customer_consents').insert({
-    business_id: params.businessId,
-    phone: params.phone,
-    channel: params.channel,
-    purpose: 'marketing', // Revocation applies to marketing by default
-    status: 'revoked',
-    source: 'whatsapp',
-    revoked_at: new Date().toISOString(),
-  });
-  if (error) logger.error('[CONSENT] Revoke failed:', error.message);
-  return { success: !error };
+  // Revoke specified purpose or all purposes (append-only, don't update existing)
+  const purposes: ConsentPurpose[] = params.purpose
+    ? [params.purpose]
+    : ['utility', 'marketing', 'authentication'];
+
+  for (const purpose of purposes) {
+    const { error } = await supabase.from('customer_consents').insert({
+      business_id: params.businessId,
+      phone: params.phone,
+      channel: params.channel,
+      purpose,
+      status: 'revoked',
+      source: 'whatsapp',
+      revoked_at: new Date().toISOString(),
+    });
+    if (error) logger.error('[CONSENT] Revoke failed for purpose', purpose, ':', error.message);
+  }
+  return { success: true };
 }
 
 export async function verifyConsent(supabase: SupabaseClient, params: {
@@ -62,7 +69,7 @@ export async function verifyConsent(supabase: SupabaseClient, params: {
   // Get the latest consent record for this phone/business/channel/purpose
   const { data } = await supabase
     .from('customer_consents')
-    .select('status, granted_at, revoked_at')
+    .select('status, granted_at, revoked_at, expires_at')
     .eq('business_id', params.businessId)
     .eq('phone', params.phone)
     .eq('channel', params.channel)
@@ -72,6 +79,10 @@ export async function verifyConsent(supabase: SupabaseClient, params: {
     .maybeSingle();
 
   if (!data) return { hasConsent: false, status: 'unknown' };
+  // Check if consent has expired
+  if (data.status === 'granted' && data.expires_at && new Date(data.expires_at) < new Date()) {
+    return { hasConsent: false, status: 'unknown' };
+  }
   return {
     hasConsent: data.status === 'granted',
     status: data.status as ConsentStatus,

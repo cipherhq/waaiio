@@ -88,6 +88,11 @@ export default function GrowthImportPage() {
       return;
     }
 
+    if (file.size > 5 * 1024 * 1024) {
+      setError('File too large. Maximum 5MB.');
+      return;
+    }
+
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (ev) => {

@@ -13,7 +13,8 @@ export async function getBalance(supabase: SupabaseClient, businessId: string): 
     .from('growth_credits')
     .select('type, remaining, expires_at')
     .eq('business_id', businessId)
-    .gt('remaining', 0);
+    .gt('remaining', 0)
+    .or('expires_at.is.null,expires_at.gt.' + new Date().toISOString());
 
   const total = (credits || []).reduce((sum, c) => sum + c.remaining, 0);
 
@@ -45,23 +46,22 @@ export async function reserveCredits(
   campaignId: string,
   amount: number,
 ): Promise<{ success: boolean; error?: string }> {
-  const balance = await getBalance(supabase, businessId);
-  if (balance.available < amount) {
-    return { success: false, error: `Insufficient credits. Available: ${balance.available}, needed: ${amount}` };
-  }
+  if (amount <= 0) return { success: false, error: 'Amount must be positive' };
 
-  // Record reservation
-  const { error } = await supabase.from('growth_credit_transactions').insert({
-    business_id: businessId,
-    campaign_id: campaignId,
-    type: 'reserve',
-    amount: -amount,
-    balance_after: balance.available - amount,
+  const { data, error } = await supabase.rpc('reserve_credits_atomic', {
+    p_business_id: businessId,
+    p_campaign_id: campaignId,
+    p_amount: amount,
   });
 
   if (error) {
-    logger.error('[CREDITS] Reserve failed:', error.message);
+    logger.error('[CREDITS] Reserve RPC failed:', error.message);
     return { success: false, error: error.message };
+  }
+  if (!data?.success) {
+    return { success: false, error: data?.reason === 'insufficient_credits'
+      ? `Insufficient credits. Available: ${data?.available}`
+      : data?.reason || 'Reserve failed' };
   }
   return { success: true };
 }
@@ -72,31 +72,22 @@ export async function consumeCredits(
   campaignId: string,
   amount: number,
 ): Promise<void> {
-  // Deduct from the oldest non-expired credit balance
-  const { data: credits } = await supabase
-    .from('growth_credits')
-    .select('id, remaining')
-    .eq('business_id', businessId)
-    .gt('remaining', 0)
-    .order('created_at', { ascending: true });
+  if (amount <= 0) return;
 
-  let remaining = amount;
-  for (const credit of credits || []) {
-    if (remaining <= 0) break;
-    const deduct = Math.min(remaining, credit.remaining);
-    await supabase
-      .from('growth_credits')
-      .update({ remaining: credit.remaining - deduct })
-      .eq('id', credit.id);
-    remaining -= deduct;
-  }
-
-  await supabase.from('growth_credit_transactions').insert({
-    business_id: businessId,
-    campaign_id: campaignId,
-    type: 'consume',
-    amount: -amount,
+  const { data, error } = await supabase.rpc('consume_credits_atomic', {
+    p_business_id: businessId,
+    p_campaign_id: campaignId,
+    p_amount: amount,
   });
+
+  if (error) {
+    logger.error('[CREDITS] Consume RPC failed:', error.message);
+    throw new Error('Credit consumption failed');
+  }
+  if (!data?.success) {
+    logger.error('[CREDITS] Consume RPC rejected:', data?.reason);
+    throw new Error(data?.reason || 'Credit consumption failed');
+  }
 }
 
 export async function releaseCredits(
@@ -117,7 +108,7 @@ export async function releaseCredits(
   if (credits) {
     await supabase
       .from('growth_credits')
-      .update({ remaining: credits.remaining + amount })
+      .update({ remaining: Math.min(credits.remaining + amount, credits.amount) })
       .eq('id', credits.id);
   }
 
@@ -138,6 +129,8 @@ export async function grantCredits(
   reference?: string,
   expiresAt?: string,
 ): Promise<{ success: boolean }> {
+  if (amount <= 0) return { success: false };
+
   const { error } = await supabase.from('growth_credits').insert({
     business_id: businessId,
     type,

@@ -58,9 +58,8 @@ describe('Credit Service', () => {
     expect(source).toContain('Insufficient credits');
   });
 
-  it('deducts from oldest credits first (FIFO)', () => {
-    expect(source).toContain("order('created_at'");
-    expect(source).toContain('ascending: true');
+  it('deducts from oldest credits first (FIFO) via atomic RPC', () => {
+    expect(source).toContain('consume_credits_atomic');
   });
 
   it('records all credit transactions', () => {
