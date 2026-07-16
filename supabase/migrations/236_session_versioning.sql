@@ -23,7 +23,6 @@ BEGIN
     current_step = p_current_step,
     session_data = p_session_data,
     conversation_log = COALESCE(p_conversation_log, conversation_log),
-    step_history = COALESCE(p_step_history, step_history),
     version = version + 1,
     updated_at = NOW()
   WHERE id = p_session_id
