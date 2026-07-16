@@ -74,9 +74,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Upload failed. Please try again.' }, { status: 500 });
   }
 
-  const { data: urlData } = supabase.storage
+  const { data: urlData } = await supabase.storage
     .from('business-documents')
-    .getPublicUrl(path);
+    .createSignedUrl(path, 3600);
 
-  return NextResponse.json({ success: true, url: urlData.publicUrl });
+  return NextResponse.json({ success: true, url: urlData?.signedUrl || '' });
 }

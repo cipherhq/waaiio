@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     }
 
     const rawBody = await request.text();
-    log.debug('[WEBHOOK] Raw body:', rawBody.slice(0, 2000));
+    log.debug('[WEBHOOK] Received message', { bodyLength: rawBody.length });
 
     let body: Record<string, unknown>;
     // Gupshup may send URL-encoded form data instead of JSON
@@ -114,17 +114,17 @@ export async function POST(request: NextRequest) {
             .from('business-documents')
             .upload(storagePath, audioBuffer, { contentType, upsert: false });
 
-          const { data: urlData } = storageClient.storage
+          const { data: urlData } = await storageClient.storage
             .from('business-documents')
-            .getPublicUrl(storagePath);
-          mediaUrl = urlData.publicUrl;
+            .createSignedUrl(storagePath, 3600);
+          mediaUrl = urlData?.signedUrl || '';
 
           // Transcribe audio with Whisper
           try {
             const transcript = await transcribeAudio(audioBuffer, contentType, `gupshup-${source}-${Date.now()}`);
             if (transcript) {
               text = transcript;
-              log.debug('[GUPSHUP-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+              log.debug('[GUPSHUP-WEBHOOK] Voice transcribed, length:', transcript.length);
             }
           } catch (transcribeErr) {
             log.error('[GUPSHUP-WEBHOOK] Transcription error:', transcribeErr);
@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
 
     // Enrich logger with sender phone once known
     const logMsg = source ? log.withContext({ from: source }) : log;
-    logMsg.debug('[WEBHOOK] source:', source, 'dest:', destination, 'text:', text, 'msgType:', msgType);
+    logMsg.debug('[WEBHOOK] source:', source.slice(-4), 'dest:', destination.slice(-4), 'msgType:', msgType);
 
     if (!source) {
       log.debug('[WEBHOOK] No source phone, skipping');
@@ -221,7 +221,7 @@ export async function POST(request: NextRequest) {
     // Resolve channel from destination phone — returns the correct MessageSender (Gupshup or MetaCloud)
     const resolved = destination ? await resolver.resolveByPhone(destination) : null;
     if (!resolved?.sender) {
-      log.warn('[WEBHOOK] No messaging channel found for destination phone:', destination);
+      log.warn('[WEBHOOK] No messaging channel found for destination phone: ...', destination.slice(-4));
       // Mark completed — no channel to process with
       await supabaseForDedup
         .from('processed_webhook_events')

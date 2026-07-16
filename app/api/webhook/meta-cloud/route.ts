@@ -516,10 +516,10 @@ export async function POST(request: NextRequest) {
                         upsert: false,
                       });
 
-                    const { data: urlData } = supabase.storage
+                    const { data: urlData } = await supabase.storage
                       .from('business-documents')
-                      .getPublicUrl(storagePath);
-                    mediaUrl = urlData.publicUrl;
+                      .createSignedUrl(storagePath, 3600);
+                    mediaUrl = urlData?.signedUrl || '';
 
                     // Transcribe audio with Whisper (tier-gated)
                     if (preResolvedBusinessId) {
@@ -537,7 +537,7 @@ export async function POST(request: NextRequest) {
                           if (transcript) {
                             text = transcript;
                             await incrementAIUsage(supabase, preResolvedBusinessId, 'voice_transcription');
-                            msgLog.debug('[META-WEBHOOK] Voice transcribed:', transcript.slice(0, 80));
+                            msgLog.debug('[META-WEBHOOK] Voice transcribed, length:', transcript.length);
                           }
                         } catch (transcribeErr) {
                           msgLog.error('[META-WEBHOOK] Transcription error:', transcribeErr);
@@ -583,7 +583,7 @@ export async function POST(request: NextRequest) {
                 continue;
               }
 
-              msgLog.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
+              msgLog.debug('[META-WEBHOOK] source: ...', source.slice(-4), 'type:', msgType, 'textLen:', text.length, 'pnid:', phoneNumberId);
 
               // Mark message as read immediately (blue ticks — shows business is active)
               if (resolved.cloud && msg.id) {
@@ -593,9 +593,9 @@ export async function POST(request: NextRequest) {
               const standalone = new StandaloneService(supabase);
               const bot = new BotService(supabase, resolved.sender, standalone, intelligenceSvc);
 
-              msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for', source, 'text:', text, 'preResolvedBiz:', preResolvedBusinessId);
+              msgLog.debug('[META-WEBHOOK] Calling bot.handleMessage for ...', source.slice(-4), 'preResolvedBiz:', preResolvedBusinessId);
               await bot.handleMessage(source, text, msgType, phoneNumberId, preResolvedBusinessId, mediaUrl);
-              msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for', source);
+              msgLog.debug('[META-WEBHOOK] bot.handleMessage completed for ...', source.slice(-4));
 
               // Mark completed after successful processing
               await supabase
