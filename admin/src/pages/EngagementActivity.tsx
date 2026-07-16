@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { adminDb } from '@/lib/supabase';
 import { Pagination } from '@/components/Pagination';
-import { fmtDateTime, maskPhone } from '@/lib/formatters';
+import { fmtDateTime, maskEmail, maskPhone } from '@/lib/formatters';
 
 // ── Types ──────────────────────────────────────────────
 
@@ -11,6 +11,7 @@ interface CheckinRecord {
   business_name?: string;
   customer_name: string;
   customer_phone: string | null;
+  customer_email: string | null;
   source: string;
   checked_in_at: string;
 }
@@ -47,13 +48,21 @@ function daysAgoISO(n: number) {
   return d.toISOString().split('T')[0];
 }
 
-function rangeStart(range: DateRange): string | null {
+const MAX_QUERY_DAYS = 90;
+
+function rangeStart(range: DateRange): string {
   switch (range) {
     case 'today': return todayISO();
     case 'week': return daysAgoISO(7);
     case 'month': return daysAgoISO(30);
-    case 'all': return null;
+    case 'all': return daysAgoISO(MAX_QUERY_DAYS);
   }
+}
+
+/** Clamp a date string so it's no more than 90 days in the past. */
+function clampDate(dateStr: string): string {
+  const minDate = daysAgoISO(MAX_QUERY_DAYS);
+  return dateStr < minDate ? minDate : dateStr;
 }
 
 // ── Component ──────────────────────────────────────────
@@ -144,12 +153,14 @@ export default function EngagementActivity() {
     checkinsRef.current = true;
     setCheckinsLoading(true);
     try {
+      const safeDate = clampDate(checkinsDate);
       const { data, error: queryError } = await adminDb
         .from('attendance_log')
         .select('*')
-        .gte('checked_in_at', checkinsDate)
-        .lt('checked_in_at', checkinsDate + 'T23:59:59.999Z')
-        .order('checked_in_at', { ascending: false });
+        .gte('checked_in_at', safeDate)
+        .lt('checked_in_at', safeDate + 'T23:59:59.999Z')
+        .order('checked_in_at', { ascending: false })
+        .range(0, 99);
 
       if (queryError) {
         setError(`Failed to load check-ins: ${queryError.message}`);
@@ -188,24 +199,26 @@ export default function EngagementActivity() {
     try {
       const start = rangeStart(topRange);
 
-      // Fetch attendance counts
-      let attendanceQuery = adminDb
+      // Fetch attendance counts (capped at 500 rows)
+      const { data: attendanceData, error: attError } = await adminDb
         .from('attendance_log')
-        .select('business_id, checked_in_at');
-      if (start) attendanceQuery = attendanceQuery.gte('checked_in_at', start);
-      const { data: attendanceData, error: attError } = await attendanceQuery;
+        .select('business_id, checked_in_at')
+        .gte('checked_in_at', start)
+        .order('checked_in_at', { ascending: false })
+        .limit(500);
 
       if (attError) {
         setError(`Failed to load top businesses: ${attError.message}`);
         return;
       }
 
-      // Fetch bot session counts
-      let botQuery = adminDb
+      // Fetch bot session counts (capped at 500 rows)
+      const { data: botData, error: botError } = await adminDb
         .from('bot_sessions')
-        .select('business_id, created_at');
-      if (start) botQuery = botQuery.gte('created_at', start);
-      const { data: botData, error: botError } = await botQuery;
+        .select('business_id, created_at')
+        .gte('created_at', start)
+        .order('created_at', { ascending: false })
+        .limit(500);
 
       if (botError) {
         setError(`Failed to load bot sessions: ${botError.message}`);
@@ -270,13 +283,15 @@ export default function EngagementActivity() {
     scansRef.current = true;
     setScansLoading(true);
     try {
+      const safeScansDate = clampDate(scansDate);
       const { data, error: scansError } = await adminDb
         .from('event_tickets')
         .select('id, ticket_code, scanned_at, scanned_by, event_id')
         .not('scanned_at', 'is', null)
-        .gte('scanned_at', scansDate)
-        .lt('scanned_at', scansDate + 'T23:59:59.999Z')
-        .order('scanned_at', { ascending: false });
+        .gte('scanned_at', safeScansDate)
+        .lt('scanned_at', safeScansDate + 'T23:59:59.999Z')
+        .order('scanned_at', { ascending: false })
+        .range(0, 99);
 
       if (scansError) {
         setError(`Failed to load ticket scans: ${scansError.message}`);
@@ -394,6 +409,8 @@ export default function EngagementActivity() {
             <input
               type="date"
               value={checkinsDate}
+              min={daysAgoISO(MAX_QUERY_DAYS)}
+              max={todayISO()}
               onChange={e => { setCheckinsDate(e.target.value); setCheckinsPage(1); }}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
@@ -406,20 +423,22 @@ export default function EngagementActivity() {
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Business</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Customer</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Phone</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-500">Email</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Source</th>
                   <th className="px-4 py-3 text-xs font-semibold text-gray-500">Time</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {checkinsLoading ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">Loading...</td></tr>
                 ) : checkinsPaginated.length === 0 ? (
-                  <tr><td colSpan={5} className="px-4 py-8 text-center text-gray-400">No check-ins found.</td></tr>
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400">No check-ins found.</td></tr>
                 ) : checkinsPaginated.map(r => (
                   <tr key={r.id} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3 font-medium text-gray-900">{r.business_name}</td>
                     <td className="px-4 py-3 text-gray-600">{r.customer_name}</td>
-                    <td className="px-4 py-3 text-gray-500">{r.customer_phone ? maskPhone(r.customer_phone) : '-'}</td>
+                    <td className="px-4 py-3 text-gray-500">{maskPhone(r.customer_phone)}</td>
+                    <td className="px-4 py-3 text-gray-500">{maskEmail(r.customer_email)}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium capitalize ${
                         r.source === 'web' ? 'bg-blue-100 text-blue-700'
@@ -452,7 +471,7 @@ export default function EngagementActivity() {
               <option value="today">Today</option>
               <option value="week">This Week</option>
               <option value="month">This Month</option>
-              <option value="all">All Time</option>
+              <option value="all">Last 90 Days</option>
             </select>
           </div>
 
@@ -494,6 +513,8 @@ export default function EngagementActivity() {
             <input
               type="date"
               value={scansDate}
+              min={daysAgoISO(MAX_QUERY_DAYS)}
+              max={todayISO()}
               onChange={e => { setScansDate(e.target.value); setScansPage(1); }}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
@@ -519,7 +540,13 @@ export default function EngagementActivity() {
                     <td className="px-4 py-3 font-medium text-gray-900">{s.event_name}</td>
                     <td className="px-4 py-3 text-gray-600 font-mono">{s.ticket_code}</td>
                     <td className="px-4 py-3 text-gray-500">{fmtDateTime(s.scanned_at)}</td>
-                    <td className="px-4 py-3 text-gray-500">{s.scanned_by || '-'}</td>
+                    <td className="px-4 py-3 text-gray-500">
+                      {s.scanned_by
+                        ? s.scanned_by.startsWith('whatsapp:')
+                          ? 'whatsapp:' + maskPhone(s.scanned_by.replace('whatsapp:', ''))
+                          : s.scanned_by
+                        : '-'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
