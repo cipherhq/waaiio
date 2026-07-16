@@ -67,6 +67,7 @@ import ResellerPayouts from './pages/ResellerPayouts';
 import PendingTransfers from './pages/PendingTransfers';
 import FeeInvoices from './pages/FeeInvoices';
 import AdminPermissions from './pages/AdminPermissions';
+import AIMarketplace from './pages/AIMarketplace';
 
 export const router = createBrowserRouter([
   { path: '/login', Component: Login },
@@ -131,6 +132,7 @@ export const router = createBrowserRouter([
       { path: 'audit-log', element: <RoleGuard roles={ADMIN_PERMISSIONS['audit-log']}><AuditLog /></RoleGuard> },
       { path: 'system-health', element: <RoleGuard roles={ADMIN_PERMISSIONS['system-health']}><SystemHealth /></RoleGuard> },
       { path: 'permissions', element: <RoleGuard roles={ADMIN_PERMISSIONS['permissions']}><AdminPermissions /></RoleGuard> },
+      { path: 'ai-marketplace', element: <RoleGuard roles={ADMIN_PERMISSIONS['ai-marketplace'] || ['admin']}><AIMarketplace /></RoleGuard> },
     ],
   },
   { path: '*', element: <Navigate to="/dashboard" replace /> },

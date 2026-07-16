@@ -44,6 +44,7 @@ import {
   Landmark,
   FileSpreadsheet,
   ScanLine,
+  Sparkles,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminSession } from './AdminLayout';
@@ -153,6 +154,7 @@ const navSections: { label: string; items: NavItem[] }[] = [
       { icon: ScrollText, label: 'Audit Log', path: '/audit-log', roles: ADMIN_PERMISSIONS['audit-log'] },
       { icon: Activity, label: 'System Health', path: '/system-health', roles: ADMIN_PERMISSIONS['system-health'] },
       { icon: ShieldCheck, label: 'Permissions', path: '/permissions', roles: ADMIN_PERMISSIONS['permissions'] },
+      { icon: Sparkles, label: 'AI Marketplace', path: '/ai-marketplace', roles: ADMIN_PERMISSIONS['ai-marketplace'] },
     ],
   },
 ];
