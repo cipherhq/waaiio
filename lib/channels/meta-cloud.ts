@@ -582,6 +582,35 @@ export class MetaCloudService {
     return res.json();
   }
 
+  // ── Download Media (audio, images, documents) ──
+
+  /** Download media from Meta API using the decrypted access token. Returns the binary buffer and MIME type. */
+  async downloadMedia(mediaId: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
+    try {
+      // Step 1: Get the media URL
+      const urlRes = await fetch(
+        `${this.baseUrl}/${mediaId}`,
+        { headers: { Authorization: `Bearer ${this.accessToken}` }, signal: AbortSignal.timeout(8000) }
+      );
+      if (!urlRes.ok) return null;
+      const { url } = await urlRes.json();
+      if (!url) return null;
+
+      // Step 2: Download the actual media binary
+      const mediaRes = await fetch(url, {
+        headers: { Authorization: `Bearer ${this.accessToken}` },
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!mediaRes.ok) return null;
+
+      const buffer = Buffer.from(await mediaRes.arrayBuffer());
+      const mimeType = mediaRes.headers.get('content-type') || 'application/octet-stream';
+      return { buffer, mimeType };
+    } catch {
+      return null;
+    }
+  }
+
   // ── Private: API Call Helper ──
 
   private async callApi(endpoint: string, body: Record<string, unknown>): Promise<CloudApiResponse> {

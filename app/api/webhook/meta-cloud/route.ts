@@ -430,6 +430,24 @@ export async function POST(request: NextRequest) {
           const source = msg.from;
           const msgLog = log.withContext({ from: source });
 
+          // Deduplicate ALL message types including orders
+          const metaMsgId = msg.id;
+          if (metaMsgId) {
+            const { data: dedupResult } = await supabase
+              .from('processed_webhook_events')
+              .upsert(
+                { event_id: `meta-${metaMsgId}`, gateway: 'meta_cloud', event_type: msg.type || 'message', processed_at: new Date().toISOString() },
+                { onConflict: 'event_id', ignoreDuplicates: true }
+              )
+              .select('id');
+
+            if (!dedupResult || dedupResult.length === 0) {
+              // Already processed — skip this message
+              msgLog.debug('[META-WEBHOOK] Duplicate message skipped:', metaMsgId);
+              continue;
+            }
+          }
+
           // ── Handle WhatsApp Catalog order messages ──
           // When a customer adds items from the native WhatsApp catalog and submits,
           // Meta sends a message with type === 'order'. This is a parallel path to
@@ -478,18 +496,15 @@ export async function POST(request: NextRequest) {
           let mediaUrl: string | undefined;
           if (msg.type === 'audio' && msg.audio?.id) {
             try {
-              const metaToken = resolved.channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
-              // Get media URL from Meta
-              const mediaRes = await fetch(`https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || 'v22.0'}/${msg.audio.id}`, {
-                headers: { Authorization: `Bearer ${metaToken}` },
-              });
-              const mediaData = await mediaRes.json();
-              if (mediaData.url) {
-                // Download the audio binary
-                const audioRes = await fetch(mediaData.url, {
-                  headers: { Authorization: `Bearer ${metaToken}` },
-                });
-                const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+              // Use resolved.cloud (MetaCloudService) which has the DECRYPTED token.
+              // Do NOT read resolved.channel.meta_access_token directly — it's encrypted ciphertext.
+              if (!resolved.cloud) {
+                msgLog.error('[META-WEBHOOK] No MetaCloudService available for media download');
+                throw new Error('MetaCloudService not available');
+              }
+              const media = await resolved.cloud.downloadMedia(msg.audio.id);
+              if (media) {
+                const audioBuffer = media.buffer;
                 const ext = (msg.audio.mime_type || 'audio/ogg').includes('ogg') ? 'ogg' : 'webm';
                 const storagePath = `chat-audio/${preResolvedBusinessId || 'unknown'}/${Date.now()}.${ext}`;
 
@@ -555,21 +570,6 @@ export async function POST(request: NextRequest) {
 
           if (!source || (!text && !mediaUrl)) continue;
 
-          // Replay protection: atomic dedup via ON CONFLICT
-          const metaMsgId = msg.id || `${source}-${msg.timestamp}`;
-          const { data: dedupInserted } = await supabase
-            .from('processed_webhook_events')
-            .upsert(
-              { event_id: `meta-${metaMsgId}`, gateway: 'meta_cloud', event_type: 'meta_cloud_message', processed_at: new Date().toISOString() },
-              { onConflict: 'event_id', ignoreDuplicates: true },
-            )
-            .select('id');
-
-          if (!dedupInserted || dedupInserted.length === 0) {
-            msgLog.debug('[META-WEBHOOK] Duplicate message, skipping:', metaMsgId);
-            continue;
-          }
-
           msgLog.debug('[META-WEBHOOK] source:', source, 'text:', text, 'type:', msgType, 'pnid:', phoneNumberId);
 
           // Mark message as read immediately (blue ticks — shows business is active)
@@ -597,7 +597,6 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          // Already marked as processed via upsert above
         }
       }
     }
