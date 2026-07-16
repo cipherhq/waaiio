@@ -11,6 +11,8 @@
  * A success in half-open closes the circuit; a failure re-opens it.
  */
 
+import * as Sentry from '@sentry/nextjs';
+
 interface CircuitState {
   failures: number;
   lastFailure: number;
@@ -44,6 +46,10 @@ export function isCircuitOpen(service: string): boolean {
     // Check if enough time has passed to allow a probe
     if (Date.now() - circuit.lastFailure >= RESET_TIMEOUT_MS) {
       circuit.state = 'half-open';
+      Sentry.captureMessage(`Circuit breaker recovered: ${service}`, {
+        level: 'info',
+        tags: { component: 'circuit-breaker', circuit: service },
+      });
       return false; // allow one probe request
     }
     return true; // still open
@@ -58,8 +64,15 @@ export function isCircuitOpen(service: string): boolean {
  */
 export function recordSuccess(service: string): void {
   const circuit = getOrCreate(service);
+  const wasOpen = circuit.state === 'half-open' || circuit.state === 'open';
   circuit.failures = 0;
   circuit.state = 'closed';
+  if (wasOpen) {
+    Sentry.captureMessage(`Circuit breaker recovered: ${service}`, {
+      level: 'info',
+      tags: { component: 'circuit-breaker', circuit: service },
+    });
+  }
 }
 
 /**
@@ -70,8 +83,12 @@ export function recordFailure(service: string): void {
   circuit.failures += 1;
   circuit.lastFailure = Date.now();
 
-  if (circuit.failures >= FAILURE_THRESHOLD) {
+  if (circuit.failures >= FAILURE_THRESHOLD && circuit.state !== 'open') {
     circuit.state = 'open';
+    Sentry.captureMessage(`Circuit breaker OPEN: ${service}`, {
+      level: 'fatal',
+      tags: { component: 'circuit-breaker', circuit: service },
+    });
   }
 }
 

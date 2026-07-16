@@ -66,6 +66,8 @@ export async function GET() {
   if (!metaOk) failures.push('meta: META_CLOUD_ACCESS_TOKEN not set');
 
   const allOk = dbOk && redisOk && whatsappOk && paymentsOk && emailOk && metaOk;
+  // Critical services: DB and payments. If either is down, return 503.
+  const criticalDown = !dbOk || !paymentsOk;
 
   // Log failures internally — never expose to response
   if (failures.length > 0) {
@@ -73,8 +75,11 @@ export async function GET() {
   }
 
   // Only expose status — not which services are configured (information disclosure)
+  const status = criticalDown ? 'critical' : allOk ? 'ok' : 'degraded';
+  const httpStatus = criticalDown ? 503 : 200;
+
   return NextResponse.json({
-    status: allOk ? 'ok' : 'degraded',
+    status,
     timestamp: new Date().toISOString(),
-  }, { status: allOk ? 200 : 503 });
+  }, { status: httpStatus });
 }

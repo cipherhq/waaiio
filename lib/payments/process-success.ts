@@ -43,11 +43,17 @@ export async function processSuccessfulPayment(
       .eq('id', payment.booking_id)
       .in('status', ['pending']);
 
-    await recordPlatformFee(supabase, {
-      bookingId: payment.booking_id,
-      paymentAmount: payment.amount,
-      gatewayFee: payment.gateway_fee,
-    });
+    try {
+      await recordPlatformFee(supabase, {
+        bookingId: payment.booking_id,
+        paymentAmount: payment.amount,
+        gatewayFee: payment.gateway_fee,
+      });
+    } catch (feeErr) {
+      Sentry.captureException(feeErr, { tags: { type: 'platform_fee_failure', entity: 'booking' } });
+      logger.error('[PLATFORM-FEE] Failed to record fee for booking:', feeErr);
+      // Don't block the booking confirmation — but ops is alerted via Sentry
+    }
 
     // Track waitlist conversion: if this customer was notified via waitlist, mark as converted
     try {
