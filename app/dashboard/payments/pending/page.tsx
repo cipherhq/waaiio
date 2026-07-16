@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -265,7 +266,7 @@ export default function PendingTransfersPage() {
       )}
 
       {/* Summary Cards */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         {/* Pending */}
         <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-5">
           <div className="inline-flex rounded-lg bg-yellow-50 dark:bg-yellow-900/20 p-2 text-yellow-600 dark:text-yellow-400">
@@ -335,18 +336,19 @@ export default function PendingTransfersPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-            <table className="w-full text-sm">
+          <ResponsiveTable>
+          <div className="rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="w-full min-w-[600px] text-sm">
               <thead className="border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
                 <tr>
                   <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Customer</th>
                   <th scope="col" className="px-4 py-2.5 text-right text-xs font-medium text-gray-500 dark:text-gray-400">Amount</th>
                   <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Reference</th>
-                  <th scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Proof</th>
+                  <th scope="col" className="hidden sm:table-cell px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Proof</th>
                   {activeTab === 'pending' && (
                     <th scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Time Left</th>
                   )}
-                  <th scope="col" className="px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created</th>
+                  <th scope="col" className="hidden sm:table-cell px-4 py-2.5 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Created</th>
                   <th scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Status</th>
                   {activeTab === 'pending' && (
                     <th scope="col" className="px-4 py-2.5 text-center text-xs font-medium text-gray-500 dark:text-gray-400">Actions</th>
@@ -382,7 +384,7 @@ export default function PendingTransfersPage() {
                       </td>
 
                       {/* Proof */}
-                      <td className="px-4 py-2.5 text-center whitespace-nowrap">
+                      <td className="hidden sm:table-cell px-4 py-2.5 text-center whitespace-nowrap">
                         {t.proof_type === 'screenshot' && t.proof_image_url ? (
                           <button
                             onClick={() => setProofImageUrl(t.proof_image_url)}
@@ -426,7 +428,7 @@ export default function PendingTransfersPage() {
                       )}
 
                       {/* Created */}
-                      <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs">
+                      <td className="hidden sm:table-cell px-4 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap text-xs">
                         {formatDate(t.created_at)}
                       </td>
 
@@ -462,6 +464,7 @@ export default function PendingTransfersPage() {
               </tbody>
             </table>
           </div>
+          </ResponsiveTable>
         )}
       </div>
 

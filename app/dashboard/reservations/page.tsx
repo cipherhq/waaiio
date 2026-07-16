@@ -9,6 +9,7 @@ import { RefundModal } from '@/components/dashboard/RefundModal';
 import { CsvExportButton } from '@/components/dashboard/CsvExportButton';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import { PhoneInput } from '@/components/auth/PhoneInput';
+import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 
 interface ServiceOption {
   id: string;
@@ -614,7 +615,7 @@ export default function BookingsPage() {
         const confirmedCount = bookings.filter(b => b.status === 'confirmed').length;
 
         return (
-          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-xl border border-blue-100 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 p-4">
               <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Today</p>
               <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">{todayBookings.length}</p>
@@ -754,31 +755,32 @@ export default function BookingsPage() {
           <p className="text-sm text-gray-400 dark:text-gray-500">No {labels.entityNamePlural} found</p>
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <table className="w-full text-sm">
+        <ResponsiveTable className="mt-4">
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <table className="w-full min-w-[700px] text-sm">
             <thead>
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300 dark:border-gray-600" /></th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guest</th>
                 {bookingType === 'reservations' || (!hasBothTypes && showReservations) ? (
                   <>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.propertyName || 'Property'}</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-in</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-out</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Nights</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guests</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Check-out</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Nights</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Guests</th>
                     <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
                   </>
                 ) : (
                   <>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Staff</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Staff</th>
                     <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date & Time</th>
-                    <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
+                    <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
                     <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
                   </>
                 )}
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
+                <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Actions</th>
               </tr>
             </thead>
@@ -792,11 +794,11 @@ export default function BookingsPage() {
                   </td>
                   {r._isReservation || bookingType === 'reservations' ? (
                     <>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' })}
                       </td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                      <td className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">
                         {r.time ? r.time.replace(/\d+ night.*/, (m: string) => {
                           const nights = parseInt(m);
                           const checkIn = new Date(r.date + 'T00:00');
@@ -804,20 +806,20 @@ export default function BookingsPage() {
                           return checkIn.toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { day: 'numeric', month: 'short' });
                         }) : '—'}
                       </td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.time?.match(/\d+/)?.[0] || '—'}</td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{r.time?.match(/\d+/)?.[0] || '—'}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-gray-100">
                         {formatCurrency(r.total_amount || 0, (business.country_code || 'NG') as CountryCode)}
                       </td>
                     </>
                   ) : (
                     <>
-                      <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{r.staff_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
                         {new Date(r.date + 'T00:00').toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), { weekday: 'short', day: 'numeric', month: 'short' })}
                         {r.time && !r.time.includes('night') && ` at ${r.time.slice(0, 5)}`}
                       </td>
-                      <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
+                      <td className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">{r.party_size}</td>
                       <td className="px-4 py-3 text-right font-medium text-gray-900 dark:text-gray-100">
                         {r.total_amount || r.deposit_amount
                           ? formatCurrency(r.total_amount || r.deposit_amount || 0, (business.country_code || 'NG') as CountryCode)
@@ -835,7 +837,7 @@ export default function BookingsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap min-w-[5rem]">{r.reference_code}</td>
+                  <td className="hidden sm:table-cell px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap min-w-[5rem]">{r.reference_code}</td>
                   <td className="px-4 py-3">
                     {(() => {
                       const actions = (nextActions[r.status] || []).filter(a => !labels.hiddenStatuses.includes(a.next));
@@ -862,6 +864,7 @@ export default function BookingsPage() {
             </tbody>
           </table>
         </div>
+        </ResponsiveTable>
       )}
 
       {/* Bulk Action Bar */}

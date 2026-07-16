@@ -407,7 +407,7 @@ export default function ServicesPage() {
           </h1>
         </div>
 
-        <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_280px]">
+        <div className="mt-5 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
           {/* Left column: Main fields */}
           <div className="space-y-4">
             {/* Image upload */}
@@ -1074,7 +1074,7 @@ export default function ServicesPage() {
   // ═══════════════════════════════════════════
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{labels.serviceNamePlural || 'Services'}</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">

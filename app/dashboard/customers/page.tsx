@@ -9,6 +9,7 @@ import { formatCurrency, getLocale, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
 import EmptyState from '@/components/dashboard/EmptyState';
 import { ensurePlus } from '@/lib/utils/phone';
+import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -565,18 +566,19 @@ export default function CustomersPage() {
           </p>
         </div>
       ) : (
-        <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <table className="w-full text-sm">
+        <ResponsiveTable className="mt-4">
+        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <table className="w-full min-w-[600px] text-sm">
             <thead>
               <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                 <th scope="col" className="px-4 py-3"><input type="checkbox" checked={selectedIds.size === pageItems.length && pageItems.length > 0} onChange={toggleAll} className="h-4 w-4 rounded border-gray-300" /></th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Givings' : 'Total Visits'}</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{isGiving ? 'Total Given' : 'Total Spent'}</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Avg Rating</th>
+                <th scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Avg Rating</th>
                 <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Last Seen</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Segment</th>
-                <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Tags</th>
+                <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Segment</th>
+                <th scope="col" className="hidden lg:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Tags</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
@@ -619,7 +621,7 @@ export default function CustomersPage() {
                   </td>
 
                   {/* Avg Rating */}
-                  <td className="px-4 py-3">
+                  <td className="hidden lg:table-cell px-4 py-3">
                     {c.avg_rating != null && c.avg_rating > 0 ? (
                       <div className="flex items-center gap-1.5">
                         <StarRating rating={Math.round(c.avg_rating)} />
@@ -638,7 +640,7 @@ export default function CustomersPage() {
                   </td>
 
                   {/* Segment */}
-                  <td className="px-4 py-3">
+                  <td className="hidden sm:table-cell px-4 py-3">
                     {c.customer_segment ? (
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
                         c.customer_segment === 'loyal' ? 'bg-green-50 text-green-700' :
@@ -655,7 +657,7 @@ export default function CustomersPage() {
                   </td>
 
                   {/* Tags */}
-                  <td className="px-4 py-3">
+                  <td className="hidden lg:table-cell px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {(c.tags || []).map((tag) => (
                         <span
@@ -672,6 +674,7 @@ export default function CustomersPage() {
             </tbody>
           </table>
         </div>
+        </ResponsiveTable>
       )}
 
       {/* Bulk Action Bar */}
