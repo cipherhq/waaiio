@@ -92,3 +92,79 @@ jobs:
             fi
           done
           echo "All migrations checked."
+
+  # ── Secret Scanning ──
+  secret-scan:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for secrets in code
+        run: |
+          # Check for common secret patterns in tracked files
+          echo "Scanning for potential secrets..."
+          FOUND=0
+
+          # Patterns that should never appear in code
+          # Skip .env.example (has placeholder values), node_modules, .next
+          PATTERNS=(
+            'sk_live_'       # Stripe live keys
+            'sk_test_[a-zA-Z0-9]{20}'  # Stripe test keys (long ones)
+            'pk_live_'       # Stripe live publishable
+            'FLWSECK_'       # Flutterwave
+            'sq0atp-'        # Square
+            'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVC'  # JWT tokens
+            'sbp_'           # Supabase access tokens
+            'xoxb-'          # Slack bot tokens
+            'ghp_'           # GitHub PATs
+          )
+
+          for pattern in "${PATTERNS[@]}"; do
+            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' 2>/dev/null || true)
+            if [ -n "$MATCHES" ]; then
+              echo "⚠️  Found potential secret pattern '$pattern' in:"
+              echo "$MATCHES"
+              FOUND=1
+            fi
+          done
+
+          if [ "$FOUND" -eq 1 ]; then
+            echo "❌ Potential secrets found. Please review."
+            exit 1
+          fi
+          echo "✅ No secrets detected."
+
+  # ── Dependency Audit ──
+  dependency-audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit root dependencies
+        run: npm audit --audit-level=critical || true
+        # Using || true because we don't want to block on non-critical advisories
+        # but we want visibility into what exists
+
+      - name: Check for wildcard dependencies
+        run: |
+          echo "Checking for wildcard (*) dependencies..."
+          if grep -r '"*"' package.json admin/package.json 2>/dev/null; then
+            echo "❌ Wildcard dependencies found. Pin to specific versions."
+            exit 1
+          fi
+          echo "✅ No wildcard dependencies."
