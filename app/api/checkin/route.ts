@@ -16,8 +16,25 @@ export async function POST(request: NextRequest) {
   try {
     const { business_id, customer_name, customer_phone, customer_email, notes } = await request.json();
 
-    if (!business_id || !customer_name?.trim()) {
+    // Input validation (ATT-05)
+    const trimmedName = customer_name?.trim() || '';
+    if (!business_id || !trimmedName) {
       return NextResponse.json({ error: 'business_id and customer_name are required' }, { status: 400 });
+    }
+    if (trimmedName.length > 200) {
+      return NextResponse.json({ error: 'Name must be 200 characters or less' }, { status: 400 });
+    }
+    const cleanPhone = customer_phone ? String(customer_phone).replace(/\D/g, '') : '';
+    if (cleanPhone && (cleanPhone.length < 7 || cleanPhone.length > 20)) {
+      return NextResponse.json({ error: 'Invalid phone number' }, { status: 400 });
+    }
+    const trimmedEmail = customer_email?.trim() || '';
+    if (trimmedEmail && (trimmedEmail.length > 320 || !trimmedEmail.includes('@'))) {
+      return NextResponse.json({ error: 'Invalid email address' }, { status: 400 });
+    }
+    const trimmedNotes = notes?.trim() || '';
+    if (trimmedNotes.length > 2000) {
+      return NextResponse.json({ error: 'Notes must be 2000 characters or less' }, { status: 400 });
     }
 
     const supabase = createServiceClient();
@@ -33,8 +50,6 @@ export async function POST(request: NextRequest) {
     if (!business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
     }
-
-    const cleanPhone = customer_phone ? String(customer_phone).replace(/\D/g, '') : '';
 
     // Duplicate check: same business + phone + today
     if (cleanPhone) {
@@ -69,10 +84,10 @@ export async function POST(request: NextRequest) {
       .from('attendance_log')
       .insert({
         business_id,
-        customer_name: customer_name.trim(),
+        customer_name: trimmedName,
         customer_phone: cleanPhone || null,
-        customer_email: customer_email?.trim() || null,
-        notes: notes?.trim() || null,
+        customer_email: trimmedEmail || null,
+        notes: trimmedNotes || null,
         source: 'web',
       });
 
@@ -127,7 +142,7 @@ export async function GET(request: NextRequest) {
     const dayStart = `${date}T00:00:00.000Z`;
     const dayEnd = `${date}T23:59:59.999Z`;
 
-    const { data: entries, count } = await supabase
+    const { data: entries, count, error: queryError } = await supabase
       .from('attendance_log')
       .select('*', { count: 'exact' })
       .eq('business_id', businessId)
@@ -135,6 +150,11 @@ export async function GET(request: NextRequest) {
       .lte('checked_in_at', dayEnd)
       .order('checked_in_at', { ascending: false })
       .range(page * limit, (page + 1) * limit - 1);
+
+    if (queryError) {
+      logger.error('[CHECKIN] GET query error:', queryError.message);
+      return NextResponse.json({ error: 'Failed to load attendance data' }, { status: 500 });
+    }
 
     return NextResponse.json({ entries: entries || [], total: count || 0 });
   } catch (err) {

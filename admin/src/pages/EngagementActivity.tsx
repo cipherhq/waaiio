@@ -60,6 +60,7 @@ function rangeStart(range: DateRange): string | null {
 
 export default function EngagementActivity() {
   const [tab, setTab] = useState<Tab>('checkins');
+  const [error, setError] = useState<string | null>(null);
   const perPage = 20;
 
   // Summary cards
@@ -91,40 +92,48 @@ export default function EngagementActivity() {
 
   // ── Summary cards (load once) ────────────────────────
 
-  useEffect(() => {
-    async function loadSummary() {
-      setSummaryLoading(true);
-      const today = todayISO();
-      const weekAgo = daysAgoISO(7);
+  async function loadSummary() {
+    setSummaryLoading(true);
+    const today = todayISO();
+    const weekAgo = daysAgoISO(7);
 
-      const [r1, r2, r3, r4] = await Promise.all([
-        adminDb
-          .from('attendance_log')
-          .select('id', { count: 'exact', head: true })
-          .gte('checked_in_at', today)
-          .eq('source', 'web'),
-        adminDb
-          .from('attendance_log')
-          .select('id', { count: 'exact', head: true })
-          .gte('checked_in_at', weekAgo)
-          .eq('source', 'web'),
-        adminDb
-          .from('bot_sessions')
-          .select('id', { count: 'exact', head: true })
-          .gte('created_at', today),
-        adminDb
-          .from('event_tickets')
-          .select('id', { count: 'exact', head: true })
-          .not('scanned_at', 'is', null)
-          .gte('scanned_at', today),
-      ]);
+    const [r1, r2, r3, r4] = await Promise.all([
+      adminDb
+        .from('attendance_log')
+        .select('id', { count: 'exact', head: true })
+        .gte('checked_in_at', today)
+        .eq('source', 'web'),
+      adminDb
+        .from('attendance_log')
+        .select('id', { count: 'exact', head: true })
+        .gte('checked_in_at', weekAgo)
+        .eq('source', 'web'),
+      adminDb
+        .from('bot_sessions')
+        .select('id', { count: 'exact', head: true })
+        .gte('created_at', today),
+      adminDb
+        .from('event_tickets')
+        .select('id', { count: 'exact', head: true })
+        .not('scanned_at', 'is', null)
+        .gte('scanned_at', today),
+    ]);
 
-      setWebCheckinsToday(r1.count ?? 0);
-      setWebCheckinsWeek(r2.count ?? 0);
-      setBotSessionsToday(r3.count ?? 0);
-      setEventScansToday(r4.count ?? 0);
+    const summaryError = r1.error || r2.error || r3.error || r4.error;
+    if (summaryError) {
+      setError(`Failed to load summary: ${summaryError.message}`);
       setSummaryLoading(false);
+      return;
     }
+
+    setWebCheckinsToday(r1.count ?? 0);
+    setWebCheckinsWeek(r2.count ?? 0);
+    setBotSessionsToday(r3.count ?? 0);
+    setEventScansToday(r4.count ?? 0);
+    setSummaryLoading(false);
+  }
+
+  useEffect(() => {
     loadSummary();
   }, []);
 
@@ -135,12 +144,17 @@ export default function EngagementActivity() {
     checkinsRef.current = true;
     setCheckinsLoading(true);
     try {
-      const { data } = await adminDb
+      const { data, error: queryError } = await adminDb
         .from('attendance_log')
         .select('*')
         .gte('checked_in_at', checkinsDate)
         .lt('checked_in_at', checkinsDate + 'T23:59:59.999Z')
         .order('checked_in_at', { ascending: false });
+
+      if (queryError) {
+        setError(`Failed to load check-ins: ${queryError.message}`);
+        return;
+      }
 
       const bizIds = [...new Set((data || []).map(r => r.business_id))];
       const { data: businesses } = await adminDb
@@ -179,14 +193,24 @@ export default function EngagementActivity() {
         .from('attendance_log')
         .select('business_id, checked_in_at');
       if (start) attendanceQuery = attendanceQuery.gte('checked_in_at', start);
-      const { data: attendanceData } = await attendanceQuery;
+      const { data: attendanceData, error: attError } = await attendanceQuery;
+
+      if (attError) {
+        setError(`Failed to load top businesses: ${attError.message}`);
+        return;
+      }
 
       // Fetch bot session counts
       let botQuery = adminDb
         .from('bot_sessions')
         .select('business_id, created_at');
       if (start) botQuery = botQuery.gte('created_at', start);
-      const { data: botData } = await botQuery;
+      const { data: botData, error: botError } = await botQuery;
+
+      if (botError) {
+        setError(`Failed to load bot sessions: ${botError.message}`);
+        return;
+      }
 
       // Aggregate
       const map = new Map<string, { checkins: number; bot_sessions: number; last: string }>();
@@ -246,13 +270,18 @@ export default function EngagementActivity() {
     scansRef.current = true;
     setScansLoading(true);
     try {
-      const { data } = await adminDb
+      const { data, error: scansError } = await adminDb
         .from('event_tickets')
         .select('id, ticket_code, scanned_at, scanned_by, event_id')
         .not('scanned_at', 'is', null)
         .gte('scanned_at', scansDate)
         .lt('scanned_at', scansDate + 'T23:59:59.999Z')
         .order('scanned_at', { ascending: false });
+
+      if (scansError) {
+        setError(`Failed to load ticket scans: ${scansError.message}`);
+        return;
+      }
 
       const eventIds = [...new Set((data || []).map(r => r.event_id).filter(Boolean))];
       const { data: events } = await adminDb
@@ -304,6 +333,14 @@ export default function EngagementActivity() {
           Track QR code scans, check-ins, and bot interactions across all businesses
         </p>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <strong>Error:</strong> {error}
+          <button onClick={() => { setError(null); loadSummary(); }} className="ml-2 underline">Retry</button>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
