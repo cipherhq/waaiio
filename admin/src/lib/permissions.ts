@@ -66,6 +66,7 @@ export const ADMIN_PERMISSIONS: Record<string, AdminRole[]> = {
   'audit-log': ['admin'],
   'system-health': ['admin'],
   'permissions': ['admin'],
+  'ai-marketplace': ['admin'],
 };
 
 /** Check if a role has access to a page */
