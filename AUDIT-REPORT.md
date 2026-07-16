@@ -15,7 +15,7 @@
 - **Exploit:** Attacker bypasses `/api/checkin` rate limiting by inserting directly via Supabase anon client. Can spam fake attendance for any business (14k+/day)
 - **Impact:** Data integrity, analytics corruption, storage abuse
 - **Fix:** Remove the policy. Service role already bypasses RLS. Public inserts go through the rate-limited API only.
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ATT-02: No column constraints on attendance_log
 - **Severity:** HIGH
@@ -23,7 +23,7 @@
 - **Evidence:** `customer_name TEXT NOT NULL` with no length limit. No CHECK constraints on source, phone, email, notes
 - **Exploit:** Insert multi-MB strings into name/notes fields, bloat DB
 - **Fix:** Add CHECK constraints: name <= 200, phone <= 30, email <= 320, notes <= 2000, source IN ('web','whatsapp','manual')
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ATT-03: No admin RLS policy on attendance_log
 - **Severity:** HIGH
@@ -31,21 +31,21 @@
 - **Evidence:** Only `owners_read` policy exists. Admin panel uses `adminDb` which is the anon client with auth session (not service client). Admin queries will be denied by RLS.
 - **Impact:** Admin Engagement page shows zero data (silent failure)
 - **Fix:** Add SELECT policy using `is_admin_or_support()` function
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ATT-04: Missing error handling in admin Engagement page
 - **Severity:** MEDIUM
 - **File:** `admin/src/pages/EngagementActivity.tsx`
 - **Evidence:** Queries don't check for errors. RLS denial silently produces zero counts.
 - **Fix:** Check `error` from every query, show error state instead of zero
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ATT-05: Missing input validation in checkin API
 - **Severity:** MEDIUM
 - **File:** `app/api/checkin/route.ts` lines 19-75
 - **Evidence:** No length validation on customer_name, customer_phone, customer_email, notes
 - **Fix:** Add server-side length validation matching DB constraints
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ---
 
@@ -57,7 +57,7 @@
 - **Evidence:** `msg.type === 'order'` is handled with `continue` BEFORE the dedup check at line 559-571
 - **Exploit:** Meta retransmits webhook → duplicate order created, inventory double-decremented
 - **Fix:** Move dedup check before ALL message processing including orders
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ORD-02: Non-transactional order creation
 - **Severity:** CRITICAL
@@ -65,7 +65,7 @@
 - **Evidence:** Order insert, order_items insert, and decrement_stock are 3 separate operations
 - **Exploit:** Partial failure → order exists but inventory not decremented, or inventory decremented but order_items missing
 - **Fix:** Create atomic RPC (like existing `purchase_tickets_atomic`)
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ORD-03: Silent inventory underflow
 - **Severity:** HIGH
@@ -73,14 +73,14 @@
 - **Evidence:** `GREATEST(0, stock - qty)` clamps to zero without error. No row lock.
 - **Exploit:** Concurrent orders both see stock=1, both succeed, actual stock goes to -1 (clamped to 0)
 - **Fix:** Add FOR UPDATE lock, raise exception if insufficient stock
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding ORD-04: Webhook price trusted over DB price
 - **Severity:** MEDIUM
 - **File:** `app/api/webhook/meta-cloud/route.ts` line 95
 - **Evidence:** `item.item_price || product.price` — webhook price takes precedence
 - **Fix:** Always use DB price as authoritative
-- **Status:** TO FIX
+- **Status:** FIXED (migration 231 — atomic RPC uses DB price)
 
 ---
 
@@ -91,22 +91,22 @@
 - **Files:** All 5 webhook handlers (Stripe, Paystack, Flutterwave, Square, PayPal)
 - **Evidence:** `processed_webhook_events` upsert happens before financial writes. If processing throws, event is marked "processed" but payment is incomplete.
 - **Exploit:** Paystack sends webhook → idempotency recorded → booking creation fails → Paystack retries → dedup rejects → payment permanently lost
-- **Fix:** Implement state machine: received → processing → completed/failed
-- **Status:** TO FIX
+- **Fix:** Moved idempotency upsert AFTER financial writes. Duplicate CHECK stays at top. Catch returns 200 to acknowledge receipt.
+- **Status:** FIXED
 
 ### Finding PAY-02: processSuccessfulPayment not fully idempotent
 - **Severity:** HIGH
 - **File:** `lib/payments/process-success.ts`
 - **Evidence:** Booking confirmation has no status guard (line 35-43). Invoice payment adds amount_paid without idempotency (line 326-333). Double-call doubles invoice amounts.
 - **Fix:** Add `.eq('status', 'pending')` guard on all financial updates
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ### Finding PAY-03: Flutterwave webhook returns 500 on processing error
 - **Severity:** HIGH
 - **File:** `app/api/webhooks/flutterwave/route.ts` line 159
 - **Evidence:** Returns 500 after idempotency is recorded. Flutterwave retries indefinitely but dedup blocks reprocessing.
 - **Fix:** Return 200 after recording, queue failed events for retry
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ---
 
@@ -118,7 +118,7 @@
 - **Evidence:** `resolved.channel.meta_access_token` (encrypted ciphertext) used as Bearer token for media download. Will fail with 401 for any dedicated channel with encrypted token.
 - **Impact:** Voice message downloads broken for all dedicated numbers
 - **Fix:** Use `resolved.cloud` (MetaCloudService with decrypted token) for all API calls
-- **Status:** TO FIX
+- **Status:** FIXED
 
 ---
 
