@@ -80,6 +80,19 @@ export async function GET(request: NextRequest) {
 
       for (const phone of broadcast.phones) {
         try {
+          // Check opt-out before sending promotional message
+          const { data: optedOut } = await supabase
+            .from('messaging_opt_outs')
+            .select('id')
+            .eq('phone', phone)
+            .is('resubscribed_at', null)
+            .maybeSingle();
+
+          if (optedOut) {
+            // Skip — customer opted out
+            continue;
+          }
+
           let messageSent = false;
 
           if (broadcast.template_name && sender.sendTemplate) {
@@ -112,7 +125,7 @@ export async function GET(request: NextRequest) {
           sentCount++;
         } catch (err) {
           failedCount++;
-          logger.error(`[SCHEDULED BROADCAST] Failed to send to ${phone}:`, (err as Error).message);
+          logger.error(`[SCHEDULED BROADCAST] Failed to send to ...${phone.slice(-4)}:`, (err as Error).message);
           await supabase.from('notifications').insert({
             business_id: broadcast.business_id,
             recipient_phone: phone,
