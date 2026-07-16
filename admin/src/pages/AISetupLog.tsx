@@ -161,7 +161,7 @@ export default function AISetupLog() {
 
       {/* Detail Modal */}
       {selected && (
-        <DetailModal title={`AI Setup: ${selected.business_name}`} onClose={() => setSelected(null)}>
+        <DetailModal open={true} title={`AI Setup: ${selected.business_name}`} onClose={() => setSelected(null)}>
           <DetailRow label="Business" value={selected.business_name} />
           <DetailRow label="Date" value={fmtDateTime(selected.latest_created_at)} />
           <DetailRow label="Services Created" value={selected.services_created} />

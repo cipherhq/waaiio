@@ -30,6 +30,7 @@ interface GivingRecord {
   notes: string | null;
   gateway: string | null;
   gateway_ref: string | null;
+  source?: string;
   created_at: string;
 }
 

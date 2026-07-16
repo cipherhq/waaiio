@@ -60,6 +60,7 @@ const TIER_BADGE_STYLE: Record<string, string> = {
 };
 
 interface Business {
+  [key: string]: unknown;
   id: string;
   name: string;
   slug: string | null;

@@ -21,6 +21,7 @@ interface Campaign {
   end_date: string | null;
   created_at: string;
   updated_at: string | null;
+  deleted_at?: string | null;
   // enriched
   business_name?: string;
 }

@@ -70,7 +70,7 @@ export default function Dashboard() {
           dateFilter = weekAgo.toISOString();
         }
 
-        const filters: Array<{ column: string; op: string; value: unknown }> = [
+        const filters: Array<{ column: string; op: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'ilike' | 'in' | 'is'; value: unknown }> = [
           { column: 'waived', op: 'eq', value: false },
           { column: 'refunded_at', op: 'is', value: null },
         ];
@@ -82,21 +82,21 @@ export default function Dashboard() {
         });
 
         // Resolve business countries
-        const bizIds = [...new Set((fees || []).map((f: { business_id: string }) => f.business_id).filter(Boolean))];
+        const bizIds = [...new Set((fees || []).map((f) => f.business_id as string).filter(Boolean))];
         const { data: bizData } = bizIds.length > 0
           ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: bizIds }] })
-          : { data: [] };
-        const bizCountry = new Map((bizData || []).map((b: { id: string; country_code: string }) => [b.id, b.country_code || 'NG']));
+          : { data: [] as Record<string, unknown>[] };
+        const bizCountry = new Map((bizData || []).map((b) => [b.id as string, (b.country_code as string) || 'NG']));
 
         // Filter by country if selected
         const filteredFees = revenueCountry === 'all'
           ? (fees || [])
-          : (fees || []).filter((f: { business_id: string }) => bizCountry.get(f.business_id) === revenueCountry);
+          : (fees || []).filter((f) => bizCountry.get(f.business_id as string) === revenueCountry);
 
         const feesByCur: Record<string, number> = {};
         const volByCur: Record<string, number> = {};
         for (const f of filteredFees) {
-          const cur = countryToCur[bizCountry.get(f.business_id) || 'NG'] || 'NGN';
+          const cur = countryToCur[bizCountry.get(f.business_id as string) || 'NG'] || 'NGN';
           feesByCur[cur] = (feesByCur[cur] || 0) + Number(f.fee_total || 0);
           volByCur[cur] = (volByCur[cur] || 0) + Number(f.transaction_amount || 0);
         }
@@ -138,16 +138,16 @@ export default function Dashboard() {
         ]);
 
         // Group fees by currency via business country
-        const feesBizIds = [...new Set((feesRes.data || []).map(f => f.business_id).filter(Boolean))];
+        const feesBizIds = [...new Set((feesRes.data || []).map(f => f.business_id as string).filter(Boolean))];
         const feeBizRes = feesBizIds.length > 0
           ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: feesBizIds }] })
-          : { data: [] };
+          : { data: [] as Record<string, unknown>[] };
         const feeBizData = feeBizRes.data || [];
-        const feeBizCountry = new Map((feeBizData || []).map(b => [b.id, b.country_code || 'NG']));
+        const feeBizCountry = new Map((feeBizData || []).map(b => [b.id as string, (b.country_code as string) || 'NG']));
 
         const revByCurrency: Record<string, number> = {};
         for (const f of feesRes.data || []) {
-          const cc = feeBizCountry.get(f.business_id) || 'NG';
+          const cc = feeBizCountry.get(f.business_id as string) || 'NG';
           const cur = countryToCur[cc] || 'NGN';
           revByCurrency[cur] = (revByCurrency[cur] || 0) + Number(f.fee_total || 0);
         }
@@ -157,14 +157,14 @@ export default function Dashboard() {
           .join(' · ') || '—';
 
         // Group payouts by currency via business country
-        const payoutBizIds = [...new Set((payoutsRes.data || []).map(p => p.business_id).filter(Boolean))];
+        const payoutBizIds = [...new Set((payoutsRes.data || []).map(p => p.business_id as string).filter(Boolean))];
         const payoutBizRes = payoutBizIds.length > 0
           ? await adminQuery('businesses', { select: 'id, country_code', filters: [{ column: 'id', op: 'in', value: payoutBizIds }] })
-          : { data: [] };
-        const payoutBizCountry = new Map((payoutBizRes.data || []).map(b => [b.id, b.country_code || 'NG']));
+          : { data: [] as Record<string, unknown>[] };
+        const payoutBizCountry = new Map((payoutBizRes.data || []).map(b => [b.id as string, (b.country_code as string) || 'NG']));
         const payoutByCurrency: Record<string, number> = {};
         for (const p of payoutsRes.data || []) {
-          const cc = payoutBizCountry.get(p.business_id) || 'NG';
+          const cc = payoutBizCountry.get(p.business_id as string) || 'NG';
           const cur = countryToCur[cc] || 'NGN';
           payoutByCurrency[cur] = (payoutByCurrency[cur] || 0) + Number(p.net_amount || 0);
         }
@@ -331,7 +331,7 @@ export default function Dashboard() {
         const capRes = await adminQuery('business_capabilities', { select: 'capability, business_id', filters: [{ column: 'is_enabled', op: 'eq', value: true }] });
         const capCounts = new Map<string, number>();
         for (const r of capRes.data || []) {
-          capCounts.set(r.capability, (capCounts.get(r.capability) || 0) + 1);
+          capCounts.set(r.capability as string, (capCounts.get(r.capability as string) || 0) + 1);
         }
         setFeatureAdoption(
           Array.from(capCounts.entries())
@@ -343,18 +343,18 @@ export default function Dashboard() {
         const bizBookingsRes = await adminQuery('bookings', { select: 'business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }] });
         const bizBookingCounts = new Map<string, number>();
         for (const b of bizBookingsRes.data || []) {
-          bizBookingCounts.set(b.business_id, (bizBookingCounts.get(b.business_id) || 0) + 1);
+          bizBookingCounts.set(b.business_id as string, (bizBookingCounts.get(b.business_id as string) || 0) + 1);
         }
         const topBizIds = Array.from(bizBookingCounts.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([id]) => id);
         if (topBizIds.length > 0) {
           const topBizDetails = await adminQuery('businesses', { select: 'id, name, country_code', filters: [{ column: 'id', op: 'in', value: topBizIds }] });
           const topBizPayments = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'business_id', op: 'in', value: topBizIds }, { column: 'status', op: 'eq', value: 'success' }, { column: 'created_at', op: 'gte', value: monthStart }] });
           const bizRevMap = new Map<string, number>();
-          for (const p of topBizPayments.data || []) { bizRevMap.set(p.business_id, (bizRevMap.get(p.business_id) || 0) + Number(p.amount || 0)); }
-          const bizDetailMap = new Map((topBizDetails.data || []).map(b => [b.id, b]));
+          for (const p of topBizPayments.data || []) { bizRevMap.set(p.business_id as string, (bizRevMap.get(p.business_id as string) || 0) + Number(p.amount || 0)); }
+          const bizDetailMap = new Map((topBizDetails.data || []).map(b => [b.id as string, b]));
           setTopBusinesses(topBizIds.map(id => {
             const d = bizDetailMap.get(id);
-            return { name: d?.name || 'Unknown', bookings: bizBookingCounts.get(id) || 0, revenue: bizRevMap.get(id) || 0, country: d?.country_code || 'NG' };
+            return { name: (d?.name as string) || 'Unknown', bookings: bizBookingCounts.get(id) || 0, revenue: bizRevMap.get(id) || 0, country: (d?.country_code as string) || 'NG' };
           }));
         }
 
@@ -373,27 +373,27 @@ export default function Dashboard() {
         const allBookingsRes = await adminQuery('bookings', { select: 'business_id', filters: [{ column: 'created_at', op: 'gte', value: monthStart }] });
         const allPaymentsRes = await adminQuery('payments', { select: 'business_id, amount', filters: [{ column: 'status', op: 'eq', value: 'success' }] });
 
-        const bizCatMap = new Map((allBizRes.data || []).map(b => [b.id, b.category]));
-        const bizCountryMap = new Map((allBizRes.data || []).map(b => [b.id, b.country_code || 'NG']));
+        const bizCatMap = new Map((allBizRes.data || []).map(b => [b.id as string, b.category as string]));
+        const bizCountryMap = new Map((allBizRes.data || []).map(b => [b.id as string, (b.country_code as string) || 'NG']));
         const catStats = new Map<string, { count: number; bookings: number; revenueByCurrency: Record<string, number> }>();
 
         // Count businesses per category
         for (const b of allBizRes.data || []) {
-          const cat = b.category || 'other';
+          const cat = (b.category as string) || 'other';
           const existing = catStats.get(cat) || { count: 0, bookings: 0, revenueByCurrency: {} };
           existing.count++;
           catStats.set(cat, existing);
         }
         // Count bookings per category
         for (const bk of allBookingsRes.data || []) {
-          const cat = bizCatMap.get(bk.business_id) || 'other';
+          const cat = bizCatMap.get(bk.business_id as string) || 'other';
           const existing = catStats.get(cat);
           if (existing) existing.bookings++;
         }
         // Sum revenue per category per currency
         for (const p of allPaymentsRes.data || []) {
-          const cat = bizCatMap.get(p.business_id) || 'other';
-          const cc = bizCountryMap.get(p.business_id) || 'NG';
+          const cat = bizCatMap.get(p.business_id as string) || 'other';
+          const cc = bizCountryMap.get(p.business_id as string) || 'NG';
           const cur = countryToCur[cc] || 'NGN';
           const existing = catStats.get(cat);
           if (existing) {
@@ -417,12 +417,15 @@ export default function Dashboard() {
         const alertBizIds = [...new Set((recentAlertsRes.data || []).map((a: Record<string, unknown>) => a.business_id as string).filter(Boolean))];
         const alertBizRes = alertBizIds.length > 0
           ? await adminQuery('businesses', { select: 'id, name', filters: [{ column: 'id', op: 'in', value: alertBizIds }] })
-          : { data: [] };
+          : { data: [] as Record<string, unknown>[] };
         const alertBizzes = alertBizRes.data || [];
-        const alertBizMap = new Map((alertBizzes || []).map(b => [b.id, b.name]));
+        const alertBizMap = new Map((alertBizzes || []).map(b => [b.id as string, b.name as string]));
         setRecentAlerts((recentAlertsRes.data || []).map(a => ({
-          ...a,
-          business_name: alertBizMap.get(a.business_id) || 'Unknown',
+          id: a.id as string,
+          severity: a.severity as string,
+          title: a.title as string,
+          created_at: a.created_at as string,
+          business_name: alertBizMap.get(a.business_id as string) || 'Unknown',
         })));
       } catch (error) {
         console.warn('Failed to load dashboard stats:', error);

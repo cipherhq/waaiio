@@ -174,7 +174,7 @@ export default function Surveys() {
 
       {/* Detail Modal */}
       {selected && (
-        <DetailModal title={selected.title} onClose={() => { setSelected(null); setResponses([]); }}>
+        <DetailModal open={true} title={selected.title} onClose={() => { setSelected(null); setResponses([]); }}>
           <DetailRow label="Business" value={selected.business_name || 'Unknown'} />
           <DetailRow label="Status" value={<StatusBadge status={selected.status} />} />
           <DetailRow label="Created" value={fmtDateTime(selected.created_at)} />
