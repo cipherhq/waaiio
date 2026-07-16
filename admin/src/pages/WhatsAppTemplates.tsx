@@ -335,7 +335,7 @@ export default function WhatsAppTemplates() {
                 </td>
                 <td className="px-4 py-3 text-gray-600">{t.language}</td>
                 <td className="px-4 py-3">
-                  <StatusBadge status={t.status} color={STATUS_COLORS[t.status] || 'gray'} />
+                  <StatusBadge status={t.status} />
                 </td>
                 <td className="px-4 py-3 text-right space-x-1">
                   <button
@@ -382,7 +382,7 @@ export default function WhatsAppTemplates() {
                 </div>
                 <div>
                   <span className="text-gray-500 block">Status</span>
-                  <StatusBadge status={selectedTemplate.status} color={STATUS_COLORS[selectedTemplate.status] || 'gray'} />
+                  <StatusBadge status={selectedTemplate.status} />
                 </div>
               </div>
 

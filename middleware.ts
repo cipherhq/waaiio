@@ -222,11 +222,18 @@ export async function middleware(request: NextRequest) {
   // ── Session Binding Check ──
   // Compare current User-Agent against cached session to detect stolen tokens.
   // Only checks in-memory cache — no DB queries in middleware hot path.
+  // Uses per-session cache keys (access_token suffix) so multi-device logins
+  // don't invalidate each other.
   if (user && request.nextUrl.pathname.startsWith('/dashboard')) {
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
     const ua = request.headers.get('user-agent') || '';
     const uaHash = fastHash(ua);
-    const sessionKey = `${user.id}-session`;
+
+    // Derive a per-session identifier from the access token so each device/browser
+    // gets its own cache entry. Falls back to user.id for edge cases.
+    const { data: { session } } = await supabase.auth.getSession();
+    const sessionSuffix = session?.access_token?.slice(-16) || 'default';
+    const sessionKey = `${user.id}-${sessionSuffix}`;
 
     const cached = getCachedSession(sessionKey);
     if (cached) {

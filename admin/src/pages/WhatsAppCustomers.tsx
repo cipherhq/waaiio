@@ -77,12 +77,12 @@ export default function Customers() {
       const bizData = apiData.businesses || [];
       const profileData = apiData.profiles || [];
 
-      const bizMap = new Map(bizData.map((b: { id: string; name: string }) => [b.id, b.name]));
+      const bizMap = new Map<string, string>(bizData.map((b: { id: string; name: string }) => [b.id, b.name]));
       setAllBusinesses(
         bizData.map((b: { id: string; name: string }) => ({ id: b.id, name: b.name })).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))
       );
-      const profileMap = new Map(
-        (profileData || []).map(p => [p.id, {
+      const profileMap = new Map<string, { name: string; email: string; phone: string }>(
+        (profileData || []).map((p: { id: string; first_name?: string; last_name?: string; email?: string; phone?: string }) => [p.id, {
           name: [p.first_name, p.last_name].filter(Boolean).join(' ') || '',
           email: p.email || '',
           phone: p.phone || '',
@@ -90,7 +90,7 @@ export default function Customers() {
       );
 
       // Build business → country map for currency resolution
-      const bizCountryMap = new Map(bizData.map((b: { id: string; country_code?: string }) => [b.id, b.country_code || 'NG']));
+      const bizCountryMap = new Map<string, string>(bizData.map((b: { id: string; country_code?: string }) => [b.id, b.country_code || 'NG']));
       const countryToCurrency: Record<string, string> = { US: 'USD', CA: 'CAD', GB: 'GBP', NG: 'NGN', GH: 'GHS', IN: 'INR' };
 
       // Group by customer (user_id or guest_phone)

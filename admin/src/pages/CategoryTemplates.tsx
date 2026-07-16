@@ -30,6 +30,7 @@ interface DefaultService {
 }
 
 interface CategoryTemplate {
+  [key: string]: unknown;
   id: string;
   key: string;
   label: string;
