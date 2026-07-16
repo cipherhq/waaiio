@@ -40,6 +40,11 @@ import { handleRefundRequest as _handleRefundRequest } from './handlers/refund-r
 
 import { HOME_PATTERN, handleEscapeHatch as _handleEscapeHatch } from './handlers/escape-hatches';
 import { handleGlobalQuery, isOrdersQuery } from './handlers/global-queries';
+import { ConversationOrchestrator } from './conversation-orchestrator';
+import { loadConversationConfig } from './confidence-policy';
+import { answerTemporaryQuestion } from './business-knowledge';
+import { applyCorrection } from './correction-parser';
+import { searchMarketplace, formatMarketplaceResults } from '@/lib/marketplace/search';
 
 export class BotService {
   private readonly flowExecutor: FlowExecutor;
@@ -1768,6 +1773,139 @@ export class BotService {
         }
       } catch (err) {
         logger.error('[BOT] Welcome button handler error (non-fatal):', err);
+      }
+    }
+
+    // ── Conversational AI Layer (feature-flagged) ──
+    // Runs AFTER specialized handlers / keywords / escape hatches, BEFORE the
+    // fallback flow executor path.  Only fires when the business has AI enabled
+    // in its conversation config.
+    if (session.business_id && text) {
+      try {
+        const convConfig = await loadConversationConfig(this.supabase, session.business_id);
+        if (convConfig.aiEnabled) {
+          const orchestrator = new ConversationOrchestrator(this.supabase, convConfig);
+          const understanding = await orchestrator.understand(
+            text,
+            session.business_id,
+            (session.session_data?.business_category as string) || null,
+            session as BotSession,
+            from,
+            undefined, // timezone — not available here; orchestrator handles fallback
+          );
+
+          // Handle temporary questions (mid-flow "what are your hours?" etc.)
+          if (
+            understanding.recommendedAction === 'answer_business_question' &&
+            understanding.temporaryQuestion
+          ) {
+            const bizName = (session.session_data?.business_name as string) || 'this business';
+            const answer = await answerTemporaryQuestion(
+              this.supabase,
+              session.business_id,
+              understanding.temporaryQuestion,
+              bizName,
+            );
+            if (answer) {
+              const capLabel = understanding.activeCapability
+                ? understanding.activeCapability.replace(/_/g, ' ')
+                : 'in a flow';
+              const resumeText = session.current_step
+                ? `\n\nYou were ${capLabel}. Let's continue!`
+                : '';
+              await this.sendText(from, answer + resumeText);
+              return;
+            }
+          }
+
+          // Handle corrections ("actually change the date to Friday")
+          if (
+            understanding.recommendedAction === 'apply_correction' &&
+            understanding.corrections?.length
+          ) {
+            const correction = understanding.corrections[0];
+            const updatedData = applyCorrection(
+              session.session_data || {},
+              correction,
+            );
+            await this.supabase
+              .from('bot_sessions')
+              .update({ session_data: updatedData })
+              .eq('id', session.id);
+            await this.sendText(
+              from,
+              `Got it! Changed ${correction.field} to ${String(correction.newValue)}.`,
+            );
+            // Let the flow executor re-prompt the current step on next message
+            return;
+          }
+
+          // Handle clarification ("did you mean booking or ordering?")
+          if (understanding.recommendedAction === 'show_clarification') {
+            const capability = understanding.activeCapability;
+            if (capability) {
+              await this.messageSender.sendButtons({
+                to: from,
+                body: `It looks like you want to ${understanding.intent}. Is that right?`,
+                buttons: [
+                  { id: `confirm_${capability}`, title: 'Yes' },
+                  { id: 'show_menu', title: 'Show menu' },
+                  { id: 'talk_to_human', title: 'Talk to someone' },
+                ],
+              });
+              return;
+            }
+          }
+
+          // Handle marketplace search (no business context needed)
+          if (understanding.recommendedAction === 'search_marketplace') {
+            const results = await searchMarketplace(this.supabase, {
+              category: understanding.entities.category,
+              query:
+                understanding.entities.serviceName ||
+                understanding.entities.productName,
+              locationText: understanding.entities.locationText,
+              latitude: understanding.entities.latitude,
+              longitude: understanding.entities.longitude,
+              supportsDelivery: understanding.entities.deliveryRequired,
+              partySize: understanding.entities.partySize,
+              budgetMax: understanding.entities.budgetMax,
+              country: undefined, // country_code not on BusinessRecord at this point
+            });
+            const formatted = formatMarketplaceResults(results, text);
+            await this.sendText(from, formatted);
+            return;
+          }
+
+          // High confidence — auto-route to flow with pre-populated entities
+          if (
+            understanding.recommendedAction === 'start_flow' &&
+            understanding.activeCapability
+          ) {
+            const prePopulate: Record<string, unknown> = {};
+            if (understanding.entities.date)
+              prePopulate.selected_date = understanding.entities.date;
+            if (understanding.entities.time)
+              prePopulate.selected_time = understanding.entities.time;
+            if (understanding.entities.serviceName)
+              prePopulate._service_keyword =
+                understanding.entities.serviceName;
+            if (understanding.entities.quantity)
+              prePopulate.party_size = understanding.entities.quantity;
+
+            if (Object.keys(prePopulate).length > 0) {
+              const merged = { ...session.session_data, ...prePopulate };
+              await this.supabase
+                .from('bot_sessions')
+                .update({ session_data: merged })
+                .eq('id', session.id);
+            }
+            // Don't return — let the normal flow routing pick up with enriched session
+          }
+        }
+      } catch (err) {
+        // Non-fatal: if the AI layer fails, fall through to default behavior
+        logger.error('[BOT] Conversational AI layer error (non-fatal):', err);
       }
     }
 
