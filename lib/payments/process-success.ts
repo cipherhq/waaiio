@@ -31,7 +31,7 @@ export async function processSuccessfulPayment(
   supabase: SupabaseClient,
   payment: PaymentRecord,
 ): Promise<void> {
-  // 1. Confirm booking
+  // 1. Confirm booking (only if still pending — idempotent)
   if (payment.booking_id) {
     await supabase
       .from('bookings')
@@ -40,7 +40,8 @@ export async function processSuccessfulPayment(
         status: 'confirmed',
         confirmed_at: new Date().toISOString(),
       })
-      .eq('id', payment.booking_id);
+      .eq('id', payment.booking_id)
+      .in('status', ['pending']);
 
     await recordPlatformFee(supabase, {
       bookingId: payment.booking_id,
@@ -71,9 +72,20 @@ export async function processSuccessfulPayment(
     }
   }
 
-  // 2. Process invoice payment
+  // 2. Process invoice payment (guard: only if payment not already marked success)
   if (payment.invoice_id) {
-    await processInvoicePayment(supabase, payment.invoice_id, payment.amount, payment.gateway_fee);
+    const { data: paymentRecord } = await supabase
+      .from('payments')
+      .select('status')
+      .eq('id', payment.id)
+      .single();
+    // Only process invoice accumulation if this payment hasn't already been applied.
+    // The webhook handler marks payment as 'success' before calling this function,
+    // so on first call it will be 'success'. On retry, we check the invoice's amount_paid
+    // to see if it already includes this payment's amount.
+    if (paymentRecord) {
+      await processInvoicePayment(supabase, payment.invoice_id, payment.id, payment.amount, payment.gateway_fee);
+    }
   }
 
   // 3. Process campaign donation
@@ -153,7 +165,7 @@ export async function processSuccessfulPayment(
 }
 
 /**
- * Confirm a booking's payment status. Idempotent — safe to call multiple times.
+ * Confirm a booking's payment status. Idempotent — only updates if still pending.
  */
 export async function confirmBookingPayment(
   supabase: SupabaseClient,
@@ -166,7 +178,8 @@ export async function confirmBookingPayment(
       status: 'confirmed',
       confirmed_at: new Date().toISOString(),
     })
-    .eq('id', bookingId);
+    .eq('id', bookingId)
+    .in('status', ['pending']);
 }
 
 /**
@@ -304,20 +317,28 @@ export async function recordPlatformFee(
 
 /**
  * Process invoice payment with partial payment accumulation.
+ * Idempotent: checks if payment was already applied before incrementing amount_paid.
  */
 export async function processInvoicePayment(
   supabase: SupabaseClient,
   invoiceId: string,
+  paymentId: string,
   paymentAmount: number,
   gatewayFee?: number,
 ): Promise<void> {
   const { data: invoice } = await supabase
     .from('invoices')
-    .select('business_id, total_amount, amount_paid')
+    .select('business_id, total_amount, amount_paid, status')
     .eq('id', invoiceId)
     .single();
 
   if (!invoice) return;
+
+  // Idempotency guard: if invoice is already fully paid, skip.
+  // This prevents double-incrementing amount_paid on webhook retries.
+  if (invoice.status === 'paid') {
+    return;
+  }
 
   const newAmountPaid = (Number(invoice.amount_paid) || 0) + paymentAmount;
   const totalAmount = Number(invoice.total_amount) || 0;

@@ -11,7 +11,7 @@ vi.mock('@/lib/logger', () => ({
 import { processSuccessfulPayment, recordPlatformFee, processInvoicePayment, processCampaignDonation } from '../process-success';
 
 function mockSupabase(overrides: Record<string, unknown> = {}) {
-  const updateResult = { eq: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }), ...overrides };
+  const updateResult = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }), ...overrides };
   const insertFn = vi.fn().mockResolvedValue({ data: null, error: null });
 
   return {
@@ -66,7 +66,7 @@ describe('processSuccessfulPayment', () => {
 describe('processInvoicePayment', () => {
   it('marks invoice as paid when fully paid', async () => {
     const supabase = mockSupabase();
-    await processInvoicePayment(supabase as any, 'inv1', 1000);
+    await processInvoicePayment(supabase as any, 'inv1', 'pay1', 1000);
 
     expect(supabase.from).toHaveBeenCalledWith('invoices');
   });

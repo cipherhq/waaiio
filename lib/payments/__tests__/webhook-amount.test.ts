@@ -26,8 +26,11 @@ function createMockSupabase(opts: {
   booking?: Record<string, unknown> | null;
   business?: Record<string, unknown> | null;
 } = {}) {
+  const eqMock = vi.fn().mockReturnThis();
+  eqMock.mockImplementation(() => ({ eq: eqMock, in: vi.fn().mockResolvedValue({ data: null }), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }) }));
   const updateFn = vi.fn().mockReturnValue({
-    eq: vi.fn().mockResolvedValue({ data: null }),
+    eq: eqMock,
+    in: vi.fn().mockResolvedValue({ data: null }),
   });
   const insertFn = vi.fn().mockResolvedValue({ data: null });
   const upsertFn = vi.fn().mockResolvedValue({ data: null });
