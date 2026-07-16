@@ -28,6 +28,11 @@ ALTER TABLE ai_conversation_config ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "owners_manage" ON ai_conversation_config FOR ALL
   USING (business_id IN (SELECT id FROM businesses WHERE owner_id = auth.uid()));
 
+-- Location fields for marketplace search
+ALTER TABLE businesses
+  ADD COLUMN IF NOT EXISTS latitude NUMERIC(10,7),
+  ADD COLUMN IF NOT EXISTS longitude NUMERIC(10,7);
+
 -- Marketplace discovery fields on businesses
 ALTER TABLE businesses
   ADD COLUMN IF NOT EXISTS discovery_enabled BOOLEAN DEFAULT false,
@@ -41,7 +46,7 @@ ALTER TABLE businesses
 
 -- Full-text search indexes for marketplace
 CREATE INDEX IF NOT EXISTS idx_businesses_name_trgm ON businesses USING gin (name gin_trgm_ops);
-CREATE INDEX IF NOT EXISTS idx_businesses_discovery ON businesses (discovery_enabled, is_active, category) WHERE discovery_enabled = true AND is_active = true;
+CREATE INDEX IF NOT EXISTS idx_businesses_discovery ON businesses (discovery_enabled, status, category) WHERE discovery_enabled = true AND status = 'active';
 
 -- Location-based search (if lat/lng columns exist)
 CREATE INDEX IF NOT EXISTS idx_businesses_location ON businesses (latitude, longitude) WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
