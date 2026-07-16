@@ -4,6 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { encryptToken } from '@/lib/encryption';
 import { logger } from '@/lib/logger';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * POST /api/auth/facebook/callback
@@ -24,6 +25,9 @@ import { logger } from '@/lib/logger';
  * }
  */
 export async function POST(request: NextRequest) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'fb-callback'), 5, 60_000);
+  if (rateLimit) return rateLimit;
+
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();
