@@ -11,10 +11,10 @@ const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
 export const metadata: Metadata = {
   title: 'Waaiio — AI-Powered WhatsApp Automation for Everyone',
   description:
-    'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries — churches, salons, clinics, restaurants, schools, shops, and more.',
+    'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 89+ business types — churches, salons, clinics, restaurants, schools, shops, and more.',
   openGraph: {
     title: 'Waaiio — AI-Powered WhatsApp Automation for Everyone',
-    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 40+ industries.',
+    description: 'Automate bookings, payments, orders, donations, and tickets on WhatsApp for 89+ business types.',
     url: baseUrl,
     siteName: 'Waaiio',
     type: 'website',
