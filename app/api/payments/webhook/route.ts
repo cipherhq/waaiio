@@ -11,6 +11,8 @@ import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   let eventId: string | null = null;
   try {
@@ -88,6 +90,27 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (event === 'charge.success') {
+      // Verify payment amount matches expected (Paystack sends amount in kobo)
+      if (existingPayment && existingPayment.amount) {
+        const webhookAmount = data.amount as number; // kobo
+        const expectedAmount = Math.round(existingPayment.amount * 100); // convert to kobo
+        if (Math.abs(webhookAmount - expectedAmount) > 1) {
+          logger.error('[PAYSTACK] Amount mismatch', {
+            expected: expectedAmount,
+            received: webhookAmount,
+            reference,
+          });
+          // Mark as failed — don't process
+          await supabase.from('processed_webhook_events')
+            .update({
+              status: 'failed',
+              last_error: `Amount mismatch: expected ${expectedAmount}, got ${webhookAmount}`,
+            })
+            .eq('event_id', eventId);
+          return NextResponse.json({ error: 'Amount mismatch' }, { status: 200 });
+        }
+      }
+
       await processPaystackChargeSuccess(data, reference, supabase);
     } else if (event === 'charge.failed') {
       await processPaystackChargeFailed(data, reference, supabase);
