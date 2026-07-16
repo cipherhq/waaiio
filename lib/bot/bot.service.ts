@@ -1713,7 +1713,14 @@ export class BotService {
         }
         return;
       }
-      // Any other text — treat as starting over (they typed something new)
+      // Any other text at post_completion — check if it looks like a real new request
+      // vs a stale button tap from the just-completed flow (e.g. "Continue" from T&C)
+      const staleButtons = ['continue', 'confirm', 'yes', 'ok', 'done', 'confirm ✓', 'continue ✅'];
+      if (staleButtons.includes(text.toLowerCase().trim())) {
+        // Ignore stale button taps — don't restart the flow
+        return;
+      }
+      // Genuine new input — restart
       await this.deactivateSession(session.id);
       await this.handleMessage(from, text, messageType, destinationPhone);
       return;
