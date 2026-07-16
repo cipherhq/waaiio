@@ -403,6 +403,7 @@ export class BotService {
               business_id: biz.id as string,
               current_step: 'rsvp_welcome',
               session_data: newSession.session_data as Record<string, unknown>,
+              version: (newSession as Record<string, unknown>).version as number ?? 0,
             },
             {
               id: biz.id as string,

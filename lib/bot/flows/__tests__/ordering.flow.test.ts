@@ -52,7 +52,7 @@ describe('Ordering Flow', () => {
           id: 'sess-1',
           user_id: 'u1',
           business_id: 'b1',
-          current_step: 'process_order',
+          current_step: 'process_order', version: 0,
           session_data: {
             _terms_cancelled: true,
             cart: [{ product_id: 'p1', name: 'Widget', quantity: 1, price: 1000 }],
@@ -97,7 +97,7 @@ describe('Ordering Flow', () => {
     it('next: returns process_order for re-entry when terms accepted', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_order',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_order', version: 0,
           session_data: { _terms_accepted: true },
         },
       });
@@ -108,7 +108,7 @@ describe('Ordering Flow', () => {
     it('next: returns process_order for re-entry when terms cancelled', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_order',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_order', version: 0,
           session_data: { _terms_cancelled: true },
         },
       });
@@ -119,7 +119,7 @@ describe('Ordering Flow', () => {
     it('next: returns null when _action is cancelled', async () => {
       const ctx = createMockContext({
         session: {
-          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_order',
+          id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'process_order', version: 0,
           session_data: { _action: 'cancelled' },
         },
       });
@@ -149,7 +149,7 @@ describe('Ordering Flow', () => {
           id: 'sess-1',
           user_id: null as any,
           business_id: 'b1',
-          current_step: 'process_order',
+          current_step: 'process_order', version: 0,
           session_data: {
             _terms_accepted: true,
             cart: [{ product_id: 'p1', name: 'Widget', quantity: 1, price: 1000 }],

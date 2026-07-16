@@ -26,7 +26,7 @@ describe('Payment Flow', () => {
         id: 's1',
         user_id: 'u1',
         business_id: 'b1',
-        current_step: 'select_category',
+        current_step: 'select_category', version: 0,
         session_data: {
           active_capability: 'payment',
           ...sessionDataOverrides,

@@ -16,7 +16,7 @@ describe('Capability Selection Flow', () => {
   it('validates capability selection by postback (cap_scheduling)', async () => {
     const ctx = createMockContext({
       session: {
-        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability',
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
         session_data: { capabilities: ['scheduling', 'payment'] },
       },
     });
@@ -29,7 +29,7 @@ describe('Capability Selection Flow', () => {
   it('validates capability selection by numeric index', async () => {
     const ctx = createMockContext({
       session: {
-        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability',
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
         session_data: { capabilities: ['scheduling', 'payment'], business_category: 'other' },
       },
     });
@@ -41,7 +41,7 @@ describe('Capability Selection Flow', () => {
   it('rejects invalid capability selection', async () => {
     const ctx = createMockContext({
       session: {
-        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability',
+        id: 's1', user_id: 'u1', business_id: 'b1', current_step: 'select_capability', version: 0,
         session_data: { capabilities: ['scheduling'] },
       },
     });

@@ -15,6 +15,7 @@ export interface BotSession {
   conversation_log?: Array<{ role: 'bot' | 'user'; content: string; timestamp: string }>;
   is_active: boolean;
   expires_at: string;
+  version: number;
 }
 
 export interface BusinessRecord {
