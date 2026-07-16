@@ -3,13 +3,13 @@ import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'request-balance'), 10, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'request-balance'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
     const supabase = await createClient();

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { logger } from '@/lib/logger';
 
@@ -11,7 +11,7 @@ function esc(s: string): string {
 
 export async function POST(request: NextRequest) {
   // Rate limit: 10/min per IP
-  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'waiver-sign'), 10, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'waiver-sign'), 10, 60_000);
   if (rateLimit) return rateLimit;
 
   try {

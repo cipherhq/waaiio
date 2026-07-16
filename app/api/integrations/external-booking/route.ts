@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { validateApiKey } from '@/lib/api-keys';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { handlePostCompletion } from '@/lib/bot/flows/shared/post-completion';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 /**
@@ -14,7 +14,7 @@ import { logger } from '@/lib/logger';
 export async function POST(request: NextRequest) {
   try {
     // Rate limit by IP
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'ext-booking'), 60, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'ext-booking'), 60, 60_000);
     if (rateLimit) return rateLimit;
 
     // API key auth

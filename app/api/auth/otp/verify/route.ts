@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { verifyPhoneOtp, generatePhonePassword } from '@/lib/otp-phone-token';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 import { bindSession } from '@/lib/security/session-bind';
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
 
     // Rate limit: 5 verify attempts per phone per 15 minutes
     if (phone) {
-      const blocked = rateLimitResponse(`otp-verify:${phone}`, 5, 15 * 60 * 1000);
+      const blocked = await rateLimitResponseAsync(`otp-verify:${phone}`, 5, 15 * 60 * 1000);
       if (blocked) return blocked;
     }
 

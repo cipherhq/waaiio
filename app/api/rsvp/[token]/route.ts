@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 const VALID_STATUSES = ['accepted', 'maybe', 'declined'] as const;
 
@@ -11,7 +11,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(_request, 'rsvp'), 30, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(_request, 'rsvp'), 30, 60_000);
   if (rateLimit) return rateLimit;
 
   const { token } = await params;
@@ -65,7 +65,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'rsvp'), 30, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'rsvp'), 30, 60_000);
   if (rateLimit) return rateLimit;
 
   const { token } = await params;

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
@@ -13,7 +13,7 @@ export const maxDuration = 60;
 export async function POST(request: NextRequest) {
   try {
     // Rate limit: max 10 broadcasts per IP per hour
-    const broadcastLimit = rateLimitResponse('broadcast:' + (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'), 10, 3600_000);
+    const broadcastLimit = await rateLimitResponseAsync('broadcast:' + (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'), 10, 3600_000);
     if (broadcastLimit) return broadcastLimit;
 
     const supabase = await createClient();
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Rate limit: max 3 sends per minute per business
-    const rateLimited = rateLimitResponse(`broadcast:${business_id}`, 3, 60_000);
+    const rateLimited = await rateLimitResponseAsync(`broadcast:${business_id}`, 3, 60_000);
     if (rateLimited) return rateLimited;
 
     // Fetch business with subscription tier

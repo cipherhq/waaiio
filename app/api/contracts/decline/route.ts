@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'contract-decline'), 10, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'contract-decline'), 10, 60_000);
   if (rateLimit) return rateLimit;
 
   try {

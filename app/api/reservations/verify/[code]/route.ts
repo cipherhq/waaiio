@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/reservations/verify/[code]
@@ -13,7 +13,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(req, 'reservation-verify'), 30, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(req, 'reservation-verify'), 30, 60_000);
   if (rateLimit) return rateLimit;
 
   const { code } = await params;
@@ -111,7 +111,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   // Rate limit: 5 check-in attempts per minute per IP
-  const rateLimit = rateLimitResponse(getRateLimitKey(req, 'reservation-checkin'), 5, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(req, 'reservation-checkin'), 5, 60_000);
   if (rateLimit) return rateLimit;
 
   // Require authentication

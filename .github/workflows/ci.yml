@@ -156,9 +156,7 @@ jobs:
         run: npm ci
 
       - name: Audit root dependencies
-        run: npm audit --audit-level=critical || true
-        # Using || true because we don't want to block on non-critical advisories
-        # but we want visibility into what exists
+        run: npm audit --audit-level=critical
 
       - name: Check for wildcard dependencies
         run: |

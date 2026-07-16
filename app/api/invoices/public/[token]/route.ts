@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { PRICING_TIERS, type SubscriptionTier } from '@/lib/constants';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
-  const rl = rateLimitResponse(getRateLimitKey(_request, 'public-invoice'), 30, 60_000);
+  const rl = await rateLimitResponseAsync(getRateLimitKey(_request, 'public-invoice'), 30, 60_000);
   if (rl) return rl;
 
   try {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 // Public endpoint — fetch waiver template by token for signing
@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     // Rate limit: 30 requests per minute per IP
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'waiver-get'), 30, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'waiver-get'), 30, 60_000);
     if (rateLimit) return rateLimit;
 
     const { token } = await params;

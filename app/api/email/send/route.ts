@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email/client';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
-  const rl = rateLimitResponse(getRateLimitKey(request, 'email-send'), 20, 60_000);
+  const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'email-send'), 20, 60_000);
   if (rl) return rl;
 
   const supabase = await createClient();

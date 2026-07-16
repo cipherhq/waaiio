@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { authenticateRequest } from '@/lib/api-auth';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-get'), 30, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'canned-get'), 30, 60_000);
     if (rateLimit) return rateLimit;
 
     const auth = await authenticateRequest(request, { requireBusinessOwnership: true });
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-post'), 30, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'canned-post'), 30, 60_000);
     if (rateLimit) return rateLimit;
 
     const body = await request.json();
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-put'), 30, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'canned-put'), 30, 60_000);
     if (rateLimit) return rateLimit;
 
     const body = await request.json();
@@ -129,7 +129,7 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'canned-delete'), 30, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'canned-delete'), 30, 60_000);
     if (rateLimit) return rateLimit;
 
     const body = await request.json();

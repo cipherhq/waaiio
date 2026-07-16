@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { validateFileSignature } from '@/lib/security/validate-file';
 import { sanitizeImage } from '@/lib/security/sanitize-image';
 
 export async function POST(request: NextRequest) {
-  const limit = rateLimitResponse(getRateLimitKey(request, 'upload-logo'), 10, 60_000);
+  const limit = await rateLimitResponseAsync(getRateLimitKey(request, 'upload-logo'), 10, 60_000);
   if (limit) return limit;
 
   const supabase = await createClient();

@@ -2,13 +2,13 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 
 export async function POST(request: NextRequest) {
   try {
-    const rl = rateLimitResponse(getRateLimitKey(request, 'quote-accept'), 10, 60_000); // 10 per min
+    const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'quote-accept'), 10, 60_000); // 10 per min
     if (rl) return rl;
 
     const body = await request.json();
