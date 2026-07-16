@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
@@ -156,6 +157,7 @@ export async function GET(request: NextRequest) {
       logger.info(`[SCHEDULED BROADCAST] Processed ${broadcast.id}: ${sentCount} sent, ${failedCount} failed`);
     } catch (err) {
       logger.error(`[SCHEDULED BROADCAST] Error processing ${broadcast.id}:`, err);
+      Sentry.captureException(err, { tags: { cron: 'scheduled-broadcasts' } });
       await supabase.from('business_broadcasts').update({
         status: 'failed',
         error_message: (err as Error).message,

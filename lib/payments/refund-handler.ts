@@ -22,6 +22,22 @@ interface ProcessRefundResult {
 export async function processRefund(opts: ProcessRefundOpts): Promise<ProcessRefundResult> {
   const { supabase, paymentId, businessId, amount, reason, initiatedBy, initiatedByRole } = opts;
 
+  // Idempotency guard: reject if a refund is already in-progress (pending) for this payment.
+  // This prevents double-processing when the user clicks the refund button twice.
+  // Completed (success) refunds are fine — they are already reflected in payment.refund_amount
+  // and the remaining-amount check below handles them correctly for partial refunds.
+  const { data: pendingRefund } = await supabase
+    .from('refunds')
+    .select('id')
+    .eq('payment_id', paymentId)
+    .eq('status', 'pending')
+    .limit(1)
+    .maybeSingle();
+
+  if (pendingRefund) {
+    return { success: false, errorMessage: 'A refund for this payment is already being processed' };
+  }
+
   // 1. Load payment record
   const { data: payment, error: paymentErr } = await supabase
     .from('payments')

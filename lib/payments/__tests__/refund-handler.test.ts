@@ -22,6 +22,22 @@ interface MockTableConfig {
 function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) {
   const calls: Record<string, { update: ReturnType<typeof vi.fn>; insert: ReturnType<typeof vi.fn> }> = {};
 
+  // Build a chainable terminal object that supports arbitrary chaining
+  // and resolves to the configured result at terminal methods (single/maybeSingle)
+  function makeChainable(result: { data: unknown; error: unknown }) {
+    const chain: Record<string, unknown> = {};
+    const handler: ProxyHandler<Record<string, unknown>> = {
+      get(_target, prop) {
+        if (prop === 'then') return undefined; // not a thenable
+        if (prop === 'single') return vi.fn().mockResolvedValue(result);
+        if (prop === 'maybeSingle') return vi.fn().mockResolvedValue(result);
+        // All other methods return the proxy for chaining
+        return vi.fn().mockReturnValue(new Proxy(chain, handler));
+      },
+    };
+    return new Proxy(chain, handler);
+  }
+
   return {
     from: vi.fn((table: string) => {
       const config = tableConfigs[table] || {};
@@ -35,16 +51,13 @@ function createMockSupabase(tableConfigs: Record<string, MockTableConfig> = {}) 
           single: vi.fn().mockResolvedValue(config.insertResult || { data: { id: 'refund-1' }, error: null }),
         }),
       });
-      const selectFn = vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue(config.selectResult || { data: null, error: null }),
-          maybeSingle: vi.fn().mockResolvedValue(config.maybeSingleResult || { data: null, error: null }),
-          is: vi.fn().mockResolvedValue(config.updateResult || { data: null, error: null }),
-        }),
-        in: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue(config.selectResult || { data: null, error: null }),
-        }),
-      });
+
+      // Use Proxy-based chaining for select to handle arbitrary .eq().eq().limit().maybeSingle() chains
+      const selectResult = config.selectResult || { data: null, error: null };
+      const maybeSingleResult = config.maybeSingleResult || { data: null, error: null };
+      const selectFn = vi.fn().mockReturnValue(
+        makeChainable(selectResult),
+      );
 
       if (!calls[table]) {
         calls[table] = { update: updateFn, insert: insertFn };

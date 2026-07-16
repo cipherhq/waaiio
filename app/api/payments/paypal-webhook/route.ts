@@ -72,6 +72,7 @@ async function verifyPayPalWebhook(
 }
 
 export async function POST(request: NextRequest) {
+  let eventId: string | null = null;
   try {
     const rawBody = await request.text();
 
@@ -98,7 +99,7 @@ export async function POST(request: NextRequest) {
     const supabase = createServiceClient();
 
     // Idempotency: check if already processed (mark AFTER processing succeeds)
-    const eventId = body.id as string | undefined;
+    eventId = (body.id as string) || null;
     if (eventId) {
       const { data: existingEvent } = await supabase
         .from('processed_webhook_events')
@@ -306,9 +307,25 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logger.error('[PAYPAL WEBHOOK] Error:', (error as Error).message);
     Sentry.captureException(error);
-    // Acknowledge receipt to prevent infinite retries, but don't mark as processed
-    // so retries will reprocess the event
-    return NextResponse.json({ received: true }, { status: 200 });
+
+    // Mark event as failed so PayPal retries
+    if (eventId) {
+      try {
+        const supabase = createServiceClient();
+        await supabase.from('processed_webhook_events')
+          .update({
+            status: 'failed',
+            last_error: String(error).slice(0, 500),
+            last_attempted_at: new Date().toISOString(),
+          })
+          .eq('event_id', `paypal-${eventId}`);
+      } catch {
+        // Best-effort — don't mask the original error
+      }
+    }
+
+    // Return 500 so PayPal retries
+    return NextResponse.json({ error: 'Processing failed' }, { status: 500 });
   }
 }
 

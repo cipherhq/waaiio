@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { encryptToken, decryptToken } from '@/lib/encryption';
@@ -141,6 +142,7 @@ export async function GET(request: NextRequest) {
         businessId: channel.business_id,
         error: err instanceof Error ? err.message : String(err),
       });
+      Sentry.captureException(err, { tags: { cron: 'refresh-meta-tokens' } });
       errors++;
     }
   }

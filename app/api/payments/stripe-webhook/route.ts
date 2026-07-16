@@ -36,7 +36,10 @@ function verifyStripeSignature(rawBody: string, signature: string): boolean {
   });
 }
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
+  let eventId: string | null = null;
   try {
     const rawBody = await request.text();
     const signature = request.headers.get('stripe-signature') || '';
@@ -51,7 +54,7 @@ export async function POST(request: NextRequest) {
 
     const body = JSON.parse(rawBody);
     const event = body.type as string;
-    const eventId = body.id as string;
+    eventId = body.id as string;
     const data = body.data?.object as Record<string, unknown>;
 
     if (!data) {
@@ -330,6 +333,24 @@ export async function POST(request: NextRequest) {
             .maybeSingle();
 
           if (customerSub) {
+            // Dedup: check if a payment with this gateway_reference already exists
+            const recurringRef = (data.payment_intent as string) || (data.id as string);
+            if (recurringRef) {
+              const { data: existingRecurring } = await supabase
+                .from('payments')
+                .select('id')
+                .eq('gateway_reference', recurringRef)
+                .eq('status', 'success')
+                .maybeSingle();
+
+              if (existingRecurring) {
+                logger.info(`[STRIPE WEBHOOK] Skipping duplicate customer recurring charge: ${recurringRef}`);
+                invoicePaidHandled = true;
+                // Fall through to event marking at the bottom
+              }
+            }
+
+            if (!invoicePaidHandled) {
             const chargeAmount = (data.amount_paid as number) / 100;
             const now = new Date().toISOString();
 
@@ -459,6 +480,7 @@ export async function POST(request: NextRequest) {
 
             logger.info(`[STRIPE WEBHOOK] Customer recurring charge processed: ${subscriptionId}, amount: ${chargeAmount}`);
             invoicePaidHandled = true;
+            } // end if (!invoicePaidHandled) dedup guard
           }
         }
       }
@@ -601,8 +623,33 @@ export async function POST(request: NextRequest) {
       const subscriptionId = data.subscription as string;
       const amountPaid = (data.amount_paid as number) / 100; // cents to dollars
       const currency = (data.currency as string)?.toUpperCase() || 'USD';
+      const invoiceGatewayRef = (data.payment_intent as string) || (data.id as string);
 
       if (subscriptionId) {
+        // Dedup: check if a payment with this gateway_reference already exists (prevents double-charge on Stripe retries)
+        if (invoiceGatewayRef) {
+          const { data: existingPayment } = await supabase
+            .from('payments')
+            .select('id')
+            .eq('gateway_reference', invoiceGatewayRef)
+            .eq('status', 'success')
+            .maybeSingle();
+
+          if (existingPayment) {
+            logger.info(`[STRIPE WEBHOOK] Skipping duplicate recurring invoice.paid: ${invoiceGatewayRef}`);
+            // Still mark event as processed below, but skip creating records
+            if (eventId) {
+              await supabase
+                .from('processed_webhook_events')
+                .upsert(
+                  { event_id: `stripe-${eventId}`, gateway: 'stripe', event_type: `stripe_${event}`, processed_at: new Date().toISOString() },
+                  { onConflict: 'event_id', ignoreDuplicates: true },
+                );
+            }
+            return NextResponse.json({ received: true, duplicate: true });
+          }
+        }
+
         // Check if subscription is paused — skip processing if so
         const { data: pausedSub } = await supabase
           .from('customer_subscriptions')
@@ -865,9 +912,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ received: true });
   } catch (error) {
     Sentry.captureException(error);
-    // Acknowledge receipt to prevent infinite retries, but don't mark as processed
-    // so retries will reprocess the event
-    return NextResponse.json({ received: true }, { status: 200 });
+
+    // Mark event as failed so Stripe retries
+    if (eventId) {
+      try {
+        const supabase = createServiceClient();
+        await supabase.from('processed_webhook_events')
+          .update({
+            status: 'failed',
+            last_error: String(error).slice(0, 500),
+            last_attempted_at: new Date().toISOString(),
+          })
+          .eq('event_id', `stripe-${eventId}`);
+      } catch {
+        // Best-effort — don't mask the original error
+      }
+    }
+
+    // Return 500 so Stripe retries
+    return NextResponse.json({ error: 'Processing failed' }, { status: 500 });
   }
 }
 

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { verifyCronAuth } from '@/lib/cron-auth';
@@ -128,6 +129,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: 'Recurring invoices processed', generated, checked: dueInvoices.length });
   } catch (error) {
     logger.error('[RECURRING-INVOICE] Error:', error);
+    Sentry.captureException(error, { tags: { cron: 'recurring-invoices' } });
     return NextResponse.json({ error: 'Failed to process recurring invoices' }, { status: 500 });
   }
 }
