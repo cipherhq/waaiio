@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/tickets/verify/[code]
@@ -12,7 +12,7 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ code: string }> },
 ) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(req, 'ticket-verify'), 30, 60_000); // 30 per min
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(req, 'ticket-verify'), 30, 60_000); // 30 per min
   if (rateLimit) return rateLimit;
 
   const { code } = await params;
@@ -107,7 +107,7 @@ export async function POST(
   { params }: { params: Promise<{ code: string }> },
 ) {
   // Rate limit: 5 check-in attempts per minute per IP
-  const rateLimit = rateLimitResponse(getRateLimitKey(req, 'ticket-checkin'), 5, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(req, 'ticket-checkin'), 5, 60_000);
   if (rateLimit) return rateLimit;
 
   const { code } = await params;

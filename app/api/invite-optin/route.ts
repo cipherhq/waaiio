@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendWithTemplate } from '@/lib/channels/send-with-template';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 /**
@@ -11,7 +11,7 @@ import { logger } from '@/lib/logger';
  * Creates an event_invite record and sends the invite via WhatsApp.
  */
 export async function POST(request: NextRequest) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'invite-optin'), 10, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'invite-optin'), 10, 60_000);
   if (rateLimit) return rateLimit;
 
   try {

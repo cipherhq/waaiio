@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { generatePhoneOtp } from '@/lib/otp-phone-token';
 import { MetaCloudService } from '@/lib/channels/meta-cloud';
 import { createServiceClient } from '@/lib/supabase/service';
@@ -30,9 +30,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Rate limit: 3 per phone per 10 minutes + 10 per IP per 10 minutes
-    const phoneLimit = rateLimitResponse(`otp-send:${phone}`, 3, 600_000);
+    const phoneLimit = await rateLimitResponseAsync(`otp-send:${phone}`, 3, 600_000);
     if (phoneLimit) return phoneLimit;
-    const ipLimit = rateLimitResponse(getRateLimitKey(request, 'otp-send'), 10, 600_000);
+    const ipLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'otp-send'), 10, 600_000);
     if (ipLimit) return ipLimit;
 
     // Generate OTP and HMAC-signed token (stateless)

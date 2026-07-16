@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 
 /**
  * POST /api/demo/chat
@@ -12,7 +12,7 @@ import { rateLimitResponse } from '@/lib/rate-limit';
 // Rate limit: 30 messages per IP per minute (prevent abuse)
 export async function POST(request: NextRequest) {
   const ip = request.headers.get('x-forwarded-for') || 'unknown';
-  const rateLimit = rateLimitResponse(`demo:${ip}`, 30, 60_000);
+  const rateLimit = await rateLimitResponseAsync(`demo:${ip}`, 30, 60_000);
   if (rateLimit) return rateLimit;
 
   try {

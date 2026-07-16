@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 import { randomInt, createHmac, timingSafeEqual } from 'crypto';
 import { logger } from '@/lib/logger';
@@ -83,7 +83,7 @@ async function handleSend(request: NextRequest, body: Record<string, unknown>, c
   }
 
   // Rate limit: 3 sends per email per 10 minutes
-  const sendLimit = rateLimitResponse(`admin-otp-send:${emailLower}`, 3, 600_000);
+  const sendLimit = await rateLimitResponseAsync(`admin-otp-send:${emailLower}`, 3, 600_000);
   if (sendLimit) {
     // Attach CORS headers to rate limit response
     const rateLimitBody = await sendLimit.json();
@@ -91,7 +91,7 @@ async function handleSend(request: NextRequest, body: Record<string, unknown>, c
   }
 
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-  const ipLimit = rateLimitResponse(getRateLimitKey(request, 'admin-otp-send'), 10, 600_000);
+  const ipLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'admin-otp-send'), 10, 600_000);
   if (ipLimit) {
     const rateLimitBody = await ipLimit.json();
     return NextResponse.json(rateLimitBody, { status: ipLimit.status, headers: cors });
@@ -204,7 +204,7 @@ async function handleVerify(request: NextRequest, body: Record<string, unknown>,
   }
 
   // Rate limit: 5 verify attempts per email per 10 minutes
-  const limit = rateLimitResponse(`admin-otp-verify:${emailLower}`, 5, 10 * 60 * 1000);
+  const limit = await rateLimitResponseAsync(`admin-otp-verify:${emailLower}`, 5, 10 * 60 * 1000);
   if (limit) {
     const rateLimitBody = await limit.json();
     return NextResponse.json(rateLimitBody, { status: limit.status, headers: cors });

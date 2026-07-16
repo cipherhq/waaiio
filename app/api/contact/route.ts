@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
     // Stricter per-route limit for contact form (5 req/min)
-    const rl = rateLimitResponse(getRateLimitKey(request, 'contact'), 5, 60_000);
+    const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'contact'), 5, 60_000);
     if (rl) return rl;
 
     const body = await request.json();

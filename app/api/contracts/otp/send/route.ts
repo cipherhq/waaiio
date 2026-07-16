@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const rl = rateLimitResponse(getRateLimitKey(request, 'otp-send'), 3, 600_000); // 3 per 10 min
+    const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'otp-send'), 3, 600_000); // 3 per 10 min
     if (rl) return rl;
 
     const body = await request.json();

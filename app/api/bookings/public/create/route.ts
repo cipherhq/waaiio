@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
 
 /**
@@ -11,7 +11,7 @@ import { verifyOtpToken } from '@/lib/otp-token';
  */
 export async function POST(request: NextRequest) {
   // Rate limit: 10 per minute per IP
-  const rateLimited = rateLimitResponse(getRateLimitKey(request, 'public-booking'), 10, 60_000);
+  const rateLimited = await rateLimitResponseAsync(getRateLimitKey(request, 'public-booking'), 10, 60_000);
   if (rateLimited) return rateLimited;
 
   try {

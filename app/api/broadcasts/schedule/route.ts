@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { type SubscriptionTier } from '@/lib/constants';
 import { loadPlatformSettings } from '@/lib/platformSettings';
 import { logger } from '@/lib/logger';
@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 /** POST — schedule a broadcast for future delivery */
 export async function POST(request: NextRequest) {
   try {
-    const limit = rateLimitResponse('broadcast-schedule:' + (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'), 10, 3600_000);
+    const limit = await rateLimitResponseAsync('broadcast-schedule:' + (request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'), 10, 3600_000);
     if (limit) return limit;
 
     const supabase = await createClient();

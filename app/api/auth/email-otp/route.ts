@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { sendEmail } from '@/lib/email/client';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 
@@ -30,9 +30,9 @@ async function handleSend(request: NextRequest) {
     }
 
     // Rate limit: 3 per email per 10min, 10 per IP per 10min
-    const emailLimit = rateLimitResponse(`email-otp:${emailLower}`, 3, 600_000);
+    const emailLimit = await rateLimitResponseAsync(`email-otp:${emailLower}`, 3, 600_000);
     if (emailLimit) return emailLimit;
-    const ipLimit = rateLimitResponse(getRateLimitKey(request, 'email-otp'), 10, 600_000);
+    const ipLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'email-otp'), 10, 600_000);
     if (ipLimit) return ipLimit;
 
     // Generate 6-digit code using crypto-safe random
@@ -95,7 +95,7 @@ async function handleVerify(request: NextRequest) {
     }
 
     // Rate limit: 5 attempts per email per 15min
-    const limit = rateLimitResponse(`email-otp-verify:${emailLower}`, 5, 15 * 60 * 1000);
+    const limit = await rateLimitResponseAsync(`email-otp-verify:${emailLower}`, 5, 15 * 60 * 1000);
     if (limit) return limit;
 
     // Fetch from DB

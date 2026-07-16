@@ -5,12 +5,12 @@ import { createRecurringCheckout } from '@/lib/payments/stripe-recurring';
 import type { CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { authenticateRequest } from '@/lib/api-auth';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'recurring-setup'), 10, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'recurring-setup'), 10, 60_000);
     if (rateLimit) return rateLimit;
 
     const body = await request.json();

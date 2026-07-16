@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * GET /api/directory?country=US&category=barber&search=cuts
@@ -10,7 +10,7 @@ import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
  * Respects admin-configured featured/hidden lists from platform_settings.
  */
 export async function GET(request: NextRequest) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'directory'), 60, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'directory'), 60, 60_000);
   if (rateLimit) return rateLimit;
   const { searchParams } = new URL(request.url);
   const country = searchParams.get('country');

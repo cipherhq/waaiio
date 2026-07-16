@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import type { PaymentGatewayName } from '@/lib/constants';
 
@@ -10,7 +10,7 @@ import type { PaymentGatewayName } from '@/lib/constants';
  */
 export async function POST(request: NextRequest) {
   // Rate limit: 20 requests per minute per IP
-  const rl = rateLimitResponse(getRateLimitKey(request, 'pay-link'), 20, 60_000);
+  const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'pay-link'), 20, 60_000);
   if (rl) return rl;
 
   let body: Record<string, unknown>;

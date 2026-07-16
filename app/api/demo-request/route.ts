@@ -3,7 +3,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { wrap, btn, h, p } from '@/lib/email/templates';
 import { logger } from '@/lib/logger';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 
 const INDUSTRIES = ['Concierge', 'Hospitality', 'Travel', 'Entertainment', 'Events', 'Membership', 'Other'];
 const USE_CASES = ['own_business', 'reselling'];
@@ -14,7 +14,7 @@ function esc(str: string): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const rl = rateLimitResponse(getRateLimitKey(request, 'demo-request'), 5, 60_000);
+    const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'demo-request'), 5, 60_000);
     if (rl) return rl;
 
     const body = await request.json();

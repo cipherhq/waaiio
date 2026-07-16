@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { authenticateRequest } from '@/lib/api-auth';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'referrals-validate'), 20, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'referrals-validate'), 20, 60_000);
     if (rateLimit) return rateLimit;
 
     const body = await request.json();

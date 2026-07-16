@@ -6,14 +6,13 @@ import { processPaystackChargeSuccess, processPaystackChargeFailed } from '@/lib
 import { sendProactiveConfirmation } from '@/lib/payments/send-confirmation';
 import { notifyCustomerChargeFailed } from '@/lib/payments/notify-charge-failed';
 import { createAlert } from '@/lib/alerts/create-alert';
-import { getPlatformFees } from '@/lib/getPlatformFees';
 import { subscriptionRenewalReceiptEmail } from '@/lib/email/templates';
 import { sendEmail } from '@/lib/email/client';
-import type { SubscriptionTier } from '@/lib/constants';
 import { logger } from '@/lib/logger';
 import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 export async function POST(request: NextRequest) {
+  let eventId: string | null = null;
   try {
     const rawBody = await request.text();
     const signature = request.headers.get('x-paystack-signature') || '';
@@ -44,16 +43,41 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Idempotency: check if already processed (but don't mark yet — mark AFTER processing succeeds)
-    const eventId = `${event}:${reference}`;
-    const { data: existingEvent } = await supabase
+    // ── State machine: atomically claim the event ──
+    eventId = `paystack-${reference}`;
+    const { data: claimed, error: claimError } = await supabase
       .from('processed_webhook_events')
-      .select('id')
-      .eq('event_id', eventId)
-      .maybeSingle();
+      .upsert({
+        event_id: eventId,
+        gateway: 'paystack',
+        event_type: event,
+        status: 'processing',
+        attempts: 1,
+        first_received_at: new Date().toISOString(),
+        last_attempted_at: new Date().toISOString(),
+      }, {
+        onConflict: 'event_id',
+        ignoreDuplicates: false,
+      })
+      .select('id, status, attempts')
+      .single();
 
-    if (existingEvent) {
-      return NextResponse.json({ received: true, duplicate: true });
+    // Unique constraint violation = another instance is processing
+    if (claimError) {
+      logger.warn('[PAYSTACK] Event already being processed:', eventId);
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    // Already successfully processed — skip
+    if (claimed.status === 'completed') {
+      return NextResponse.json({ received: true }, { status: 200 });
+    }
+
+    // Retry of a previously failed event — allow it, bump attempts
+    if (claimed.status === 'processing' && claimed.attempts > 1) {
+      await supabase.from('processed_webhook_events')
+        .update({ attempts: claimed.attempts + 1, last_attempted_at: new Date().toISOString() })
+        .eq('event_id', eventId);
     }
 
     // ── Payment events (deposit bookings) — delegated to shared handler ──
@@ -241,14 +265,14 @@ export async function POST(request: NextRequest) {
 
     // ── Recurring customer subscription events ──
 
-    // Recurring charge success: log charge, create booking + payment records
+    // Recurring charge success: use atomic RPC for booking + payment + fee + subscription update
     if (event === 'charge.success') {
       const authorization = data.authorization as Record<string, string> | undefined;
       const customerData = data.customer as Record<string, string> | undefined;
       const authCode = authorization?.authorization_code;
       const custCode = customerData?.customer_code;
 
-      if (authCode || custCode) {
+      if ((authCode || custCode) && !existingPayment) {
         // Check if this charge is for a paused subscription — skip if so
         let pausedCheckQuery = supabase
           .from('customer_subscriptions')
@@ -259,141 +283,31 @@ export async function POST(request: NextRequest) {
         const { data: pausedSubs } = await pausedCheckQuery;
         if (pausedSubs && pausedSubs.length > 0) {
           logger.info(`[PAYSTACK WEBHOOK] Skipping charge for paused subscription(s): ${pausedSubs.map(s => s.id).join(', ')}`);
-        }
-
-        // Find matching customer_subscription by authorization or customer code
-        let subQuery = supabase
-          .from('customer_subscriptions')
-          .select('*')
-          .eq('status', 'active');
-
-        if (authCode) {
-          subQuery = subQuery.eq('authorization_code', authCode);
-        } else if (custCode) {
-          subQuery = subQuery.eq('gateway_customer_code', custCode);
-        }
-
-        const { data: subs } = await subQuery;
-        const sub = subs?.[0];
-
-        // Only process if this is a recurring charge (subscription exists and payment was not already handled above)
-        if (sub && !existingPayment) {
-          const chargeAmount = (data.amount as number) / 100; // kobo to naira
-          const now = new Date().toISOString();
-
-          // Create a booking record for the recurring charge
-          const { data: booking } = await supabase
-            .from('bookings')
-            .insert({
-              business_id: sub.business_id,
-              user_id: sub.user_id,
-              service_id: sub.service_id,
-              date: new Date().toISOString().split('T')[0],
-              time: new Date().toTimeString().split(' ')[0].slice(0, 5),
-              party_size: 1,
-              flow_type: 'payment',
-              channel: 'recurring',
-              deposit_amount: chargeAmount,
-              deposit_status: 'paid',
-              status: 'confirmed',
-              total_amount: chargeAmount,
-              quantity: 1,
-              guest_name: sub.customer_name || '',
-              guest_phone: sub.customer_phone || '',
-              confirmed_at: now,
-              notes: `Recurring ${sub.frequency} charge`,
-            })
-            .select('id, reference_code')
-            .single();
-
-          // Create payment record
-          const { data: payment } = await supabase
-            .from('payments')
-            .insert({
-              business_id: sub.business_id,
-              user_id: sub.user_id,
-              booking_id: booking?.id || null,
-              amount: chargeAmount,
-              currency: sub.currency,
-              gateway: 'paystack',
-              gateway_reference: reference,
-              status: 'success',
-              gateway_status: 'success',
-              payment_method: (data.channel as string) || 'card',
-              card_last_four: authorization?.last4 || sub.card_last_four,
-              card_brand: authorization?.brand || sub.card_brand,
-              paid_at: now,
-              metadata: { recurring: true, subscription_id: sub.id },
-            })
-            .select('id')
-            .single();
-
-          // Log the subscription charge
-          await supabase.from('subscription_charges').insert({
-            subscription_id: sub.id,
-            business_id: sub.business_id,
-            user_id: sub.user_id,
-            amount: chargeAmount,
-            currency: sub.currency,
-            status: 'success',
-            gateway: 'paystack',
-            gateway_reference: reference,
-            payment_id: payment?.id || null,
-            booking_id: booking?.id || null,
-            charged_at: now,
+        } else {
+          // Call atomic RPC — all financial writes in a single transaction
+          const recurringEventId = `paystack-recurring-${reference}`;
+          const { data: rpcResult, error: rpcError } = await supabase.rpc('process_recurring_charge', {
+            p_event_id: recurringEventId,
+            p_event_type: event,
+            p_gateway_ref: reference,
+            p_auth_code: authCode || null,
+            p_cust_code: custCode || null,
+            p_amount_kobo: data.amount as number,
+            p_currency: (data.currency as string) || 'NGN',
+            p_channel: (data.channel as string) || 'card',
+            p_card_last_four: authorization?.last4 || null,
+            p_card_brand: authorization?.brand || null,
           });
 
-          // Record platform fee for recurring payment (non-blocking)
-          if (booking?.id) {
-            const { data: recBusiness } = await supabase
-              .from('businesses')
-              .select('subscription_tier, trial_ends_at, payout_mode')
-              .eq('id', sub.business_id)
-              .single();
-
-            if (recBusiness && recBusiness.payout_mode !== 'direct_split') {
-              const recIsInTrial = new Date(recBusiness.trial_ends_at) > new Date();
-              const recTier = (recBusiness.subscription_tier || 'free') as SubscriptionTier;
-              const { feePercentage, feeFlat, feeTotal } = await getPlatformFees(chargeAmount, recTier, recIsInTrial);
-
-              await supabase.from('platform_fees').insert({
-                business_id: sub.business_id,
-                booking_id: booking.id,
-                transaction_amount: chargeAmount,
-                fee_percentage: feePercentage,
-                fee_flat: feeFlat,
-                fee_total: feeTotal,
-                tier: recTier,
-              });
-            }
-          }
-
-          // Update subscription totals and next charge date
-          const nextCharge = new Date();
-          if (sub.frequency === 'weekly') {
-            nextCharge.setDate(nextCharge.getDate() + 7);
-          } else {
-            nextCharge.setMonth(nextCharge.getMonth() + 1);
-          }
-
-          await supabase
-            .from('customer_subscriptions')
-            .update({
-              charge_count: (sub.charge_count || 0) + 1,
-              total_charged: parseFloat(sub.total_charged || '0') + chargeAmount,
-              last_charged_at: now,
-              next_charge_at: nextCharge.toISOString(),
-              failure_count: 0,
-            })
-            .eq('id', sub.id);
-
-          // Send WhatsApp + email confirmation to customer
-          if (payment) {
+          if (rpcError) {
+            logger.error('[PAYSTACK RECURRING] Atomic RPC error:', rpcError);
+          } else if (rpcResult?.success) {
+            // Non-critical notifications OUTSIDE the transaction
             try {
               await sendProactiveConfirmation(supabase, {
-                id: payment.id,
-                amount: chargeAmount,
-                booking_id: booking?.id || null,
+                id: rpcResult.payment_id,
+                amount: rpcResult.amount,
+                booking_id: rpcResult.booking_id || null,
                 invoice_id: null,
                 campaign_id: null,
                 reservation_id: null,
@@ -404,23 +318,27 @@ export async function POST(request: NextRequest) {
             }
 
             // Send receipt image to customer (non-blocking)
-            if (booking?.reference_code && sub.customer_phone) {
+            if (rpcResult.booking_ref && rpcResult.customer_phone) {
               try {
                 const resolver = new (await import('@/lib/channels/channel-resolver')).ChannelResolver(supabase);
-                const resolved = await resolver.resolveByBusinessId(sub.business_id);
+                const resolved = await resolver.resolveByBusinessId(rpcResult.business_id);
                 if (resolved) {
                   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
-                  const phone = sub.customer_phone.startsWith('+') ? sub.customer_phone.slice(1) : sub.customer_phone;
+                  const phone = (rpcResult.customer_phone as string).startsWith('+')
+                    ? (rpcResult.customer_phone as string).slice(1)
+                    : rpcResult.customer_phone;
                   await resolved.sender.sendImage({
                     to: phone,
-                    imageUrl: `${appUrl}/api/receipts/image?ref=${booking.reference_code}`,
-                    caption: `🧾 Receipt — ${booking.reference_code}`,
+                    imageUrl: `${appUrl}/api/receipts/image?ref=${rpcResult.booking_ref}`,
+                    caption: `🧾 Receipt — ${rpcResult.booking_ref}`,
                   });
                 }
               } catch (receiptErr) {
                 logger.error('[PAYSTACK RECURRING] Receipt image error:', receiptErr);
               }
             }
+          } else if (rpcResult?.skipped) {
+            logger.info(`[PAYSTACK RECURRING] Skipped: ${rpcResult.reason}`);
           }
         }
       }
@@ -508,19 +426,32 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Mark event as processed AFTER all financial writes succeeded
-    await supabase
-      .from('processed_webhook_events')
-      .upsert(
-        { event_id: eventId, gateway: 'paystack', event_type: `paystack_${event}`, processed_at: new Date().toISOString() },
-        { onConflict: 'event_id', ignoreDuplicates: true },
-      );
+    // ── Mark event as completed after all financial writes succeeded ──
+    await supabase.from('processed_webhook_events')
+      .update({ status: 'completed', completed_at: new Date().toISOString() })
+      .eq('event_id', eventId);
 
     return NextResponse.json({ received: true });
   } catch (error) {
     Sentry.captureException(error);
-    // Acknowledge receipt to prevent infinite retries, but don't mark as processed
-    // so retries will reprocess the event
-    return NextResponse.json({ received: true }, { status: 200 });
+
+    // Mark event as failed so Paystack can retry
+    if (eventId) {
+      try {
+        const supabase = createServiceClient();
+        await supabase.from('processed_webhook_events')
+          .update({
+            status: 'failed',
+            last_error: String(error).slice(0, 500),
+            last_attempted_at: new Date().toISOString(),
+          })
+          .eq('event_id', eventId);
+      } catch {
+        // Best-effort — don't mask the original error
+      }
+    }
+
+    // Return 500 so Paystack retries
+    return NextResponse.json({ error: 'Processing failed' }, { status: 500 });
   }
 }

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { CAPABILITY_TIER_REQUIREMENTS, type CapabilityId } from '@/lib/capabilities/types';
 import { checkAIFeature, incrementAIUsage } from '@/lib/bot/ai-tier-guard';
@@ -178,7 +178,7 @@ export async function POST(request: NextRequest) {
     .map(m => ({ role: m.role, content: String(m.content).slice(0, 5000) }));
 
   // Rate limit: 20 messages per business per hour
-  const rateLimited = rateLimitResponse(`ai-setup:${business_id}`, 20, 3600_000);
+  const rateLimited = await rateLimitResponseAsync(`ai-setup:${business_id}`, 20, 3600_000);
   if (rateLimited) return rateLimited;
 
   // Verify ownership + get business context

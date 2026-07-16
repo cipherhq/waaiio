@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 // Storage quotas per tier (in bytes)
@@ -15,7 +15,7 @@ const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB per file
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'doc-upload'), 20, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'doc-upload'), 20, 60_000);
     if (rateLimit) return rateLimit;
 
     const supabase = await createClient();

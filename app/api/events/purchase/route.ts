@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { initializePayment } from '@/lib/bot/flows/shared/payment';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { verifyOtpToken } from '@/lib/otp-token';
 
 export async function POST(request: NextRequest) {
   // Rate limit: 10/min per IP
   const rlKey = getRateLimitKey(request, 'event-purchase');
-  const rlResponse = rateLimitResponse(rlKey, 10, 60_000);
+  const rlResponse = await rateLimitResponseAsync(rlKey, 10, 60_000);
   if (rlResponse) return rlResponse;
 
   let body: {

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 type Params = { params: Promise<{ id: string }> };
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .eq('id', poll.business_id).eq('owner_id', user.id).single();
   if (!biz) return NextResponse.json({ error: 'Not authorized' }, { status: 403 });
 
-  const rateLimited = rateLimitResponse(`poll-send:${poll.business_id}`, 3, 60_000);
+  const rateLimited = await rateLimitResponseAsync(`poll-send:${poll.business_id}`, 3, 60_000);
   if (rateLimited) return rateLimited;
 
   // Check conversation limit

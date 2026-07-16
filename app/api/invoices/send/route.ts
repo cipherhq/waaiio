@@ -4,7 +4,7 @@ import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendEmail } from '@/lib/email/client';
 import { invoiceEmail } from '@/lib/email/templates';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { generateInvoicePdf, type InvoicePdfData } from '@/lib/pdf/invoice-pdf-generator';
 import { PRICING_TIERS, type CountryCode, type SubscriptionTier } from '@/lib/constants';
@@ -74,7 +74,7 @@ function formatAmount(amount: number, currency: string): string {
 }
 
 export async function POST(request: NextRequest) {
-  const rl = rateLimitResponse(getRateLimitKey(request, 'invoice-send'), 20, 60_000);
+  const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'invoice-send'), 20, 60_000);
   if (rl) return rl;
 
   try {

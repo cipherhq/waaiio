@@ -5,14 +5,14 @@ import { initializePayment } from '@/lib/bot/flows/shared/payment';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { sendOrEmail, findCustomerEmail } from '@/lib/channels/send-or-email';
 import { businessNotificationEmail } from '@/lib/email/templates';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { sendEmail } from '@/lib/email/client';
 import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest) {
   try {
-    const rateLimit = rateLimitResponse(getRateLimitKey(request, 'payment-request'), 20, 60_000);
+    const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'payment-request'), 20, 60_000);
     if (rateLimit) return rateLimit;
 
     const supabase = await createClient();

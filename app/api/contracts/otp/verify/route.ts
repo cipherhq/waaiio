@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 import { checkBruteForce, recordFailure, clearFailures } from '@/lib/brute-force';
 
 export async function POST(request: NextRequest) {
   try {
-    const rl = rateLimitResponse(getRateLimitKey(request, 'otp-verify'), 10, 600_000); // 10 per 10 min
+    const rl = await rateLimitResponseAsync(getRateLimitKey(request, 'otp-verify'), 10, 600_000); // 10 per 10 min
     if (rl) return rl;
 
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';

@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { rateLimitResponse } from '@/lib/rate-limit';
+import { rateLimitResponseAsync } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 let client: Anthropic | null = null;
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Rate limit: 10 image parses per business per hour
-  const rateLimited = rateLimitResponse(`ai-parse:${businessId}`, 10, 3600_000);
+  const rateLimited = await rateLimitResponseAsync(`ai-parse:${businessId}`, 10, 3600_000);
   if (rateLimited) return rateLimited;
 
   // Verify ownership

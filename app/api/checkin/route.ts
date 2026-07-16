@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { createClient } from '@/lib/supabase/server';
-import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
+import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
 import { logger } from '@/lib/logger';
 
 /**
@@ -10,7 +10,7 @@ import { logger } from '@/lib/logger';
  * Records attendance in attendance_log table.
  */
 export async function POST(request: NextRequest) {
-  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'attendance-checkin'), 10, 60_000);
+  const rateLimit = await rateLimitResponseAsync(getRateLimitKey(request, 'attendance-checkin'), 10, 60_000);
   if (rateLimit) return rateLimit;
 
   try {
@@ -136,8 +136,18 @@ export async function GET(request: NextRequest) {
     }
 
     const date = searchParams.get('date') || new Date().toISOString().split('T')[0];
+    // Validate date format
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date))) {
+      return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD.' }, { status: 400 });
+    }
     const page = parseInt(searchParams.get('page') || '0');
     const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 100);
+    if (isNaN(page) || page < 0) {
+      return NextResponse.json({ error: 'Invalid page parameter' }, { status: 400 });
+    }
+    if (isNaN(limit) || limit < 1) {
+      return NextResponse.json({ error: 'Invalid limit parameter' }, { status: 400 });
+    }
 
     const dayStart = `${date}T00:00:00.000Z`;
     const dayEnd = `${date}T23:59:59.999Z`;
