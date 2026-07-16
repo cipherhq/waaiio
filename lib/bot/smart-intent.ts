@@ -103,11 +103,31 @@ const TICKETING_PATTERNS = [
   /\b(abeg)\b.*\b(ticket|movie|show|film|concert)\b/i,
 ];
 
+// ── Timezone-aware "now" ─────────────────────────────────
+
+function getBusinessLocalDate(timezone?: string): Date {
+  if (!timezone) return new Date();
+  try {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    const get = (type: string) => parts.find(p => p.type === type)?.value || '';
+    return new Date(`${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}:00`);
+  } catch {
+    // Invalid timezone — fall back to server time
+    return new Date();
+  }
+}
+
 // ── Date extraction ──────────────────────────────────────
 
-function extractDate(text: string): string | null {
+function extractDate(text: string, timezone?: string): string | null {
   const lower = text.toLowerCase();
-  const now = new Date();
+  const now = getBusinessLocalDate(timezone);
 
   // "today" / "2day"
   if (/\b(today|2day|todey)\b/.test(lower)) {
@@ -432,7 +452,7 @@ function extractServiceKeywords(text: string): string[] {
 
 // ── Lightweight entity-only extraction (no intent, no LLM, no PostHog) ──
 
-export function extractEntitiesOnly(text: string): {
+export function extractEntitiesOnly(text: string, timezone?: string): {
   date: string | null;
   specificTime: string | null;
   timePreference: 'morning' | 'afternoon' | 'evening' | null;
@@ -442,7 +462,7 @@ export function extractEntitiesOnly(text: string): {
 } {
   const timeResult = extractTime(text);
   return {
-    date: extractDate(text),
+    date: extractDate(text, timezone),
     specificTime: timeResult.specific,
     timePreference: timeResult.preference,
     quantity: extractQuantity(text),
@@ -453,7 +473,7 @@ export function extractEntitiesOnly(text: string): {
 
 // ── Main parser ──────────────────────────────────────────
 
-export function parseSmartIntent(text: string): SmartParseResult {
+export function parseSmartIntent(text: string, timezone?: string): SmartParseResult {
   const result: SmartParseResult = {
     understood: false,
     intent: null,
@@ -474,7 +494,7 @@ export function parseSmartIntent(text: string): SmartParseResult {
 
   // Extract entities
   result.serviceKeywords = extractServiceKeywords(text);
-  result.date = extractDate(text);
+  result.date = extractDate(text, timezone);
   const timeResult = extractTime(text);
   result.specificTime = timeResult.specific;
   result.timePreference = timeResult.preference;
@@ -503,9 +523,10 @@ export async function parseSmartIntentHybrid(
   businessCategory: string | null,
   supabase: SupabaseClient,
   businessId: string | null,
+  timezone?: string,
 ): Promise<SmartParseResult & { language?: string; llmUsed?: boolean }> {
   // Step 1: Try regex
-  const regexResult = parseSmartIntent(text);
+  const regexResult = parseSmartIntent(text, timezone);
 
   // Check if LLM is enabled via feature flag (defaults to true if PostHog not configured)
   const llmEnabled = businessId

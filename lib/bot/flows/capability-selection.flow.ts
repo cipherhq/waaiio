@@ -272,7 +272,8 @@ const selectCapabilityStep: FlowStepConfig = {
     if ((capId === 'scheduling' || capId === 'reservation' || capId === 'payment' || capId === 'giving' || capId === 'ticketing' || capId === 'ordering') && ctx.business) {
       try {
         const { parseSmartIntentHybrid, matchServiceFromKeywords } = await import('@/lib/bot/smart-intent');
-        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null);
+        const bizTz = (ctx.session.session_data as Record<string, unknown>).business_timezone as string | undefined;
+        const parsed = await parseSmartIntentHybrid(input, ctx.business.category || null, ctx.supabase, ctx.business.id || null, bizTz);
 
         if (parsed.understood) {
           // Match service keywords — single match skips, multiple shows picker
