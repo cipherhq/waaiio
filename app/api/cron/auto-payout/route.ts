@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
 import { verifyCronAuth } from '@/lib/cron-auth';
@@ -348,6 +349,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     logger.error('[AUTO-PAYOUT] Error:', error);
+    Sentry.captureException(error, { tags: { cron: 'auto-payout' } });
     return NextResponse.json({ error: 'Auto-payout failed' }, { status: 500 });
   }
 }

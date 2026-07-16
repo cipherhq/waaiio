@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { ChannelResolver } from '@/lib/channels/channel-resolver';
 import { verifyCronAuth } from '@/lib/cron-auth';
@@ -99,11 +100,13 @@ export async function GET(request: NextRequest) {
         reminded++;
       } catch (err) {
         logger.error(`[CRON:SUB-REMINDERS] Error processing ${sub.id}:`, (err as Error).message);
+        Sentry.captureException(err, { tags: { cron: 'subscription-reminders' } });
         errors++;
       }
     }
   } catch (err) {
     logger.error('[CRON:SUB-REMINDERS] Fatal error:', (err as Error).message);
+    Sentry.captureException(err, { tags: { cron: 'subscription-reminders' } });
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 

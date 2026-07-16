@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { subscriptionExpiringEmail, subscriptionExpiredEmail } from '@/lib/email/templates';
@@ -204,6 +205,7 @@ export async function GET(request: NextRequest) {
       }
     } catch (err) {
       logger.error('[CRON:SUBSCRIPTION-EXPIRY] Error processing subscription:', (err as Error).message);
+      Sentry.captureException(err, { tags: { cron: 'subscription-expiry' } });
       errors++;
     }
   }

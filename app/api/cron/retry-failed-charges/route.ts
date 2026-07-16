@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { verifyCronAuth } from '@/lib/cron-auth';
 import { chargeAuthorization } from '@/lib/payments/paystack-recurring';
@@ -135,6 +136,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, retried, cancelled });
   } catch (error) {
     logger.error('[RETRY-CHARGES] Cron error:', error);
+    Sentry.captureException(error, { tags: { cron: 'retry-failed-charges' } });
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

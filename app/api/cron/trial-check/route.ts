@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createServiceClient } from '@/lib/supabase/service';
 import { sendEmail } from '@/lib/email/client';
 import { trialExpiringEmail, trialEndedEmail } from '@/lib/email/templates';
@@ -16,6 +17,7 @@ export async function GET(request: NextRequest) {
   const now = new Date();
   let emailsSent = 0;
 
+  try {
   // ── 1. Businesses whose trial ends in 2 days (warning email) ──
   const twoDaysFromNow = new Date(now);
   twoDaysFromNow.setDate(twoDaysFromNow.getDate() + 2);
@@ -79,4 +81,8 @@ export async function GET(request: NextRequest) {
     expiringSoon: expiringSoon?.length || 0,
     justExpired: justExpired?.length || 0,
   });
+  } catch (err) {
+    Sentry.captureException(err, { tags: { cron: 'trial-check' } });
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
+  }
 }
