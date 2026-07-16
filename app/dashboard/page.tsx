@@ -18,6 +18,7 @@ import { PayoutBanner } from '@/components/dashboard/PayoutBanner';
 import { UpgradeBanner } from '@/components/dashboard/UpgradeBanner';
 import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist';
 import { AISetupCard } from '@/components/dashboard/AISetupCard';
+import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 import type { CapabilityId } from '@/lib/capabilities/types';
 
 interface Stats {
@@ -424,7 +425,7 @@ export default function DashboardOverview() {
       />
 
       {/* Stats */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard
           label={`Total ${labels.entityNamePlural}`}
           value={stats.totalBookings}
@@ -507,7 +508,7 @@ export default function DashboardOverview() {
 
       {/* Tier Usage Indicators — show for free/growth tiers */}
       {(business.subscription_tier === 'free' || business.subscription_tier === 'growth') && (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <UsageBar
             label={`${labels.entityNamePlural} this month`}
             current={monthlyBookings}
@@ -668,12 +669,12 @@ export default function DashboardOverview() {
               View all
             </Link>
           </div>
-          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <ResponsiveTable className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date</th>
+                  <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date</th>
                   <th scope="col" className="px-4 py-3 text-right font-medium text-gray-500 dark:text-gray-400">Amount</th>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
                 </tr>
@@ -682,7 +683,7 @@ export default function DashboardOverview() {
                 {recentOrders.map((o) => (
                   <tr key={o.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/30">
                     <td className="px-4 py-3 font-mono text-xs text-gray-900 dark:text-gray-100 break-all">{o.reference_code}</td>
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+                    <td className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">
                       {new Date(o.created_at).toLocaleDateString(getLocale((business.country_code || 'NG') as CountryCode), {
                         day: 'numeric',
                         month: 'short',
@@ -706,7 +707,7 @@ export default function DashboardOverview() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </ResponsiveTable>
         </div>
       )}
 
@@ -787,15 +788,15 @@ export default function DashboardOverview() {
             </p>
           </div>
         ) : recent.length === 0 ? null : (
-          <div className="mt-4 overflow-x-auto rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
+          <ResponsiveTable className="mt-4 rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-50 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.personLabel}</th>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Date</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
+                  <th scope="col" className="hidden sm:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">{labels.quantityLabel}</th>
                   <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Status</th>
-                  <th scope="col" className="px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
+                  <th scope="col" className="hidden md:table-cell px-4 py-3 text-left font-medium text-gray-500 dark:text-gray-400">Ref</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50 dark:divide-gray-700">
@@ -812,7 +813,7 @@ export default function DashboardOverview() {
                         month: 'short',
                       })}
                     </td>
-                    <td className="px-4 py-3 text-gray-600 dark:text-gray-400">
+                    <td className="hidden sm:table-cell px-4 py-3 text-gray-600 dark:text-gray-400">
                       {labels.quantityLabel === 'amount'
                         ? formatCurrency(r.total_amount || r.deposit_amount || 0, country)
                         : r.party_size}
@@ -822,12 +823,12 @@ export default function DashboardOverview() {
                         {r.status.replace('_', ' ')}
                       </span>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 break-all">{r.reference_code}</td>
+                    <td className="hidden md:table-cell px-4 py-3 font-mono text-xs text-gray-400 dark:text-gray-500 break-all">{r.reference_code}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </ResponsiveTable>
         )}
       </div>
     </div>
@@ -926,7 +927,7 @@ function QuickActions({
   return (
     <div className="mt-6">
       <h3 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Quick Actions</h3>
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {visibleActions.map((action) => (
           <Link
             key={action.href}
