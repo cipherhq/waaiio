@@ -3,7 +3,6 @@ import { readFileSync } from 'fs';
 
 describe('Webhook inbound event state machine', () => {
   const metaWebhook = readFileSync('app/api/webhook/meta-cloud/route.ts', 'utf-8');
-  const gupshupWebhook = readFileSync('app/api/webhook/whatsapp/route.ts', 'utf-8');
 
   describe('Meta webhook', () => {
     it('inserts new events as processing, not completed', () => {
@@ -42,26 +41,6 @@ describe('Webhook inbound event state machine', () => {
     it('wraps all processing in per-message try/catch', () => {
       // The processing block must be inside a try/catch that updates event status
       expect(metaWebhook).toContain("catch (processingErr)");
-    });
-  });
-
-  describe('Gupshup webhook', () => {
-    it('inserts new events as processing, not completed', () => {
-      expect(gupshupWebhook).toContain("status: 'processing'");
-      expect(gupshupWebhook).not.toContain("ignoreDuplicates: true");
-    });
-
-    it('marks successful processing as completed', () => {
-      expect(gupshupWebhook).toContain("status: 'completed'");
-    });
-
-    it('marks failed processing as failed with error', () => {
-      expect(gupshupWebhook).toContain("status: 'failed'");
-      expect(gupshupWebhook).toContain("last_error");
-    });
-
-    it('allows retry of failed events', () => {
-      expect(gupshupWebhook).toContain("'failed'");
     });
   });
 

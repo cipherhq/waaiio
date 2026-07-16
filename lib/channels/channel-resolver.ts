@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { GupshupService } from './gupshup';
 import { MetaCloudService } from './meta-cloud';
 import { MetaCloudSender, type MessageSender } from './message-sender';
 import { logger } from '@/lib/logger';
@@ -9,12 +8,10 @@ interface ChannelRecord {
   id: string;
   country_code: CountryCode;
   phone_number: string;
-  gupshup_app_name: string;
-  gupshup_api_key: string;
   channel_type: 'shared' | 'dedicated';
   business_id: string | null;
   is_active: boolean;
-  provider: 'gupshup' | 'meta_cloud';
+  provider: 'meta_cloud';
   waba_id: string | null;
   phone_number_id: string | null;
   meta_access_token: string | null;
@@ -78,25 +75,24 @@ export class ChannelResolver {
   }
 
   private buildSender(channel: ChannelRecord): MessageSender {
-    if (channel.provider === 'meta_cloud' && channel.phone_number_id) {
-      // Use channel-specific token, falling back to env var for shared channels
-      // Decrypt token if encrypted (backwards compatible with plaintext)
-      let accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
-      try {
-        const { decryptToken } = require('@/lib/encryption');
-        accessToken = decryptToken(accessToken);
-      } catch (err) {
-        logger.error('[CHANNEL] Token decryption failed, using raw value:', err);
-      }
-      const cloud = new MetaCloudService({
-        accessToken,
-        phoneNumberId: channel.phone_number_id,
-        wabaId: channel.waba_id || undefined,
-      });
-      return new MetaCloudSender(cloud);
+    if (!channel.phone_number_id) {
+      throw new Error(`[CHANNEL] Channel ${channel.id} has no phone_number_id — only meta_cloud channels are supported`);
     }
-    // Default: Gupshup
-    return GupshupService.fromChannel(channel);
+    // Use channel-specific token, falling back to env var for shared channels
+    // Decrypt token if encrypted (backwards compatible with plaintext)
+    let accessToken = channel.meta_access_token || process.env.META_CLOUD_ACCESS_TOKEN || '';
+    try {
+      const { decryptToken } = require('@/lib/encryption');
+      accessToken = decryptToken(accessToken);
+    } catch (err) {
+      logger.error('[CHANNEL] Token decryption failed, using raw value:', err);
+    }
+    const cloud = new MetaCloudService({
+      accessToken,
+      phoneNumberId: channel.phone_number_id,
+      wabaId: channel.waba_id || undefined,
+    });
+    return new MetaCloudSender(cloud);
   }
 
   /**

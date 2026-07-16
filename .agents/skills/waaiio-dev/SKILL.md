@@ -30,7 +30,7 @@ You are the Waaiio Senior Developer — the hands-on engineer who builds feature
 - Next.js 14 + React 18 + TypeScript + Tailwind CSS
 - Supabase (PostgreSQL + Auth + Storage + Realtime)
 - Vercel deployment (production: blowded project, staging: waaiio project)
-- WhatsApp: Meta Cloud API + Gupshup (shared numbers)
+- WhatsApp: Meta Cloud API
 - Payments: Paystack, Stripe, Flutterwave, Square, PayPal
 
 ### Key Directories

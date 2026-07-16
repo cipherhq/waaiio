@@ -62,7 +62,7 @@ cd admin && npm run dev  # Admin panel (port 8083)
 - **Main app:** Next.js 14 + React 18 + TypeScript + Tailwind CSS
 - **Admin panel:** Vite + React 18 (separate app in `admin/`)
 - **Database:** Supabase (PostgreSQL + Auth + Storage + Realtime)
-- **WhatsApp:** Meta Cloud API (premium) + Gupshup (shared numbers)
+- **WhatsApp:** Meta Cloud API
 - **Payments:** Paystack (NG/GH), Stripe (US/GB/CA), Flutterwave, Square
 - **AI:** Anthropic Claude (intent detection + voice transcription via Haiku 4.5)
 - **Email:** Resend

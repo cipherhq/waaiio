@@ -26,9 +26,9 @@ Vercel Edge Network (CDN + Serverless)
     │       ├── RLS on all public schema tables
     │       └── RPC functions for atomic operations
     │
-    ├── WhatsApp (Meta Cloud API / Gupshup)
+    ├── WhatsApp (Meta Cloud API)
     │       ├── Inbound: webhook → bot.service.ts → flow executor
-    │       └── Outbound: channel resolver → MetaCloudSender / GupshupSender
+    │       └── Outbound: channel resolver → MetaCloudSender
     │
     └── Admin Panel (Vite + React, separate deploy)
             ├── 43 admin pages

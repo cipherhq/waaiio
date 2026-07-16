@@ -144,11 +144,6 @@ export default function DPAPage() {
                       <td className="py-2">US / Global</td>
                     </tr>
                     <tr>
-                      <td className="py-2 pr-4">Gupshup</td>
-                      <td className="py-2 pr-4">WhatsApp Business API provider</td>
-                      <td className="py-2">US / India</td>
-                    </tr>
-                    <tr>
                       <td className="py-2 pr-4">Supabase (AWS)</td>
                       <td className="py-2 pr-4">Database, authentication, file storage, real-time infrastructure</td>
                       <td className="py-2">US</td>

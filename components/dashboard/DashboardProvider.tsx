@@ -31,7 +31,6 @@ export interface Business {
   wa_method: 'shared' | 'transfer' | 'coexist' | null;
   assigned_channel_id: string | null;
   whatsapp_channel_id: string | null;
-  gupshup_app_id: string | null;
   is_whitelabel: boolean;
   verification_level: string | null;
   timezone: string;

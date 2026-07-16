@@ -1,9 +1,8 @@
 /**
  * Unified MessageSender interface
  *
- * Both GupshupService (shared numbers) and MetaCloudService (dedicated numbers)
- * are wrapped behind this common interface so the bot doesn't need to know
- * which provider is handling the message.
+ * MetaCloudService is wrapped behind this common interface so the bot
+ * doesn't need to know the details of the underlying provider.
  */
 
 import { MetaCloudService } from './meta-cloud';
@@ -121,7 +120,7 @@ export interface MessageSender {
 
 /**
  * Adapter that wraps MetaCloudService into the MessageSender interface
- * so it can be used interchangeably with GupshupService.
+ * so it conforms to the unified MessageSender interface.
  */
 export class MetaCloudSender implements MessageSender {
   constructor(private readonly cloud: MetaCloudService) {}

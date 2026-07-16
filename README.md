@@ -13,7 +13,7 @@ See [CLAUDE.md](./CLAUDE.md) for golden rules, pre-change checklists, and deep i
 | Frontend | Next.js 14, React 18, TypeScript, Tailwind CSS |
 | Admin Panel | Vite + React 18 (separate app in `admin/`) |
 | Database | Supabase (PostgreSQL + Auth + Storage + Realtime) |
-| WhatsApp | Meta Cloud API (dedicated numbers) + Gupshup (shared) |
+| WhatsApp | Meta Cloud API |
 | Payments | Paystack (NG/GH), Stripe (US/GB/CA), Flutterwave, Square, PayPal |
 | AI | Anthropic Claude (intent detection + voice transcription) |
 | Email | Resend |

@@ -3,7 +3,7 @@
  *
  * Direct integration with Meta's WhatsApp Cloud API
  * for businesses that connect their own WhatsApp number.
- * Replaces Gupshup for "transfer" and "coexist" connection methods.
+ * Used for all connection methods (shared and dedicated numbers).
  *
  * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api
  */
