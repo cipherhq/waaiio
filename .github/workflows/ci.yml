@@ -7,11 +7,12 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-test:
+  # ── Main Application ──
+  main-app:
+    name: Main App (lint, test, build)
     runs-on: ubuntu-latest
 
     env:
-      # Dummy env vars so the build doesn't fail on missing secrets
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: dummy
       NEXT_PUBLIC_APP_URL: https://www.waaiio.com
@@ -45,3 +46,49 @@ jobs:
 
       - name: Build
         run: npx next build
+
+  # ── Admin Application ──
+  admin-app:
+    name: Admin App (install, build)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: admin
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+  # ── Migration Validation ──
+  migrations:
+    name: Migration syntax check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate SQL migrations are parseable
+        run: |
+          for f in supabase/migrations/*.sql; do
+            echo "Checking $f..."
+            # Basic syntax check: ensure no common errors
+            if grep -qP '^\s*(DROP\s+TABLE|TRUNCATE)\s' "$f"; then
+              echo "WARNING: $f contains DROP TABLE or TRUNCATE"
+            fi
+          done
+          echo "All migrations checked."

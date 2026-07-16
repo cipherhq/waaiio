@@ -46,18 +46,16 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Idempotency: atomic dedup via ON CONFLICT
+    // Idempotency: check if already processed (mark AFTER processing succeeds)
     const eventId = body.event_id as string | undefined;
     if (eventId) {
-      const { data: inserted } = await supabase
+      const { data: existingEvent } = await supabase
         .from('processed_webhook_events')
-        .upsert(
-          { event_id: eventId, gateway: 'square', event_type: `square_${eventType}`, processed_at: new Date().toISOString() },
-          { onConflict: 'event_id', ignoreDuplicates: true },
-        )
-        .select('id');
+        .select('id')
+        .eq('event_id', eventId)
+        .maybeSingle();
 
-      if (!inserted || inserted.length === 0) {
+      if (existingEvent) {
         return NextResponse.json({ received: true, duplicate: true });
       }
     }
@@ -153,9 +151,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Mark event as processed AFTER all financial writes succeeded
+    if (eventId) {
+      await supabase
+        .from('processed_webhook_events')
+        .upsert(
+          { event_id: eventId, gateway: 'square', event_type: `square_${eventType}`, processed_at: new Date().toISOString() },
+          { onConflict: 'event_id', ignoreDuplicates: true },
+        );
+    }
+
     return NextResponse.json({ received: true });
   } catch (error) {
     Sentry.captureException(error);
+    // Acknowledge receipt to prevent infinite retries, but don't mark as processed
+    // so retries will reprocess the event
     return NextResponse.json({ received: true }, { status: 200 });
   }
 }

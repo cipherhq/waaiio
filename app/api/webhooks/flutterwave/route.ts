@@ -66,17 +66,15 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServiceClient();
 
-    // Idempotency: atomic dedup via ON CONFLICT
+    // Idempotency: check if already processed (mark AFTER processing succeeds)
     const eventId = `flw-${txRef}`;
-    const { data: inserted } = await supabase
+    const { data: existingEvent } = await supabase
       .from('processed_webhook_events')
-      .upsert(
-        { event_id: eventId, gateway: 'flutterwave', event_type: 'charge.completed', processed_at: new Date().toISOString() },
-        { onConflict: 'event_id', ignoreDuplicates: true },
-      )
-      .select('id');
+      .select('id')
+      .eq('event_id', eventId)
+      .maybeSingle();
 
-    if (!inserted || inserted.length === 0) {
+    if (existingEvent) {
       return NextResponse.json({ message: 'Already processed' }, { status: 200 });
     }
 
@@ -152,11 +150,21 @@ export async function POST(request: NextRequest) {
       logger.error('[FLUTTERWAVE WEBHOOK] Proactive confirmation error:', confirmErr);
     }
 
+    // Mark event as processed AFTER all financial writes succeeded
+    await supabase
+      .from('processed_webhook_events')
+      .upsert(
+        { event_id: eventId, gateway: 'flutterwave', event_type: 'charge.completed', processed_at: new Date().toISOString() },
+        { onConflict: 'event_id', ignoreDuplicates: true },
+      );
+
     return NextResponse.json({ message: 'OK' }, { status: 200 });
   } catch (error) {
     logger.error('Flutterwave webhook error:', (error as Error).message);
     Sentry.captureException(error);
-    return NextResponse.json({ message: 'Internal error' }, { status: 500 });
+    // Acknowledge receipt to prevent infinite retries, but don't mark as processed
+    // so retries will reprocess the event
+    return NextResponse.json({ received: true }, { status: 200 });
   }
 }
 

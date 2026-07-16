@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { logger } from '@/lib/logger';
+import { rateLimitResponse, getRateLimitKey } from '@/lib/rate-limit';
 
 /**
  * POST /api/auth/facebook/discover
@@ -12,6 +13,9 @@ import { logger } from '@/lib/logger';
  * Body: { code: string }
  */
 export async function POST(request: NextRequest) {
+  const rateLimit = rateLimitResponse(getRateLimitKey(request, 'fb-discover'), 5, 60_000);
+  if (rateLimit) return rateLimit;
+
   try {
     const supabase = await createClient();
     const { data: { user } } = await supabase.auth.getUser();

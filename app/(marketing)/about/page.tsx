@@ -261,7 +261,7 @@ export default function AboutPage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                 ),
-                title: '40+ industries, zero coding',
+                title: '89+ business types, zero coding',
                 desc: 'Pre-built automation flows for churches, salons, restaurants, schools, clinics, shops, NGOs, events, and dozens more. Just pick your category and go.',
                 color: 'border-brand-200 bg-brand-50/50',
                 iconBg: 'bg-brand-50',

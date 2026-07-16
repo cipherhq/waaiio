@@ -333,7 +333,7 @@ export default function PricingPage() {
             <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {[
                 { icon: '&#x1F4AC;', title: 'WhatsApp Native', desc: 'Customers interact on the app they use daily. No downloads, no links, no friction.' },
-                { icon: '&#x1F3ED;', title: '40+ Industries', desc: 'Churches, mosques, salons, clinics, schools, shops, NGOs, events — pre-built flows for every category.' },
+                { icon: '&#x1F3ED;', title: '89+ Business Types', desc: 'Churches, mosques, salons, clinics, schools, shops, NGOs, events — pre-built flows for every category.' },
                 { icon: '&#x1F30D;', title: '5 Countries', desc: 'Nigeria, US, UK, Canada & Ghana with localized pricing and payment gateways.' },
                 { icon: '&#x1F916;', title: 'AI Intelligence', desc: 'Smart intent detection, auto-upsell, multi-language support including Pidgin.' },
               ].map((f) => (

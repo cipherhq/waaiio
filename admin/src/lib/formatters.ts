@@ -45,10 +45,19 @@ export function fmtDateTime(date: string | Date): string {
   });
 }
 
-/** Format phone number for admin display — shows full number (admin-only panel). */
+/** Mask phone number for admin display — shows only last 4 digits. */
 export function maskPhone(phone: string | null | undefined): string {
   if (!phone) return '—';
-  return phone;
+  if (phone.length <= 4) return phone;
+  return '•••• ' + phone.slice(-4);
+}
+
+/** Mask email for admin display — shows first 2 chars + domain only. */
+export function maskEmail(email: string | null | undefined): string {
+  if (!email) return '—';
+  const [local, domain] = email.split('@');
+  if (!domain) return '—';
+  return local.slice(0, 2) + '•••@' + domain;
 }
 
 export function fmtRelative(date: string | Date): string {

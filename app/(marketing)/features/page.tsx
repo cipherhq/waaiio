@@ -7,7 +7,7 @@ export const revalidate = 3600;
 export const metadata: Metadata = {
   title: 'Features — Waaiio',
   description:
-    'Explore all 20+ capabilities of Waaiio — WhatsApp automation, booking, payments, ordering, ticketing, loyalty, broadcasts, analytics, and more.',
+    'Explore all 24 capabilities of Waaiio — WhatsApp automation, booking, payments, ordering, ticketing, loyalty, broadcasts, analytics, and more.',
 };
 
 const CHECK = (
