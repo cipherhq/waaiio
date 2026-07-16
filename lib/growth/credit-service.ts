@@ -94,30 +94,20 @@ export async function releaseCredits(
   supabase: SupabaseClient,
   businessId: string,
   campaignId: string,
-  amount: number,
-): Promise<void> {
-  // Return unused credits to the newest credit balance
-  const { data: credits } = await supabase
-    .from('growth_credits')
-    .select('id, remaining, amount')
-    .eq('business_id', businessId)
-    .order('created_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (credits) {
-    await supabase
-      .from('growth_credits')
-      .update({ remaining: Math.min(credits.remaining + amount, credits.amount) })
-      .eq('id', credits.id);
-  }
-
-  await supabase.from('growth_credit_transactions').insert({
-    business_id: businessId,
-    campaign_id: campaignId,
-    type: 'release',
-    amount,
+): Promise<{ success: boolean; released?: number; error?: string }> {
+  const { data, error } = await supabase.rpc('release_credits_atomic', {
+    p_business_id: businessId,
+    p_campaign_id: campaignId,
   });
+
+  if (error) {
+    logger.error('[CREDITS] Release RPC failed:', error.message);
+    return { success: false, error: error.message };
+  }
+  if (!data?.success) {
+    return { success: false, error: data?.reason || 'Release failed' };
+  }
+  return { success: true, released: data.released };
 }
 
 export async function grantCredits(
