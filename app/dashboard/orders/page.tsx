@@ -275,7 +275,7 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-3">
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2 space-y-6">
             {/* Items */}
             <div className="rounded-xl border border-gray-100 bg-white p-6">
@@ -608,7 +608,7 @@ export default function OrdersPage() {
       />
 
       {/* Quick Stats */}
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-gray-100 bg-white p-4">
           <p className="text-xs font-medium text-gray-500">Total Orders</p>
           <p className="mt-1 text-xl font-bold text-gray-900">{totalOrders}</p>

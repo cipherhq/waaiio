@@ -482,6 +482,8 @@ export function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
 
   const { capabilities } = useCapabilities();
   const isReseller = useIsReseller();
@@ -507,6 +509,22 @@ export function Sidebar() {
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
+
+  // Close mobile sidebar on Escape
+  useEffect(() => {
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape' && mobileOpen) setMobileOpen(false);
+    }
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [mobileOpen]);
+
+  // Focus close button when mobile drawer opens
+  useEffect(() => {
+    if (mobileOpen) {
+      closeButtonRef.current?.focus();
+    }
+  }, [mobileOpen]);
 
   // Close switcher on outside click
   useEffect(() => {
@@ -942,6 +960,7 @@ export function Sidebar() {
       {/* Mobile top bar with hamburger */}
       <div className="fixed left-0 right-0 top-0 z-40 flex h-14 items-center border-b border-gray-200 bg-white/95 px-4 backdrop-blur-sm dark:border-gray-700 dark:bg-gray-900/95 md:hidden">
         <button
+          ref={hamburgerRef}
           onClick={() => setMobileOpen(true)}
           className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
           aria-label="Open menu"
@@ -961,7 +980,8 @@ export function Sidebar() {
           <div className="absolute inset-0 bg-black/50" aria-hidden="true" onClick={() => setMobileOpen(false)} />
           <div className="absolute left-0 top-0 bottom-0 w-72 bg-white dark:bg-gray-900 shadow-xl flex flex-col">
             <button
-              onClick={() => setMobileOpen(false)}
+              ref={closeButtonRef}
+              onClick={() => { setMobileOpen(false); hamburgerRef.current?.focus(); }}
               className="absolute right-3 top-3 rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600"
               aria-label="Close menu"
             >

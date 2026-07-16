@@ -5,6 +5,7 @@ import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import { ResponsiveTable } from '@/components/dashboard/ResponsiveTable';
 
 interface Campaign {
   id: string;
@@ -333,14 +334,14 @@ export default function CampaignsPage() {
                       No donations yet
                     </p>
                   ) : (
-                    <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <ResponsiveTable>
                       <table className="w-full text-sm">
                         <thead className="border-b border-gray-100 bg-gray-50">
                           <tr>
                             <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Donor</th>
                             <th scope="col" className="px-3 py-2 text-right text-xs font-medium text-gray-500">Amount</th>
-                            <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
-                            <th scope="col" className="px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
+                            <th scope="col" className="hidden sm:table-cell px-3 py-2 text-left text-xs font-medium text-gray-500">Status</th>
+                            <th scope="col" className="hidden sm:table-cell px-3 py-2 text-left text-xs font-medium text-gray-500">Date</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
@@ -349,11 +350,19 @@ export default function CampaignsPage() {
                               <td className="px-3 py-2">
                                 <p className="font-medium text-gray-900">{d.donor_name || 'Anonymous'}</p>
                                 <p className="text-xs text-gray-400">{d.donor_phone}</p>
+                                <span className={`sm:hidden mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                                  d.status === 'success' ? 'bg-green-100 text-green-700' :
+                                  d.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                                  d.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-gray-100 text-gray-600'
+                                }`}>
+                                  {d.status}
+                                </span>
                               </td>
                               <td className="px-3 py-2 text-right font-medium text-gray-900">
                                 {formatCurrency(d.amount, country)}
                               </td>
-                              <td className="px-3 py-2">
+                              <td className="hidden sm:table-cell px-3 py-2">
                                 <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
                                   d.status === 'success' ? 'bg-green-100 text-green-700' :
                                   d.status === 'confirmed' ? 'bg-green-100 text-green-700' :
@@ -363,14 +372,14 @@ export default function CampaignsPage() {
                                   {d.status}
                                 </span>
                               </td>
-                              <td className="px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
+                              <td className="hidden sm:table-cell px-3 py-2 text-xs text-gray-500 whitespace-nowrap">
                                 {new Date(d.created_at).toLocaleDateString()}
                               </td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
-                    </div>
+                    </ResponsiveTable>
                   )}
                 </div>
               </>
