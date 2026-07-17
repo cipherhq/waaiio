@@ -27,8 +27,7 @@ import { loadPlatformSettings } from '@/lib/platformSettings';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
-const AUTO_APPROVE_LIMIT_NGN = 500_000; // ₦500,000 max auto-approve
-const AUTO_APPROVE_LIMIT_USD = 1_000;   // $1,000 max auto-approve
+// Auto-approve limits are now loaded from platform_settings.auto_approve_limits
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
@@ -172,8 +171,10 @@ export async function GET(request: NextRequest) {
       const bizAge = (Date.now() - new Date(biz.created_at).getTime()) / (1000 * 60 * 60 * 24);
       const transactionCount = (fees || []).length;
       const avgPerDay = transactionCount / 7;
-      const isNG = biz.country_code === 'NG' || biz.country_code === 'GH';
-      const autoApproveLimit = isNG ? AUTO_APPROVE_LIMIT_NGN : AUTO_APPROVE_LIMIT_USD;
+      const countryCode = biz.country_code || 'NG';
+      const autoApproveLimit = settings.auto_approve_limits[countryCode]
+        ?? settings.auto_approve_limits['US']
+        ?? 1000;
 
       const canAutoApprove =
         bizAge >= COOLING_PERIOD_DAYS &&

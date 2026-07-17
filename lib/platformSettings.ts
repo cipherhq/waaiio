@@ -65,6 +65,8 @@ export interface PlatformSettings {
   payout_verification_limits: Record<string, number>;
   /** Minimum amount for bank transfer option per country in major currency units (e.g. ₦10,000) */
   minimum_bank_transfer: Record<string, number>;
+  /** Max auto-approve payout amount per country in local currency minor units (e.g. NG: 500000 = ₦500,000) */
+  auto_approve_limits: Record<string, number>;
 }
 
 // ── Sentinel Utility ──
@@ -122,6 +124,7 @@ function buildFallback(): PlatformSettings {
     abuse_cooldown_hard_minutes: 30,
     payout_verification_limits: { unverified: 0, basic: 500000, standard: 2000000, full: 999999999 },
     minimum_bank_transfer: { NG: 10000, GH: 600 },
+    auto_approve_limits: { NG: 500000, US: 1000, GB: 800, CA: 1000, GH: 5000 },
   };
 }
 
@@ -159,7 +162,7 @@ export async function loadPlatformSettings(
         'fraud_velocity_threshold', 'default_platform_fee_percent', 'bot_rate_limit_per_minute',
         'max_businesses_per_user', 'ocr_confidence_threshold', 'invoice_expiry_days',
         'contract_signing_hours', 'abuse_cooldown_soft_minutes', 'abuse_cooldown_hard_minutes',
-        'payout_verification_limits', 'minimum_bank_transfer',
+        'payout_verification_limits', 'minimum_bank_transfer', 'auto_approve_limits',
       ]);
 
     if (error) throw error;
@@ -228,6 +231,9 @@ export async function loadPlatformSettings(
       minimum_bank_transfer: map.has('minimum_bank_transfer')
         ? (map.get('minimum_bank_transfer') as Record<string, number>)
         : fallback.minimum_bank_transfer,
+      auto_approve_limits: map.has('auto_approve_limits')
+        ? (map.get('auto_approve_limits') as Record<string, number>)
+        : fallback.auto_approve_limits,
     };
     cacheTime = Date.now();
     return cache;
