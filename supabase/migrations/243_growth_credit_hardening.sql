@@ -1,26 +1,31 @@
 -- Migration 243: Growth credit system hardening
 -- Adds CHECK constraints, reservation lifecycle, atomic RPCs, and recovery
 
--- 1. Add CHECK constraints to growth_credits
-ALTER TABLE growth_credits
-  ADD CONSTRAINT chk_credits_amount_positive CHECK (amount > 0),
-  ADD CONSTRAINT chk_credits_remaining_non_negative CHECK (remaining >= 0),
-  ADD CONSTRAINT chk_credits_remaining_lte_amount CHECK (remaining <= amount);
+-- Setup DDL wrapped in DO block for Supabase CLI single-statement compatibility
+DO $setup$ BEGIN
+  -- 1. Add CHECK constraints to growth_credits
+  BEGIN
+    ALTER TABLE public.growth_credits
+      ADD CONSTRAINT chk_credits_amount_positive CHECK (amount > 0),
+      ADD CONSTRAINT chk_credits_remaining_non_negative CHECK (remaining >= 0),
+      ADD CONSTRAINT chk_credits_remaining_lte_amount CHECK (remaining <= amount);
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END;
 
--- 2. Add reservation lifecycle tracking to growth_campaigns
-ALTER TABLE growth_campaigns
-  ADD COLUMN IF NOT EXISTS reservation_id UUID DEFAULT gen_random_uuid(),
-  ADD COLUMN IF NOT EXISTS reservation_status TEXT DEFAULT 'none'
-    CHECK (reservation_status IN ('none', 'reserved', 'partially_consumed', 'consumed', 'released', 'expired')),
-  ADD COLUMN IF NOT EXISTS reservation_expires_at TIMESTAMPTZ,
-  ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
+  -- 2. Add reservation lifecycle tracking to growth_campaigns
+  ALTER TABLE public.growth_campaigns
+    ADD COLUMN IF NOT EXISTS reservation_id UUID DEFAULT gen_random_uuid(),
+    ADD COLUMN IF NOT EXISTS reservation_status TEXT DEFAULT 'none'
+      CHECK (reservation_status IN ('none', 'reserved', 'partially_consumed', 'consumed', 'released', 'expired')),
+    ADD COLUMN IF NOT EXISTS reservation_expires_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT;
 
--- Idempotency key must be unique per business
-CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_idempotency
-  ON growth_campaigns(business_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_idempotency
+    ON public.growth_campaigns(business_id, idempotency_key) WHERE idempotency_key IS NOT NULL;
 
--- 3. Drop old campaign unique constraint (replace with idempotency key)
-ALTER TABLE growth_campaigns DROP CONSTRAINT IF EXISTS uq_growth_campaign_dedup;
+  -- 3. Drop old campaign unique constraint (replace with idempotency key)
+  ALTER TABLE public.growth_campaigns DROP CONSTRAINT IF EXISTS uq_growth_campaign_dedup;
+END $setup$;
 
 -- 4. Replace reserve_credits_atomic with full reservation lifecycle
 CREATE OR REPLACE FUNCTION reserve_credits_atomic(

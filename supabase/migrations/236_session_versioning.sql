@@ -1,6 +1,8 @@
 -- Add version column for optimistic concurrency control
-ALTER TABLE bot_sessions
-  ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
+DO $pre$ BEGIN
+  ALTER TABLE public.bot_sessions
+    ADD COLUMN IF NOT EXISTS version BIGINT NOT NULL DEFAULT 0;
+END $pre$;
 
 -- Create an RPC that performs compare-and-set session updates
 CREATE OR REPLACE FUNCTION update_session_cas(

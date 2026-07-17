@@ -164,7 +164,7 @@ jobs:
   playwright:
     name: Playwright smoke tests
     runs-on: ubuntu-latest
-    needs: main
+    needs: [main, migrations]
 
     steps:
       - name: Checkout code

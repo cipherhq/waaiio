@@ -42,11 +42,4 @@ BEGIN
 
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Trigger fires BEFORE UPDATE so the tier change is part of the same row write
-DROP TRIGGER IF EXISTS trg_auto_upgrade_membership_tier ON customer_profiles;
-CREATE TRIGGER trg_auto_upgrade_membership_tier
-  BEFORE UPDATE OF total_spent ON customer_profiles
-  FOR EACH ROW
-  EXECUTE FUNCTION auto_upgrade_membership_tier();
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';

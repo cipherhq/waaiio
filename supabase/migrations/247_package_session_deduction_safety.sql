@@ -5,25 +5,25 @@
 -- in a single transaction.
 -- ══════════════════════════════════════════════════
 
--- 1. Consumption tracking table for replay safety
-CREATE TABLE IF NOT EXISTS package_session_log (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  enrollment_id UUID NOT NULL REFERENCES package_enrollments(id) ON DELETE CASCADE,
-  booking_id UUID NOT NULL REFERENCES bookings(id) ON DELETE CASCADE,
-  deducted_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(enrollment_id, booking_id)
-);
-
-ALTER TABLE package_session_log ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "service_only" ON package_session_log
-  FOR ALL USING (auth.role() = 'service_role');
-
-CREATE INDEX idx_package_session_log_booking ON package_session_log(booking_id);
-CREATE INDEX idx_package_session_log_enrollment ON package_session_log(enrollment_id);
+-- 1. Setup tables and drop old RPC (wrapped for single-statement compat)
+DO $setup$ BEGIN
+  CREATE TABLE IF NOT EXISTS public.package_session_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    enrollment_id UUID NOT NULL REFERENCES public.package_enrollments(id) ON DELETE CASCADE,
+    booking_id UUID NOT NULL REFERENCES public.bookings(id) ON DELETE CASCADE,
+    deducted_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(enrollment_id, booking_id)
+  );
+  ALTER TABLE public.package_session_log ENABLE ROW LEVEL SECURITY;
+  DROP POLICY IF EXISTS "service_only" ON public.package_session_log;
+  CREATE POLICY "service_only" ON public.package_session_log
+    FOR ALL USING (auth.role() = 'service_role');
+  CREATE INDEX IF NOT EXISTS idx_package_session_log_booking ON public.package_session_log(booking_id);
+  CREATE INDEX IF NOT EXISTS idx_package_session_log_enrollment ON public.package_session_log(enrollment_id);
+  DROP FUNCTION IF EXISTS public.deduct_package_session(UUID);
+END $setup$;
 
 -- 2. Replace the RPC with fully atomic version
-DROP FUNCTION IF EXISTS deduct_package_session(UUID);
 
 CREATE OR REPLACE FUNCTION deduct_package_session(
   p_business_id UUID,
