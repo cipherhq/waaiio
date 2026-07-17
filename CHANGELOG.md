@@ -7,6 +7,11 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Auto-Deduct Package Sessions on Booking Confirmation
+- `supabase/migrations/246_deduct_package_session_rpc.sql` — New SECURITY DEFINER RPC `deduct_package_session(p_enrollment_id)`. Atomically increments `sessions_used` only if `sessions_used < sessions_total`, `is_active = true`, and `expires_at > NOW()`. Returns boolean.
+- `lib/payments/process-success.ts` — Added `deductPackageSession()` function. After booking confirmation, looks up the customer's active package enrollment (by business_id, guest_phone, service_id match in `service_packages.service_ids`). Uses soonest-expiring-first strategy. Calls RPC for atomic deduction. Non-blocking (errors caught and logged, never fails payment confirmation).
+- **Affects:** All booking confirmations via payment webhooks. Package enrollments now auto-decrement when a covered service is booked and paid for. No manual session tracking needed.
+
 ### JSON-LD Structured Data for Event and Property Public Pages
 - `app/e/[slug]/page.tsx` — Enhanced existing JSON-LD with: combined date+time for startDate/endDate (ISO 8601), eventStatus, eventAttendanceMode, organizer URL, location address, per-ticket-type offers array with availability and URL. Uses `getCurrencyCode()` instead of inline currencyMap.
 - `app/property/[id]/page.tsx` — Added new JSON-LD `LodgingBusiness` schema with: name, description, image, address (PostalAddress), numberOfRooms, offer with price/currency/unitCode, brand organization link.

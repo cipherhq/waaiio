@@ -72,6 +72,21 @@ export async function processSuccessfulPayment(
           bookingId: payment.booking_id,
         });
       }
+
+      // Deduct session from package enrollment if customer has an active package for this service
+      if (booking?.service_id && booking?.guest_phone && booking?.business_id) {
+        try {
+          await deductPackageSession(supabase, {
+            businessId: booking.business_id,
+            customerPhone: booking.guest_phone,
+            serviceId: booking.service_id,
+            bookingId: payment.booking_id,
+          });
+        } catch (pkgErr) {
+          logger.error('[PROCESS-SUCCESS] Package session deduction error:', pkgErr);
+          Sentry.captureException(pkgErr, { tags: { component: 'process-success', operation: 'package-session-deduction' } });
+        }
+      }
     } catch (err) {
       logger.error('[PROCESS-SUCCESS] Waitlist conversion tracking error:', err);
       Sentry.captureException(err, { tags: { component: 'process-success', operation: 'waitlist-conversion' } });
@@ -422,5 +437,57 @@ export async function processCampaignDonation(
       paymentAmount: amount,
       gatewayFee,
     });
+  }
+}
+
+/**
+ * Deduct a session from the customer's active package enrollment.
+ * Uses soonest-expiring-first strategy. Atomic RPC prevents race conditions.
+ * Non-blocking — errors are caught by the caller.
+ */
+async function deductPackageSession(
+  supabase: SupabaseClient,
+  opts: {
+    businessId: string;
+    customerPhone: string;
+    serviceId: string;
+    bookingId: string;
+  },
+): Promise<void> {
+  // Find the soonest-expiring active enrollment whose package covers this service
+  const { data: enrollments } = await supabase
+    .from('package_enrollments')
+    .select('id, package_id, sessions_used, sessions_total, service_packages!inner(service_ids)')
+    .eq('business_id', opts.businessId)
+    .eq('customer_phone', opts.customerPhone)
+    .eq('is_active', true)
+    .gt('expires_at', new Date().toISOString())
+    .order('expires_at', { ascending: true });
+
+  if (!enrollments || enrollments.length === 0) return;
+
+  // Find the first enrollment whose package includes this service_id
+  const matching = enrollments.find((e) => {
+    const pkg = e.service_packages as unknown as { service_ids: string[] };
+    return (
+      pkg?.service_ids?.includes(opts.serviceId) &&
+      e.sessions_used < e.sessions_total
+    );
+  });
+
+  if (!matching) return;
+
+  // Atomic deduction via RPC — only increments if sessions_used < sessions_total
+  const { data: deducted, error } = await supabase.rpc('deduct_package_session', {
+    p_enrollment_id: matching.id,
+  });
+
+  if (error) {
+    logger.error('[PACKAGE-DEDUCT] RPC error:', error);
+    return;
+  }
+
+  if (deducted) {
+    logger.info(`[PACKAGE-DEDUCT] Deducted session for enrollment ${matching.id} (booking ${opts.bookingId}). Used: ${matching.sessions_used + 1}/${matching.sessions_total}`);
   }
 }
