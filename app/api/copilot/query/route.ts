@@ -31,9 +31,11 @@ function localDateToUtc(dateStr: string, timezone: string): string {
   const match = localStr.match(/(\d{4})-(\d{2})-(\d{2}),?\s*(\d{2}):(\d{2}):(\d{2})/);
   if (!match) return `${dateStr}T00:00:00.000Z`; // fallback to UTC
   const localHour = parseInt(match[4], 10);
-  const offsetHours = localHour - 12; // difference from UTC noon
+  const localMinute = parseInt(match[5], 10);
+  // Offset = (local time) - (UTC noon probe)
+  const offsetMinutes = (localHour * 60 + localMinute) - (12 * 60);
   // Midnight local = 00:00 local = (00:00 - offset) UTC
-  const midnightUtc = new Date(Date.UTC(y, m - 1, d, -offsetHours, 0, 0));
+  const midnightUtc = new Date(Date.UTC(y, m - 1, d, 0, -offsetMinutes, 0));
   return midnightUtc.toISOString();
 }
 
