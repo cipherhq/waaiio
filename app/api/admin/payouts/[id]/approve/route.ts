@@ -302,15 +302,16 @@ export async function POST(
     sendNotification(service, supabase, payout, bizCountry, 'processing', reference).catch(() => {});
     return NextResponse.json({ success: true, status: 'processing' });
   } catch (error) {
-    // Provider threw — status is uncertain. Mark as 'failed' with note to check provider.
-    // The idempotency reference can be used to query the provider before retrying.
+    // Provider threw — status is UNCERTAIN. The transfer may or may not have succeeded.
+    // Mark as 'review_required' (not 'failed') to prevent blind retry.
+    // Admin must query the provider using the idempotency reference before taking action.
     const msg = (error as Error).message;
-    logger.error(`[ADMIN-PAYOUT] Provider error for ${id}:`, msg);
+    logger.error(`[ADMIN-PAYOUT] Provider error for ${id} (status uncertain):`, msg);
     Sentry.captureException(error, { tags: { component: 'admin-payout', payout_id: id } });
     await service.from('business_payouts')
       .update({
-        status: 'failed',
-        notes: `Provider error (status uncertain — check provider with ref ${idempotencyRef}): ${msg}`,
+        status: 'review_required',
+        notes: `UNCERTAIN: Provider error — check provider with ref "${idempotencyRef}" before retrying. Error: ${msg}`,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id);
