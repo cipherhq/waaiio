@@ -1,7 +1,7 @@
 -- Auto-upgrade membership tier when customer total_spent crosses a tier threshold
 -- Fires as BEFORE UPDATE trigger so it modifies the row in-place (no extra UPDATE)
 
-CREATE OR REPLACE FUNCTION auto_upgrade_membership_tier()
+CREATE OR REPLACE FUNCTION public.auto_upgrade_membership_tier()
 RETURNS TRIGGER AS $$
 DECLARE
   v_new_tier_id UUID;
@@ -14,7 +14,7 @@ BEGIN
 
   -- Find the highest tier the customer qualifies for
   SELECT id, name INTO v_new_tier_id, v_new_tier_name
-  FROM membership_tiers
+  FROM public.membership_tiers
   WHERE business_id = NEW.business_id
     AND is_active = true
     AND min_spend <= NEW.total_spent

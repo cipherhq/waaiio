@@ -3,11 +3,12 @@ import { readFileSync } from 'fs';
 
 describe('Session optimistic concurrency', () => {
   const executor = readFileSync('lib/bot/flows/executor.ts', 'utf-8');
-  const migration = readFileSync('supabase/migrations/236_session_versioning.sql', 'utf-8');
+  const schemaMigration = readFileSync('supabase/migrations/236_session_versioning.sql', 'utf-8');
+  const migration = readFileSync('supabase/migrations/259_update_session_cas.sql', 'utf-8');
 
   describe('Schema', () => {
     it('adds version column to bot_sessions', () => {
-      expect(migration).toContain('version BIGINT NOT NULL DEFAULT 0');
+      expect(schemaMigration).toContain('version BIGINT NOT NULL DEFAULT 0');
     });
 
     it('creates compare-and-set RPC', () => {
@@ -29,7 +30,7 @@ describe('Session optimistic concurrency', () => {
     });
 
     it('RPC restricted to service_role', () => {
-      const privileges = readFileSync('supabase/migrations/250_consolidated_function_privileges.sql', 'utf-8');
+      const privileges = readFileSync('supabase/migrations/264_consolidated_function_privileges.sql', 'utf-8');
       expect(privileges).toContain('REVOKE ALL ON FUNCTION public.update_session_cas');
       expect(privileges).toContain('GRANT EXECUTE');
       expect(privileges).toContain('TO service_role');
