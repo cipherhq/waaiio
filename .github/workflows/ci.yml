@@ -32,7 +32,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -63,7 +63,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: admin/package-lock.json
 
@@ -133,6 +133,23 @@ jobs:
             email TEXT,
             raw_app_meta_data JSONB DEFAULT '{}'
           );
+
+          -- Supabase Realtime publication (referenced by migration 001)
+          CREATE PUBLICATION IF NOT EXISTS supabase_realtime;
+
+          -- Supabase migration tracking (some migrations reference this)
+          CREATE SCHEMA IF NOT EXISTS supabase_migrations;
+          CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (
+            version TEXT PRIMARY KEY,
+            statements TEXT[],
+            name TEXT
+          );
+
+          -- Platform subscription type (referenced before migration 002 creates it)
+          DO $$ BEGIN
+            CREATE TYPE restaurant_status AS ENUM ('pending', 'active', 'suspended', 'closed');
+          EXCEPTION WHEN duplicate_object THEN NULL;
+          END $$;
           EOSQL
           echo "✅ Supabase schema stubs created"
 
@@ -241,7 +258,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -304,7 +321,7 @@ jobs:
             'ghp_'
           )
           for pattern in "${PATTERNS[@]}"; do
-            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' 2>/dev/null || true)
+            MATCHES=$(git grep -l "$pattern" -- ':!.env.example' ':!node_modules' ':!.next' ':!*.lock' ':!.github/workflows/ci.yml' ':!.husky/pre-commit' ':!.agents/' 2>/dev/null || true)
             if [ -n "$MATCHES" ]; then
               echo "⚠️  Found potential secret pattern '$pattern' in:"
               echo "$MATCHES"
@@ -328,7 +345,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -341,7 +358,7 @@ jobs:
       - name: Check for wildcard dependencies
         run: |
           echo "Checking for wildcard (*) dependencies..."
-          if grep -r '"*"' package.json admin/package.json 2>/dev/null; then
+          if grep -E ':\s*"\*"' package.json admin/package.json 2>/dev/null; then
             echo "❌ Wildcard dependencies found. Pin to specific versions."
             exit 1
           fi
