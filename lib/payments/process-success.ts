@@ -359,8 +359,21 @@ export async function processInvoicePayment(
 
   if (!invoice) return;
 
-  // Idempotency guard: if invoice is already fully paid, skip.
-  // This prevents double-incrementing amount_paid on webhook retries.
+  // Idempotency: check if this specific payment was already applied to this invoice.
+  // A webhook retry must not increment amount_paid twice for the same payment.
+  const { data: alreadyApplied } = await supabase
+    .from('platform_fees')
+    .select('id')
+    .eq('payment_id', paymentId)
+    .eq('invoice_id', invoiceId)
+    .maybeSingle();
+
+  if (alreadyApplied) {
+    // This payment's fee was already recorded — skip to prevent double-increment.
+    return;
+  }
+
+  // Also skip if invoice is already fully paid
   if (invoice.status === 'paid') {
     return;
   }
@@ -378,6 +391,8 @@ export async function processInvoicePayment(
     })
     .eq('id', invoiceId);
 
+  // Record fee — UNIQUE index on payment_id prevents duplicates even if the
+  // above check races with a concurrent call.
   await recordPlatformFee(supabase, { invoiceId, paymentId, paymentAmount, gatewayFee });
 }
 
@@ -391,7 +406,8 @@ export async function processCampaignDonation(
   amount: number,
   gatewayFee?: number,
 ): Promise<void> {
-  // Mark donation as success — try by payment_id first, fallback to campaign_id
+  // Mark donation as success — try by payment_id first, fallback to campaign_id.
+  // The .eq('status', 'pending') guard ensures only one call transitions the donation.
   const { data: updated } = await supabase
     .from('campaign_donations')
     .update({ status: 'success' })
@@ -401,15 +417,24 @@ export async function processCampaignDonation(
     .maybeSingle();
 
   if (!updated) {
-    await supabase
+    const { data: fallbackUpdated } = await supabase
       .from('campaign_donations')
       .update({ status: 'success', payment_id: paymentId })
       .eq('campaign_id', campaignId)
       .eq('status', 'pending')
-      .is('payment_id', null);
+      .is('payment_id', null)
+      .select('id')
+      .maybeSingle();
+
+    if (!fallbackUpdated) {
+      // Donation already processed (status != 'pending') — skip increment.
+      // This prevents double-counting on webhook retries.
+      return;
+    }
   }
 
-  // Atomic increment of campaign stats (prevents double-counting under race)
+  // Only reached if we actually transitioned a donation from pending → success.
+  // Atomic increment of campaign stats.
   if (typeof supabase.rpc === 'function') {
     await supabase.rpc('increment_campaign_donation', {
       p_campaign_id: campaignId,
@@ -417,7 +442,6 @@ export async function processCampaignDonation(
       p_donor_count: 1,
     });
   } else {
-    // Fallback for test environments without RPC support
     const { data: camp } = await supabase.from('campaigns').select('raised_amount, donor_count').eq('id', campaignId).single();
     if (camp) {
       await supabase.from('campaigns').update({
