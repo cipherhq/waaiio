@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION consume_credits_atomic(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_credit RECORD;
@@ -20,7 +20,7 @@ BEGIN
   -- Lock and iterate credits FIFO
   FOR v_credit IN
     SELECT id, remaining
-    FROM growth_credits
+    FROM public.growth_credits
     WHERE business_id = p_business_id
       AND remaining > 0
       AND (expires_at IS NULL OR expires_at > NOW())
@@ -29,17 +29,17 @@ BEGIN
   LOOP
     EXIT WHEN v_remaining <= 0;
     v_deduct := LEAST(v_remaining, v_credit.remaining);
-    UPDATE growth_credits SET remaining = remaining - v_deduct WHERE id = v_credit.id;
+    UPDATE public.growth_credits SET remaining = remaining - v_deduct WHERE id = v_credit.id;
     v_remaining := v_remaining - v_deduct;
   END LOOP;
 
   -- Update campaign consumed count
-  UPDATE growth_campaigns
+  UPDATE public.growth_campaigns
   SET credits_consumed = credits_consumed + p_amount
   WHERE id = p_campaign_id AND business_id = p_business_id;
 
   -- Record transaction
-  INSERT INTO growth_credit_transactions (business_id, campaign_id, type, amount)
+  INSERT INTO public.growth_credit_transactions (business_id, campaign_id, type, amount)
   VALUES (p_business_id, p_campaign_id, 'consume', -p_amount);
 
   RETURN jsonb_build_object('success', true, 'consumed', p_amount);

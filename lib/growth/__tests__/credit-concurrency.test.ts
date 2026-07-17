@@ -188,7 +188,7 @@ describe('RPC access control', () => {
   });
 
   it('all RPCs set search_path', () => {
-    const searchPathCount = (migration.match(/SET search_path = public/g) || []).length;
+    const searchPathCount = (allMigrations.match(/SET search_path\b/g) || []).length;
     expect(searchPathCount).toBeGreaterThanOrEqual(4);
   });
 });

@@ -9,12 +9,12 @@ CREATE OR REPLACE FUNCTION update_session_cas(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
-  v_result bot_sessions;
+  v_result public.bot_sessions;
 BEGIN
-  UPDATE bot_sessions
+  UPDATE public.bot_sessions
   SET
     current_step = p_current_step,
     session_data = p_session_data,
@@ -27,7 +27,7 @@ BEGIN
 
   IF NOT FOUND THEN
     -- Version mismatch — return the current state so caller can retry
-    SELECT * INTO v_result FROM bot_sessions WHERE id = p_session_id;
+    SELECT * INTO v_result FROM public.bot_sessions WHERE id = p_session_id;
     IF NOT FOUND THEN
       RETURN jsonb_build_object('success', false, 'reason', 'session_not_found');
     END IF;

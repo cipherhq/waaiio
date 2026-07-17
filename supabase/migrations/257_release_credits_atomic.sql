@@ -4,7 +4,7 @@ CREATE OR REPLACE FUNCTION release_credits_atomic(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_campaign RECORD;
@@ -16,7 +16,7 @@ BEGIN
   -- Lock the campaign
   SELECT id, reservation_status, credits_reserved, credits_consumed, business_id
   INTO v_campaign
-  FROM growth_campaigns
+  FROM public.growth_campaigns
   WHERE id = p_campaign_id
   FOR UPDATE;
 
@@ -38,7 +38,7 @@ BEGIN
   v_releasable := v_campaign.credits_reserved - v_campaign.credits_consumed;
   IF v_releasable <= 0 THEN
     -- Fully consumed, just mark released
-    UPDATE growth_campaigns SET reservation_status = 'consumed' WHERE id = p_campaign_id;
+    UPDATE public.growth_campaigns SET reservation_status = 'consumed' WHERE id = p_campaign_id;
     RETURN jsonb_build_object('success', true, 'released', 0, 'reason', 'fully_consumed');
   END IF;
 
@@ -46,7 +46,7 @@ BEGIN
   v_to_release := v_releasable;
   FOR v_credit IN
     SELECT id, remaining, amount
-    FROM growth_credits
+    FROM public.growth_credits
     WHERE business_id = p_business_id
       AND remaining < amount  -- Only credits that were deducted from
       AND (expires_at IS NULL OR expires_at > NOW())
@@ -58,7 +58,7 @@ BEGIN
       v_restorable INTEGER := LEAST(v_to_release, v_credit.amount - v_credit.remaining);
     BEGIN
       IF v_restorable > 0 THEN
-        UPDATE growth_credits SET remaining = remaining + v_restorable WHERE id = v_credit.id;
+        UPDATE public.growth_credits SET remaining = remaining + v_restorable WHERE id = v_credit.id;
         v_released := v_released + v_restorable;
         v_to_release := v_to_release - v_restorable;
       END IF;
@@ -66,12 +66,12 @@ BEGIN
   END LOOP;
 
   -- Mark campaign released
-  UPDATE growth_campaigns
+  UPDATE public.growth_campaigns
   SET reservation_status = 'released'
   WHERE id = p_campaign_id;
 
   -- Record transaction
-  INSERT INTO growth_credit_transactions (business_id, campaign_id, type, amount, balance_after)
+  INSERT INTO public.growth_credit_transactions (business_id, campaign_id, type, amount, balance_after)
   VALUES (p_business_id, p_campaign_id, 'release', v_released, NULL);
 
   RETURN jsonb_build_object('success', true, 'released', v_released, 'was_reserved', v_campaign.credits_reserved, 'was_consumed', v_campaign.credits_consumed);

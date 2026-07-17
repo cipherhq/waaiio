@@ -16,8 +16,8 @@ DECLARE
 BEGIN
   -- Find the soonest-expiring active enrollment for this service, lock it
   SELECT pe.id INTO v_enrollment_id
-  FROM package_enrollments pe
-  JOIN service_packages sp ON pe.package_id = sp.id
+  FROM public.package_enrollments pe
+  JOIN public.service_packages sp ON pe.package_id = sp.id
   WHERE pe.business_id = p_business_id
     AND pe.customer_phone = p_customer_phone
     AND pe.is_active = true
@@ -33,7 +33,7 @@ BEGIN
   END IF;
 
   -- Atomic deduction with guard
-  UPDATE package_enrollments
+  UPDATE public.package_enrollments
   SET sessions_used = sessions_used + 1
   WHERE id = v_enrollment_id
     AND sessions_used < sessions_total;
@@ -50,7 +50,7 @@ BEGIN
     VALUES (v_enrollment_id, p_booking_id);
   EXCEPTION WHEN unique_violation THEN
     -- Already deducted for this booking — rollback the increment
-    UPDATE package_enrollments
+    UPDATE public.package_enrollments
     SET sessions_used = sessions_used - 1
     WHERE id = v_enrollment_id;
     RETURN false;

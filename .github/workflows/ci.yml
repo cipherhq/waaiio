@@ -66,7 +66,7 @@ jobs:
           set -o pipefail
           # Get DB URL from structured env output
           eval "$(supabase status -o env 2>/dev/null)" || true
-          PGURL="${POSTGRES_URL:-}"
+          PGURL="${DB_URL:-${POSTGRES_URL:-}}"
           if [ -z "$PGURL" ]; then
             echo "❌ Could not get database URL"
             supabase status -o env
@@ -118,7 +118,7 @@ jobs:
         run: |
           set -o pipefail
           eval "$(supabase status -o env 2>/dev/null)" || true
-          PGURL="${POSTGRES_URL:-}"
+          PGURL="${DB_URL:-${POSTGRES_URL:-}}"
           for table in payments platform_fees business_payouts payout_accounts refunds invoices; do
             RLS=$(psql "$PGURL" -t -c "SELECT rowsecurity FROM pg_tables WHERE tablename='$table' AND schemaname='public'" | tr -d ' ')
             if [ "$RLS" != "t" ]; then

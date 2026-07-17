@@ -5,7 +5,7 @@ CREATE OR REPLACE FUNCTION reserve_credits_atomic(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_available INTEGER;
@@ -18,7 +18,7 @@ BEGIN
   -- Lock the campaign row to prevent concurrent reservations
   SELECT id, reservation_status, credits_reserved, business_id
   INTO v_campaign
-  FROM growth_campaigns
+  FROM public.growth_campaigns
   WHERE id = p_campaign_id
   FOR UPDATE;
 
@@ -38,7 +38,7 @@ BEGIN
 
   -- Calculate available credits with lock (exclude expired)
   SELECT COALESCE(SUM(remaining), 0) INTO v_available
-  FROM growth_credits
+  FROM public.growth_credits
   WHERE business_id = p_business_id
     AND remaining > 0
     AND (expires_at IS NULL OR expires_at > NOW())
@@ -47,7 +47,7 @@ BEGIN
   -- Subtract existing active reservations from other campaigns
   v_available := v_available - COALESCE((
     SELECT SUM(credits_reserved - credits_consumed)
-    FROM growth_campaigns
+    FROM public.growth_campaigns
     WHERE business_id = p_business_id
       AND id != p_campaign_id
       AND reservation_status IN ('reserved', 'partially_consumed')
@@ -58,7 +58,7 @@ BEGIN
   END IF;
 
   -- Update campaign with reservation
-  UPDATE growth_campaigns
+  UPDATE public.growth_campaigns
   SET credits_reserved = p_amount,
       credits_consumed = 0,
       reservation_status = 'reserved',
@@ -68,10 +68,10 @@ BEGIN
 
   -- Get the new reservation_id
   SELECT reservation_id INTO v_campaign.reservation_id
-  FROM growth_campaigns WHERE id = p_campaign_id;
+  FROM public.growth_campaigns WHERE id = p_campaign_id;
 
   -- Record transaction
-  INSERT INTO growth_credit_transactions (business_id, campaign_id, type, amount, balance_after)
+  INSERT INTO public.growth_credit_transactions (business_id, campaign_id, type, amount, balance_after)
   VALUES (p_business_id, p_campaign_id, 'reserve', -p_amount, v_available - p_amount);
 
   RETURN jsonb_build_object(

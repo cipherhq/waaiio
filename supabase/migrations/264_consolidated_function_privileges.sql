@@ -59,16 +59,20 @@ DO $$ BEGIN
   ) TO service_role;
 
   -- restore_stock / restore_variant_stock / restore_tickets_sold (from 181)
-  REVOKE ALL ON FUNCTION public.restore_stock(uuid, integer) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.restore_stock(uuid, integer) FROM PUBLIC, anon, authenticated;
   GRANT EXECUTE ON FUNCTION public.restore_stock(uuid, integer) TO service_role;
-  REVOKE ALL ON FUNCTION public.restore_variant_stock(uuid, integer) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.restore_variant_stock(uuid, integer) FROM PUBLIC, anon, authenticated;
   GRANT EXECUTE ON FUNCTION public.restore_variant_stock(uuid, integer) TO service_role;
-  REVOKE ALL ON FUNCTION public.restore_tickets_sold(uuid, integer) FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.restore_tickets_sold(uuid, integer) FROM PUBLIC, anon, authenticated;
   GRANT EXECUTE ON FUNCTION public.restore_tickets_sold(uuid, integer) TO service_role;
 
   -- process_recurring_charge (from 233)
-  REVOKE ALL ON FUNCTION public.process_recurring_charge FROM PUBLIC;
+  REVOKE ALL ON FUNCTION public.process_recurring_charge FROM PUBLIC, anon, authenticated;
   GRANT EXECUTE ON FUNCTION public.process_recurring_charge TO service_role;
+
+  -- create_catalog_order_atomic (from 231)
+  REVOKE ALL ON FUNCTION public.create_catalog_order_atomic(UUID, UUID, TEXT, TEXT, TEXT, JSONB) FROM PUBLIC, anon, authenticated;
+  GRANT EXECUTE ON FUNCTION public.create_catalog_order_atomic(UUID, UUID, TEXT, TEXT, TEXT, JSONB) TO service_role;
 
   -- update_session_cas (from 236)
   REVOKE ALL ON FUNCTION public.update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[]) FROM PUBLIC, anon, authenticated;
