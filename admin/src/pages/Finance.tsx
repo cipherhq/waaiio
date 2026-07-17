@@ -25,7 +25,7 @@ interface PlatformFee {
 interface BusinessPayout {
   net_amount: number;
   platform_fee: number;
-  currency: string | null;
+  business_id: string;
   status: string;
   created_at: string;
 }
@@ -75,7 +75,7 @@ export default function Finance() {
       const [paymentsRes, feesRes, payoutsRes, refundsRes, bizRes, subsRes] = await Promise.all([
         adminDb.from('payments').select('id, amount, currency, gateway, status, business_id, created_at'),
         adminDb.from('platform_fees').select('fee_total, waived, refunded_at, business_id, created_at, is_direct_transfer').is('refunded_at', null),
-        adminDb.from('business_payouts').select('net_amount, platform_fee, currency, status, created_at'),
+        adminDb.from('business_payouts').select('net_amount, platform_fee, status, created_at, business_id'),
         adminDb.from('refunds').select('amount, business_id, status, created_at').eq('status', 'success'),
         adminDb.from('businesses').select('id, category, country_code, subscription_tier'),
         adminDb.from('subscriptions').select('id, business_id, tier, amount, currency, status, created_at').eq('status', 'active'),
@@ -119,7 +119,7 @@ export default function Finance() {
   }
   const filteredPayments = useMemo(() => payments.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payments, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredFees = useMemo(() => fees.filter(f => inRange(f.created_at) && matchesCountry(f.business_id)), [fees, dateFrom, dateTo, countryFilter, bizCountryMap]);
-  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at)), [payouts, dateFrom, dateTo]);
+  const filteredPayouts = useMemo(() => payouts.filter(p => inRange(p.created_at) && matchesCountry(p.business_id)), [payouts, dateFrom, dateTo, countryFilter, bizCountryMap]);
   const filteredRefunds = useMemo(() => refunds.filter(r => inRange(r.created_at) && matchesCountry(r.business_id)), [refunds, dateFrom, dateTo, countryFilter, bizCountryMap]);
 
   // Resolve business → currency
@@ -175,19 +175,19 @@ export default function Finance() {
 
     const payoutsOwedByCurrency: Record<string, number> = {};
     for (const p of filteredPayouts.filter(p => ['pending', 'approved'].includes(p.status))) {
-      const cur = p.currency || 'NGN';
+      const cur = bizCurrencyMap.get(p.business_id) || 'NGN';
       payoutsOwedByCurrency[cur] = (payoutsOwedByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 
     const paidOutByCurrency: Record<string, number> = {};
     for (const p of filteredPayouts.filter(p => p.status === 'paid')) {
-      const cur = p.currency || 'NGN';
+      const cur = bizCurrencyMap.get(p.business_id) || 'NGN';
       paidOutByCurrency[cur] = (paidOutByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 
     const outstandingByCurrency: Record<string, number> = {};
     for (const p of filteredPayouts.filter(p => ['pending', 'approved', 'processing'].includes(p.status))) {
-      const cur = p.currency || 'NGN';
+      const cur = bizCurrencyMap.get(p.business_id) || 'NGN';
       outstandingByCurrency[cur] = (outstandingByCurrency[cur] || 0) + Number(p.net_amount || 0);
     }
 

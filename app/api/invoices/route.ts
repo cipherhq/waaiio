@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
 import { logger } from '@/lib/logger';
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
       .from('business_capabilities')
       .select('id')
       .eq('business_id', business_id)
-      .eq('capability_id', 'invoice')
+      .eq('capability', 'invoice')
       .eq('is_enabled', true)
       .maybeSingle();
     if (!invoiceCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
@@ -230,7 +231,9 @@ export async function POST(request: NextRequest) {
       amount: Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100,
     }));
 
-    const { data: invoice, error } = await supabase.rpc('create_invoice_with_items', {
+    // RPC is service-role-only (migration 264 revokes from authenticated)
+    const serviceDb = createServiceClient();
+    const { data: invoice, error } = await serviceDb.rpc('create_invoice_with_items', {
       p_invoice: invoiceData,
       p_items: itemRows,
     });

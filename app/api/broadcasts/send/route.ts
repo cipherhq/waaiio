@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       .from('business_capabilities')
       .select('id')
       .eq('business_id', business_id)
-      .eq('capability_id', 'broadcast')
+      .eq('capability', 'broadcast')
       .eq('is_enabled', true)
       .maybeSingle();
     if (!broadcastCap) {

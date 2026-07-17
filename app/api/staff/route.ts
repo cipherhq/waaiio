@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       .from('business_capabilities')
       .select('id')
       .eq('business_id', businessId)
-      .eq('capability_id', 'staff')
+      .eq('capability', 'staff')
       .eq('is_enabled', true)
       .maybeSingle();
     if (!staffCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });

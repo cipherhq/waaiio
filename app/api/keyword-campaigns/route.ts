@@ -95,7 +95,7 @@ export async function POST(request: NextRequest) {
     .from('business_capabilities')
     .select('id')
     .eq('business_id', business_id)
-    .eq('capability_id', 'crowdfunding')
+    .eq('capability', 'crowdfunding')
     .eq('is_enabled', true)
     .maybeSingle();
   if (!campaignCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });

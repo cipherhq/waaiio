@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
       .from('business_capabilities')
       .select('id')
       .eq('business_id', business.id)
-      .eq('capability_id', 'scheduling')
+      .eq('capability', 'scheduling')
       .eq('is_enabled', true)
       .maybeSingle();
     if (!schedCap) {
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
         .from('business_capabilities')
         .select('id')
         .eq('business_id', business.id)
-        .eq('capability_id', 'appointment')
+        .eq('capability', 'appointment')
         .eq('is_enabled', true)
         .maybeSingle();
       if (!apptCap) {

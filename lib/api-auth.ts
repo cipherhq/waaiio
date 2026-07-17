@@ -93,7 +93,7 @@ export async function authenticateRequest(
         .from('business_capabilities')
         .select('id')
         .eq('business_id', businessId)
-        .eq('capability_id', options.requireCapability)
+        .eq('capability', options.requireCapability)
         .eq('is_enabled', true)
         .maybeSingle();
 

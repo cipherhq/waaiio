@@ -285,10 +285,10 @@ export async function GET(request: NextRequest) {
               const transferData = await transferRes.json();
 
               if (transferData.status) {
+                // Status is 'processing' — NOT paid. paid_at is set only by webhook confirmation.
                 const { error: successUpdateError } = await supabase.from('business_payouts').update({
                   status: 'processing',
                   gateway_transfer_code: transferData.data.transfer_code,
-                  paid_at: new Date().toISOString(),
                 }).eq('id', payout.id);
                 if (successUpdateError) {
                   logger.error(`[AUTO-PAYOUT] Failed to update payout ${payout.id} to processing:`, successUpdateError.message);
