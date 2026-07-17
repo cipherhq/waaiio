@@ -120,11 +120,44 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
+    // ── Column security: block sensitive columns for non-admin roles ──
+    // These columns contain secrets, tokens, or credentials that must never
+    // reach the browser for any role except admin (who can access the DB directly anyway).
+    const BLOCKED_COLUMNS: Record<string, string[]> = {
+      payout_accounts: ['account_number', 'square_access_token', 'routing_number', 'subaccount_code', 'stripe_account_id'],
+      whatsapp_channels: ['meta_access_token'],
+    };
+
+    // Columns that non-admin can see on payout_accounts (explicit allowlist)
+    const PAYOUT_ACCOUNT_SAFE_COLUMNS = [
+      'id', 'business_id', 'gateway', 'bank_name', 'account_name',
+      'platform_percentage', 'is_active', 'verified_at', 'created_at', 'updated_at',
+      'square_merchant_id',
+    ];
+
     // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
     let safeSelect = select;
     if (profile.role !== 'admin') {
       // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
+
+      // For tables with blocked columns: replace * with safe column list
+      if (table === 'payout_accounts' && (safeSelect === '*' || safeSelect === '')) {
+        safeSelect = PAYOUT_ACCOUNT_SAFE_COLUMNS.join(', ');
+      }
+
+      // Block specific column requests on sensitive tables
+      const blockedForTable = BLOCKED_COLUMNS[table];
+      if (blockedForTable && safeSelect !== '*') {
+        const requestedCols = safeSelect.split(',').map((c: string) => c.trim());
+        const forbidden = requestedCols.filter((c: string) => blockedForTable.includes(c));
+        if (forbidden.length > 0) {
+          return NextResponse.json(
+            { error: `Columns not permitted: ${forbidden.join(', ')}` },
+            { status: 403, headers: cors },
+          );
+        }
+      }
     }
 
     let query: any = count === 'exact'
@@ -173,16 +206,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
-    // Mask sensitive fields for non-admin roles
-    if (table === 'payout_accounts' && profile.role !== 'admin' && Array.isArray(data)) {
-      for (const row of data as Record<string, unknown>[]) {
-        if (row.account_number && typeof row.account_number === 'string') {
-          row.account_number = '****' + row.account_number.slice(-4);
+    // Defense in depth: strip any blocked columns from results for non-admin
+    // The column blocklist above should prevent selection, but if a column
+    // somehow appears (e.g., via * on a table without an explicit allowlist),
+    // remove it from the response entirely.
+    if (profile.role !== 'admin' && Array.isArray(data)) {
+      const blockedForTable = BLOCKED_COLUMNS[table];
+      if (blockedForTable) {
+        for (const row of data as Record<string, unknown>[]) {
+          for (const col of blockedForTable) {
+            delete row[col];
+          }
+          // Also strip stripe_account_id (contains provider reference)
+          if (table === 'payout_accounts') {
+            delete row.stripe_account_id;
+          }
         }
-        // Also mask any provider tokens/secrets that might exist
-        if (row.square_access_token) row.square_access_token = '****';
-        if (row.stripe_account_id && typeof row.stripe_account_id === 'string' && profile.role !== 'admin') {
-          row.stripe_account_id = '****' + row.stripe_account_id.slice(-4);
+      }
+      // Strip meta_access_token from whatsapp_channels
+      if (table === 'whatsapp_channels') {
+        for (const row of data as Record<string, unknown>[]) {
+          delete row.meta_access_token;
         }
       }
     }

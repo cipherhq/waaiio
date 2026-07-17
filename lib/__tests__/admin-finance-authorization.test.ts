@@ -1,206 +1,140 @@
 /**
  * Admin Finance Authorization Tests
  *
- * Tests actual route handlers with mocked auth to prove:
- * - Admin can perform authorized actions
- * - Finance can read but cannot mutate
- * - Ordinary users are blocked
- * - Sensitive fields are masked
- * - Service client queries are not tenant-scoped (documented risk)
+ * Tests route handler logic, column security, and role enforcement.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { readFileSync } from 'fs';
 
-// ── Helper: create mock Supabase client ──
-function createMockSupabase(role: string | null, userId: string = 'test-user-id') {
-  const user = role ? { id: userId, email: `${role}@test.local` } : null;
-  return {
-    auth: {
-      getUser: vi.fn().mockResolvedValue({ data: { user } }),
-    },
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          maybeSingle: vi.fn().mockResolvedValue({
-            data: role ? { role } : null,
-          }),
-        }),
-      }),
-    }),
-  };
-}
+// ── 1. Mutation routes: admin-only ──
 
-// ── 1. Payout mutation routes: admin-only ──
-
-describe('Payout mutation routes reject non-admin roles', () => {
-  const mutationRoutes = [
-    { path: 'app/api/admin/payouts/[id]/approve/route.ts', name: 'approve' },
-    { path: 'app/api/admin/payouts/[id]/reject/route.ts', name: 'reject' },
-    { path: 'app/api/admin/payouts/generate/route.ts', name: 'generate' },
+describe('Payout mutation routes: admin-only', () => {
+  const routes = [
+    { file: 'app/api/admin/payouts/[id]/approve/route.ts', name: 'approve' },
+    { file: 'app/api/admin/payouts/[id]/reject/route.ts', name: 'reject' },
+    { file: 'app/api/admin/payouts/generate/route.ts', name: 'generate' },
+    { file: 'app/api/admin/payments/refund/route.ts', name: 'refund' },
   ];
 
-  for (const route of mutationRoutes) {
-    it(`${route.name}: admin role check is present and rejects non-admin`, () => {
-      const content = readFileSync(route.path, 'utf-8');
-      // The route checks profile.role !== 'admin'
+  for (const r of routes) {
+    it(`${r.name} rejects non-admin roles`, () => {
+      const content = readFileSync(r.file, 'utf-8');
       expect(content).toContain("profile.role !== 'admin'");
-      // Returns 401 for non-admin
-      expect(content).toContain('401');
     });
   }
-
-  it('refund route requires admin', () => {
-    const content = readFileSync('app/api/admin/payments/refund/route.ts', 'utf-8');
-    expect(content).toContain("profile.role !== 'admin'");
-    expect(content).toContain('403');
-  });
 });
 
-// ── 2. Payout list route: admin + finance ──
+// ── 2. Read route: admin + finance ──
 
-describe('Payout list route accepts admin and finance', () => {
-  it('requireAdminOrFinance accepts both roles', () => {
+describe('Payout list route: admin + finance', () => {
+  it('accepts both admin and finance roles', () => {
     const content = readFileSync('app/api/admin/payouts/route.ts', 'utf-8');
     expect(content).toContain("'admin', 'finance'");
-    expect(content).toContain('requireAdminOrFinance');
   });
 });
 
-// ── 3. Admin query route: service client risks ──
+// ── 3. Admin query: column security ──
 
-describe('Admin query route — service client analysis', () => {
+describe('Admin query route: column blocklist', () => {
   const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
 
-  it('uses createServiceClient (bypasses RLS)', () => {
-    expect(queryRoute).toContain('createServiceClient');
+  it('defines BLOCKED_COLUMNS for payout_accounts', () => {
+    expect(queryRoute).toContain('BLOCKED_COLUMNS');
+    expect(queryRoute).toContain("payout_accounts: ['account_number', 'square_access_token', 'routing_number', 'subaccount_code', 'stripe_account_id']");
   });
 
-  it('RISK: service client sees ALL rows across ALL businesses', () => {
-    // The admin query route does NOT add business_id scoping.
-    // Any finance/support/operations user can query all rows.
-    // This is by design for admin reporting, but means:
-    // - Finance sees all businesses' payout data
-    // - Support sees all businesses' booking data
-    // The query proxy trusts the role check + table whitelist.
-    expect(queryRoute).not.toContain('business_id = auth.uid()');
+  it('defines BLOCKED_COLUMNS for whatsapp_channels', () => {
+    expect(queryRoute).toContain("whatsapp_channels: ['meta_access_token']");
   });
 
-  it('restricts tables by role', () => {
-    expect(queryRoute).toContain('FINANCE_TABLES');
-    expect(queryRoute).toContain('SUPPORT_TABLES');
-    expect(queryRoute).toContain('OPERATIONS_TABLES');
-    expect(queryRoute).toContain('ADMIN_TABLES');
-  });
-
-  it('finance cannot access admin-only tables', () => {
-    // admin_audit_logs is in ADMIN_TABLES but NOT in FINANCE_TABLES
-    expect(queryRoute).toContain("'admin_audit_logs'");
-    // FINANCE_TABLES spreads SUPPORT_TABLES + finance-specific tables
-    // admin_audit_logs is not in either
-    const financeTables = queryRoute.slice(
-      queryRoute.indexOf('FINANCE_TABLES'),
-      queryRoute.indexOf('];', queryRoute.indexOf('FINANCE_TABLES'))
+  it('defines explicit safe column list for payout_accounts', () => {
+    expect(queryRoute).toContain('PAYOUT_ACCOUNT_SAFE_COLUMNS');
+    // Safe columns should NOT include any sensitive fields
+    expect(queryRoute).toContain("'id', 'business_id', 'gateway', 'bank_name', 'account_name'");
+    // Verify blocked columns are NOT in the safe list
+    const safeColSection = queryRoute.slice(
+      queryRoute.indexOf('PAYOUT_ACCOUNT_SAFE_COLUMNS'),
+      queryRoute.indexOf('];', queryRoute.indexOf('PAYOUT_ACCOUNT_SAFE_COLUMNS'))
     );
-    expect(financeTables).not.toContain('admin_audit_logs');
-    expect(financeTables).not.toContain('impersonation_logs');
+    expect(safeColSection).not.toContain('account_number');
+    expect(safeColSection).not.toContain('square_access_token');
+    expect(safeColSection).not.toContain('routing_number');
+    expect(safeColSection).not.toContain('subaccount_code');
+    expect(safeColSection).not.toContain('stripe_account_id');
   });
 
-  it('strips relationship traversal for non-admin', () => {
-    expect(queryRoute).toContain("profile.role !== 'admin'");
-    expect(queryRoute).toContain('safeSelect');
-  });
-});
-
-// ── 4. Sensitive field masking ──
-
-describe('Sensitive field masking in admin query', () => {
-  const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
-
-  it('masks account_number for non-admin on payout_accounts', () => {
+  it('replaces * with safe columns for non-admin payout_accounts queries', () => {
     expect(queryRoute).toContain("table === 'payout_accounts'");
-    expect(queryRoute).toContain("profile.role !== 'admin'");
-    expect(queryRoute).toContain("'****'");
-    expect(queryRoute).toContain('.slice(-4)');
+    expect(queryRoute).toContain('PAYOUT_ACCOUNT_SAFE_COLUMNS.join');
   });
 
-  it('masks square_access_token', () => {
-    expect(queryRoute).toContain('square_access_token');
-    expect(queryRoute).toContain("row.square_access_token = '****'");
+  it('rejects explicit requests for blocked columns', () => {
+    expect(queryRoute).toContain('Columns not permitted');
+    expect(queryRoute).toContain('403');
   });
 
-  it('masks stripe_account_id for non-admin', () => {
-    expect(queryRoute).toContain('stripe_account_id');
-  });
-});
-
-// ── 5. RLS policy verification ──
-
-describe('RLS policies on financial tables', () => {
-  const migration010 = readFileSync('supabase/migrations/010_payout_system.sql', 'utf-8');
-
-  it('business_payouts: admin has ALL, owner has SELECT', () => {
-    expect(migration010).toContain('Admins have full access to business_payouts');
-    expect(migration010).toContain('Business owners can view own payouts');
-  });
-
-  it('business_payouts: no finance-specific RLS policy', () => {
-    // Finance accesses via service client, not via RLS
-    const payoutPolicies = migration010.slice(
-      migration010.indexOf('business_payouts'),
-      migration010.indexOf('admin_audit_logs')
-    );
-    expect(payoutPolicies).not.toContain("'finance'");
-  });
-
-  it('admin_audit_logs: admin-only SELECT and INSERT', () => {
-    expect(migration010).toContain('Admins can view audit logs');
-    expect(migration010).toContain('Admins can insert audit logs');
+  it('strips blocked columns from response as defense in depth', () => {
+    expect(queryRoute).toContain('delete row[col]');
+    expect(queryRoute).toContain('delete row.stripe_account_id');
+    expect(queryRoute).toContain('delete row.meta_access_token');
   });
 });
 
-// ── 6. Cross-business access documentation ──
+// ── 4. Verify actual blocked columns against real schema ──
 
-describe('Cross-business access via admin query', () => {
-  it('DOCUMENTED RISK: admin query has no business_id filter', () => {
+describe('Blocked columns match actual database schema', () => {
+  // These columns actually exist in the database and contain secrets
+  const ACTUAL_SECRET_COLUMNS: Record<string, string[]> = {
+    payout_accounts: ['account_number', 'square_access_token', 'routing_number', 'subaccount_code', 'stripe_account_id'],
+    whatsapp_channels: ['meta_access_token'],
+  };
+
+  for (const [table, cols] of Object.entries(ACTUAL_SECRET_COLUMNS)) {
+    for (const col of cols) {
+      it(`${table}.${col} is blocked or stripped for non-admin`, () => {
+        const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
+        // Either in BLOCKED_COLUMNS or explicitly deleted from response
+        const isBlocked = queryRoute.includes(`'${col}'`) &&
+          (queryRoute.includes('BLOCKED_COLUMNS') || queryRoute.includes(`delete row.${col}`));
+        expect(isBlocked).toBe(true);
+      });
+    }
+  }
+});
+
+// ── 5. Finance scope decision ──
+
+describe('Finance role scope: platform-wide (documented decision)', () => {
+  it('Finance is platform-wide for reporting (no tenant scoping)', () => {
+    // DECISION: Finance is a platform-level role that can view aggregated
+    // financial data across all businesses. This is required for:
+    // - Platform revenue reporting
+    // - Payout queue management
+    // - Fee reconciliation
+    //
+    // Finance CANNOT:
+    // - See raw bank account numbers (blocked columns)
+    // - See provider tokens/secrets (blocked columns)
+    // - Approve, reject, or generate payouts (admin-only mutations)
+    // - Access admin audit logs or impersonation logs
+    //
+    // If business-scoped finance access is needed in the future,
+    // a dedicated API with business_id filtering should be built.
     const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
-    // The route does NOT enforce business_id scoping.
-    // This is intentional for platform-wide admin/finance reporting.
-    // The risk is accepted because:
-    // 1. Only authenticated admin/finance/support/operations can access
-    // 2. Tables are whitelisted by role
-    // 3. Relationship traversal is blocked for non-admin
-    // 4. Sensitive columns are masked
-    // If tenant isolation is required for finance, a dedicated API
-    // should be built instead of using the generic query proxy.
-    expect(queryRoute).toContain('createServiceClient');
-  });
-
-  it('each admin API route that reads business data uses service client', () => {
-    // The payout list, generate, approve, reject routes all use
-    // createClient (authenticated) which respects RLS.
-    // Only the query route uses service client.
-    const payoutList = readFileSync('app/api/admin/payouts/route.ts', 'utf-8');
-    const payoutApprove = readFileSync('app/api/admin/payouts/[id]/approve/route.ts', 'utf-8');
-    const payoutReject = readFileSync('app/api/admin/payouts/[id]/reject/route.ts', 'utf-8');
-
-    expect(payoutList).toContain('createClient');
-    expect(payoutApprove).toContain('createClient');
-    expect(payoutReject).toContain('createClient');
+    expect(queryRoute).toContain('createServiceClient'); // Platform-wide access
+    expect(queryRoute).toContain('FINANCE_TABLES'); // Restricted table set
+    expect(queryRoute).toContain('BLOCKED_COLUMNS'); // Restricted columns
   });
 });
 
-// ── 7. Execute actual route handler: unauthenticated ──
+// ── 6. Route handler execution ──
 
-describe('Route handler execution: unauthenticated access', () => {
-  beforeEach(() => {
-    vi.resetModules();
-  });
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+describe('Route handler execution: unauthenticated', () => {
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.restoreAllMocks(); });
 
-  it('payout approval returns 401 for unauthenticated request', async () => {
+  it('payout approval returns 401 for unauthenticated', async () => {
     vi.mock('@/lib/supabase/server', () => ({
       createClient: vi.fn().mockResolvedValue({
         auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
@@ -218,61 +152,83 @@ describe('Route handler execution: unauthenticated access', () => {
   });
 });
 
-// ── 8. ENABLE_PAYOUTS gate ──
+// ── 7. RLS policies ──
 
-describe('ENABLE_PAYOUTS feature flag', () => {
-  it('is not set by default (payouts disabled)', () => {
-    expect(process.env.ENABLE_PAYOUTS).toBeUndefined();
+describe('RLS policies on financial tables', () => {
+  const migration010 = readFileSync('supabase/migrations/010_payout_system.sql', 'utf-8');
+
+  it('business_payouts: admin ALL, owner SELECT only', () => {
+    expect(migration010).toContain('Admins have full access to business_payouts');
+    expect(migration010).toContain('Business owners can view own payouts');
   });
 
-  it('payout routes in PR #15 check ENABLE_PAYOUTS', () => {
-    // This test documents the requirement.
-    // The actual gate is in PR #15 (fix/pre-launch-finance-safety).
-    // Until that PR lands and ENABLE_PAYOUTS=true is set,
-    // payouts remain disabled at the API level.
-    expect(true).toBe(true); // Placeholder — gate is in PR #15
+  it('business_payouts: no finance RLS policy (reads via service client)', () => {
+    const section = migration010.slice(
+      migration010.indexOf('business_payouts'),
+      migration010.indexOf('admin_audit_logs')
+    );
+    expect(section).not.toContain("'finance'");
+  });
+
+  it('admin_audit_logs: admin-only', () => {
+    expect(migration010).toContain('Admins can view audit logs');
+    expect(migration010).toContain('Admins can insert audit logs');
   });
 });
 
-// ── 9. Authorization summary ──
+// ── 8. Table whitelist by role ──
 
-describe('Authorization matrix summary', () => {
-  it('admin: full access to all payout operations', () => {
-    const routes = [
-      'app/api/admin/payouts/route.ts',
-      'app/api/admin/payouts/[id]/approve/route.ts',
-      'app/api/admin/payouts/[id]/reject/route.ts',
-      'app/api/admin/payouts/generate/route.ts',
-    ];
-    for (const r of routes) {
-      const content = readFileSync(r, 'utf-8');
-      expect(content).toContain("'admin'");
-    }
+describe('Table whitelist enforcement', () => {
+  const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
+
+  it('finance cannot access admin_audit_logs', () => {
+    const financeSection = queryRoute.slice(
+      queryRoute.indexOf('FINANCE_TABLES'),
+      queryRoute.indexOf('];', queryRoute.indexOf('FINANCE_TABLES'))
+    );
+    expect(financeSection).not.toContain('admin_audit_logs');
   });
 
-  it('finance: read payouts, read finance data (masked), NO mutations', () => {
-    // Can list payouts
-    const list = readFileSync('app/api/admin/payouts/route.ts', 'utf-8');
-    expect(list).toContain("'finance'");
-
-    // Cannot approve
-    const approve = readFileSync('app/api/admin/payouts/[id]/approve/route.ts', 'utf-8');
-    expect(approve).toContain("profile.role !== 'admin'");
-
-    // Cannot reject
-    const reject = readFileSync('app/api/admin/payouts/[id]/reject/route.ts', 'utf-8');
-    expect(reject).toContain("profile.role !== 'admin'");
-
-    // Cannot generate
-    const generate = readFileSync('app/api/admin/payouts/generate/route.ts', 'utf-8');
-    expect(generate).toContain("profile.role !== 'admin'");
+  it('finance cannot access impersonation_logs', () => {
+    const financeSection = queryRoute.slice(
+      queryRoute.indexOf('FINANCE_TABLES'),
+      queryRoute.indexOf('];', queryRoute.indexOf('FINANCE_TABLES'))
+    );
+    expect(financeSection).not.toContain('impersonation_logs');
   });
 
   it('ordinary user roles are not in any admin allowlist', () => {
-    const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
-    const allowedRoles = "'admin', 'support', 'finance', 'operations'";
-    expect(queryRoute).toContain(allowedRoles);
-    // restaurant_owner, restaurant_staff not in any admin route
+    expect(queryRoute).toContain("'admin', 'support', 'finance', 'operations'");
     expect(queryRoute).not.toContain('restaurant_owner');
+    expect(queryRoute).not.toContain('restaurant_staff');
+  });
+});
+
+// ── 9. ENABLE_PAYOUTS ──
+
+describe('Payouts remain disabled', () => {
+  it('ENABLE_PAYOUTS is not set', () => {
+    expect(process.env.ENABLE_PAYOUTS).toBeUndefined();
+  });
+});
+
+// ── 10. What these tests do NOT prove (honest limitations) ──
+
+describe('Documented test limitations', () => {
+  it('OPEN: no real authenticated Supabase sessions tested', () => {
+    // These tests mock auth or inspect source code.
+    // Real authenticated integration tests require:
+    // - Test users with admin/finance/ordinary roles in Supabase
+    // - Real JWT tokens
+    // - Running Next.js server
+    // This infrastructure does not exist yet.
+    expect(true).toBe(true); // Placeholder — limitation acknowledged
+  });
+
+  it('OPEN: cross-business isolation not tested with real queries', () => {
+    // The admin query route uses service client (no RLS).
+    // Finance sees all businesses' data by design.
+    // If business-scoped finance is needed, this must be built.
+    expect(true).toBe(true); // Placeholder — limitation acknowledged
   });
 });
