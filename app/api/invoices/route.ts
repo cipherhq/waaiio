@@ -74,6 +74,8 @@ export async function POST(request: NextRequest) {
     }
     if (!items || !Array.isArray(items) || items.length === 0) {
       vErrors.items = 'At least one line item is required';
+    } else if (items.length > 200) {
+      vErrors.items = 'Maximum 200 line items per invoice';
     } else {
       for (let i = 0; i < items.length; i++) {
         const item = items[i];
@@ -83,6 +85,8 @@ export async function POST(request: NextRequest) {
         }
         if (!item.description || typeof item.description !== 'string' || !item.description.trim()) {
           vErrors[`items[${i}].description`] = 'Description is required';
+        } else if (item.description.trim().length > 2000) {
+          vErrors[`items[${i}].description`] = 'Description must be 2000 characters or less';
         }
         if (item.quantity !== undefined && item.quantity !== null) {
           const qty = Number(item.quantity);
@@ -113,6 +117,16 @@ export async function POST(request: NextRequest) {
       const dv = Number(discount_value);
       if (isNaN(dv) || dv < 0) {
         vErrors.discount_value = 'Discount value must be non-negative';
+      }
+      if (discount_type === 'percent' && dv > 100) {
+        vErrors.discount_value = 'Percent discount cannot exceed 100%';
+      }
+    }
+
+    if (is_recurring) {
+      const validFreq = ['weekly', 'biweekly', 'monthly', 'quarterly', 'yearly'];
+      if (recurring_frequency && !validFreq.includes(recurring_frequency)) {
+        vErrors.recurring_frequency = `Must be one of: ${validFreq.join(', ')}`;
       }
     }
 
@@ -165,6 +179,10 @@ export async function POST(request: NextRequest) {
     }
 
     const totalAmount = Math.round((subtotal + taxAmount - discountAmount) * 100) / 100;
+
+    if (totalAmount < 0) {
+      return NextResponse.json({ error: 'Discount cannot exceed subtotal plus tax' }, { status: 400 });
+    }
 
     // Resolve default currency from business country if not provided
     let resolvedCurrency = currency;

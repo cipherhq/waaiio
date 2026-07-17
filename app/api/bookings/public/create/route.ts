@@ -87,15 +87,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid date format' }, { status: 400 });
     }
 
-    // Validate time format
-    if (!/^\d{2}:\d{2}$/.test(time)) {
+    // Validate time format (00:00 - 23:59)
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
       return NextResponse.json({ error: 'Invalid time format' }, { status: 400 });
-    }
-
-    // Date must not be in the past
-    const today = new Date().toISOString().split('T')[0];
-    if (date < today) {
-      return NextResponse.json({ error: 'Cannot book in the past' }, { status: 400 });
     }
 
     // Sanitize email
@@ -111,13 +105,42 @@ export async function POST(request: NextRequest) {
     // Fetch business
     const { data: business, error: bizError } = await supabase
       .from('businesses')
-      .select('id, name, slug, country_code, operating_hours, payment_gateway, subscription_tier, metadata, owner_id')
+      .select('id, name, slug, country_code, operating_hours, payment_gateway, subscription_tier, metadata, owner_id, timezone')
       .eq('slug', businessSlug)
       .eq('is_active', true)
+      .eq('status', 'active')
       .single();
 
     if (bizError || !business) {
       return NextResponse.json({ error: 'Business not found' }, { status: 404 });
+    }
+
+    // Date must not be in the past (timezone-aware)
+    const businessTimezone = (business as Record<string, unknown>).timezone as string || 'UTC';
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: businessTimezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    if (date < today) {
+      return NextResponse.json({ error: 'Cannot book in the past' }, { status: 400 });
+    }
+
+    // Capability check: scheduling or appointment must be enabled
+    const { data: schedCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business.id)
+      .eq('capability_id', 'scheduling')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!schedCap) {
+      const { data: apptCap } = await supabase
+        .from('business_capabilities')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('capability_id', 'appointment')
+        .eq('is_enabled', true)
+        .maybeSingle();
+      if (!apptCap) {
+        return NextResponse.json({ error: 'This business does not accept online bookings' }, { status: 403 });
+      }
     }
 
     // Fetch service

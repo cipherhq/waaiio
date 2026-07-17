@@ -7,6 +7,32 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Discovery/Marketplace Safety Fixes
+- `lib/marketplace/search.ts` — 4 fixes:
+  1. `discovery_enabled` filter changed from `.or('discovery_enabled.is.null,discovery_enabled.eq.true')` to `.eq('discovery_enabled', true)` — NULL no longer treated as discoverable
+  2. Coordinate truthiness fix: `criteria.latitude &&` replaced with `criteria.latitude != null &&` (0 is a valid coordinate)
+  3. `criteria.radiusKm &&` replaced with `criteria.radiusKm != null && criteria.radiusKm > 0 &&` (0 is falsy)
+  4. `sanitizeFilterValue()` now used for both `category` and `query` params (was using manual regex only, missing PostgREST injection chars)
+- `app/(marketing)/directory/page.tsx` — Added `.eq('discovery_enabled', true)` filter to SEO server query (was missing, only checked status/bot_code)
+- `app/(marketing)/directory/DirectoryClient.tsx` — 2 fixes:
+  1. Country-aware WhatsApp numbers: replaced single `SHARED_WHATSAPP_NUMBER` with `SHARED_WHATSAPP_NUMBERS` record keyed by country code (NG/US/GB/CA/GH)
+  2. WhatsApp CTA button hidden when no number is configured for the business's country
+- **Affects:** Marketplace search, directory page, WhatsApp CTA links. Prevents non-opted-in businesses from appearing, fixes coordinate 0 bug, adds PostgREST injection protection, routes WhatsApp to correct country number.
+
+### Pre-Launch Finance & Booking Validation Hardening
+- `app/api/invoices/route.ts` — 5 new validations:
+  1. Percent discount > 100% rejected
+  2. Negative total from flat discount rejected (floor check after computation)
+  3. Recurring frequency validated against allowlist (weekly/biweekly/monthly/quarterly/yearly)
+  4. Line item count capped at 200
+  5. Item description length capped at 2000 characters
+- `app/api/bookings/public/create/route.ts` — 4 improvements:
+  1. Business status check added (`.eq('status', 'active')`) alongside existing `is_active`
+  2. Time format regex hardened from `\d{2}:\d{2}` to `([01]\d|2[0-3]):[0-5]\d` (rejects 99:99 etc.)
+  3. Date-in-past check now uses business timezone via `Intl.DateTimeFormat` instead of server UTC
+  4. Capability check added: requires `scheduling` or `appointment` capability enabled
+- **Affects:** Invoice creation, public booking creation. Prevents financial manipulation via oversized discounts, invalid recurring configs, and bookings on businesses without scheduling capability.
+
 ### Auto-Payout Financial Integrity Hardening
 - `app/api/cron/auto-payout/route.ts` — Added comprehensive DB error handling across all queries and mutations:
   1. Business fetch query now throws on error (exits cron with 500)
