@@ -127,18 +127,20 @@ export async function PATCH(
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout ${id} ${action}: status=${updated.status}`);
 
-    // Audit log
-    await service.from('admin_audit_logs').insert({
-      actor_id: auth.user.id,
-      action: `reseller_payout_${action}`,
-      entity_type: 'reseller_payout',
-      entity_id: id,
-      details: {
-        reseller_id: payout.reseller_id,
-        amount: payout.net_amount,
-        ...(action === 'reject' ? { reason: notes } : {}),
-      },
-    }).then(() => {}).catch((err: unknown) => console.error('[AUDIT] Failed:', err));
+    // Audit log (best-effort — don't block response)
+    try {
+      await service.from('admin_audit_logs').insert({
+        actor_id: auth.user.id,
+        action: `reseller_payout_${action}`,
+        entity_type: 'reseller_payout',
+        entity_id: id,
+        details: {
+          reseller_id: payout.reseller_id,
+          amount: payout.net_amount,
+          ...(action === 'reject' ? { reason: notes } : {}),
+        },
+      });
+    } catch { /* best-effort */ }
 
     return NextResponse.json({ payout: updated });
   } catch {

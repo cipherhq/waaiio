@@ -169,20 +169,22 @@ export async function POST(request: NextRequest) {
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout created: ${payout.id} for reseller ${reseller_id}, net=${netAmount}`);
 
-    // Audit log
-    await service.from('admin_audit_logs').insert({
-      actor_id: auth.user.id,
-      action: 'reseller_payout_created',
-      entity_type: 'reseller_payout',
-      entity_id: payout.id,
-      details: {
-        reseller_id,
-        period_start,
-        period_end,
-        gross_commission: grossCommission,
-        net_amount: netAmount,
-      },
-    }).then(() => {}).catch((err: unknown) => console.error('[AUDIT] Failed:', err));
+    // Audit log (best-effort — don't block response)
+    try {
+      await service.from('admin_audit_logs').insert({
+        actor_id: auth.user.id,
+        action: 'reseller_payout_created',
+        entity_type: 'reseller_payout',
+        entity_id: payout.id,
+        details: {
+          reseller_id,
+          period_start,
+          period_end,
+          gross_commission: grossCommission,
+          net_amount: netAmount,
+        },
+      });
+    } catch { /* best-effort */ }
 
     return NextResponse.json({ payout }, { status: 201 });
   } catch {
