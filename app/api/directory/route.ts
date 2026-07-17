@@ -30,18 +30,37 @@ export async function GET(request: NextRequest) {
   });
 
   if (results.length === 0) {
-    const response = NextResponse.json({ businesses: [] });
+    // Still return categories/countries for filter dropdowns even when no businesses match
+    const [{ data: emptyCategories }, { data: emptyCountries }] = await Promise.all([
+      supabase
+        .from('category_templates')
+        .select('key, label, icon')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true }),
+      supabase
+        .from('countries')
+        .select('code, name, flag, is_active')
+        .eq('is_active', true)
+        .order('name', { ascending: true }),
+    ]);
+    const response = NextResponse.json({
+      businesses: [],
+      categories: (emptyCategories || []).map(c => ({ key: c.key, label: c.label, icon: c.icon })),
+      countries: (emptyCountries || []).map(c => ({ code: c.code, name: c.name, flag: c.flag })),
+    });
     response.headers.set('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
     return response;
   }
 
   const businessIds = results.map(r => r.businessId);
 
-  // Step 2: Fetch directory settings + enrichment data in parallel
+  // Step 2: Fetch directory settings + enrichment data + categories/countries in parallel
   const [
     { data: settingsData },
     { data: capRows },
     { data: serviceRows },
+    { data: categoryTemplates },
+    { data: countryRows },
   ] = await Promise.all([
     supabase
       .from('platform_settings')
@@ -56,6 +75,16 @@ export async function GET(request: NextRequest) {
       .from('services')
       .select('id, name, price, duration_minutes, business_id')
       .in('business_id', businessIds),
+    supabase
+      .from('category_templates')
+      .select('key, label, icon')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true }),
+    supabase
+      .from('countries')
+      .select('code, name, flag, is_active')
+      .eq('is_active', true)
+      .order('name', { ascending: true }),
   ]);
 
   // Apply directory visibility settings (featured/hidden)
@@ -159,7 +188,11 @@ export async function GET(request: NextRequest) {
     matchReasons: r.matchReasons,
   }));
 
-  const response = NextResponse.json({ businesses });
+  const response = NextResponse.json({
+    businesses,
+    categories: (categoryTemplates || []).map(c => ({ key: c.key, label: c.label, icon: c.icon })),
+    countries: (countryRows || []).map(c => ({ code: c.code, name: c.name, flag: c.flag })),
+  });
   response.headers.set('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
   return response;
 }
