@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useBusiness } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { PageHelp } from '@/components/dashboard/PageHelp';
+import AddressAutocomplete from '@/components/ui/AddressAutocomplete';
 
 interface DiscoveryConfig {
   discovery_enabled: boolean;
@@ -15,6 +16,11 @@ interface DiscoveryConfig {
   max_group_size: number | null;
   latitude: number | null;
   longitude: number | null;
+  address: string;
+  city: string;
+  description: string | null;
+  operating_hours: Record<string, unknown> | null;
+  logo_url: string | null;
 }
 
 const DEFAULTS: DiscoveryConfig = {
@@ -27,7 +33,27 @@ const DEFAULTS: DiscoveryConfig = {
   max_group_size: null,
   latitude: null,
   longitude: null,
+  address: '',
+  city: '',
+  description: null,
+  operating_hours: null,
+  logo_url: null,
 };
+
+function calculateCompleteness(config: DiscoveryConfig): { score: number; missing: string[] } {
+  const missing: string[] = [];
+  if (!config.description) missing.push('Description');
+  if (!config.address) missing.push('Address');
+  if (!config.operating_hours) missing.push('Business Hours');
+  if (!config.discovery_description) missing.push('Discovery Description');
+  if (!config.discovery_keywords?.length) missing.push('Keywords');
+  if (!config.latitude || !config.longitude) missing.push('Address Verification');
+  if (!config.logo_url) missing.push('Logo');
+
+  const total = 7;
+  const score = Math.round(((total - missing.length) / total) * 100);
+  return { score, missing };
+}
 
 export default function DiscoveryPage() {
   const business = useBusiness();
@@ -38,30 +64,48 @@ export default function DiscoveryPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [addressVerified, setAddressVerified] = useState(false);
+  const [verifiedAddress, setVerifiedAddress] = useState('');
 
   const loadConfig = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from('businesses')
-      .select('discovery_enabled, discovery_description, discovery_keywords, price_band, supports_delivery, delivery_radius_km, max_group_size, latitude, longitude')
+      .select(
+        'discovery_enabled, discovery_description, discovery_keywords, price_band, ' +
+        'supports_delivery, delivery_radius_km, max_group_size, latitude, longitude, ' +
+        'address, city, description, operating_hours, logo_url'
+      )
       .eq('id', business.id)
       .limit(1);
 
     if (data && data.length > 0) {
-      const row = data[0];
+      // Cast to bypass generated types — discovery columns added in migration 239
+      const row = data[0] as unknown as Record<string, unknown>;
       const keywords = (row.discovery_keywords as string[]) || [];
-      setConfig({
-        discovery_enabled: row.discovery_enabled ?? false,
-        discovery_description: row.discovery_description ?? '',
+      const cfg: DiscoveryConfig = {
+        discovery_enabled: (row.discovery_enabled as boolean) ?? false,
+        discovery_description: (row.discovery_description as string) ?? '',
         discovery_keywords: keywords,
-        price_band: row.price_band ?? null,
-        supports_delivery: row.supports_delivery ?? false,
+        price_band: (row.price_band as string | null) ?? null,
+        supports_delivery: (row.supports_delivery as boolean) ?? false,
         delivery_radius_km: row.delivery_radius_km != null ? Number(row.delivery_radius_km) : null,
-        max_group_size: row.max_group_size ?? null,
+        max_group_size: row.max_group_size != null ? Number(row.max_group_size) : null,
         latitude: row.latitude != null ? Number(row.latitude) : null,
         longitude: row.longitude != null ? Number(row.longitude) : null,
-      });
+        address: (row.address as string) ?? '',
+        city: (row.city as string) ?? '',
+        description: (row.description as string | null) ?? null,
+        operating_hours: (row.operating_hours as Record<string, unknown> | null) ?? null,
+        logo_url: (row.logo_url as string | null) ?? null,
+      };
+      setConfig(cfg);
       setKeywordsInput(keywords.join(', '));
+      // If lat/lng already exist, mark as verified
+      if (cfg.latitude && cfg.longitude) {
+        setAddressVerified(true);
+        setVerifiedAddress(cfg.address || 'Previously verified');
+      }
     }
     setLoading(false);
   }, [business.id, supabase]);
@@ -91,6 +135,8 @@ export default function DiscoveryPage() {
       max_group_size: config.max_group_size,
       latitude: config.latitude,
       longitude: config.longitude,
+      address: config.address || null,
+      city: config.city || null,
     };
 
     await supabase.from('businesses').update(payload).eq('id', business.id);
@@ -104,6 +150,8 @@ export default function DiscoveryPage() {
   function update<K extends keyof DiscoveryConfig>(key: K, value: DiscoveryConfig[K]) {
     setConfig(prev => ({ ...prev, [key]: value }));
   }
+
+  const { score, missing } = calculateCompleteness(config);
 
   const inputClass =
     'w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500';
@@ -130,8 +178,48 @@ export default function DiscoveryPage() {
         <PageHelp
           pageKey="discovery"
           title="Marketplace Discovery"
-          description="Enable discovery to let new customers find you through Waaiio's marketplace. Add keywords that describe your business, set a price band so customers can filter by budget, and specify your location for proximity-based search. The preview card below shows how your listing will appear in search results."
+          description="Enable discovery to let new customers find you through Waaiio's marketplace. Add keywords that describe your business, set a price band so customers can filter by budget, and verify your address for proximity-based search. The preview card below shows how your listing will appear in search results."
         />
+      </div>
+
+      {/* Completeness Score */}
+      <div className="mb-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Profile Completeness</h2>
+          <span className={`text-2xl font-bold ${
+            score === 100 ? 'text-green-600' : score >= 70 ? 'text-yellow-600' : 'text-red-600'
+          }`}>
+            {score}%
+          </span>
+        </div>
+        <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-3">
+          <div
+            className={`h-3 rounded-full transition-all duration-500 ${
+              score === 100 ? 'bg-green-500' : score >= 70 ? 'bg-yellow-500' : 'bg-red-500'
+            }`}
+            style={{ width: `${score}%` }}
+          />
+        </div>
+        {missing.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Missing items:</p>
+            <div className="flex flex-wrap gap-1.5">
+              {missing.map(item => (
+                <span
+                  key={item}
+                  className="inline-flex rounded-full bg-amber-100 dark:bg-amber-900/30 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300"
+                >
+                  {item}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        {score === 100 && (
+          <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+            Your discovery profile is complete. You are fully visible in search results.
+          </p>
+        )}
       </div>
 
       <form onSubmit={handleSave} className="space-y-6">
@@ -257,52 +345,62 @@ export default function DiscoveryPage() {
           </div>
         </div>
 
-        {/* Location */}
+        {/* Location — Address Autocomplete */}
         <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
           <h2 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Location</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-4">
             <div>
-              <label className={labelClass}>Latitude</label>
-              <input
-                type="number"
-                step="any"
-                value={config.latitude ?? ''}
-                onChange={e => update('latitude', e.target.value ? parseFloat(e.target.value) : null)}
-                placeholder="e.g. 6.5244"
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className={labelClass}>Longitude</label>
-              <input
-                type="number"
-                step="any"
-                value={config.longitude ?? ''}
-                onChange={e => update('longitude', e.target.value ? parseFloat(e.target.value) : null)}
-                placeholder="e.g. 3.3792"
-                className={inputClass}
-              />
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              if ('geolocation' in navigator) {
-                navigator.geolocation.getCurrentPosition(
-                  pos => {
-                    update('latitude', parseFloat(pos.coords.latitude.toFixed(7)));
-                    update('longitude', parseFloat(pos.coords.longitude.toFixed(7)));
-                  },
-                  () => {
-                    // silently ignore denied permission
+              <label className={labelClass}>Business Address</label>
+              <AddressAutocomplete
+                defaultValue={config.address}
+                countryCode={business.country_code || undefined}
+                className="!rounded-lg !border-gray-300 dark:!border-gray-600 !bg-white dark:!bg-gray-800 !text-sm !text-gray-900 dark:!text-white"
+                onSelect={(result) => {
+                  setConfig(prev => ({
+                    ...prev,
+                    address: result.formattedAddress || result.address,
+                    city: result.city,
+                    latitude: result.latitude ?? null,
+                    longitude: result.longitude ?? null,
+                  }));
+                  if (result.latitude && result.longitude) {
+                    setAddressVerified(true);
+                    setVerifiedAddress(result.formattedAddress || result.address);
                   }
-                );
-              }
-            }}
-            className="mt-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-          >
-            Use My Location
-          </button>
+                }}
+                onManualChange={(value) => {
+                  setConfig(prev => ({ ...prev, address: value }));
+                  // Invalidate verification if address is manually changed
+                  setAddressVerified(false);
+                  setVerifiedAddress('');
+                }}
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                Start typing and select your address from the suggestions to verify your location
+              </p>
+            </div>
+
+            {/* Verification status */}
+            {addressVerified ? (
+              <div className="flex items-start gap-2 rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 px-4 py-3">
+                <span className="text-green-600 dark:text-green-400 text-lg leading-none mt-0.5">&#10003;</span>
+                <div>
+                  <p className="text-sm font-medium text-green-700 dark:text-green-300">Address verified</p>
+                  <p className="text-xs text-green-600 dark:text-green-400">{verifiedAddress}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3">
+                <span className="text-amber-500 text-lg leading-none mt-0.5">!</span>
+                <div>
+                  <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Address not verified</p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Select an address from the autocomplete suggestions to verify your location for proximity search
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Preview card */}

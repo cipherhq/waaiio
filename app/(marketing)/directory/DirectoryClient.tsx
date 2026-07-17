@@ -34,39 +34,23 @@ interface Business {
   events: EventItem[];
 }
 
-const COUNTRIES = [
-  { code: '', label: 'All Countries', flag: '🌍' },
-  { code: 'NG', label: 'Nigeria', flag: '🇳🇬' },
-  { code: 'US', label: 'United States', flag: '🇺🇸' },
-  { code: 'GB', label: 'United Kingdom', flag: '🇬🇧' },
-  { code: 'CA', label: 'Canada', flag: '🇨🇦' },
-  { code: 'GH', label: 'Ghana', flag: '🇬🇭' },
-];
+interface CategoryOption {
+  key: string;
+  label: string;
+  icon: string;
+}
 
-const CATEGORIES = [
-  { key: '', label: 'All Categories' },
-  { key: 'barber', label: 'Barbers' },
-  { key: 'salon', label: 'Salons' },
-  { key: 'spa', label: 'Spas' },
-  { key: 'restaurant', label: 'Restaurants' },
-  { key: 'church', label: 'Churches' },
-  { key: 'mosque', label: 'Mosques' },
-  { key: 'shop', label: 'Shops' },
-  { key: 'clinic', label: 'Clinics' },
-  { key: 'hotel', label: 'Hotels' },
-  { key: 'gym', label: 'Gyms' },
-  { key: 'events', label: 'Events' },
-  { key: 'food_delivery', label: 'Food Delivery' },
-];
+interface CountryOption {
+  code: string;
+  name: string;
+  flag: string;
+}
 
-const CATEGORY_ICONS: Record<string, string> = {
-  barber: '💈', salon: '💅', spa: '🧖', restaurant: '🍽️', church: '⛪',
-  mosque: '🕌', shop: '🛍️', clinic: '🏥', hotel: '🏨', gym: '💪',
-  events: '🎪', food_delivery: '🚚', school: '🎓', ngo: '❤️',
-  tattoo: '🎨', dental: '🦷', veterinary: '🐾', pharmacy: '💊',
-  cinema: '🎬', car_wash: '🚗', laundry: '👔', tutor: '📚',
-  photographer: '📸', real_estate: '🏠', coworking: '💻', catering: '🍳',
-};
+interface DirectoryData {
+  businesses: Business[];
+  categories: CategoryOption[];
+  countries: CountryOption[];
+}
 
 const CAPABILITY_LABELS: Record<string, string> = {
   scheduling: 'Bookings', payment: 'Payments', ordering: 'Online Orders',
@@ -76,16 +60,12 @@ const CAPABILITY_LABELS: Record<string, string> = {
   reminders: 'Reminders', reports: 'Reports', staff: 'Staff',
 };
 
-const WHATSAPP_NUMBERS: Record<string, string> = {
-  NG: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '12029226251',
-  US: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '12029226251',
-  GB: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GB || '12029226251',
-  CA: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_CA || '12029226251',
-  GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || '12029226251',
-};
+const SHARED_WHATSAPP_NUMBER = '12029226251';
 
 export default function DirectoryClient() {
   const [businesses, setBusinesses] = useState<Business[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([{ key: '', label: 'All Categories', icon: '🔍' }]);
+  const [countries, setCountries] = useState<CountryOption[]>([{ code: '', name: 'All Countries', flag: '🌍' }]);
   const [loading, setLoading] = useState(true);
   const [country, setCountry] = useState('');
   const [category, setCategory] = useState('');
@@ -114,8 +94,10 @@ export default function DirectoryClient() {
       if (debouncedSearch) params.set('search', debouncedSearch);
 
       const res = await fetch(`/api/directory?${params}`);
-      const data = await res.json();
+      const data: DirectoryData = await res.json();
       setBusinesses(data.businesses || []);
+      setCategories([{ key: '', label: 'All Categories', icon: '🔍' }, ...(data.categories || [])]);
+      setCountries([{ code: '', name: 'All Countries', flag: '🌍' }, ...(data.countries || [])]);
       setLoading(false);
     }
     load();
@@ -130,8 +112,8 @@ export default function DirectoryClient() {
     grouped.set(key, list);
   }
 
-  const countryName = (code: string) => COUNTRIES.find(c => c.code === code)?.label || code;
-  const countryFlag = (code: string) => COUNTRIES.find(c => c.code === code)?.flag || '🌍';
+  const countryName = (code: string) => countries.find(c => c.code === code)?.name || code;
+  const countryFlag = (code: string) => countries.find(c => c.code === code)?.flag || '🌍';
 
   return (
     <div className="min-h-screen bg-gray-50 pt-24 pb-16">
@@ -151,8 +133,8 @@ export default function DirectoryClient() {
             onChange={(e) => setCountry(e.target.value)}
             className="rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm focus:border-brand focus:ring-2 focus:ring-brand-100"
           >
-            {COUNTRIES.map(c => (
-              <option key={c.code} value={c.code}>{c.flag} {c.label}</option>
+            {countries.map(c => (
+              <option key={c.code} value={c.code}>{c.flag} {c.name}</option>
             ))}
           </select>
           <select
@@ -160,8 +142,8 @@ export default function DirectoryClient() {
             onChange={(e) => setCategory(e.target.value)}
             className="rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm focus:border-brand focus:ring-2 focus:ring-brand-100"
           >
-            {CATEGORIES.map(c => (
-              <option key={c.key} value={c.key}>{c.label}</option>
+            {categories.map(c => (
+              <option key={c.key} value={c.key}>{c.icon ? `${c.icon} ` : ''}{c.label}</option>
             ))}
           </select>
           <input
@@ -198,7 +180,7 @@ export default function DirectoryClient() {
                 <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {bizList.map((biz) => {
                     const isShared = biz.wa_method === 'shared';
-                    const sharedNumber = WHATSAPP_NUMBERS[biz.country_code] || WHATSAPP_NUMBERS.US;
+                    const sharedNumber = SHARED_WHATSAPP_NUMBER;
                     const dedicatedNumber = biz.wa_phone?.replace(/\D/g, '') || null;
                     const waLink = isShared
                       ? `https://wa.me/${sharedNumber}?text=${encodeURIComponent(biz.bot_code || 'Hi')}`
@@ -215,7 +197,7 @@ export default function DirectoryClient() {
                       >
                         {/* Header */}
                         <div className="flex items-start gap-3">
-                          <span className="text-3xl">{CATEGORY_ICONS[biz.category] || '🏢'}</span>
+                          <span className="text-3xl">{categories.find(c => c.key === biz.category)?.icon || '🏢'}</span>
                           <div className="min-w-0 flex-1">
                             <h3 className="text-sm font-bold text-gray-900 truncate">{biz.name}</h3>
                             <p className="text-xs text-gray-500 capitalize">{biz.category.replace(/_/g, ' ')} &middot; {biz.city || 'N/A'}</p>

@@ -8,6 +8,9 @@ interface AddressResult {
   state: string;
   zipCode: string;
   country: string;
+  latitude?: number;
+  longitude?: number;
+  formattedAddress?: string;
 }
 
 interface AddressAutocompleteProps {
@@ -59,7 +62,7 @@ export default function AddressAutocomplete({
 
     const options: google.maps.places.AutocompleteOptions = {
       types: ['address'],
-      fields: ['address_components', 'formatted_address'],
+      fields: ['address_components', 'formatted_address', 'geometry'],
     };
 
     if (countryCode) {
@@ -106,9 +109,13 @@ export default function AddressAutocomplete({
       }
 
       const address = streetNumber ? `${streetNumber} ${route}` : route;
-      setValue(place.formatted_address || address);
+      const formattedAddress = place.formatted_address || address;
+      setValue(formattedAddress);
 
-      onSelect({ address, city, state, zipCode, country });
+      const latitude = place.geometry?.location?.lat();
+      const longitude = place.geometry?.location?.lng();
+
+      onSelect({ address, city, state, zipCode, country, latitude, longitude, formattedAddress });
     });
   }, [loaded, countryCode, onSelect]);
 
