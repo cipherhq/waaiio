@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_182_rpc_lockdown_and_capability_fix_sql", "label": "182_rpc_lockdown_and_capability_fix.sql", "file_type": "code", "source_file": "supabase/migrations/182_rpc_lockdown_and_capability_fix.sql", "source_location": null}], "edges": []}

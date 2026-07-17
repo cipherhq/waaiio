@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_070_backfill_ticketing_capability_sql", "label": "070_backfill_ticketing_capability.sql", "file_type": "code", "source_file": "supabase/migrations/070_backfill_ticketing_capability.sql", "source_location": null}], "edges": []}

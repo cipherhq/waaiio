@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_113_add_missing_capability_enum_values_sql", "label": "113_add_missing_capability_enum_values.sql", "file_type": "code", "source_file": "supabase/migrations/113_add_missing_capability_enum_values.sql", "source_location": null}], "edges": []}

@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_082_seed_platform_settings_sql", "label": "082_seed_platform_settings.sql", "file_type": "code", "source_file": "supabase/migrations/082_seed_platform_settings.sql", "source_location": null}], "edges": []}

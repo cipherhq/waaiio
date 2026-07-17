@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_185_add_dashboard_booking_channel_sql", "label": "185_add_dashboard_booking_channel.sql", "file_type": "code", "source_file": "supabase/migrations/185_add_dashboard_booking_channel.sql", "source_location": null}], "edges": []}

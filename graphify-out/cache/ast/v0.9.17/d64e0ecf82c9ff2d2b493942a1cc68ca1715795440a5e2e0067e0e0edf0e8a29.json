@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_214_security_rls_fix_sql", "label": "214_security_rls_fix.sql", "file_type": "code", "source_file": "supabase/migrations/214_security_rls_fix.sql", "source_location": null}], "edges": []}

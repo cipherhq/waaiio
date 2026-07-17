@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_135_drop_permissive_storage_policy_sql", "label": "135_drop_permissive_storage_policy.sql", "file_type": "code", "source_file": "supabase/migrations/135_drop_permissive_storage_policy.sql", "source_location": null}], "edges": []}

@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_220_profiles_admin_insert_sql", "label": "220_profiles_admin_insert.sql", "file_type": "code", "source_file": "supabase/migrations/220_profiles_admin_insert.sql", "source_location": null}], "edges": []}

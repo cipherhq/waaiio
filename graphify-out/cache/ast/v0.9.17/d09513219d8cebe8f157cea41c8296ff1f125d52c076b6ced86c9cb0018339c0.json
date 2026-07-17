@@ -1,1 +1,0 @@
-{"nodes": [{"id": "supabase_migrations_134_add_new_capability_enum_values_sql", "label": "134_add_new_capability_enum_values.sql", "file_type": "code", "source_file": "supabase/migrations/134_add_new_capability_enum_values.sql", "source_location": null}], "edges": []}
