@@ -11,10 +11,36 @@ import {
 } from '@/lib/copilot/classify-intent';
 
 // ─── Timezone helpers ────────────────────────────────────
+
+/**
+ * Convert a local YYYY-MM-DD date string in a given timezone to a UTC ISO timestamp.
+ * Used to create proper UTC boundaries for timestamptz queries.
+ * e.g. "2026-07-16" in "Africa/Lagos" (UTC+1) → "2026-07-15T23:00:00.000Z"
+ */
+function localDateToUtc(dateStr: string, timezone: string): string {
+  // Parse the date parts
+  const [y, m, d] = dateStr.split('-').map(Number);
+  // Create a date in the local timezone by finding the UTC offset
+  // We use a probe: format a known UTC time in the target timezone, measure the difference
+  const probe = new Date(Date.UTC(y, m - 1, d, 12, 0, 0)); // noon UTC on that date
+  const localStr = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(probe);
+  // Parse local formatted string to get the local representation of noon UTC
+  const match = localStr.match(/(\d{4})-(\d{2})-(\d{2}),?\s*(\d{2}):(\d{2}):(\d{2})/);
+  if (!match) return `${dateStr}T00:00:00.000Z`; // fallback to UTC
+  const localHour = parseInt(match[4], 10);
+  const offsetHours = localHour - 12; // difference from UTC noon
+  // Midnight local = 00:00 local = (00:00 - offset) UTC
+  const midnightUtc = new Date(Date.UTC(y, m - 1, d, -offsetHours, 0, 0));
+  return midnightUtc.toISOString();
+}
+
 function getBusinessDates(timezone: string) {
   const now = new Date();
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' });
-  const today = formatter.format(now); // YYYY-MM-DD
+  const today = formatter.format(now); // YYYY-MM-DD in business tz
 
   const parts = today.split('-').map(Number);
   const year = parts[0];
@@ -29,24 +55,28 @@ function getBusinessDates(timezone: string) {
   monday.setHours(0, 0, 0, 0);
   const weekStart = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(monday);
 
-  // Calendar month start
+  // Next Monday (upper bound for "this week")
+  const nextMonday = new Date(monday);
+  nextMonday.setDate(nextMonday.getDate() + 7);
+  const nextMondayStr = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(nextMonday);
+
+  // Calendar month start + next month start (upper bound)
   const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextMonthYear = month === 12 ? year + 1 : year;
+  const nextMonthStart = `${nextMonthYear}-${String(nextMonth).padStart(2, '0')}-01`;
 
   // Previous week (Mon–Sun)
   const prevMonday = new Date(monday);
   prevMonday.setDate(prevMonday.getDate() - 7);
-  const prevSunday = new Date(monday);
-  prevSunday.setDate(prevSunday.getDate() - 1);
   const prevWeekStart = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(prevMonday);
-  const prevWeekEnd = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(prevSunday);
 
   // Previous month
   const prevMonth = month === 1 ? 12 : month - 1;
   const prevMonthYear = month === 1 ? year - 1 : year;
   const prevMonthStart = `${prevMonthYear}-${String(prevMonth).padStart(2, '0')}-01`;
-  const prevMonthEnd = `${year}-${String(month).padStart(2, '0')}-01`; // exclusive
 
-  // Tomorrow for upcoming
+  // Tomorrow for upcoming bookings (uses DATE column, not timestamptz — no UTC conversion needed)
   const tomorrow = new Date(nowInTz);
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(tomorrow);
@@ -56,15 +86,34 @@ function getBusinessDates(timezone: string) {
   nextWeek.setDate(nextWeek.getDate() + 7);
   const nextWeekStr = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(nextWeek);
 
-  // 30 days ago for metrics
+  // 30 days ago
   const thirtyDaysAgo = new Date(nowInTz);
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
   const thirtyDaysAgoStr = new Intl.DateTimeFormat('en-CA', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(thirtyDaysAgo);
 
+  // UTC boundaries for timestamptz queries (payments.paid_at, etc.)
+  const todayUtcStart = localDateToUtc(today, timezone);
+  const tomorrowUtcStart = localDateToUtc(tomorrowStr, timezone);
+  const weekStartUtc = localDateToUtc(weekStart, timezone);
+  const nextMondayUtc = localDateToUtc(nextMondayStr, timezone);
+  const monthStartUtc = localDateToUtc(monthStart, timezone);
+  const nextMonthStartUtc = localDateToUtc(nextMonthStart, timezone);
+  const prevWeekStartUtc = localDateToUtc(prevWeekStart, timezone);
+  const weekStartUtcForPrevEnd = weekStartUtc; // prev week ends where this week starts
+  const prevMonthStartUtc = localDateToUtc(prevMonthStart, timezone);
+  const monthStartUtcForPrevEnd = monthStartUtc;
+
   return {
+    // Local date strings (for bookings.date which is a DATE column)
     today, weekStart, monthStart,
-    prevWeekStart, prevWeekEnd, prevMonthStart, prevMonthEnd,
+    prevWeekStart, prevMonthStart,
     tomorrowStr, nextWeekStr, thirtyDaysAgoStr,
+    // UTC boundaries (for payments.paid_at which is TIMESTAMPTZ)
+    todayUtcStart, tomorrowUtcStart,
+    weekStartUtc, nextMondayUtc,
+    monthStartUtc, nextMonthStartUtc,
+    prevWeekStartUtc, weekStartUtcForPrevEnd,
+    prevMonthStartUtc, monthStartUtcForPrevEnd,
   };
 }
 
@@ -135,7 +184,8 @@ async function runReport(
         .from('orders')
         .select('id', { count: 'exact', head: true })
         .eq('business_id', businessId)
-        .gte('created_at', `${dates.today}T00:00:00`)
+        .gte('created_at', dates.todayUtcStart)
+        .lt('created_at', dates.tomorrowUtcStart)
         .not('status', 'eq', 'cancelled');
       return { answer: `You have ${count || 0} orders placed today.`, reportId };
     }
@@ -156,7 +206,8 @@ async function runReport(
         .select('amount')
         .eq('business_id', businessId)
         .eq('status', 'success')
-        .gte('paid_at', `${dates.today}T00:00:00`);
+        .gte('paid_at', dates.todayUtcStart)
+        .lt('paid_at', dates.tomorrowUtcStart);
       const total = (payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
       return { answer: `Today's revenue: ${fmt(total)}.`, reportId };
     }
@@ -167,7 +218,8 @@ async function runReport(
         .select('amount')
         .eq('business_id', businessId)
         .eq('status', 'success')
-        .gte('paid_at', `${dates.weekStart}T00:00:00`);
+        .gte('paid_at', dates.weekStartUtc)
+        .lt('paid_at', dates.nextMondayUtc);
       const total = (payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
       return { answer: `This week's revenue (Mon–today): ${fmt(total)}.`, reportId };
     }
@@ -178,21 +230,23 @@ async function runReport(
         .select('amount')
         .eq('business_id', businessId)
         .eq('status', 'success')
-        .gte('paid_at', `${dates.monthStart}T00:00:00`);
+        .gte('paid_at', dates.monthStartUtc)
+        .lt('paid_at', dates.nextMonthStartUtc);
       const total = (payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
       return { answer: `This month's revenue: ${fmt(total)}.`, reportId };
     }
 
     case 'revenue_compare': {
-      // This week vs last week
+      // This week vs last week (both with proper UTC boundaries)
       const [thisWeek, lastWeek] = await Promise.all([
         db.from('payments').select('amount')
           .eq('business_id', businessId).eq('status', 'success')
-          .gte('paid_at', `${dates.weekStart}T00:00:00`),
+          .gte('paid_at', dates.weekStartUtc)
+          .lt('paid_at', dates.nextMondayUtc),
         db.from('payments').select('amount')
           .eq('business_id', businessId).eq('status', 'success')
-          .gte('paid_at', `${dates.prevWeekStart}T00:00:00`)
-          .lte('paid_at', `${dates.prevWeekEnd}T23:59:59`),
+          .gte('paid_at', dates.prevWeekStartUtc)
+          .lt('paid_at', dates.weekStartUtcForPrevEnd),
       ]);
       const thisTotal = (thisWeek.data || []).reduce((s, p) => s + (p.amount || 0), 0);
       const lastTotal = (lastWeek.data || []).reduce((s, p) => s + (p.amount || 0), 0);
@@ -227,14 +281,14 @@ async function runReport(
 
     // ── Products & Services ──
     case 'top_products': {
+      // Query order_items joined through orders (exclude cancelled/draft) and products (for name)
       const { data } = await db
         .from('order_items')
-        .select('product_id, quantity, unit_price, products!inner(name)')
+        .select('product_id, quantity, unit_price, products!inner(name, business_id), orders!inner(status)')
         .eq('products.business_id', businessId)
-        .order('quantity', { ascending: false })
-        .limit(50);
+        .in('orders.status', ['confirmed', 'processing', 'ready', 'shipped', 'delivered']);
       if (!data?.length) return { answer: 'No product sales data yet.', reportId };
-      // Aggregate by product
+      // Aggregate by product (no row limit — aggregation happens in JS)
       const agg = new Map<string, { name: string; qty: number; revenue: number }>();
       for (const item of data) {
         const name = (item.products as unknown as { name: string })?.name || 'Unknown';
@@ -276,7 +330,7 @@ async function runReport(
         .from('customer_profiles')
         .select('id', { count: 'exact', head: true })
         .eq('business_id', businessId)
-        .gte('created_at', `${dates.monthStart}T00:00:00`);
+        .gte('created_at', dates.monthStartUtc);
       return { answer: `${count || 0} new customers this month.`, reportId };
     }
 
@@ -309,7 +363,8 @@ async function runReport(
         .from('attendance_log')
         .select('id', { count: 'exact', head: true })
         .eq('business_id', businessId)
-        .gte('checked_in_at', `${dates.today}T00:00:00`);
+        .gte('checked_in_at', dates.todayUtcStart)
+        .lt('checked_in_at', dates.tomorrowUtcStart);
       return { answer: `${count || 0} check-ins today.`, reportId };
     }
 
