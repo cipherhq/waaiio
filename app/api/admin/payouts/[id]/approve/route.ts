@@ -20,7 +20,7 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  // Verify admin
+  // Require admin role (finance cannot approve)
   const { data: profile } = await supabase
     .from('profiles')
     .select('role')
@@ -140,13 +140,67 @@ export async function POST(
     }, { status: 400 });
   }
 
-  try {
-    let gatewayTransferCode: string | null = null;
-    let finalStatus = 'paid';
+  // ── STEP 1: CLAIM the payout with compare-and-set BEFORE calling any provider ──
+  // This is the critical safety gate: only one concurrent request can claim the payout.
+  // Deterministic idempotency reference persisted before any external call.
+  const idempotencyRef = `payout_${id}`;
+  const isGatewayTransfer = transfer_method === 'paystack_transfer' || transfer_method === 'stripe_transfer';
 
-    // API-initiated transfers
+  const { data: claimed, error: claimError } = await supabase
+    .from('business_payouts')
+    .update({
+      status: isGatewayTransfer ? 'processing' : 'paid',
+      approved_by: user.id,
+      approved_at: new Date().toISOString(),
+      transfer_method,
+      transfer_reference: idempotencyRef,
+      notes: notes || null,
+      paid_at: isGatewayTransfer ? null : new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .in('status', ['pending', 'held']) // Compare-and-set: only one request wins
+    .select('id')
+    .maybeSingle();
+
+  if (claimError) {
+    logger.error(`[ADMIN-PAYOUT] Claim failed for ${id}:`, claimError.message);
+    return NextResponse.json({ error: 'Failed to claim payout' }, { status: 500 });
+  }
+
+  if (!claimed) {
+    return NextResponse.json({ error: 'Payout was already processed by another administrator' }, { status: 409 });
+  }
+
+  // ── STEP 2: Audit log (mandatory — failure reverts the claim) ──
+  const { error: auditError } = await supabase.from('admin_audit_logs').insert({
+    actor_id: user.id,
+    action: 'approve_payout',
+    entity_type: 'business_payout',
+    entity_id: id,
+    details: {
+      business_id: payout.business_id,
+      amount: payout.net_amount,
+      transfer_method,
+      idempotency_ref: idempotencyRef,
+    },
+  });
+
+  if (auditError) {
+    // Audit failed — revert the claim to prevent unaudited financial action
+    await supabase
+      .from('business_payouts')
+      .update({ status: payout.status, approved_by: null, approved_at: null, transfer_reference: null, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    logger.error(`[ADMIN-PAYOUT] Audit failed, reverted claim for ${id}:`, auditError.message);
+    return NextResponse.json({ error: 'Failed to create audit record' }, { status: 500 });
+  }
+
+  // ── STEP 3: Execute gateway transfer (payout already claimed — safe from races) ──
+  let gatewayTransferCode: string | null = null;
+
+  try {
     if (transfer_method === 'paystack_transfer' && paystackSecretKey && payout.payout_account_id) {
-      // Fetch payout account for bank details
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
         .select('bank_code, account_number, account_name')
@@ -172,7 +226,7 @@ export async function POST(
         const recipientData = await recipientRes.json();
 
         if (recipientData.status && recipientData.data?.recipient_code) {
-          // Initiate transfer
+          // Initiate transfer with idempotency reference
           const transferRes = await fetch('https://api.paystack.co/transfer', {
             method: 'POST',
             headers: {
@@ -184,20 +238,24 @@ export async function POST(
               amount: Math.round(payout.net_amount * 100), // Paystack uses kobo
               recipient: recipientData.data.recipient_code,
               reason: `Payout for period ${payout.period_start} to ${payout.period_end}`,
+              reference: idempotencyRef, // Paystack idempotency via reference
             }),
           });
           const transferData = await transferRes.json();
 
           if (transferData.status) {
             gatewayTransferCode = transferData.data.transfer_code;
-            finalStatus = 'processing'; // Will be confirmed via webhook
           } else {
+            // Transfer failed — mark payout as failed (not pending, since it was claimed)
+            await supabase
+              .from('business_payouts')
+              .update({ status: 'failed', notes: `Transfer failed: ${transferData.message}`, updated_at: new Date().toISOString() })
+              .eq('id', id);
             return NextResponse.json({ error: transferData.message || 'Transfer failed' }, { status: 400 });
           }
         }
       }
     } else if (transfer_method === 'stripe_transfer' && stripeSecretKey && payout.payout_account_id) {
-      // Fetch Stripe account ID
       const { data: payoutAccount } = await supabase
         .from('payout_accounts')
         .select('stripe_account_id')
@@ -210,9 +268,10 @@ export async function POST(
           headers: {
             Authorization: `Bearer ${stripeSecretKey}`,
             'Content-Type': 'application/x-www-form-urlencoded',
+            'Idempotency-Key': idempotencyRef, // Stripe idempotency header
           },
           body: new URLSearchParams({
-            amount: String(Math.round(payout.net_amount * 100)), // Stripe uses smallest currency unit
+            amount: String(Math.round(payout.net_amount * 100)),
             currency: bizCurrency.toLowerCase(),
             destination: payoutAccount.stripe_account_id,
             description: `Payout for period ${payout.period_start} to ${payout.period_end}`,
@@ -222,51 +281,23 @@ export async function POST(
 
         if (stripeData.id) {
           gatewayTransferCode = stripeData.id;
-          finalStatus = 'processing';
         } else {
+          await supabase
+            .from('business_payouts')
+            .update({ status: 'failed', notes: `Stripe error: ${stripeData.error?.message}`, updated_at: new Date().toISOString() })
+            .eq('id', id);
           return NextResponse.json({ error: stripeData.error?.message || 'Stripe transfer failed' }, { status: 400 });
         }
       }
     }
-    const { data: updated, error: updateError } = await supabase
-      .from('business_payouts')
-      .update({
-        status: finalStatus,
-        approved_by: user.id,
-        approved_at: new Date().toISOString(),
-        transfer_method,
-        transfer_reference: reference || null,
-        gateway_transfer_code: gatewayTransferCode,
-        notes: notes || null,
-        paid_at: finalStatus === 'paid' ? new Date().toISOString() : null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .in('status', ['pending', 'held'])  // Compare-and-set: only update if still in expected state
-      .select('id')
-      .maybeSingle();
 
-    if (updateError) {
-      return NextResponse.json({ error: 'Failed to update payout' }, { status: 500 });
+    // Update gateway transfer code if we got one
+    if (gatewayTransferCode) {
+      await supabase
+        .from('business_payouts')
+        .update({ gateway_transfer_code: gatewayTransferCode, updated_at: new Date().toISOString() })
+        .eq('id', id);
     }
-
-    if (!updated) {
-      return NextResponse.json({ error: 'Payout was already processed by another administrator' }, { status: 409 });
-    }
-
-    // Audit log
-    await supabase.from('admin_audit_logs').insert({
-      actor_id: user.id,
-      action: 'approve_payout',
-      entity_type: 'business_payout',
-      entity_id: id,
-      details: {
-        business_id: payout.business_id,
-        amount: payout.net_amount,
-        transfer_method,
-        gateway_transfer_code: gatewayTransferCode,
-      },
-    });
 
     // Send email to business owner (non-blocking)
     const { data: biz } = await supabase
@@ -284,31 +315,37 @@ export async function POST(
         .eq('id', biz.owner_id)
         .single();
       if (ownerProfile?.email) {
+        const finalStatus = isGatewayTransfer ? 'processing' : 'paid';
         const email = finalStatus === 'paid'
           ? payoutPaidEmail(biz.name, amountStr, reference || '')
           : payoutApprovedEmail(biz.name, amountStr, transfer_method);
         sendEmail({ to: ownerProfile.email, ...email }).catch(() => {});
       }
 
-      // Create in-app notification
       try {
+        const finalStatus = isGatewayTransfer ? 'processing' : 'paid';
         await supabase.from('notifications').insert({
           business_id: payout.business_id,
           type: 'payment',
           channel: 'email',
           status: 'sent',
-          subject: finalStatus === 'paid' ? `Payout sent — ${amountStr}` : `Payout approved — ${amountStr}`,
+          subject: finalStatus === 'paid' ? `Payout sent — ${formatCurrency(Number(payout.net_amount), cc)}` : `Payout approved — ${formatCurrency(Number(payout.net_amount), cc)}`,
           body: finalStatus === 'paid'
-            ? `Your payout of ${amountStr} for ${biz.name} has been sent to your bank account.`
-            : `Your payout of ${amountStr} for ${biz.name} has been approved and is being processed.`,
+            ? `Your payout of ${formatCurrency(Number(payout.net_amount), cc)} for ${biz.name} has been sent to your bank account.`
+            : `Your payout of ${formatCurrency(Number(payout.net_amount), cc)} for ${biz.name} has been approved and is being processed.`,
           sent_at: new Date().toISOString(),
         });
       } catch { /* non-critical */ }
     }
 
-    return NextResponse.json({ success: true, status: finalStatus });
+    return NextResponse.json({ success: true, status: isGatewayTransfer ? 'processing' : 'paid' });
   } catch (error) {
+    // Transfer threw — mark payout as failed
     logger.error('Approve payout error:', (error as Error).message);
-    return NextResponse.json({ error: 'Failed to approve payout' }, { status: 500 });
+    await supabase
+      .from('business_payouts')
+      .update({ status: 'failed', notes: `Error: ${(error as Error).message}`, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    return NextResponse.json({ error: 'Transfer failed' }, { status: 500 });
   }
 }
