@@ -61,17 +61,29 @@ export async function POST(
     return NextResponse.json({ error: 'Transfer already initiated for this payout' }, { status: 409 });
   }
 
-  // Business and account verification
-  const { data: bizCheck } = await service
+  // Business and account verification — errors must not be silently ignored
+  const { data: bizCheck, error: bizError } = await service
     .from('businesses')
     .select('verification_level, country_code')
     .eq('id', payout.business_id)
     .single();
 
-  const bizCountry = (bizCheck?.country_code || 'NG') as CountryCode;
-  const bizCurrency = getCountry(bizCountry)?.currency_code ?? 'NGN';
+  if (bizError || !bizCheck) {
+    return NextResponse.json({ error: 'Failed to verify business' }, { status: 500 });
+  }
 
-  if (bizCheck?.verification_level === 'unverified') {
+  if (!bizCheck.country_code) {
+    return NextResponse.json({ error: 'Business has no country configured' }, { status: 400 });
+  }
+
+  const bizCountry = bizCheck.country_code as CountryCode;
+  const countryConfig = getCountry(bizCountry);
+  if (!countryConfig) {
+    return NextResponse.json({ error: `Unsupported country: ${bizCountry}` }, { status: 400 });
+  }
+  const bizCurrency = countryConfig.currency_code;
+
+  if (bizCheck.verification_level === 'unverified') {
     return NextResponse.json({ error: 'Business is unverified' }, { status: 400 });
   }
 
@@ -92,19 +104,27 @@ export async function POST(
     return NextResponse.json({ error: 'Payout account inactive or unverified' }, { status: 400 });
   }
 
-  // Re-verify balance
-  const { data: balancePayments } = await service
+  // Re-verify balance — errors must not silently default to zero
+  const { data: balancePayments, error: balErr } = await service
     .from('platform_fees')
     .select('transaction_amount, fee_total')
     .eq('business_id', payout.business_id)
     .is('refunded_at', null);
 
-  const { data: priorPayouts } = await service
+  if (balErr) {
+    return NextResponse.json({ error: 'Failed to verify balance' }, { status: 500 });
+  }
+
+  const { data: priorPayouts, error: priorErr } = await service
     .from('business_payouts')
     .select('net_amount')
     .eq('business_id', payout.business_id)
     .in('status', ['paid', 'processing', 'approved'])
     .neq('id', id);
+
+  if (priorErr) {
+    return NextResponse.json({ error: 'Failed to verify prior payouts' }, { status: 500 });
+  }
 
   const totalEarned = (balancePayments || []).reduce((sum, f) => sum + (f.transaction_amount - f.fee_total), 0);
   const totalPaidOut = (priorPayouts || []).reduce((sum, p) => sum + Number(p.net_amount), 0);
@@ -126,6 +146,10 @@ export async function POST(
     return NextResponse.json({ error: 'Stripe secret key not configured' }, { status: 500 });
   }
 
+  // For gateway transfers: transfer_reference is the idempotency key (used for provider dedup)
+  // For manual transfers: transfer_reference is the admin-supplied reference (bank transfer ref etc.)
+  const transferRef = isGatewayTransfer ? idempotencyRef : (reference || idempotencyRef);
+
   const { data: claimed, error: claimError } = await service
     .from('business_payouts')
     .update({
@@ -133,7 +157,7 @@ export async function POST(
       approved_by: user.id,
       approved_at: new Date().toISOString(),
       transfer_method,
-      transfer_reference: idempotencyRef,
+      transfer_reference: transferRef,
       notes: notes || null,
       paid_at: isGatewayTransfer ? null : new Date().toISOString(),
       updated_at: new Date().toISOString(),

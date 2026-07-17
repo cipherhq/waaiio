@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as Sentry from '@sentry/nextjs';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
 import { logger } from '@/lib/logger';
@@ -126,10 +127,14 @@ export async function PATCH(
     });
 
     if (auditErr) {
-      // Revert the update
-      await service.from('reseller_payouts')
+      // Revert the update — check if revert succeeds
+      const { error: revertErr } = await service.from('reseller_payouts')
         .update({ status: payout.status, approved_by: payout.approved_by, paid_at: payout.paid_at, notes: payout.notes })
         .eq('id', id);
+      if (revertErr) {
+        logger.error(`[RESELLER-PAYOUT] CRITICAL: Audit AND revert failed for ${id}:`, { auditErr: auditErr.message, revertErr: revertErr.message });
+        Sentry.captureException(new Error(`Audit and revert both failed for reseller payout ${id}`));
+      }
       logger.error(`[RESELLER-PAYOUT] Audit failed, reverted ${id}:`, auditErr.message);
       return NextResponse.json({ error: 'Audit logging failed — action reverted' }, { status: 500 });
     }

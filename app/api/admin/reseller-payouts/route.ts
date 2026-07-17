@@ -133,12 +133,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Calculate gross commission from platform_fees
+    // Uses gte(start) + lt(end) for consistency with overlap detection (exclusive end)
     const { data: fees, error: feesErr } = await service
       .from('platform_fees')
       .select('reseller_commission')
       .eq('reseller_id', reseller_id)
       .gte('created_at', period_start)
-      .lte('created_at', period_end);
+      .lt('created_at', period_end);
 
     if (feesErr) {
       logger.error('[ADMIN_RESELLER_PAYOUTS] Fee calc error:', feesErr.message);
