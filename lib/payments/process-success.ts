@@ -442,8 +442,8 @@ export async function processCampaignDonation(
 
 /**
  * Deduct a session from the customer's active package enrollment.
- * Uses soonest-expiring-first strategy. Atomic RPC prevents race conditions.
- * Non-blocking — errors are caught by the caller.
+ * Fully atomic RPC handles enrollment lookup + deduction + replay protection
+ * in a single database transaction. Non-blocking — errors are logged and captured.
  */
 async function deductPackageSession(
   supabase: SupabaseClient,
@@ -454,40 +454,25 @@ async function deductPackageSession(
     bookingId: string;
   },
 ): Promise<void> {
-  // Find the soonest-expiring active enrollment whose package covers this service
-  const { data: enrollments } = await supabase
-    .from('package_enrollments')
-    .select('id, package_id, sessions_used, sessions_total, service_packages!inner(service_ids)')
-    .eq('business_id', opts.businessId)
-    .eq('customer_phone', opts.customerPhone)
-    .eq('is_active', true)
-    .gt('expires_at', new Date().toISOString())
-    .order('expires_at', { ascending: true });
+  try {
+    const { data: deducted, error } = await supabase.rpc('deduct_package_session', {
+      p_business_id: opts.businessId,
+      p_customer_phone: opts.customerPhone,
+      p_service_id: opts.serviceId,
+      p_booking_id: opts.bookingId,
+    });
 
-  if (!enrollments || enrollments.length === 0) return;
+    if (error) {
+      logger.error('[PACKAGE-DEDUCT] RPC error:', error.message);
+      Sentry.captureException(error, { tags: { area: 'package-deduction' } });
+      return;
+    }
 
-  // Find the first enrollment whose package includes this service_id
-  const matching = enrollments.find((e) => {
-    const pkg = e.service_packages as unknown as { service_ids: string[] };
-    return (
-      pkg?.service_ids?.includes(opts.serviceId) &&
-      e.sessions_used < e.sessions_total
-    );
-  });
-
-  if (!matching) return;
-
-  // Atomic deduction via RPC — only increments if sessions_used < sessions_total
-  const { data: deducted, error } = await supabase.rpc('deduct_package_session', {
-    p_enrollment_id: matching.id,
-  });
-
-  if (error) {
-    logger.error('[PACKAGE-DEDUCT] RPC error:', error);
-    return;
-  }
-
-  if (deducted) {
-    logger.info(`[PACKAGE-DEDUCT] Deducted session for enrollment ${matching.id} (booking ${opts.bookingId}). Used: ${matching.sessions_used + 1}/${matching.sessions_total}`);
+    if (deducted) {
+      logger.info(`[PACKAGE-DEDUCT] Session deducted for booking ${opts.bookingId}`);
+    }
+  } catch (err) {
+    logger.error('[PACKAGE-DEDUCT] Error:', err);
+    Sentry.captureException(err, { tags: { area: 'package-deduction' } });
   }
 }

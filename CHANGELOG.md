@@ -7,6 +7,11 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Package Session Deduction Safety Hardening
+- `supabase/migrations/247_package_session_deduction_safety.sql` — Replaces 1-param RPC with fully atomic 4-param `deduct_package_session(business_id, phone, service_id, booking_id)`. Enrollment lookup + row lock + deduction + replay protection all in one transaction. Creates `package_session_log` table with UNIQUE(enrollment_id, booking_id) to prevent double-deductions on webhook replay. RPC revoked from public/anon/authenticated, granted only to service_role.
+- `lib/payments/process-success.ts` — Simplified `deductPackageSession()` to call the new atomic RPC directly (no client-side enrollment lookup). Adds Sentry error capture. Internal try/catch so the function never throws.
+- **Affects:** All booking payment confirmations that trigger package session deduction. Fixes race condition where concurrent webhooks could double-deduct. Fixes replay vulnerability. No breaking changes to callers.
+
 ### Auto-Deduct Package Sessions on Booking Confirmation
 - `supabase/migrations/246_deduct_package_session_rpc.sql` — New SECURITY DEFINER RPC `deduct_package_session(p_enrollment_id)`. Atomically increments `sessions_used` only if `sessions_used < sessions_total`, `is_active = true`, and `expires_at > NOW()`. Returns boolean.
 - `lib/payments/process-success.ts` — Added `deductPackageSession()` function. After booking confirmation, looks up the customer's active package enrollment (by business_id, guest_phone, service_id match in `service_packages.service_ids`). Uses soonest-expiring-first strategy. Calls RPC for atomic deduction. Non-blocking (errors caught and logged, never fails payment confirmation).
