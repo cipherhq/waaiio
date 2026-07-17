@@ -46,13 +46,13 @@ declare global {
   }
 }
 
-// Fallback numbers — used only if DB lookup fails
+// Fallback numbers — used only if DB lookup fails. Empty string = no fallback (safe).
 const FALLBACK_WHATSAPP_NUMBERS: Record<string, string> = {
-  NG: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '12029226251',
-  US: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '12029226251',
-  GB: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GB || '12029226251',
-  CA: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_CA || '12029226251',
-  GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || '12029226251',
+  NG: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_NG || '',
+  US: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_US || '',
+  GB: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GB || '',
+  CA: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_CA || '',
+  GH: process.env.NEXT_PUBLIC_WHATSAPP_NUMBER_GH || '',
 };
 
 /* ─── Side Panel Content per Step ─── */
@@ -1064,7 +1064,7 @@ function OnboardingWizard() {
 
   // For shared numbers: wa.me/{waaiioNumber}?text={botCode}
   // For dedicated numbers (transfer/coexist): wa.me/{theirOwnNumber} (no bot code needed)
-  const sharedNumber = sharedWhatsAppNumber || FALLBACK_WHATSAPP_NUMBERS[selectedCountry] || '12029226251';
+  const sharedNumber = sharedWhatsAppNumber || FALLBACK_WHATSAPP_NUMBERS[selectedCountry] || '';
   const dedicatedNumber = fbConnectionData?.phone_number?.replace(/[^0-9]/g, '') || ownPhone.replace(/[^0-9]/g, '');
   const waNumber = waMethod !== 'shared' && dedicatedNumber ? dedicatedNumber : sharedNumber;
   const waLink = waMethod !== 'shared' && dedicatedNumber
