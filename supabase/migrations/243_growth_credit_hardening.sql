@@ -274,14 +274,8 @@ END;
 $$;
 
 -- Revoke public access on new function
-REVOKE ALL ON FUNCTION release_credits_atomic(UUID, UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION release_credits_atomic(UUID, UUID) TO service_role;
 
 -- Re-revoke on updated functions (CREATE OR REPLACE resets grants)
-REVOKE ALL ON FUNCTION reserve_credits_atomic(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION reserve_credits_atomic(UUID, UUID, INTEGER) TO service_role;
-REVOKE ALL ON FUNCTION consume_credits_atomic(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION consume_credits_atomic(UUID, UUID, INTEGER) TO service_role;
 
 -- 7. Stuck reservation recovery function
 CREATE OR REPLACE FUNCTION recover_expired_reservations()
@@ -317,5 +311,3 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION recover_expired_reservations() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION recover_expired_reservations() TO service_role;

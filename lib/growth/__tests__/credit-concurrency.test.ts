@@ -168,10 +168,11 @@ describe('Campaign idempotency', () => {
 
 describe('RPC access control', () => {
   it('all RPCs restricted to service_role', () => {
-    const revokeCount = (migration.match(/REVOKE ALL ON FUNCTION.*FROM PUBLIC/g) || []).length;
-    expect(revokeCount).toBeGreaterThanOrEqual(4); // reserve, consume, release, recover
+    const privileges = readFileSync('supabase/migrations/250_consolidated_function_privileges.sql', 'utf-8');
+    const revokeCount = (privileges.match(/REVOKE ALL ON FUNCTION.*FROM PUBLIC/g) || []).length;
+    expect(revokeCount).toBeGreaterThanOrEqual(4); // reserve, consume, release, recover + others
 
-    const grantCount = (migration.match(/GRANT EXECUTE.*TO service_role/g) || []).length;
+    const grantCount = (privileges.match(/GRANT EXECUTE.*TO service_role/g) || []).length;
     expect(grantCount).toBeGreaterThanOrEqual(4);
   });
 

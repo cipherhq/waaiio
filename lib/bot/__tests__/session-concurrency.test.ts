@@ -29,9 +29,10 @@ describe('Session optimistic concurrency', () => {
     });
 
     it('RPC restricted to service_role', () => {
-      expect(migration).toContain('REVOKE ALL ON FUNCTION update_session_cas');
-      expect(migration).toContain('GRANT EXECUTE');
-      expect(migration).toContain('TO service_role');
+      const privileges = readFileSync('supabase/migrations/250_consolidated_function_privileges.sql', 'utf-8');
+      expect(privileges).toContain('REVOKE ALL ON FUNCTION public.update_session_cas');
+      expect(privileges).toContain('GRANT EXECUTE');
+      expect(privileges).toContain('TO service_role');
     });
   });
 

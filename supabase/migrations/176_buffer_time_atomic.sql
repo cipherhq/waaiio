@@ -14,18 +14,15 @@ CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_buffer_minutes integer DEFAULT 0,
   p_duration integer DEFAULT 30
 ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
-DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text;
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text; v_lock_key bigint;
 BEGIN
-  -- Lock rows for this slot to prevent concurrent inserts
-  PERFORM id FROM bookings
-  WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
-    AND status IN ('confirmed', 'pending', 'in_progress')
-    AND (p_staff_id IS NULL OR staff_id = p_staff_id)
-  FOR UPDATE;
+  -- Advisory lock keyed on slot identity — serializes concurrent bookings
+  v_lock_key := hashtext(p_business_id::text || p_date::text || p_time || COALESCE(p_staff_id::text, ''));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
 
-  -- Capacity check (unchanged)
-  SELECT COUNT(*) INTO v_count FROM bookings
+  -- Capacity check
+  SELECT COUNT(*) INTO v_count FROM public.bookings
   WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
     AND status IN ('confirmed', 'pending', 'in_progress')
     AND (p_staff_id IS NULL OR staff_id = p_staff_id);
@@ -38,7 +35,7 @@ BEGIN
   -- Buffer overlap check (only if buffer_minutes > 0)
   IF p_buffer_minutes > 0 THEN
     SELECT COUNT(*) INTO v_buffer_count
-    FROM bookings
+    FROM public.bookings
     WHERE business_id = p_business_id
       AND date = p_date
       AND status IN ('pending', 'confirmed', 'in_progress')
@@ -57,7 +54,7 @@ BEGIN
   END IF;
 
   -- Insert the booking
-  INSERT INTO bookings (
+  INSERT INTO public.bookings (
     business_id, user_id, service_id, appointment_id, staff_id, staff_name,
     date, time, party_size, flow_type, channel,
     deposit_amount, deposit_status, status,
@@ -86,6 +83,3 @@ BEGIN
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;
 $$;
-
-REVOKE ALL ON FUNCTION public.book_slot_atomic FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.book_slot_atomic TO service_role;

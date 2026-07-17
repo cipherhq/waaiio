@@ -27,22 +27,27 @@ CREATE OR REPLACE FUNCTION public.book_slot_atomic(
 ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 DECLARE
   v_count int;
   v_booking_id uuid;
   v_ref text;
+  v_lock_key bigint;
 BEGIN
-  -- Lock rows for this slot to prevent concurrent inserts
+  -- Advisory lock keyed on business + date + time + staff to serialize concurrent bookings.
+  -- hashtext produces a stable int from the slot identity; pg_advisory_xact_lock holds until COMMIT.
+  v_lock_key := hashtext(p_business_id::text || p_date::text || p_time || COALESCE(p_staff_id::text, ''));
+  PERFORM pg_advisory_xact_lock(v_lock_key);
+
+  -- Count existing bookings for this slot
   SELECT COUNT(*) INTO v_count
-  FROM bookings
+  FROM public.bookings
   WHERE business_id = p_business_id
     AND date = p_date
     AND time = p_time
     AND status IN ('confirmed', 'pending', 'in_progress')
-    AND (p_staff_id IS NULL OR staff_id = p_staff_id)
-  FOR UPDATE;
+    AND (p_staff_id IS NULL OR staff_id = p_staff_id);
 
   -- Check capacity
   IF v_count >= p_max_capacity THEN
@@ -51,7 +56,7 @@ BEGIN
   END IF;
 
   -- Insert the booking
-  INSERT INTO bookings (
+  INSERT INTO public.bookings (
     business_id, user_id, service_id, staff_id, staff_name,
     date, time, party_size, flow_type, channel,
     deposit_amount, deposit_status, status,
@@ -71,7 +76,3 @@ BEGIN
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;
 $$;
-
--- Grant execute to service_role only (bot uses service client)
-REVOKE ALL ON FUNCTION public.book_slot_atomic FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.book_slot_atomic TO service_role;

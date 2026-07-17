@@ -99,11 +99,7 @@ END;
 $$;
 
 -- Revoke public execution
-REVOKE ALL ON FUNCTION reserve_credits_atomic(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION reserve_credits_atomic(UUID, UUID, INTEGER) TO service_role;
 
-REVOKE ALL ON FUNCTION consume_credits_atomic(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION consume_credits_atomic(UUID, UUID, INTEGER) TO service_role;
 
 -- Fix 4: Remove unsafe INSERT policy on customer_consents
 DROP POLICY IF EXISTS "customer_consents_service_insert" ON public.customer_consents;

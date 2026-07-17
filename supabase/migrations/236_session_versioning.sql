@@ -53,7 +53,3 @@ END;
 $$;
 
 -- Only service role should call this
-REVOKE ALL ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[]) FROM PUBLIC;
-REVOKE ALL ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[]) FROM anon;
-REVOKE ALL ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[]) FROM authenticated;
-GRANT EXECUTE ON FUNCTION update_session_cas(UUID, BIGINT, TEXT, JSONB, JSONB, TEXT[]) TO service_role;

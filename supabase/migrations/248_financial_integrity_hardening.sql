@@ -68,8 +68,6 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.create_payout_with_adjustments(UUID, DATE, DATE, NUMERIC, NUMERIC, NUMERIC, NUMERIC, TEXT, UUID, JSONB, UUID[]) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.create_payout_with_adjustments(UUID, DATE, DATE, NUMERIC, NUMERIC, NUMERIC, NUMERIC, TEXT, UUID, JSONB, UUID[]) TO service_role;
 
 -- ── 3. Atomic invoice + items RPC ───────────────────────
 CREATE OR REPLACE FUNCTION public.create_invoice_with_items(
@@ -139,8 +137,6 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.create_invoice_with_items(JSONB, JSONB) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.create_invoice_with_items(JSONB, JSONB) TO service_role;
 
 -- ── 4. Replace package session deduction RPC ────────────
 -- Fixes from migration 247:
@@ -233,8 +229,6 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.deduct_package_session(UUID, TEXT, UUID, UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.deduct_package_session(UUID, TEXT, UUID, UUID) TO service_role;
 
 -- ── 5. Update auto_approve_limits documentation ─────────
 -- Values are in MAJOR currency units (naira, dollars, pounds, cedis).

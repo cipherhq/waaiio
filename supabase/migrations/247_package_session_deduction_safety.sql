@@ -87,5 +87,3 @@ END;
 $$;
 
 -- 3. Lock down permissions — only service_role can call
-REVOKE EXECUTE ON FUNCTION deduct_package_session(UUID, TEXT, UUID, UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION deduct_package_session(UUID, TEXT, UUID, UUID) TO service_role;
