@@ -81,7 +81,7 @@ export async function searchMarketplace(
   supabase: SupabaseClient,
   criteria: MarketplaceSearchCriteria,
 ): Promise<MarketplaceResult[]> {
-  const limit = Math.min(criteria.limit || 5, 10);
+  const limit = Math.min(criteria.limit || 20, 50);
 
   try {
     let query = supabase
