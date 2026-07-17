@@ -5,6 +5,48 @@ If something breaks, check this log to find what changed and when.
 
 ---
 
+## 2026-07-16
+
+### Pre-Launch Hardening: Ace AI Copilot (Critical Fix)
+- `app/api/copilot/query/route.ts` — **Complete rewrite.** Fixed 10 bugs: bookings used `created_at` instead of `date` column; revenue had no currency; week/month used rolling days not calendar; no business timezone; unpaid included cancelled; top products had wrong column filter and showed no names; used nonexistent `payment_status` column.
+- `lib/copilot/classify-intent.ts` — New file. Extracted intent classifier (20 report types, was 6). Supports: bookings (today/upcoming/week/month), orders (today/pending), revenue (today/week/month/compare), unpaid (bookings/invoices), top products, top services, new/returning customers, cancellation rate, check-ins, low stock, attention items.
+- `components/dashboard/Copilot.tsx` — Honest UI ("Quick answers about..." not "Ask anything"), capability-aware quick questions, follow-up context, auto-scroll, mobile responsive, whitespace-pre-line.
+- Role-based permissions: staff/support blocked from financial reports via `business_members` table.
+- **Tests:** 49 new intent classification tests in `lib/copilot/__tests__/classify-intent.test.ts`.
+- **Affects:** All dashboard copilot users. Team members can now access copilot with role-appropriate restrictions.
+
+### Pre-Launch Hardening: Remove Hardcoded WhatsApp Fallbacks (Critical)
+- `lib/support-contact.ts` — New centralized helper. `getSupportWhatsAppNumber()` and `getSupportWhatsAppLink()` read from `NEXT_PUBLIC_WHATSAPP_NUMBER_{country}` env vars. Returns empty string if not configured (safe).
+- Removed hardcoded `12029226251` from 11 files: Footer, layout, HomeClient, contact, directory, OnboardingWizard, StepAuth, dashboard page, support page, whatsapp connect, ReturnToWhatsApp.
+- `app/api/onboarding/subscribe/route.ts` — Uses `FALLBACK_EMAIL_DOMAIN` env var.
+- **Production requirement:** Set `NEXT_PUBLIC_WHATSAPP_NUMBER_US` in Vercel.
+- **Affects:** All marketing pages, onboarding, dashboard. WhatsApp buttons hidden if env var not set.
+
+### Pre-Launch Hardening: Dashboard Capability Gating (Security)
+- Added `useRequireCapability()` to 14 dashboard pages that were missing it. Users could bypass sidebar hiding by navigating directly to URLs like `/dashboard/invoices`.
+- Pages gated: invoices, properties (3 pages), forms, surveys, packages, locations, waivers, staff, team, contracts, reports, campaigns.
+- Redirects to `/dashboard/capabilities?upgrade={cap}` if capability missing.
+- **Affects:** All growth/business-tier feature pages. Free-tier pages unchanged.
+
+### Pre-Launch Hardening: API Capability Checks (Security)
+- `lib/api-auth.ts` — Extended `authenticateRequest` with `requireCapability` option.
+- Added capability verification to 12 POST API routes: invoices, broadcasts, surveys, packages, locations, waivers, contracts, staff, reports, campaigns, loyalty, referrals.
+- Returns 403 with clear error if capability not enabled.
+- **Affects:** All tier-gated API mutations. Prevents feature bleed via direct API calls.
+
+### Pre-Launch Hardening: Dashboard Finance Timezone Fix
+- `app/dashboard/financials/page.tsx` — Monthly revenue chart and date filters now use business timezone via `Intl.DateTimeFormat`. Was using UTC, causing late-night transactions to appear in wrong month.
+- `app/dashboard/payouts/history/page.tsx` — Monthly totals and chart buckets now use business timezone.
+- **Affects:** Financials and payout history for businesses in non-UTC timezones.
+
+### Pre-Launch Hardening: Auto-Approve Limits Admin-Configurable
+- `lib/platformSettings.ts` — Added `auto_approve_limits` to PlatformSettings interface and loader.
+- `app/api/cron/auto-payout/route.ts` — Replaced hardcoded `AUTO_APPROVE_LIMIT_NGN`/`AUTO_APPROVE_LIMIT_USD` with `settings.auto_approve_limits[countryCode]`.
+- `supabase/migrations/244_auto_approve_limits_setting.sql` — Seeds per-country limits in `platform_settings`.
+- **Affects:** Auto-payout cron. Admin can now adjust limits via PlatformSettings page.
+
+---
+
 ## 2026-07-14
 
 ### UX: Value-first onboarding redesign
