@@ -1,6 +1,7 @@
--- Migration 176: Add buffer time enforcement to book_slot_atomic
--- Adds optional p_buffer_minutes parameter. When > 0, checks that no existing
--- booking overlaps within the buffer window. Existing behavior unchanged when 0.
+-- Migration 176: Final production version of book_slot_atomic
+-- Adds buffer time enforcement. Uses advisory lock on business+date+staff
+-- to serialize ALL booking attempts for the same resource, preventing both
+-- identical-slot races and buffer-overlap races.
 
 CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_business_id uuid, p_user_id uuid, p_service_id uuid, p_staff_id uuid,
@@ -15,13 +16,25 @@ CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_duration integer DEFAULT 30
 ) RETURNS TABLE(booking_id uuid, reference_code text, slot_available boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
-DECLARE v_count int; v_buffer_count int; v_booking_id uuid; v_ref text; v_lock_key bigint;
+DECLARE
+  v_count int;
+  v_buffer_count int;
+  v_booking_id uuid;
+  v_ref text;
+  v_lock_key bigint;
 BEGIN
-  -- Advisory lock keyed on slot identity — serializes concurrent bookings
-  v_lock_key := hashtext(p_business_id::text || p_date::text || p_time || COALESCE(p_staff_id::text, ''));
+  -- Advisory lock on business + date + staff (+ location if set).
+  -- Serializes ALL booking attempts for this resource on this date,
+  -- preventing both identical-slot races and buffer-overlap races.
+  -- Lock is held until transaction commits.
+  v_lock_key := hashtext(
+    p_business_id::text || p_date::text
+    || COALESCE(p_staff_id::text, 'nostaff')
+    || COALESCE(p_location_id::text, 'noloc')
+  );
   PERFORM pg_advisory_xact_lock(v_lock_key);
 
-  -- Capacity check
+  -- Capacity check for this exact time slot
   SELECT COUNT(*) INTO v_count FROM public.bookings
   WHERE business_id = p_business_id AND date = p_date AND time = p_time::time
     AND status IN ('confirmed', 'pending', 'in_progress')
@@ -40,9 +53,8 @@ BEGIN
       AND date = p_date
       AND status IN ('pending', 'confirmed', 'in_progress')
       AND (p_staff_id IS NULL OR staff_id = p_staff_id)
-      AND time != p_time::time  -- exclude same-slot (already checked by capacity)
+      AND time != p_time::time
       AND (
-        -- New booking overlaps with existing booking+buffer
         p_time::time < (time + make_interval(mins => COALESCE(p_duration, 30) + p_buffer_minutes))
         AND (p_time::time + make_interval(mins => COALESCE(p_duration, 30))) > (time - make_interval(mins => p_buffer_minutes))
       );
@@ -78,7 +90,7 @@ BEGIN
     p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size,
     p_location_id
   )
-  RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
+  RETURNING id, public.bookings.reference_code INTO v_booking_id, v_ref;
 
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;

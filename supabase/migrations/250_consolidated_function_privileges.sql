@@ -49,4 +49,8 @@ DO $$ BEGIN
   -- create_invoice_with_items (from 248)
   REVOKE ALL ON FUNCTION public.create_invoice_with_items(JSONB, JSONB) FROM PUBLIC, anon, authenticated;
   GRANT EXECUTE ON FUNCTION public.create_invoice_with_items(JSONB, JSONB) TO service_role;
+
+  -- recover_expired_reservations (from 243)
+  REVOKE ALL ON FUNCTION public.recover_expired_reservations() FROM PUBLIC, anon, authenticated;
+  GRANT EXECUTE ON FUNCTION public.recover_expired_reservations() TO service_role;
 END $$;

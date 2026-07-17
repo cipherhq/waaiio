@@ -1,6 +1,6 @@
 -- Atomic booking slot check: prevents double-booking the same time slot
--- Counts existing bookings for the same business/date/time/staff within a transaction,
--- and only inserts if capacity hasn't been exceeded.
+-- Note: This function is replaced by migrations 139-141, 155, 166, 176.
+-- Migration 176 is the final production version with advisory locking.
 CREATE OR REPLACE FUNCTION public.book_slot_atomic(
   p_business_id uuid,
   p_user_id uuid,
@@ -33,14 +33,7 @@ DECLARE
   v_count int;
   v_booking_id uuid;
   v_ref text;
-  v_lock_key bigint;
 BEGIN
-  -- Advisory lock keyed on business + date + time + staff to serialize concurrent bookings.
-  -- hashtext produces a stable int from the slot identity; pg_advisory_xact_lock holds until COMMIT.
-  v_lock_key := hashtext(p_business_id::text || p_date::text || p_time || COALESCE(p_staff_id::text, ''));
-  PERFORM pg_advisory_xact_lock(v_lock_key);
-
-  -- Count existing bookings for this slot
   SELECT COUNT(*) INTO v_count
   FROM public.bookings
   WHERE business_id = p_business_id
@@ -49,13 +42,11 @@ BEGIN
     AND status IN ('confirmed', 'pending', 'in_progress')
     AND (p_staff_id IS NULL OR staff_id = p_staff_id);
 
-  -- Check capacity
   IF v_count >= p_max_capacity THEN
     RETURN QUERY SELECT NULL::uuid, NULL::text, false;
     RETURN;
   END IF;
 
-  -- Insert the booking
   INSERT INTO public.bookings (
     business_id, user_id, service_id, staff_id, staff_name,
     date, time, party_size, flow_type, channel,
@@ -71,7 +62,7 @@ BEGIN
     p_special_requests, p_venue_address, p_end_date,
     p_addons_snapshot, p_promo_code_id, p_total_amount, p_party_size
   )
-  RETURNING id, bookings.reference_code INTO v_booking_id, v_ref;
+  RETURNING id, public.bookings.reference_code INTO v_booking_id, v_ref;
 
   RETURN QUERY SELECT v_booking_id, v_ref, true;
 END;
