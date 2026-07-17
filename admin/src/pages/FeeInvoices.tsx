@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
