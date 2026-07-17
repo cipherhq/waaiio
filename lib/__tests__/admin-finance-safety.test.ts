@@ -286,8 +286,8 @@ describe('Bank account masking — server-side', () => {
 describe('Cross-tenant payout account security', () => {
   it('rejects if payout account belongs to different business', () => {
     // Production code at approve/route.ts lines 96-104
-    const payoutBusinessId = 'biz-A';
-    const accountBusinessId = 'biz-B';
+    const payoutBusinessId: string = 'biz-A';
+    const accountBusinessId: string = 'biz-B';
     const isViolation = payoutBusinessId !== accountBusinessId;
     expect(isViolation).toBe(true);
   });

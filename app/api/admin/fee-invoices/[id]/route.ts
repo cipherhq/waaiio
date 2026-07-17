@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -37,9 +38,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       details: { invoice_number: invoice.invoice_number, amount: invoice.total_fee_amount, payment_reference },
     });
     if (auditErr) {
-      // Revert
-      await service.from('platform_fee_invoices').update({ status: invoice.status, paid_at: null, paid_via: null, payment_reference: null }).eq('id', id);
-      return NextResponse.json({ error: 'Audit logging failed' }, { status: 500 });
+      // Revert — check the revert succeeded
+      const { error: revertErr } = await service.from('platform_fee_invoices')
+        .update({ status: invoice.status, paid_at: null, paid_via: null, payment_reference: null })
+        .eq('id', id);
+      if (revertErr) {
+        // Revert also failed — critical inconsistency, alert ops
+        logger.error(`[FEE-INVOICE] CRITICAL: Audit AND revert failed for ${id}:`, { auditErr: auditErr.message, revertErr: revertErr.message });
+      }
+      return NextResponse.json({ error: 'Audit logging failed — action reverted' }, { status: 500 });
     }
     return NextResponse.json({ success: true });
   }
@@ -59,8 +66,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       details: { invoice_number: invoice.invoice_number, amount: invoice.total_fee_amount, reason },
     });
     if (auditErr) {
-      await service.from('platform_fee_invoices').update({ status: invoice.status, waived_reason: null, waived_by: null }).eq('id', id);
-      return NextResponse.json({ error: 'Audit logging failed' }, { status: 500 });
+      const { error: revertErr } = await service.from('platform_fee_invoices')
+        .update({ status: invoice.status, waived_reason: null, waived_by: null })
+        .eq('id', id);
+      if (revertErr) {
+        logger.error(`[FEE-INVOICE] CRITICAL: Audit AND revert failed for ${id}:`, { auditErr: auditErr.message, revertErr: revertErr.message });
+      }
+      return NextResponse.json({ error: 'Audit logging failed — action reverted' }, { status: 500 });
     }
     return NextResponse.json({ success: true });
   }

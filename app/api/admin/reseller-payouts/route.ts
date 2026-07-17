@@ -85,6 +85,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'reseller_id, period_start, and period_end are required' }, { status: 400 });
     }
 
+    // Validate date order
+    if (period_start >= period_end) {
+      return NextResponse.json({ error: 'period_start must be before period_end' }, { status: 400 });
+    }
+
+    // Validate input bounds
+    if (holdback_percent !== undefined && holdback_percent !== null) {
+      const hp = Number(holdback_percent);
+      if (isNaN(hp) || hp < 0 || hp > 100) {
+        return NextResponse.json({ error: 'holdback_percent must be between 0 and 100' }, { status: 400 });
+      }
+    }
+    if (deductions !== undefined && deductions !== null) {
+      const d = Number(deductions);
+      if (isNaN(d) || d < 0) {
+        return NextResponse.json({ error: 'deductions must be non-negative' }, { status: 400 });
+      }
+    }
+
     // Validate reseller exists
     const { data: reseller, error: resellerErr } = await service
       .from('resellers')
@@ -96,17 +115,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Reseller not found' }, { status: 404 });
     }
 
-    // Check for duplicate payout period
-    const { data: existing } = await service
+    // Check for overlapping payout periods (not just exact duplicates)
+    // A period overlaps if: existing.start < new.end AND existing.end > new.start
+    const { data: overlapping } = await service
       .from('reseller_payouts')
-      .select('id')
+      .select('id, period_start, period_end, status')
       .eq('reseller_id', reseller_id)
-      .eq('period_start', period_start)
-      .eq('period_end', period_end)
-      .maybeSingle();
+      .lt('period_start', period_end)
+      .gt('period_end', period_start)
+      .not('status', 'eq', 'rejected')
+      .limit(1);
 
-    if (existing) {
-      return NextResponse.json({ error: 'A payout already exists for this period' }, { status: 409 });
+    if (overlapping && overlapping.length > 0) {
+      return NextResponse.json({
+        error: `Overlapping payout exists for ${overlapping[0].period_start} to ${overlapping[0].period_end}`,
+      }, { status: 409 });
     }
 
     // Calculate gross commission from platform_fees
@@ -138,7 +161,11 @@ export async function POST(request: NextRequest) {
 
     const holdback = Math.round(grossCommission * (effectiveHoldbackPercent / 100));
     const effectiveDeductions = Number(deductions) || 0;
-    const netAmount = grossCommission - holdback - effectiveDeductions;
+    const netAmount = Math.max(0, grossCommission - holdback - effectiveDeductions);
+
+    if (netAmount <= 0) {
+      return NextResponse.json({ error: 'Net amount is zero or negative after holdback and deductions' }, { status: 400 });
+    }
 
     const { data: payout, error: insertErr } = await service
       .from('reseller_payouts')
@@ -169,22 +196,25 @@ export async function POST(request: NextRequest) {
 
     logger.info(`[ADMIN_RESELLER_PAYOUTS] Payout created: ${payout.id} for reseller ${reseller_id}, net=${netAmount}`);
 
-    // Audit log (best-effort — don't block response)
-    try {
-      await service.from('admin_audit_logs').insert({
-        actor_id: auth.user.id,
-        action: 'reseller_payout_created',
-        entity_type: 'reseller_payout',
-        entity_id: payout.id,
-        details: {
-          reseller_id,
-          period_start,
-          period_end,
-          gross_commission: grossCommission,
-          net_amount: netAmount,
-        },
-      });
-    } catch { /* best-effort */ }
+    // Mandatory audit — failure deletes the payout
+    const { error: auditErr } = await service.from('admin_audit_logs').insert({
+      actor_id: auth.user.id,
+      action: 'reseller_payout_created',
+      entity_type: 'reseller_payout',
+      entity_id: payout.id,
+      details: {
+        reseller_id,
+        period_start,
+        period_end,
+        gross_commission: grossCommission,
+        net_amount: netAmount,
+      },
+    });
+    if (auditErr) {
+      await service.from('reseller_payouts').delete().eq('id', payout.id);
+      logger.error('[RESELLER-PAYOUT] Audit failed, deleted payout:', auditErr.message);
+      return NextResponse.json({ error: 'Audit logging failed — payout reverted' }, { status: 500 });
+    }
 
     return NextResponse.json({ payout }, { status: 201 });
   } catch {
