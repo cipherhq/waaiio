@@ -205,7 +205,7 @@ export default function Finance() {
     for (const p of filteredPayouts) {
       if (!payoutBuckets[p.status]) payoutBuckets[p.status] = { count: 0, amounts: {} };
       payoutBuckets[p.status].count++;
-      const cur = p.currency || 'NGN';
+      const cur = bizCurrencyMap.get(p.business_id) || 'NGN';
       payoutBuckets[p.status].amounts[cur] = (payoutBuckets[p.status].amounts[cur] || 0) + Number(p.net_amount || 0);
     }
 
@@ -284,7 +284,7 @@ export default function Finance() {
     for (const p of payouts) {
       if (p.status !== 'paid') continue;
       const month = getMonth(p.created_at);
-      const cur = p.currency || 'NGN';
+      const cur = bizCurrencyMap.get(p.business_id) || 'NGN';
       const key = `${month}|${cur}`;
       const row = getRow(key, month, cur);
       row.payouts += Number(p.net_amount || 0);
