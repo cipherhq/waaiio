@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server';
+import { getCurrencyCode } from '@/lib/constants';
 import type { Metadata } from 'next';
 import EventPurchaseForm from './EventPurchaseForm';
 
@@ -143,25 +144,60 @@ export default async function EventPage(
       available: tt.total_tickets - tt.tickets_sold,
     }));
 
-  const currencyMap: Record<string, string> = { US: 'USD', NG: 'NGN', GH: 'GHS', GB: 'GBP', CA: 'CAD' };
-  const priceCurrency = currencyMap[business.country_code] || 'USD';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com';
+  const priceCurrency = getCurrencyCode(business.country_code);
 
-  const jsonLd = {
+  // Build ISO 8601 date-time strings for structured data
+  const startDate = event.time
+    ? `${event.date}T${event.time}`
+    : event.date;
+  const endDate = event.end_date
+    ? (event.end_time ? `${event.end_date}T${event.end_time}` : event.end_date)
+    : undefined;
+
+  // Build offers array from ticket types if available, otherwise use the event-level price
+  const offers = ticketTypes.length > 0
+    ? ticketTypes.map((tt) => ({
+        '@type': 'Offer' as const,
+        name: tt.name,
+        price: tt.price,
+        priceCurrency,
+        availability: tt.available > 0
+          ? 'https://schema.org/InStock'
+          : 'https://schema.org/SoldOut',
+        url: `${baseUrl}/e/${event.slug}`,
+      }))
+    : [{
+        '@type': 'Offer' as const,
+        price: event.price,
+        priceCurrency,
+        availability: available > 0
+          ? 'https://schema.org/InStock'
+          : 'https://schema.org/SoldOut',
+        url: `${baseUrl}/e/${event.slug}`,
+      }];
+
+  const jsonLd: Record<string, unknown> = {
     '@context': 'https://schema.org',
     '@type': 'Event',
     name: event.name,
     description: event.description || `Get tickets for ${event.name}`,
-    startDate: event.date,
-    ...(event.end_date ? { endDate: event.end_date } : {}),
+    startDate,
+    ...(endDate ? { endDate } : {}),
     ...(event.image_url ? { image: event.image_url } : {}),
-    location: { '@type': 'Place', name: event.venue || 'TBD' },
-    organizer: { '@type': 'Organization', name: business.name },
-    offers: {
-      '@type': 'Offer',
-      price: event.price,
-      priceCurrency,
-      availability: available > 0 ? 'https://schema.org/InStock' : 'https://schema.org/SoldOut',
+    eventStatus: 'https://schema.org/EventScheduled',
+    eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
+    location: {
+      '@type': 'Place',
+      name: event.venue || 'TBD',
+      ...(event.venue ? { address: event.venue } : {}),
     },
+    organizer: {
+      '@type': 'Organization',
+      name: business.name,
+      url: `${baseUrl}/b/${business.slug}`,
+    },
+    offers,
   };
 
   return (

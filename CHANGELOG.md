@@ -7,6 +7,11 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### JSON-LD Structured Data for Event and Property Public Pages
+- `app/e/[slug]/page.tsx` — Enhanced existing JSON-LD with: combined date+time for startDate/endDate (ISO 8601), eventStatus, eventAttendanceMode, organizer URL, location address, per-ticket-type offers array with availability and URL. Uses `getCurrencyCode()` instead of inline currencyMap.
+- `app/property/[id]/page.tsx` — Added new JSON-LD `LodgingBusiness` schema with: name, description, image, address (PostalAddress), numberOfRooms, offer with price/currency/unitCode, brand organization link.
+- **Affects:** SEO and AI discoverability for public event and property pages. No visual or functional changes.
+
 ### Auto-Upgrade Membership Tier on Spend Threshold
 - `supabase/migrations/245_auto_upgrade_membership_tier.sql` — New BEFORE UPDATE trigger on `customer_profiles.total_spent`. When total_spent increases, finds the highest qualifying `membership_tiers` row (by min_spend) and upgrades the customer. Never downgrades. Handles NULL tier (new customers), businesses with no tiers (no-op), and same-tier (no-op). SECURITY DEFINER. Sets `tier_earned_at` on upgrade.
 - **Affects:** Any code path that updates `customer_profiles.total_spent` (migration 165 `increment_customer_visit` RPC, any direct UPDATE). Membership tier changes are now automatic — no application-level code needed.

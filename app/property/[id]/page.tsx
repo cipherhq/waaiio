@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Image from 'next/image';
 import Link from 'next/link';
 import { createServiceClient } from '@/lib/supabase/service';
-import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { formatCurrency, getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { notFound } from 'next/navigation';
 
 export const revalidate = 60; // ISR: regenerate every 60 seconds
@@ -146,7 +146,43 @@ export default async function PublicPropertyPage({ params }: PageProps) {
     });
   }
 
+  // Build JSON-LD structured data for AI and SEO discoverability
+  const priceCurrency = getCurrencyCode(cc);
+  const propertyJsonLd: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': 'LodgingBusiness',
+    name: property.name,
+    ...(property.description ? { description: property.description } : {}),
+    ...(photos.length > 0 ? { image: photos[0] } : {}),
+    ...(property.address ? {
+      address: {
+        '@type': 'PostalAddress',
+        streetAddress: property.address,
+      },
+    } : {}),
+    ...(property.max_guests > 0 ? { numberOfRooms: property.max_guests } : {}),
+    offers: {
+      '@type': 'Offer',
+      price: property.price,
+      priceCurrency,
+      unitCode: 'DAY',
+      availability: 'https://schema.org/InStock',
+    },
+    ...(biz ? {
+      brand: {
+        '@type': 'Organization',
+        name: biz.name,
+        ...(biz.slug ? { url: `${process.env.NEXT_PUBLIC_APP_URL || 'https://www.waaiio.com'}/b/${biz.slug}` } : {}),
+      },
+    } : {}),
+  };
+
   return (
+    <>
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: JSON.stringify(propertyJsonLd) }}
+    />
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="border-b border-gray-200 bg-white">
@@ -370,5 +406,6 @@ export default async function PublicPropertyPage({ params }: PageProps) {
         </div>
       </footer>
     </div>
+    </>
   );
 }
