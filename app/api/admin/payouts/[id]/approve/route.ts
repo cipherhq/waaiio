@@ -18,6 +18,11 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // Server-side kill switch: payouts must be explicitly enabled
+  if (process.env.ENABLE_PAYOUTS !== 'true') {
+    return NextResponse.json({ error: 'Payouts are currently disabled' }, { status: 503 });
+  }
+
   const { id } = await params;
   const supabase = await createClient();
   const service = createServiceClient();

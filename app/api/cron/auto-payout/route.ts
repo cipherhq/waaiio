@@ -32,6 +32,11 @@ export const maxDuration = 60;
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 
 export async function GET(request: NextRequest) {
+  // Server-side kill switch: payouts must be explicitly enabled
+  if (process.env.ENABLE_PAYOUTS !== 'true') {
+    return NextResponse.json({ message: 'Payouts disabled', generated: 0 });
+  }
+
   const authError = verifyCronAuth(request);
   if (authError) return authError;
 

@@ -34,11 +34,11 @@ test.describe('Smoke tests — public pages', () => {
   });
 
   test('check-in page shows not found for invalid business', async ({ page }) => {
-    const response = await page.goto('/checkin/00000000-0000-0000-0000-000000000000');
-    // Page may show "Business not found" text or return 404
-    const hasNotFound = await page.getByText(/Business not found|not found/i).isVisible().catch(() => false);
-    const is404 = response?.status() === 404;
-    expect(hasNotFound || is404).toBe(true);
+    // The check-in page (app/checkin/[businessId]/page.tsx) renders a client-side
+    // "Business not found" error state for invalid UUIDs. It returns HTTP 200
+    // because the page shell loads, then the client query finds no business.
+    await page.goto('/checkin/00000000-0000-0000-0000-000000000000');
+    await expect(page.getByText(/Business not found/i)).toBeVisible({ timeout: 10000 });
   });
 
   test('terms page loads', async ({ page }) => {
