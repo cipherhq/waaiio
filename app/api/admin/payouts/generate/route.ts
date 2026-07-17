@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   if (!profile || profile.role !== 'admin') {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: 'Admin role required' }, { status: 403 });
   }
 
   try {

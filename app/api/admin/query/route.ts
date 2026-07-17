@@ -120,11 +120,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
-    // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
+    // ── Column security for non-admin roles ──
+    // Allowlist approach: only approved columns can be selected on sensitive tables.
+    // New/unknown columns are rejected by default (safe against schema changes).
+    const APPROVED_COLUMNS: Record<string, string[]> = {
+      payout_accounts: [
+        'id', 'business_id', 'gateway', 'bank_name', 'account_name',
+        'platform_percentage', 'is_active', 'verified_at', 'created_at', 'updated_at',
+        'country_code',
+      ],
+      subscriptions: [
+        'id', 'business_id', 'plan', 'status', 'amount', 'currency',
+        'current_period_start', 'current_period_end', 'cancelled_at',
+        'created_at', 'updated_at', 'gateway', 'billing_interval', 'cancellation_reason',
+      ],
+      payments: [
+        'id', 'booking_id', 'user_id', 'amount', 'currency', 'gateway',
+        'payment_method', 'card_last_four', 'card_brand', 'status',
+        'paid_at', 'created_at', 'business_id', 'refund_amount',
+        'reservation_id', 'invoice_id', 'campaign_id', 'order_id', 'gateway_fee',
+      ],
+    };
+
     let safeSelect = select;
     if (profile.role !== 'admin') {
-      // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
+      // Strip relationship traversal patterns
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
+
+      const approvedCols = APPROVED_COLUMNS[table];
+      if (approvedCols) {
+        if (safeSelect === '*' || safeSelect === '') {
+          safeSelect = approvedCols.join(', ');
+        } else {
+          const requestedCols = safeSelect.split(',').map((c: string) => c.trim()).filter(Boolean);
+          const forbidden = requestedCols.filter((c: string) => !approvedCols.includes(c));
+          if (forbidden.length > 0) {
+            return NextResponse.json(
+              { error: `Columns not permitted: ${forbidden.join(', ')}` },
+              { status: 403, headers: cors },
+            );
+          }
+        }
+      }
     }
 
     let query: any = count === 'exact'
@@ -173,11 +210,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
-    // Mask sensitive columns for non-admin roles
-    if (table === 'payout_accounts' && profile.role !== 'admin' && data) {
-      for (const row of data as Record<string, unknown>[]) {
-        if (row.account_number && typeof row.account_number === 'string') {
-          row.account_number = '****' + (row.account_number as string).slice(-4);
+    // Defense in depth: strip unapproved columns from response
+    if (profile.role !== 'admin' && Array.isArray(data)) {
+      const approvedCols = APPROVED_COLUMNS[table];
+      if (approvedCols) {
+        const approvedSet = new Set(approvedCols);
+        for (const row of data as Record<string, unknown>[]) {
+          for (const key of Object.keys(row)) {
+            if (!approvedSet.has(key)) {
+              delete row[key];
+            }
+          }
         }
       }
     }
