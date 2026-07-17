@@ -50,11 +50,13 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: 2.20.12
+          version: 2.84.2
 
       - name: Start Supabase and apply migrations
         run: |
           set -o pipefail
+          echo "Supabase CLI version:"
+          supabase --version
           supabase start --workdir supabase
 
       - name: Verify migrations applied
