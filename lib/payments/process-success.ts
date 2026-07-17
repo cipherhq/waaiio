@@ -46,6 +46,7 @@ export async function processSuccessfulPayment(
     try {
       await recordPlatformFee(supabase, {
         bookingId: payment.booking_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -132,6 +133,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         orderId,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -175,6 +177,7 @@ export async function processSuccessfulPayment(
 
       await recordPlatformFee(supabase, {
         reservationId: payment.reservation_id,
+        paymentId: payment.id,
         paymentAmount: payment.amount,
         gatewayFee: payment.gateway_fee,
       });
@@ -217,56 +220,55 @@ export async function recordPlatformFee(
     orderId?: string;
     reservationId?: string;
     businessId?: string;
+    paymentId?: string;
     paymentAmount: number;
     gatewayFee?: number;
   },
 ): Promise<void> {
   let businessId = opts.businessId;
-  let transactionAmount = opts.paymentAmount;
+  // Always use the actual payment amount — never replace with entity totals.
+  // Deposits and partial payments must record only the amount actually collected.
+  const transactionAmount = opts.paymentAmount;
 
-  // Resolve business_id and total_amount from the entity
+  // Resolve business_id from the entity (but do NOT override transactionAmount)
   if (opts.bookingId && !businessId) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.bookingId)
       .single();
     if (!booking?.business_id) return;
     businessId = booking.business_id;
-    transactionAmount = booking.total_amount || opts.paymentAmount;
   }
 
   if (opts.orderId && !businessId) {
     const { data: order } = await supabase
       .from('orders')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.orderId)
       .single();
     if (!order?.business_id) return;
     businessId = order.business_id;
-    transactionAmount = order.total_amount || opts.paymentAmount;
   }
 
   if (opts.invoiceId && !businessId) {
     const { data: invoice } = await supabase
       .from('invoices')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.invoiceId)
       .single();
     if (!invoice?.business_id) return;
     businessId = invoice.business_id;
-    transactionAmount = invoice.total_amount || opts.paymentAmount;
   }
 
   if (opts.reservationId && !businessId) {
     const { data: reservation } = await supabase
       .from('reservations')
-      .select('business_id, total_amount')
+      .select('business_id')
       .eq('id', opts.reservationId)
       .single();
     if (!reservation?.business_id) return;
     businessId = reservation.business_id;
-    transactionAmount = reservation.total_amount || opts.paymentAmount;
   }
 
   if (!businessId) return;
@@ -307,9 +309,11 @@ export async function recordPlatformFee(
     }
   }
 
-  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race)
+  // Insert fee — log but don't throw on duplicate (webhook + "I've Paid" race).
+  // UNIQUE index on payment_id ensures at most one fee per successful payment.
   const { error: feeErr } = await supabase.from('platform_fees').insert({
     business_id: businessId,
+    payment_id: opts.paymentId || null,
     booking_id: opts.bookingId || null,
     invoice_id: opts.invoiceId || null,
     campaign_id: opts.campaignId || null,
@@ -374,7 +378,7 @@ export async function processInvoicePayment(
     })
     .eq('id', invoiceId);
 
-  await recordPlatformFee(supabase, { invoiceId, paymentAmount, gatewayFee });
+  await recordPlatformFee(supabase, { invoiceId, paymentId, paymentAmount, gatewayFee });
 }
 
 /**
@@ -434,6 +438,7 @@ export async function processCampaignDonation(
     await recordPlatformFee(supabase, {
       campaignId,
       businessId: campaign.business_id,
+      paymentId,
       paymentAmount: amount,
       gatewayFee,
     });

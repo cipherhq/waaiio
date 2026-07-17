@@ -47,15 +47,24 @@ export async function GET(request: NextRequest) {
     const VELOCITY_THRESHOLD = settings.fraud_velocity_threshold;
     const MINIMUM_PAYOUT = settings.minimum_payout;
 
-    // Calculate period: last full week (Monday to Sunday)
+    // Calculate period: Monday 00:00 UTC inclusive through following Monday 00:00 UTC exclusive.
+    // If cron runs Monday at 6 AM, this covers the previous Mon 00:00 to this Mon 00:00.
     const now = new Date();
-    const periodEnd = new Date(now);
-    periodEnd.setDate(periodEnd.getDate() - periodEnd.getDay()); // Last Sunday
-    const periodStart = new Date(periodEnd);
-    periodStart.setDate(periodStart.getDate() - 6); // Monday before
+    const thisMonday = new Date(now);
+    const daysSinceMonday = (now.getUTCDay() + 6) % 7; // 0=Mon, 6=Sun
+    thisMonday.setUTCDate(now.getUTCDate() - daysSinceMonday);
+    thisMonday.setUTCHours(0, 0, 0, 0);
 
-    const periodStartStr = periodStart.toISOString().split('T')[0];
-    const periodEndStr = periodEnd.toISOString().split('T')[0];
+    const prevMonday = new Date(thisMonday);
+    prevMonday.setUTCDate(thisMonday.getUTCDate() - 7);
+
+    // Period dates for the payout record (display only — queries use full timestamps)
+    const periodStartStr = prevMonday.toISOString().split('T')[0];
+    const periodEndStr = new Date(thisMonday.getTime() - 86400000).toISOString().split('T')[0]; // Sunday date
+
+    // Full UTC timestamps for fee queries (inclusive start, exclusive end)
+    const periodStartIso = prevMonday.toISOString();
+    const periodEndIso = thisMonday.toISOString();
 
     // Get all active platform-managed businesses
     const { data: businesses, error: bizError } = await supabase
@@ -91,8 +100,8 @@ export async function GET(request: NextRequest) {
         .select('business_id, transaction_amount, fee_total, gateway_fee, waived')
         .in('business_id', bizIds)
         .is('refunded_at', null)
-        .gte('created_at', periodStart.toISOString())
-        .lte('created_at', periodEnd.toISOString())
+        .gte('created_at', periodStartIso)
+        .lt('created_at', periodEndIso)
         .limit(100_000),
       // Unapplied payout adjustments across all businesses
       supabase
@@ -203,38 +212,30 @@ export async function GET(request: NextRequest) {
       if (net > autoApproveLimit) holdReasons.push(`Amount exceeds auto-approve limit`);
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');
 
-      // Create payout record
-      const { data: payout, error: payoutError } = await supabase.from('business_payouts').insert({
-        business_id: biz.id,
-        period_start: periodStartStr,
-        period_end: periodEndStr,
-        gross_amount: gross,
-        platform_fee: totalFees,
-        gateway_fee: totalGatewayFees,
-        net_amount: net,
-        status,
-        payout_account_id: payoutAccount?.id || null,
-        flags: holdReasons.length > 0 ? holdReasons : null,
-        auto_generated: true,
-      }).select('id, net_amount').single();
+      // Create payout + assign adjustments atomically via RPC (single transaction).
+      // If either fails, the entire operation rolls back — no orphaned payouts or unapplied adjustments.
+      const adjIds = adjustments.length > 0 ? adjustments.map((a) => a.id) : [];
+      const { data: payoutId, error: payoutError } = await supabase.rpc('create_payout_with_adjustments', {
+        p_business_id: biz.id,
+        p_period_start: periodStartStr,
+        p_period_end: periodEndStr,
+        p_gross_amount: gross,
+        p_platform_fee: totalFees,
+        p_gateway_fee: totalGatewayFees,
+        p_net_amount: net,
+        p_status: status,
+        p_payout_account_id: payoutAccount?.id || null,
+        p_flags: holdReasons.length > 0 ? holdReasons : null,
+        p_adjustment_ids: adjIds,
+      });
 
-      if (payoutError || !payout) {
+      if (payoutError || !payoutId) {
         logger.error(`[AUTO-PAYOUT] Failed to create payout for ${biz.name}:`, payoutError?.message);
-        Sentry.captureException(payoutError || new Error('Payout insert returned null'), { tags: { cron: 'auto-payout', business_id: biz.id } });
+        Sentry.captureException(payoutError || new Error('Payout RPC returned null'), { tags: { cron: 'auto-payout', business_id: biz.id } });
         continue;
       }
 
-      // Mark adjustments as applied to this payout
-      if (adjustments && adjustments.length > 0) {
-        const adjIds = adjustments.map((a) => a.id);
-        const { error: adjError } = await supabase
-          .from('payout_adjustments')
-          .update({ applied_to_payout_id: payout.id, applied_at: new Date().toISOString() })
-          .in('id', adjIds);
-        if (adjError) {
-          logger.error(`[AUTO-PAYOUT] Failed to mark adjustments for payout ${payout.id}:`, adjError.message);
-        }
-      }
+      const payout = { id: payoutId as string, net_amount: net };
 
       generated++;
 

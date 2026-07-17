@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { getCurrencyCode, type CountryCode } from '@/lib/constants';
 import { checkTierLimit } from '@/lib/tier-limits';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest) {
   try {
@@ -195,51 +196,49 @@ export async function POST(request: NextRequest) {
       resolvedCurrency = getCurrencyCode((biz?.country_code || 'NG') as CountryCode);
     }
 
-    const { data: invoice, error } = await supabase
-      .from('invoices')
-      .insert({
-        business_id,
-        customer_profile_id: customer_profile_id || null,
-        customer_name,
-        customer_phone: customer_phone || null,
-        customer_email: customer_email || null,
-        customer_address: customer_address || null,
-        subtotal,
-        tax_rate: taxRate,
-        tax_amount: taxAmount,
-        discount_type: discount_type || null,
-        discount_value: discount_value || 0,
-        discount_amount: discountAmount,
-        total_amount: totalAmount,
-        currency: resolvedCurrency,
-        issue_date: issue_date || new Date().toISOString().split('T')[0],
-        due_date: due_date || null,
-        notes: notes || null,
-        terms: terms || null,
-        status: 'draft',
-        is_recurring: is_recurring || false,
-        recurring_frequency: is_recurring ? (recurring_frequency || 'monthly') : null,
-        recurring_next_date: is_recurring ? (recurring_next_date || due_date || null) : null,
-        recurring_end_date: is_recurring && recurring_end_date ? recurring_end_date : null,
-      })
-      .select('id, reference_code')
-      .single();
+    // Create invoice + items atomically via RPC (single transaction).
+    // If item insertion fails, the invoice is also rolled back — no orphaned records.
+    const invoiceData = {
+      business_id,
+      customer_name,
+      customer_phone: customer_phone || null,
+      customer_email: customer_email || null,
+      customer_address: customer_address || null,
+      subtotal,
+      tax_rate: taxRate,
+      tax_amount: taxAmount,
+      discount_type: discount_type || null,
+      discount_value: discount_value || 0,
+      discount_amount: discountAmount,
+      total_amount: totalAmount,
+      currency: resolvedCurrency,
+      issue_date: issue_date || new Date().toISOString().split('T')[0],
+      due_date: due_date || null,
+      notes: notes || null,
+      terms: terms || null,
+      status: 'draft',
+      is_recurring: is_recurring || false,
+      recurring_frequency: is_recurring ? (recurring_frequency || 'monthly') : null,
+      recurring_next_date: is_recurring ? (recurring_next_date || due_date || null) : null,
+      recurring_end_date: is_recurring && recurring_end_date ? recurring_end_date : null,
+    };
 
-    if (error || !invoice) {
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
-    // Insert line items
-    const itemRows = items.map((item: { description: string; quantity: number; unit_price: number }, i: number) => ({
-      invoice_id: invoice.id,
+    const itemRows = items.map((item: { description: string; quantity: number; unit_price: number }) => ({
       description: item.description,
       quantity: item.quantity || 1,
       unit_price: item.unit_price || 0,
       amount: Math.round((item.quantity || 1) * (item.unit_price || 0) * 100) / 100,
-      sort_order: i,
     }));
 
-    await supabase.from('invoice_items').insert(itemRows);
+    const { data: invoice, error } = await supabase.rpc('create_invoice_with_items', {
+      p_invoice: invoiceData,
+      p_items: itemRows,
+    });
+
+    if (error || !invoice) {
+      logger.error('[INVOICES] Atomic creation failed:', error?.message);
+      return NextResponse.json({ error: 'Failed to create invoice' }, { status: 500 });
+    }
 
     return NextResponse.json(invoice, { status: 201 });
   } catch {

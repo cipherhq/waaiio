@@ -180,10 +180,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Time is outside operating hours' }, { status: 400 });
     }
 
-    // If booking today, ensure time is not in the past
+    // If booking today, ensure time is not in the past (in business timezone)
     if (date === today) {
-      const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
+      const nowParts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: businessTimezone, hour: '2-digit', minute: '2-digit', hour12: false,
+      }).format(new Date());
+      const [nowH, nowM] = nowParts.split(':').map(Number);
+      const nowMinutes = nowH * 60 + nowM;
       if (timeMinutes <= nowMinutes) {
         return NextResponse.json({ error: 'Cannot book a past time slot' }, { status: 400 });
       }
