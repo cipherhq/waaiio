@@ -221,7 +221,7 @@ export async function GET(request: NextRequest) {
         autoApproved++;
 
         // Initiate Paystack transfer for NG/GH
-        if (isNG && payoutAccount && paystackSecretKey) {
+        if ((countryCode === 'NG' || countryCode === 'GH') && payoutAccount && paystackSecretKey) {
           try {
             // Create transfer recipient
             const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
