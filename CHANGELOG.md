@@ -7,6 +7,18 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Auto-Payout Financial Integrity Hardening
+- `app/api/cron/auto-payout/route.ts` — Added comprehensive DB error handling across all queries and mutations:
+  1. Business fetch query now throws on error (exits cron with 500)
+  2. All 4 parallel batch queries (existing payouts, platform fees, adjustments, payout accounts) now check errors and throw on failure
+  3. Payout insert checks for error/null — logs + Sentry + skips business instead of proceeding to transfer
+  4. Adjustment update checks for error — logs inconsistency but does not skip (payout already created)
+  5. Both success and failure status updates on Paystack transfer now check for DB errors
+  6. Idempotent Paystack transfer: stores `transfer_reference` (payout_{id}) before calling Paystack, sends as `reference` field for dedup
+  7. Auto-approve limit no longer silently falls back to US/1000 for unknown countries — logs warning and defaults to 0 (forces manual review)
+  8. Added revenue comment clarifying `transaction_amount` is the fee-base amount from successful payments only
+- **Affects:** All weekly auto-payout runs. Prevents silent money transfer on failed DB inserts, prevents duplicate Paystack transfers on retry, forces manual review for unconfigured countries.
+
 ### Package Session Deduction Safety Hardening
 - `supabase/migrations/247_package_session_deduction_safety.sql` — Replaces 1-param RPC with fully atomic 4-param `deduct_package_session(business_id, phone, service_id, booking_id)`. Enrollment lookup + row lock + deduction + replay protection all in one transaction. Creates `package_session_log` table with UNIQUE(enrollment_id, booking_id) to prevent double-deductions on webhook replay. RPC revoked from public/anon/authenticated, granted only to service_role.
 - `lib/payments/process-success.ts` — Simplified `deductPackageSession()` to call the new atomic RPC directly (no client-side enrollment lookup). Adds Sentry error capture. Internal try/catch so the function never throws.

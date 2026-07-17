@@ -58,11 +58,13 @@ export async function GET(request: NextRequest) {
     const periodEndStr = periodEnd.toISOString().split('T')[0];
 
     // Get all active platform-managed businesses
-    const { data: businesses } = await supabase
+    const { data: businesses, error: bizError } = await supabase
       .from('businesses')
       .select('id, name, created_at, country_code, verification_level')
       .eq('payout_mode', 'platform_managed')
       .eq('status', 'active');
+
+    if (bizError) throw new Error(`Failed to fetch businesses: ${bizError.message}`);
 
     if (!businesses?.length) {
       return NextResponse.json({ message: 'No platform-managed businesses', generated: 0 });
@@ -71,12 +73,7 @@ export async function GET(request: NextRequest) {
     const bizIds = businesses.map(b => b.id);
 
     // Batch-fetch all data needed for the main loop in parallel — one query each instead of N per business.
-    const [
-      { data: existingPayoutsForPeriod },
-      { data: allFeeRows },
-      { data: allAdjustmentRows },
-      { data: allPayoutAccountRows },
-    ] = await Promise.all([
+    const [existingRes, feeRes, adjRes, accountRes] = await Promise.all([
       // Existing payouts for this period
       supabase
         .from('business_payouts')
@@ -86,6 +83,9 @@ export async function GET(request: NextRequest) {
         .eq('period_end', periodEndStr)
         .limit(5000),
       // Platform fees for the period across all businesses
+      // NOTE: transaction_amount is the fee-base amount (what was charged to the customer),
+      // used for gross revenue. Platform fees are only created for successful payments,
+      // so this correctly reflects actual collected revenue for payout calculation.
       supabase
         .from('platform_fees')
         .select('business_id, transaction_amount, fee_total, gateway_fee, waived')
@@ -110,12 +110,22 @@ export async function GET(request: NextRequest) {
         .limit(5000),
     ]);
 
+    if (existingRes.error) throw new Error(`Failed to fetch existing payouts: ${existingRes.error.message}`);
+    if (feeRes.error) throw new Error(`Failed to fetch platform fees: ${feeRes.error.message}`);
+    if (adjRes.error) throw new Error(`Failed to fetch adjustments: ${adjRes.error.message}`);
+    if (accountRes.error) throw new Error(`Failed to fetch payout accounts: ${accountRes.error.message}`);
+
+    const existingPayoutsForPeriod = existingRes.data;
+    const allFeeRows = feeRes.data;
+    const allAdjustmentRows = adjRes.data;
+    const allPayoutAccountRows = accountRes.data;
+
     // Build lookup structures from batch results
-    const alreadyHasPayout = new Set((existingPayoutsForPeriod || []).map(p => p.business_id));
+    const alreadyHasPayout = new Set(existingPayoutsForPeriod.map(p => p.business_id));
 
     // Group fees by business_id
     const feesByBiz = new Map<string, { transaction_amount: number; fee_total: number; gateway_fee: number; waived: boolean }[]>();
-    for (const row of (allFeeRows || [])) {
+    for (const row of allFeeRows) {
       const list = feesByBiz.get(row.business_id) ?? [];
       list.push(row);
       feesByBiz.set(row.business_id, list);
@@ -123,7 +133,7 @@ export async function GET(request: NextRequest) {
 
     // Group adjustments by business_id
     const adjustmentsByBiz = new Map<string, { id: string; amount: number }[]>();
-    for (const row of (allAdjustmentRows || [])) {
+    for (const row of allAdjustmentRows) {
       const list = adjustmentsByBiz.get(row.business_id) ?? [];
       list.push(row);
       adjustmentsByBiz.set(row.business_id, list);
@@ -132,7 +142,7 @@ export async function GET(request: NextRequest) {
     // One active payout account per business (take the first active one if multiple)
     type PayoutAccountRow = { id: string; business_id: string; bank_code: string | null; account_number: string | null; account_name: string | null; gateway: string | null };
     const payoutAccountByBiz = new Map<string, PayoutAccountRow>();
-    for (const row of (allPayoutAccountRows || [])) {
+    for (const row of allPayoutAccountRows) {
       if (!payoutAccountByBiz.has(row.business_id)) {
         payoutAccountByBiz.set(row.business_id, row);
       }
@@ -172,9 +182,11 @@ export async function GET(request: NextRequest) {
       const transactionCount = (fees || []).length;
       const avgPerDay = transactionCount / 7;
       const countryCode = biz.country_code || 'NG';
-      const autoApproveLimit = settings.auto_approve_limits[countryCode]
-        ?? settings.auto_approve_limits['US']
-        ?? 1000;
+      const configuredLimit = settings.auto_approve_limits[countryCode];
+      if (configuredLimit === undefined) {
+        logger.warn(`[AUTO-PAYOUT] No auto-approve limit for country ${countryCode}, holding for manual review`);
+      }
+      const autoApproveLimit = configuredLimit ?? 0; // 0 means no auto-approve for unconfigured countries
 
       const canAutoApprove =
         bizAge >= COOLING_PERIOD_DAYS &&
@@ -192,7 +204,7 @@ export async function GET(request: NextRequest) {
       if ((biz.verification_level || 'unverified') === 'unverified') holdReasons.push('Business not verified');
 
       // Create payout record
-      const { data: payout } = await supabase.from('business_payouts').insert({
+      const { data: payout, error: payoutError } = await supabase.from('business_payouts').insert({
         business_id: biz.id,
         period_start: periodStartStr,
         period_end: periodEndStr,
@@ -206,13 +218,22 @@ export async function GET(request: NextRequest) {
         auto_generated: true,
       }).select('id, net_amount').single();
 
+      if (payoutError || !payout) {
+        logger.error(`[AUTO-PAYOUT] Failed to create payout for ${biz.name}:`, payoutError?.message);
+        Sentry.captureException(payoutError || new Error('Payout insert returned null'), { tags: { cron: 'auto-payout', business_id: biz.id } });
+        continue;
+      }
+
       // Mark adjustments as applied to this payout
-      if (payout && adjustments && adjustments.length > 0) {
+      if (adjustments && adjustments.length > 0) {
         const adjIds = adjustments.map((a) => a.id);
-        await supabase
+        const { error: adjError } = await supabase
           .from('payout_adjustments')
-          .update({ applied_to_payout_id: payout.id })
+          .update({ applied_to_payout_id: payout.id, applied_at: new Date().toISOString() })
           .in('id', adjIds);
+        if (adjError) {
+          logger.error(`[AUTO-PAYOUT] Failed to mark adjustments for payout ${payout.id}:`, adjError.message);
+        }
       }
 
       generated++;
@@ -241,6 +262,10 @@ export async function GET(request: NextRequest) {
             const recipientData = await recipientRes.json();
 
             if (recipientData.status && recipientData.data?.recipient_code) {
+              // Store idempotent transfer reference before calling Paystack
+              const transferReference = `payout_${payout.id}`;
+              await supabase.from('business_payouts').update({ transfer_reference: transferReference }).eq('id', payout.id);
+
               // Initiate transfer
               const transferRes = await fetch('https://api.paystack.co/transfer', {
                 method: 'POST',
@@ -253,23 +278,30 @@ export async function GET(request: NextRequest) {
                   amount: Math.round(net * 100), // kobo/pesewas
                   recipient: recipientData.data.recipient_code,
                   reason: `Waaiio payout: ${periodStartStr} to ${periodEndStr}`,
+                  reference: transferReference,
                 }),
               });
               const transferData = await transferRes.json();
 
               if (transferData.status) {
-                await supabase.from('business_payouts').update({
+                const { error: successUpdateError } = await supabase.from('business_payouts').update({
                   status: 'processing',
                   gateway_transfer_code: transferData.data.transfer_code,
                   paid_at: new Date().toISOString(),
-                }).eq('id', payout!.id);
+                }).eq('id', payout.id);
+                if (successUpdateError) {
+                  logger.error(`[AUTO-PAYOUT] Failed to update payout ${payout.id} to processing:`, successUpdateError.message);
+                }
                 transferred++;
                 logger.debug(`[AUTO-PAYOUT] Transfer initiated for ${biz.name}: ${net}`);
               } else {
-                await supabase.from('business_payouts').update({
+                const { error: failUpdateError } = await supabase.from('business_payouts').update({
                   status: 'pending',
                   flags: [...(holdReasons || []), `Transfer failed: ${transferData.message}`],
-                }).eq('id', payout!.id);
+                }).eq('id', payout.id);
+                if (failUpdateError) {
+                  logger.error(`[AUTO-PAYOUT] Failed to update payout ${payout.id} to pending:`, failUpdateError.message);
+                }
                 held++;
                 logger.error(`[AUTO-PAYOUT] Transfer failed for ${biz.name}:`, transferData.message);
 
