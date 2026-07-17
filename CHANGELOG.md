@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Field-Level Server-Side Validation on Critical API Routes
+- `app/api/bookings/public/create/route.ts` — Added UUID validation on serviceId, guestName max 200 chars, quantity positive integer with bounds (1-50), structured field-level error responses.
+- `app/api/invoices/route.ts` — Added UUID validation on business_id, customer_name max 200 chars, per-item validation (description required, quantity positive, unit_price non-negative), due_date format, tax_rate 0-100 range, discount_value non-negative.
+- `app/api/products/bulk/route.ts` — Added UUID validation on business_id, array type and emptiness checks with structured errors.
+- `app/api/events/purchase/route.ts` — Added UUID validation on ticketTypeId, guestName max 200 chars, consolidated email/quantity validation with field-specific error messages.
+- All routes now return `{ error: 'Validation failed', fields: { fieldName: 'message' } }` on 400 for client-friendly error handling.
+- **Affects:** All public booking/purchase flows, invoice creation, bulk product import. No breaking changes — existing valid requests pass through unchanged.
+
 ### Pre-Launch Hardening: Ace AI Copilot (Critical Fix)
 - `app/api/copilot/query/route.ts` — **Complete rewrite.** Fixed 10 bugs: bookings used `created_at` instead of `date` column; revenue had no currency; week/month used rolling days not calendar; no business timezone; unpaid included cancelled; top products had wrong column filter and showed no names; used nonexistent `payment_status` column.
 - `lib/copilot/classify-intent.ts` — New file. Extracted intent classifier (20 report types, was 6). Supports: bookings (today/upcoming/week/month), orders (today/pending), revenue (today/week/month/compare), unpaid (bookings/invoices), top products, top services, new/returning customers, cancellation rate, check-ins, low stock, attention items.
