@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
-import { useBusiness } from '@/components/dashboard/DashboardProvider';
+import { useBusiness, useRequireCapability } from '@/components/dashboard/DashboardProvider';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, getLocale, type CountryCode, CATEGORY_LABELS } from '@/lib/constants';
 import EmptyState from '@/components/dashboard/EmptyState';
@@ -169,6 +169,7 @@ function CheckInQRSection({ propertyId, propertyName }: { propertyId: string; pr
 }
 
 export default function PropertyDetailPage() {
+  const allowed = useRequireCapability('reservation');
   const params = useParams();
   const router = useRouter();
   const business = useBusiness();
@@ -440,6 +441,8 @@ export default function PropertyDetailPage() {
   }
 
   const today = new Date().toISOString().split('T')[0];
+
+  if (!allowed) return null;
 
   return (
     <div>
