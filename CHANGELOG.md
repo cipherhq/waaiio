@@ -7,6 +7,15 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Payout Approval Idempotency & State Transition Fixes
+- `app/api/admin/payouts/[id]/approve/route.ts` — 3 critical fixes:
+  1. Removed 'approved' from approvable states (`['pending', 'held']` only) — prevents double-approval triggering duplicate transfers
+  2. Added compare-and-set guard on UPDATE (`.in('status', ['pending', 'held'])` + `.maybeSingle()`) — returns 409 if another admin already processed it
+  3. Added `gateway_transfer_code` pre-check — rejects if transfer was already initiated (409)
+- `app/api/admin/payouts/route.ts` — Finance role access: `requireAdmin()` now accepts both 'admin' and 'finance' roles for GET (list payouts). Approve action remains admin-only.
+- `app/api/admin/query/route.ts` — Account number masking: non-admin roles see `****XXXX` for `payout_accounts.account_number`
+- **Affects:** Payout approval flow, admin panel payout list, admin query proxy. Prevents concurrent double-disbursement, adds finance role visibility, masks bank details for non-admin roles.
+
 ### Discovery/Marketplace Safety Fixes
 - `lib/marketplace/search.ts` — 4 fixes:
   1. `discovery_enabled` filter changed from `.or('discovery_enabled.is.null,discovery_enabled.eq.true')` to `.eq('discovery_enabled', true)` — NULL no longer treated as discoverable

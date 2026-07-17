@@ -173,6 +173,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
+    // Mask sensitive columns for non-admin roles
+    if (table === 'payout_accounts' && profile.role !== 'admin' && data) {
+      for (const row of data as Record<string, unknown>[]) {
+        if (row.account_number && typeof row.account_number === 'string') {
+          row.account_number = '****' + (row.account_number as string).slice(-4);
+        }
+      }
+    }
+
     return NextResponse.json({ data, count: rowCount }, { headers: cors });
   } catch (error) {
     logger.error('[ADMIN QUERY] error:', error);

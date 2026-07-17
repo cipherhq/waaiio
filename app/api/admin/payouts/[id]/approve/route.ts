@@ -49,8 +49,13 @@ export async function POST(
     return NextResponse.json({ error: 'Payout not found' }, { status: 404 });
   }
 
-  if (!['pending', 'approved', 'held'].includes(payout.status)) {
+  if (!['pending', 'held'].includes(payout.status)) {
     return NextResponse.json({ error: 'Payout cannot be approved in current status' }, { status: 400 });
+  }
+
+  // If a gateway transfer was already initiated, reject to prevent double transfer
+  if (payout.gateway_transfer_code) {
+    return NextResponse.json({ error: 'Transfer already initiated for this payout' }, { status: 409 });
   }
 
   // Verification level check
@@ -223,7 +228,7 @@ export async function POST(
         }
       }
     }
-    const { error: updateError } = await supabase
+    const { data: updated, error: updateError } = await supabase
       .from('business_payouts')
       .update({
         status: finalStatus,
@@ -236,10 +241,17 @@ export async function POST(
         paid_at: finalStatus === 'paid' ? new Date().toISOString() : null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', id);
+      .eq('id', id)
+      .in('status', ['pending', 'held'])  // Compare-and-set: only update if still in expected state
+      .select('id')
+      .maybeSingle();
 
     if (updateError) {
       return NextResponse.json({ error: 'Failed to update payout' }, { status: 500 });
+    }
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Payout was already processed by another administrator' }, { status: 409 });
     }
 
     // Audit log
