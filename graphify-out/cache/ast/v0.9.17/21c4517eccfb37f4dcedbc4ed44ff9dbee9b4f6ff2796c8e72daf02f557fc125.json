@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_126_new_capability_types_sql", "label": "126_new_capability_types.sql", "file_type": "code", "source_file": "supabase/migrations/126_new_capability_types.sql", "source_location": null}], "edges": []}

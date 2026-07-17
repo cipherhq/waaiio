@@ -43,6 +43,9 @@ export interface MarketplaceResult {
   address?: string;
   phone?: string;
   botCode?: string;
+  city?: string;
+  slug?: string;
+  countryCode?: string;
   matchReasons: string[];
   actions: string[];
 }
@@ -57,6 +60,9 @@ interface BusinessRow {
   address: string | null;
   phone: string | null;
   bot_code: string | null;
+  city: string | null;
+  slug: string | null;
+  country_code: string | null;
   latitude: number | null;
   longitude: number | null;
   discovery_enabled: boolean | null;
@@ -81,12 +87,14 @@ export async function searchMarketplace(
     let query = supabase
       .from('businesses')
       .select(
-        'id, name, category, description, address, phone, bot_code, latitude, longitude, ' +
-        'discovery_enabled, discovery_description, price_band, supports_delivery, ' +
-        'max_group_size, is_verified, metadata, operating_hours',
+        'id, name, category, description, address, phone, bot_code, city, slug, country_code, ' +
+        'latitude, longitude, discovery_enabled, discovery_description, price_band, ' +
+        'supports_delivery, max_group_size, is_verified, metadata, operating_hours',
       )
       .eq('is_active', true)
-      .eq('status', 'active');
+      .eq('status', 'active')
+      // Respect discovery_enabled: treat null as true (backward compat)
+      .or('discovery_enabled.is.null,discovery_enabled.eq.true');
 
     // Category filter
     if (criteria.category) {
@@ -214,6 +222,9 @@ export async function searchMarketplace(
         address: biz.address as string | undefined,
         phone: biz.phone as string | undefined,
         botCode: biz.bot_code as string | undefined,
+        city: biz.city as string | undefined,
+        slug: biz.slug as string | undefined,
+        countryCode: biz.country_code as string | undefined,
         matchReasons: reasons,
         actions,
         _score: score,

@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_033_business_documents_bucket_sql", "label": "033_business_documents_bucket.sql", "file_type": "code", "source_file": "supabase/migrations/033_business_documents_bucket.sql", "source_location": null}], "edges": []}

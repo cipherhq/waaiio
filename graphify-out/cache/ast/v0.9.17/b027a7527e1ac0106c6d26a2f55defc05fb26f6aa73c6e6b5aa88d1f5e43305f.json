@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_028_service_name_labels_sql", "label": "028_service_name_labels.sql", "file_type": "code", "source_file": "supabase/migrations/028_service_name_labels.sql", "source_location": null}], "edges": []}

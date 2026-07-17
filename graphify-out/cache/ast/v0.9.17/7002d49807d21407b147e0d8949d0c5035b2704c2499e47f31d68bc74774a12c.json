@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_193_fix_search_path_sql", "label": "193_fix_search_path.sql", "file_type": "code", "source_file": "supabase/migrations/193_fix_search_path.sql", "source_location": null}], "edges": []}

@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_036_fix_permissive_rls_policies_sql", "label": "036_fix_permissive_rls_policies.sql", "file_type": "code", "source_file": "supabase/migrations/036_fix_permissive_rls_policies.sql", "source_location": null}], "edges": []}

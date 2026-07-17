@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_100_add_giving_capability_sql", "label": "100_add_giving_capability.sql", "file_type": "code", "source_file": "supabase/migrations/100_add_giving_capability.sql", "source_location": null}], "edges": []}

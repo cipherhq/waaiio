@@ -1,0 +1,1 @@
+{"nodes": [{"id": "supabase_migrations_217_configurable_settings_sql", "label": "217_configurable_settings.sql", "file_type": "code", "source_file": "supabase/migrations/217_configurable_settings.sql", "source_location": null}], "edges": []}

@@ -1,12 +1,14 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
 import { rateLimitResponseAsync, getRateLimitKey } from '@/lib/rate-limit';
+import { searchMarketplace } from '@/lib/marketplace/search';
 
 /**
  * GET /api/directory?country=US&category=barber&search=cuts
  *
  * Public API for the business directory.
- * Returns active businesses with their services and capabilities.
+ * Uses the unified marketplace search engine for filtering & ranking,
+ * then enriches results with services, capabilities, events, and WhatsApp info.
  * Respects admin-configured featured/hidden lists from platform_settings.
  */
 export async function GET(request: NextRequest) {
@@ -17,56 +19,57 @@ export async function GET(request: NextRequest) {
   const category = searchParams.get('category');
   const search = searchParams.get('search');
 
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
-  // Fetch businesses and directory settings in parallel
-  let query = supabase
-    .from('businesses')
-    .select(`
-      id, name, category, country_code, city, address, bot_code, wa_method, slug,
-      services:services(id, name, price, duration_minutes)
-    `)
-    .eq('status', 'active')
-    .not('bot_code', 'is', null)
-    .order('name', { ascending: true })
-    .limit(100);
+  // Step 1: Use unified marketplace search for filtering & ranking
+  const results = await searchMarketplace(supabase, {
+    category: category || undefined,
+    query: search || undefined,
+    country: country || undefined,
+    limit: 50,
+  });
 
-  if (country) query = query.eq('country_code', country);
-  if (category) query = query.eq('category', category);
-  if (search) {
-    const safeSearch = search.replace(/[%_\\]/g, '\\$&');
-    query = query.ilike('name', `%${safeSearch}%`);
+  if (results.length === 0) {
+    const response = NextResponse.json({ businesses: [] });
+    response.headers.set('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
+    return response;
   }
 
-  const [{ data, error }, { data: settingsData }] = await Promise.all([
-    query,
-    supabase.from('platform_settings').select('key, value').in('key', ['directory_hidden', 'directory_featured']),
+  const businessIds = results.map(r => r.businessId);
+
+  // Step 2: Fetch directory settings + enrichment data in parallel
+  const [
+    { data: settingsData },
+    { data: capRows },
+    { data: serviceRows },
+  ] = await Promise.all([
+    supabase
+      .from('platform_settings')
+      .select('key, value')
+      .in('key', ['directory_hidden', 'directory_featured']),
+    supabase
+      .from('business_capabilities')
+      .select('business_id, capability')
+      .in('business_id', businessIds)
+      .eq('is_enabled', true),
+    supabase
+      .from('services')
+      .select('id, name, price, duration_minutes, business_id')
+      .in('business_id', businessIds),
   ]);
 
-  if (error) {
-    return NextResponse.json({ error: 'Failed to load directory' }, { status: 500 });
-  }
-
-  // Apply directory visibility settings
+  // Apply directory visibility settings (featured/hidden)
   const settingsMap = new Map((settingsData || []).map(s => [s.key, s.value]));
   const hiddenIds = (settingsMap.get('directory_hidden') as string[]) || [];
   const featuredIds = (settingsMap.get('directory_featured') as string[]) || [];
 
-  const visible = (data || []).filter(b => !hiddenIds.includes(b.id));
-  const featured = visible.filter(b => featuredIds.includes(b.id));
-  const rest = visible.filter(b => !featuredIds.includes(b.id));
+  // Filter hidden, then sort: featured first, then by search rank
+  const visible = results.filter(r => !hiddenIds.includes(r.businessId));
+  const featured = visible.filter(r => featuredIds.includes(r.businessId));
+  const rest = visible.filter(r => !featuredIds.includes(r.businessId));
   const sorted = [...featured, ...rest];
 
-  // Get capabilities for visible businesses
-  const businessIds = sorted.map(b => b.id);
-  const { data: capRows } = businessIds.length > 0
-    ? await supabase
-        .from('business_capabilities')
-        .select('business_id, capability')
-        .in('business_id', businessIds)
-        .eq('is_enabled', true)
-    : { data: [] };
-
+  // Build capability map
   const capMap = new Map<string, string[]>();
   for (const row of (capRows || [])) {
     const existing = capMap.get(row.business_id) || [];
@@ -74,8 +77,19 @@ export async function GET(request: NextRequest) {
     capMap.set(row.business_id, existing);
   }
 
-  // Fetch published events for ticketing businesses
-  const ticketingBizIds = sorted.filter(b => (capMap.get(b.id) || []).includes('ticketing')).map(b => b.id);
+  // Build service map
+  const serviceMap = new Map<string, Array<{ id: string; name: string; price: number; duration_minutes: number }>>();
+  for (const row of (serviceRows || [])) {
+    const existing = serviceMap.get(row.business_id) || [];
+    existing.push({ id: row.id, name: row.name, price: row.price, duration_minutes: row.duration_minutes });
+    serviceMap.set(row.business_id, existing);
+  }
+
+  // Step 3: Fetch events for ticketing businesses
+  const ticketingBizIds = sorted
+    .filter(r => (capMap.get(r.businessId) || []).includes('ticketing'))
+    .map(r => r.businessId);
+
   const { data: eventRows } = ticketingBizIds.length > 0
     ? await supabase
         .from('events')
@@ -93,8 +107,15 @@ export async function GET(request: NextRequest) {
     eventMap.set(e.business_id, existing);
   }
 
-  // Fetch WhatsApp phone numbers for dedicated businesses
-  const dedicatedBizIds = sorted.filter(b => b.wa_method === 'dedicated' || b.wa_method === 'transfer' || b.wa_method === 'coexist').map(b => b.id);
+  // Step 4: Fetch WhatsApp phone numbers for dedicated/transfer/coexist businesses
+  // We need wa_method which is not in MarketplaceResult, so fetch from DB
+  const { data: waMethodRows } = await supabase
+    .from('businesses')
+    .select('id, wa_method')
+    .in('id', businessIds)
+    .in('wa_method', ['dedicated', 'transfer', 'coexist']);
+
+  const dedicatedBizIds = (waMethodRows || []).map(r => r.id);
   const waPhoneMap = new Map<string, string>();
   if (dedicatedBizIds.length > 0) {
     const { data: channels } = await supabase
@@ -108,12 +129,34 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const businesses = sorted.map(b => ({
-    ...b,
-    wa_phone: waPhoneMap.get(b.id) || null,
-    capabilities: capMap.get(b.id) || [],
-    events: eventMap.get(b.id) || [],
-    is_featured: featuredIds.includes(b.id),
+  // Build wa_method map for the response
+  const waMethodMap = new Map<string, string>();
+  for (const row of (waMethodRows || [])) {
+    waMethodMap.set(row.id, row.wa_method);
+  }
+
+  // Step 5: Compose enriched response
+  const businesses = sorted.map(r => ({
+    id: r.businessId,
+    name: r.name,
+    category: r.category,
+    country_code: r.countryCode || null,
+    city: r.city || '',
+    address: r.address || '',
+    bot_code: r.botCode || '',
+    wa_method: waMethodMap.get(r.businessId) || null,
+    slug: r.slug || '',
+    wa_phone: waPhoneMap.get(r.businessId) || null,
+    services: serviceMap.get(r.businessId) || [],
+    capabilities: capMap.get(r.businessId) || [],
+    events: eventMap.get(r.businessId) || [],
+    is_featured: featuredIds.includes(r.businessId),
+    // Marketplace search enrichment
+    shortDescription: r.shortDescription,
+    isOpenNow: r.isOpenNow,
+    priceBand: r.priceBand,
+    supportsDelivery: r.supportsDelivery,
+    matchReasons: r.matchReasons,
   }));
 
   const response = NextResponse.json({ businesses });
