@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { createClient } from '@/lib/supabase/server';
 import { formatCurrency, type CountryCode } from '@/lib/constants';
+import { isWhiteLabel } from '@/lib/whitelabel';
 import { ReceiptClient } from './ReceiptClient';
 
 export const revalidate = 0; // No caching — always fresh
@@ -73,7 +74,7 @@ async function getReceiptData(code: string) {
     isPaid,
     status: isPaid ? 'Paid' : 'Pending',
     countryCode,
-    subscriptionTier: business?.subscription_tier || 'free',
+    whitelabel: isWhiteLabel(business?.subscription_tier),
   };
 }
 

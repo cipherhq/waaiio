@@ -20,12 +20,13 @@ async function getProperty(id: string) {
       id, name, description, property_type, price, deposit_amount,
       max_guests, bedrooms, bathrooms, amenities, photos, address,
       is_active, business_id,
-      businesses:business_id (
-        id, name, slug, logo_url, country_code, phone, whatsapp_number, assigned_channel_id, whatsapp_channel_id
+      businesses:business_id!inner (
+        id, name, slug, logo_url, country_code, is_active
       )
     `)
     .eq('id', id)
     .eq('is_active', true)
+    .eq('businesses.is_active', true)
     .single();
 
   return property;
@@ -105,10 +106,6 @@ export default async function PublicPropertyPage({ params }: PageProps) {
     slug: string;
     logo_url: string | null;
     country_code?: string;
-    phone?: string;
-    whatsapp_number?: string;
-    assigned_channel_id?: string;
-    whatsapp_channel_id?: string;
   } | null;
 
   const cc = (biz?.country_code || 'NG') as CountryCode;
@@ -116,21 +113,19 @@ export default async function PublicPropertyPage({ params }: PageProps) {
   const amenities = (property.amenities as string[]) || [];
   const blockedRanges = await getBlockedDates(property.id, property.business_id);
 
-  // Resolve WhatsApp channel phone (not business owner's personal phone)
+  // Resolve WhatsApp channel phone (never expose business owner's personal phone)
   let whatsappNumber = '';
   const supabaseForChannel = createServiceClient();
-  const channelId = biz?.assigned_channel_id || biz?.whatsapp_channel_id;
-  if (channelId) {
-    const { data: ch } = await supabaseForChannel.from('whatsapp_channels').select('phone_number').eq('id', channelId).eq('is_active', true).maybeSingle();
-    if (ch?.phone_number) whatsappNumber = ch.phone_number;
+  // Try dedicated channel first, then any active shared channel
+  const { data: dedicatedCh } = await supabaseForChannel.from('whatsapp_channels').select('phone_number')
+    .eq('business_id', property.business_id).eq('is_active', true).order('channel_type').limit(1).maybeSingle();
+  if (dedicatedCh?.phone_number) {
+    whatsappNumber = dedicatedCh.phone_number;
   }
   if (!whatsappNumber) {
-    const { data: dedicated } = await supabaseForChannel.from('whatsapp_channels').select('phone_number')
-      .eq('business_id', property.business_id).eq('channel_type', 'dedicated').eq('is_active', true).maybeSingle();
-    if (dedicated?.phone_number) whatsappNumber = dedicated.phone_number;
-  }
-  if (!whatsappNumber) {
-    whatsappNumber = biz?.whatsapp_number || biz?.phone || '';
+    const { data: sharedCh } = await supabaseForChannel.from('whatsapp_channels').select('phone_number')
+      .eq('channel_type', 'shared').eq('is_active', true).limit(1).maybeSingle();
+    if (sharedCh?.phone_number) whatsappNumber = sharedCh.phone_number;
   }
 
   const whatsappLink = whatsappNumber

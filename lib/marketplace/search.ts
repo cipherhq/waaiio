@@ -98,7 +98,10 @@ export async function searchMarketplace(
 
     // Category filter
     if (criteria.category) {
-      query = query.ilike('category', `%${criteria.category}%`);
+      const safeCat = criteria.category.replace(/[%_'"\\]/g, '');
+      if (safeCat.length > 0) {
+        query = query.ilike('category', `%${safeCat}%`);
+      }
     }
 
     // Country filter

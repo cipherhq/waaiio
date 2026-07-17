@@ -48,7 +48,7 @@ async function getEvent(slug: string): Promise<EventData | null> {
       venue, total_tickets, tickets_sold, price,
       image_url, max_per_order, slug,
       businesses!inner (
-        id, name, slug, logo_url, country_code, payment_gateway
+        id, name, slug, logo_url, country_code, payment_gateway, is_active
       ),
       event_ticket_types (
         id, name, price, total_tickets, tickets_sold, sort_order, is_active
@@ -56,6 +56,7 @@ async function getEvent(slug: string): Promise<EventData | null> {
     `)
     .eq('slug', slug)
     .eq('status', 'published')
+    .eq('businesses.is_active', true)
     .single();
 
   // Note: No date filter here — individual event pages should remain accessible
