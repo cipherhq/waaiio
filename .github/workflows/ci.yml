@@ -57,42 +57,68 @@ jobs:
           set -o pipefail
           echo "Supabase CLI version:"
           supabase --version
-          supabase start --workdir supabase
+          echo ""
+          echo "Starting Supabase (applies all migrations from supabase/migrations/)..."
+          supabase start
 
       - name: Verify migrations applied
         run: |
           set -o pipefail
-          PGURL=$(supabase status --workdir supabase | grep "DB URL" | awk '{print $NF}')
+          # Use structured output — never parse human-readable text
+          PGURL=$(supabase status -o env | grep POSTGRES_URL | cut -d= -f2- | tr -d '"')
           if [ -z "$PGURL" ]; then
-            echo "❌ Could not get database URL from supabase status"
+            echo "❌ Could not get database URL"
+            supabase status -o env
+            exit 1
+          fi
+          echo "DB URL obtained successfully"
+
+          # Count SQL migration files versus applied migrations
+          FILE_COUNT=$(ls -1 supabase/migrations/*.sql 2>/dev/null | wc -l | tr -d ' ')
+          APPLIED=$(psql "$PGURL" -t -c "SELECT COUNT(*) FROM supabase_migrations.schema_migrations" | tr -d ' ')
+          echo "Migration files: $FILE_COUNT"
+          echo "Applied migrations: $APPLIED"
+
+          if [ "$APPLIED" -lt "$FILE_COUNT" ]; then
+            echo "⚠️  Not all migrations applied: $APPLIED of $FILE_COUNT"
+            echo "Missing:"
+            psql "$PGURL" -t -c "
+              SELECT '  ' || v.version FROM (
+                SELECT regexp_replace(f, '^0*', '') AS version
+                FROM unnest(ARRAY[$(ls -1 supabase/migrations/*.sql | xargs -I{} basename {} .sql | sed "s/_.*//;s/^/'/" | sed "s/$/'/" | tr '\n' ',' | sed 's/,$//')]) AS f
+              ) v
+              WHERE v.version NOT IN (SELECT version FROM supabase_migrations.schema_migrations)
+              ORDER BY v.version::integer
+              LIMIT 20
+            " 2>/dev/null || echo "  (could not determine missing versions)"
             exit 1
           fi
 
-          TABLES=$(psql "$PGURL" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'" 2>/dev/null | tr -d ' ')
-          echo "Public tables: $TABLES"
-
-          if [ "$TABLES" -lt 10 ]; then
-            echo "❌ Expected at least 10 public tables, found $TABLES"
+          # Verify latest applied is 249
+          LATEST=$(psql "$PGURL" -t -c "SELECT MAX(version::integer) FROM supabase_migrations.schema_migrations" | tr -d ' ')
+          echo "Latest applied migration: $LATEST"
+          if [ "$LATEST" != "249" ]; then
+            echo "❌ Expected latest migration 249, got $LATEST"
             exit 1
           fi
 
           # Verify critical financial tables exist
-          for table in businesses payments platform_fees business_payouts payout_accounts refunds invoices; do
-            EXISTS=$(psql "$PGURL" -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$table'" 2>/dev/null | tr -d ' ')
+          for table in businesses payments platform_fees business_payouts payout_accounts refunds invoices package_session_log; do
+            EXISTS=$(psql "$PGURL" -t -c "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='$table'" | tr -d ' ')
             if [ "$EXISTS" != "1" ]; then
               echo "❌ Missing table: $table"
               exit 1
             fi
           done
 
-          echo "✅ All migrations applied, key tables verified."
+          echo "✅ All $APPLIED migrations applied. Key tables verified."
 
       - name: Verify RLS enabled on financial tables
         run: |
           set -o pipefail
-          PGURL=$(supabase status --workdir supabase | grep "DB URL" | awk '{print $NF}')
+          PGURL=$(supabase status -o env | grep POSTGRES_URL | cut -d= -f2- | tr -d '"')
           for table in payments platform_fees business_payouts payout_accounts refunds invoices; do
-            RLS=$(psql "$PGURL" -t -c "SELECT rowsecurity FROM pg_tables WHERE tablename='$table' AND schemaname='public'" 2>/dev/null | tr -d ' ')
+            RLS=$(psql "$PGURL" -t -c "SELECT rowsecurity FROM pg_tables WHERE tablename='$table' AND schemaname='public'" | tr -d ' ')
             if [ "$RLS" != "t" ]; then
               echo "❌ RLS not enabled on: $table"
               exit 1
@@ -102,7 +128,7 @@ jobs:
 
       - name: Stop Supabase
         if: always()
-        run: supabase stop --workdir supabase 2>/dev/null || true
+        run: supabase stop 2>/dev/null || true
 
   # ── Admin Application ──
   admin:
