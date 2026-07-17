@@ -164,6 +164,7 @@ export default function Payouts() {
   // Approve payout via API route
   async function handleApprove() {
     if (!approveTarget) return;
+    if (!window.confirm(`Approve payout of ${formatMoney(approveTarget.net_amount, approveTarget.country_code)} for ${approveTarget.business_name}? This will initiate a transfer.`)) return;
     setApproving(true);
 
     try {
@@ -211,6 +212,7 @@ export default function Payouts() {
   // Reject payout via API route
   async function handleReject() {
     if (!rejectTarget || !rejectReason) return;
+    if (!window.confirm(`Reject this payout? The business owner will be notified.`)) return;
     setRejecting(true);
 
     try {

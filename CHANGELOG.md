@@ -7,6 +7,14 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Admin UI Confirmation Dialogs & Audit Logging
+- `admin/src/pages/Payouts.tsx` — Added `window.confirm()` to approve and reject handlers before API call
+- `admin/src/pages/ResellerPayouts.tsx` — Added `window.confirm()` to approve, reject, and mark-as-paid actions
+- `admin/src/pages/FeeInvoices.tsx` — Added `window.confirm()` to mark-as-paid and waive handlers
+- `app/api/admin/reseller-payouts/[id]/route.ts` — Added `admin_audit_logs` insert after approve/reject/mark_paid status updates
+- `app/api/admin/reseller-payouts/route.ts` — Added `admin_audit_logs` insert after payout creation (POST handler)
+- **Affects:** All financial admin actions now require explicit confirmation. Reseller payout lifecycle fully audit-logged server-side.
+
 ### Payout Approval Idempotency & State Transition Fixes
 - `app/api/admin/payouts/[id]/approve/route.ts` — 3 critical fixes:
   1. Removed 'approved' from approvable states (`['pending', 'held']` only) — prevents double-approval triggering duplicate transfers

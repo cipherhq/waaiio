@@ -232,6 +232,9 @@ export default function ResellerPayouts() {
   }
 
   async function handleAction(payoutId: string, action: 'approve' | 'reject' | 'pay') {
+    if (action === 'approve' && !window.confirm('Approve this reseller payout?')) return;
+    if (action === 'reject' && !window.confirm('Reject this reseller payout?')) return;
+    if (action === 'pay' && !window.confirm('Mark this payout as paid? This action cannot be undone.')) return;
     setActionLoading(payoutId);
     try {
       const updates: Record<string, unknown> = {};

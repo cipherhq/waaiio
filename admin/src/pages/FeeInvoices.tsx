@@ -162,6 +162,7 @@ export default function FeeInvoices() {
 
   async function handleMarkAsPaid() {
     if (!selected || !canMutate) return;
+    if (!window.confirm('Mark this fee invoice as paid?')) return;
     setPayLoading(true);
     setPayError('');
     setPaySuccess('');
@@ -212,6 +213,7 @@ export default function FeeInvoices() {
 
   async function handleWaive() {
     if (!selected || !canMutate) return;
+    if (!window.confirm('Waive this fee invoice? This cannot be undone.')) return;
     if (!waiveReason.trim()) {
       setWaiveError('A reason is required to waive an invoice');
       return;
