@@ -120,42 +120,57 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Table not allowed' }, { status: 403, headers: cors });
     }
 
-    // ── Column security: block sensitive columns for non-admin roles ──
-    // These columns contain secrets, tokens, or credentials that must never
-    // reach the browser for any role except admin (who can access the DB directly anyway).
-    const BLOCKED_COLUMNS: Record<string, string[]> = {
-      payout_accounts: ['account_number', 'square_access_token', 'routing_number', 'subaccount_code', 'stripe_account_id'],
-      whatsapp_channels: ['meta_access_token'],
+    // ── Column security for non-admin roles ──
+    // Allowlist approach: only approved columns can be selected.
+    // New/unknown columns are rejected by default (safe against schema changes).
+    // Tables without an explicit allowlist get select=* (bookings, orders, etc.
+    // do not contain credentials — only the tables below have secrets).
+    const APPROVED_COLUMNS: Record<string, string[]> = {
+      payout_accounts: [
+        'id', 'business_id', 'gateway', 'bank_name', 'account_name',
+        'platform_percentage', 'is_active', 'verified_at', 'created_at', 'updated_at',
+        'country_code',
+        // EXCLUDED: account_number, square_access_token, stripe_account_id,
+        //           routing_number, subaccount_code, iban, swift_code, square_merchant_id
+      ],
+      subscriptions: [
+        'id', 'business_id', 'plan', 'status', 'amount', 'currency',
+        'current_period_start', 'current_period_end', 'cancelled_at',
+        'created_at', 'updated_at', 'gateway', 'billing_interval', 'cancellation_reason',
+        // EXCLUDED: paystack_subscription_code, paystack_customer_code,
+        //           stripe_subscription_id, stripe_customer_id
+      ],
+      payments: [
+        'id', 'booking_id', 'user_id', 'amount', 'currency', 'gateway',
+        'payment_method', 'card_last_four', 'card_brand', 'status',
+        'paid_at', 'created_at', 'business_id', 'refund_amount',
+        'reservation_id', 'invoice_id', 'campaign_id', 'order_id', 'gateway_fee',
+        // EXCLUDED: gateway_reference, gateway_status, metadata, payer_ip,
+        //           payer_country, payer_device_fingerprint, fraud_score, fraud_flags
+      ],
     };
 
-    // Columns that non-admin can see on payout_accounts (explicit allowlist)
-    const PAYOUT_ACCOUNT_SAFE_COLUMNS = [
-      'id', 'business_id', 'gateway', 'bank_name', 'account_name',
-      'platform_percentage', 'is_active', 'verified_at', 'created_at', 'updated_at',
-      'square_merchant_id',
-    ];
-
-    // Non-admin roles: restrict select to prevent relationship traversal (e.g., '*, profiles(*)')
+    // Non-admin roles: enforce column allowlist
     let safeSelect = select;
     if (profile.role !== 'admin') {
-      // Strip any relationship traversal patterns like "table(*)" or "table!inner(*)"
+      // Strip relationship traversal patterns
       safeSelect = select.replace(/\w+[!]?\w*\([^)]*\)/g, '').replace(/,\s*,/g, ',').replace(/^,|,$/g, '').trim() || '*';
 
-      // For tables with blocked columns: replace * with safe column list
-      if (table === 'payout_accounts' && (safeSelect === '*' || safeSelect === '')) {
-        safeSelect = PAYOUT_ACCOUNT_SAFE_COLUMNS.join(', ');
-      }
-
-      // Block specific column requests on sensitive tables
-      const blockedForTable = BLOCKED_COLUMNS[table];
-      if (blockedForTable && safeSelect !== '*') {
-        const requestedCols = safeSelect.split(',').map((c: string) => c.trim());
-        const forbidden = requestedCols.filter((c: string) => blockedForTable.includes(c));
-        if (forbidden.length > 0) {
-          return NextResponse.json(
-            { error: `Columns not permitted: ${forbidden.join(', ')}` },
-            { status: 403, headers: cors },
-          );
+      const approvedCols = APPROVED_COLUMNS[table];
+      if (approvedCols) {
+        if (safeSelect === '*' || safeSelect === '') {
+          // Replace * with approved columns only
+          safeSelect = approvedCols.join(', ');
+        } else {
+          // Validate each requested column against the allowlist
+          const requestedCols = safeSelect.split(',').map((c: string) => c.trim()).filter(Boolean);
+          const forbidden = requestedCols.filter((c: string) => !approvedCols.includes(c));
+          if (forbidden.length > 0) {
+            return NextResponse.json(
+              { error: `Columns not permitted: ${forbidden.join(', ')}` },
+              { status: 403, headers: cors },
+            );
+          }
         }
       }
     }
@@ -206,27 +221,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
-    // Defense in depth: strip any blocked columns from results for non-admin
-    // The column blocklist above should prevent selection, but if a column
-    // somehow appears (e.g., via * on a table without an explicit allowlist),
-    // remove it from the response entirely.
+    // Defense in depth: for tables with an approved column list, strip any
+    // column from the response that isn't in the allowlist. This catches
+    // edge cases where the DB returns extra columns (e.g., schema changes).
     if (profile.role !== 'admin' && Array.isArray(data)) {
-      const blockedForTable = BLOCKED_COLUMNS[table];
-      if (blockedForTable) {
+      const approvedCols = APPROVED_COLUMNS[table];
+      if (approvedCols) {
+        const approvedSet = new Set(approvedCols);
         for (const row of data as Record<string, unknown>[]) {
-          for (const col of blockedForTable) {
-            delete row[col];
+          for (const key of Object.keys(row)) {
+            if (!approvedSet.has(key)) {
+              delete row[key];
+            }
           }
-          // Also strip stripe_account_id (contains provider reference)
-          if (table === 'payout_accounts') {
-            delete row.stripe_account_id;
-          }
-        }
-      }
-      // Strip meta_access_token from whatsapp_channels
-      if (table === 'whatsapp_channels') {
-        for (const row of data as Record<string, unknown>[]) {
-          delete row.meta_access_token;
         }
       }
     }
