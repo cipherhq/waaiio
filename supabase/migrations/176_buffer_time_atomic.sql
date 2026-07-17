@@ -23,14 +23,14 @@ DECLARE
   v_ref text;
   v_lock_key bigint;
 BEGIN
-  -- Advisory lock serializes booking attempts to prevent races.
-  -- When p_staff_id IS NULL the capacity query matches ALL staff,
-  -- so the lock must cover the entire business+date to be safe.
-  -- When p_staff_id is set, lock is scoped to that staff member.
-  v_lock_key := hashtext(
-    p_business_id::text || p_date::text
-    || COALESCE(p_staff_id::text, '')
-  );
+  -- Advisory lock serializes ALL booking attempts for this business+date.
+  -- We intentionally use the broadest safe scope (business+date) because:
+  -- 1. Null-staff requests query ALL bookings for the date, conflicting with
+  --    assigned-staff bookings. Different lock keys would not serialize them.
+  -- 2. Buffer overlap checks span multiple time slots for the same staff.
+  -- A narrower lock (adding staff_id) would miss cross-staff conflicts from
+  -- null-staff requests. Business+date is safe for launch volumes.
+  v_lock_key := hashtext(p_business_id::text || p_date::text);
   PERFORM pg_advisory_xact_lock(v_lock_key);
 
   -- Capacity check for this exact time slot

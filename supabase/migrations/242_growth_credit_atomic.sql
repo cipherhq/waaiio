@@ -98,11 +98,15 @@ BEGIN
 END;
 $$;
 
--- Fixes moved to DO block for single-statement compatibility
-DO $fix$ BEGIN
+-- Fixes moved to DO blocks for single-statement compatibility.
+-- Separate blocks so exception handling is scoped correctly.
+DO $fix1$ BEGIN
   DROP POLICY IF EXISTS "customer_consents_service_insert" ON public.customer_consents;
+END $fix1$;
+
+DO $fix2$ BEGIN
   ALTER TABLE public.growth_campaigns
     ADD CONSTRAINT uq_growth_campaign_dedup UNIQUE (business_id, name, type)
     DEFERRABLE INITIALLY DEFERRED;
 EXCEPTION WHEN duplicate_object THEN NULL;
-END $fix$;
+END $fix2$;

@@ -8,7 +8,43 @@
 -- Each DO block is one statement — safe for prepared-statement mode.
 
 DO $$ BEGIN
-  -- book_slot_atomic: 26-param version (from migration 176, the only production version)
+  -- book_slot_atomic: revoke ALL overloads, then grant only the production 26-param version.
+  -- Legacy overloads (22, 23, 24 params) are dropped in migration 252.
+  -- Revoking here ensures they're not publicly executable between 250 and 252.
+
+  -- 22-param overload (from 137/139/140/141)
+  BEGIN
+    REVOKE ALL ON FUNCTION public.book_slot_atomic(
+      uuid, uuid, uuid, uuid, date, text, int, int,
+      text, int, text, text, text, text, text,
+      text, text, date, jsonb, uuid, int, text
+    ) FROM PUBLIC, anon, authenticated;
+  EXCEPTION WHEN undefined_function THEN NULL;
+  END;
+
+  -- 23-param overload (from 155)
+  BEGIN
+    REVOKE ALL ON FUNCTION public.book_slot_atomic(
+      uuid, uuid, uuid, uuid, date, text, int, int,
+      text, int, text, text, text, text, text,
+      text, text, date, jsonb, uuid, int, text,
+      uuid
+    ) FROM PUBLIC, anon, authenticated;
+  EXCEPTION WHEN undefined_function THEN NULL;
+  END;
+
+  -- 24-param overload (from 166)
+  BEGIN
+    REVOKE ALL ON FUNCTION public.book_slot_atomic(
+      uuid, uuid, uuid, uuid, date, text, int, int,
+      text, int, text, text, text, text, text,
+      text, text, date, jsonb, uuid, int, text,
+      uuid, uuid
+    ) FROM PUBLIC, anon, authenticated;
+  EXCEPTION WHEN undefined_function THEN NULL;
+  END;
+
+  -- 26-param production version (from 176)
   REVOKE ALL ON FUNCTION public.book_slot_atomic(
     uuid, uuid, uuid, uuid, date, text, int, int,
     text, int, text, text, text, text, text,

@@ -1,9 +1,10 @@
 -- ═══════════════════════════════════════════════════════
--- 251: Fix admin role enum usage after 161
+-- 251: Forward repair for is_admin_or_support()
 -- ═══════════════════════════════════════════════════════
--- Migration 161 added 'finance' and 'operations' to user_role enum.
--- PostgreSQL disallows using new enum values as literals in the same
--- transaction. This separate migration safely uses them via text cast.
+-- If migration 161 was previously applied without the function definition
+-- (an earlier version separated enum creation from function usage),
+-- this ensures the function exists with the correct search_path.
+-- CREATE OR REPLACE is idempotent — safe for both fresh and repair installs.
 
 CREATE OR REPLACE FUNCTION public.is_admin_or_support()
 RETURNS boolean AS $$
@@ -11,4 +12,4 @@ RETURNS boolean AS $$
     SELECT 1 FROM public.profiles
     WHERE id = auth.uid() AND role::text IN ('admin', 'support', 'finance', 'operations')
   );
-$$ LANGUAGE sql SECURITY DEFINER STABLE;
+$$ LANGUAGE sql SECURITY DEFINER STABLE SET search_path = '';
