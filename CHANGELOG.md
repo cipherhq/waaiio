@@ -7,6 +7,16 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### ResellerPayouts: Replace Direct DB Mutations with Server API Calls
+- `admin/src/pages/ResellerPayouts.tsx` — Security hardening:
+  1. Replaced direct `adminDb.from('reseller_payouts').insert()` with `fetch(POST /api/admin/reseller-payouts)` — server now handles commission calculation, duplicate detection, and audit logging
+  2. Replaced direct `adminDb.from('reseller_payouts').update()` with `fetch(PATCH /api/admin/reseller-payouts/[id])` — server now handles state validation, balance verification (mark_paid), and role enforcement
+  3. Removed client-side `logAudit()` calls — the server API routes already audit-log all actions
+  4. Action type renamed from `'pay'` to `'mark_paid'` to match API contract
+  5. Added `getAccessToken()` helper and session expiry handling
+  6. Approve/reject buttons already gated to `isFullAdmin` — matches server-side role enforcement (admin-only for approve/reject, admin+finance for mark_paid)
+- **Affects:** Reseller payout creation & status changes. All mutations now go through authenticated server routes with proper auth, role checks, balance verification, and duplicate detection. Read-only queries (load data, calculate commission preview) remain as client-side RLS-gated queries.
+
 ### Admin UI Confirmation Dialogs & Audit Logging
 - `admin/src/pages/Payouts.tsx` — Added `window.confirm()` to approve and reject handlers before API call
 - `admin/src/pages/ResellerPayouts.tsx` — Added `window.confirm()` to approve, reject, and mark-as-paid actions
