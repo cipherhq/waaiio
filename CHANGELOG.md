@@ -7,6 +7,10 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Auto-Upgrade Membership Tier on Spend Threshold
+- `supabase/migrations/245_auto_upgrade_membership_tier.sql` — New BEFORE UPDATE trigger on `customer_profiles.total_spent`. When total_spent increases, finds the highest qualifying `membership_tiers` row (by min_spend) and upgrades the customer. Never downgrades. Handles NULL tier (new customers), businesses with no tiers (no-op), and same-tier (no-op). SECURITY DEFINER. Sets `tier_earned_at` on upgrade.
+- **Affects:** Any code path that updates `customer_profiles.total_spent` (migration 165 `increment_customer_visit` RPC, any direct UPDATE). Membership tier changes are now automatic — no application-level code needed.
+
 ### Field-Level Server-Side Validation on Critical API Routes
 - `app/api/bookings/public/create/route.ts` — Added UUID validation on serviceId, guestName max 200 chars, quantity positive integer with bounds (1-50), structured field-level error responses.
 - `app/api/invoices/route.ts` — Added UUID validation on business_id, customer_name max 200 chars, per-item validation (description required, quantity positive, unit_price non-negative), due_date format, tax_rate 0-100 range, discount_value non-negative.
