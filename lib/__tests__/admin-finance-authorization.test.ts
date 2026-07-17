@@ -186,12 +186,15 @@ describe('Finance scope: platform-wide', () => {
     expect(queryRoute).toContain('createServiceClient');
   });
 
-  it('DECISION NOT YET APPROVED: cross-business visibility needs product sign-off', () => {
-    // Finance sees all businesses' financial data via service client.
-    // This is a product decision that needs explicit approval.
-    // Until approved, this remains a documented risk.
-    // The allowlist protects secrets but not business isolation.
-    expect(true).toBe(true); // Tracked as OPEN
+  it('APPROVED: Finance is a Waaiio platform role with cross-business read access', () => {
+    // Product decision: Finance is an internal Waaiio platform role.
+    // Finance MAY view approved read-only financial reports across all
+    // businesses for platform reconciliation.
+    // Finance MUST NOT: approve/reject/generate payouts, issue refunds,
+    // change bank accounts, view full bank numbers or provider credentials.
+    // Column allowlists enforce this at the API level.
+    expect(queryRoute).toContain('APPROVED_COLUMNS');
+    expect(queryRoute).toContain('FINANCE_TABLES');
   });
 });
 
@@ -226,8 +229,10 @@ describe('Documented limitations (OPEN)', () => {
     expect(true).toBe(true);
   });
 
-  it('OPEN: cross-business finance visibility not product-approved', () => {
-    // Finance sees all businesses. Product decision pending.
+  it('RESOLVED: Finance cross-business access is product-approved', () => {
+    // Finance is an internal Waaiio platform role.
+    // Cross-business read access approved for platform reconciliation.
+    // Column allowlists and mutation blocks enforce the boundary.
     expect(true).toBe(true);
   });
 });
