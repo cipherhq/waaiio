@@ -73,6 +73,21 @@ describe('Admin: authorized mutations', () => {
     expect(res.status).toBe(404);
   });
 
+  it('refund → past auth (400 missing params, not 401/403)', async () => {
+    mockRole = 'admin';
+    const { POST } = await import('@/app/api/admin/payments/refund/route');
+    const req = new NextRequest('http://localhost/test', {
+      method: 'POST',
+      body: JSON.stringify({}), // Missing required fields
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await POST(req);
+    // Admin passes auth — gets 400 (validation error), not 401/403
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('required');
+  });
+
   it('generate → past auth (200 or 500, not 401/403)', async () => {
     mockRole = 'admin';
     const { POST } = await import('@/app/api/admin/payouts/generate/route');
@@ -142,13 +157,18 @@ describe('Finance: blocked from mutations with 403', () => {
     expect(res.status).toBe(403);
   });
 
-  it('refund route requires admin (verified from source)', () => {
-    // Refund route uses @supabase/supabase-js directly (not our createClient wrapper)
-    // so the mock doesn't cover it. Verified via source inspection:
-    const fs = require('fs');
-    const content = fs.readFileSync('app/api/admin/payments/refund/route.ts', 'utf-8');
-    expect(content).toContain("profile.role !== 'admin'");
-    expect(content).toContain('403');
+  it('refund → 403 (handler executed)', async () => {
+    mockRole = 'finance';
+    const { POST } = await import('@/app/api/admin/payments/refund/route');
+    const req = new NextRequest('http://localhost/test', {
+      method: 'POST',
+      body: JSON.stringify({ paymentId: 'x', businessId: 'y', amount: 100 }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain('Admin');
   });
 });
 
@@ -224,6 +244,18 @@ describe('Unauthenticated: 401 on all routes', () => {
     const { POST } = await import('@/app/api/admin/payouts/generate/route');
     const req = new NextRequest('http://localhost/test', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+  });
+
+  it('refund → 401', async () => {
+    mockRole = null;
+    const { POST } = await import('@/app/api/admin/payments/refund/route');
+    const req = new NextRequest('http://localhost/test', {
+      method: 'POST',
+      body: JSON.stringify({ paymentId: 'x', businessId: 'y', amount: 100 }),
+      headers: { 'Content-Type': 'application/json' },
     });
     const res = await POST(req);
     expect(res.status).toBe(401);
