@@ -50,16 +50,17 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.20.12
 
-      - name: Start Supabase
-        run: supabase start --workdir . 2>&1 | tail -5
+      - name: Start Supabase and apply migrations
+        run: |
+          set -o pipefail
+          supabase start --workdir supabase
 
       - name: Verify migrations applied
         run: |
-          # supabase start applies all migrations automatically.
-          # Check that it completed without errors by verifying key tables.
-          PGURL=$(supabase status --workdir . 2>/dev/null | grep "DB URL" | awk '{print $NF}')
+          set -o pipefail
+          PGURL=$(supabase status --workdir supabase | grep "DB URL" | awk '{print $NF}')
           if [ -z "$PGURL" ]; then
             echo "❌ Could not get database URL from supabase status"
             exit 1
@@ -86,7 +87,8 @@ jobs:
 
       - name: Verify RLS enabled on financial tables
         run: |
-          PGURL=$(supabase status --workdir . 2>/dev/null | grep "DB URL" | awk '{print $NF}')
+          set -o pipefail
+          PGURL=$(supabase status --workdir supabase | grep "DB URL" | awk '{print $NF}')
           for table in payments platform_fees business_payouts payout_accounts refunds invoices; do
             RLS=$(psql "$PGURL" -t -c "SELECT rowsecurity FROM pg_tables WHERE tablename='$table' AND schemaname='public'" 2>/dev/null | tr -d ' ')
             if [ "$RLS" != "t" ]; then
@@ -98,7 +100,7 @@ jobs:
 
       - name: Stop Supabase
         if: always()
-        run: supabase stop --workdir . 2>/dev/null || true
+        run: supabase stop --workdir supabase 2>/dev/null || true
 
   # ── Admin Application ──
   admin:
@@ -122,7 +124,7 @@ jobs:
 
       - name: Typecheck admin
         working-directory: admin
-        run: npx tsc --noEmit
+        run: npm run typecheck
 
       - name: Build admin
         working-directory: admin
@@ -198,7 +200,6 @@ jobs:
 
       - name: Audit root dependencies
         run: npm audit --audit-level=critical
-        continue-on-error: true
 
       - name: Check for wildcard dependencies
         run: |
