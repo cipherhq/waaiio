@@ -18,7 +18,7 @@ BEGIN
     FOR UPDATE SKIP LOCKED  -- Don't block on actively-processed campaigns
   LOOP
     -- Release via the atomic release function
-    PERFORM release_credits_atomic(v_campaign.business_id, v_campaign.id);
+    PERFORM public.release_credits_atomic(v_campaign.business_id, v_campaign.id);
 
     -- Mark as expired (not just released)
     UPDATE public.growth_campaigns SET reservation_status = 'expired' WHERE id = v_campaign.id;

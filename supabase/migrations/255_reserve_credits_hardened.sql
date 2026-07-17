@@ -36,13 +36,19 @@ BEGIN
       'reservation_id', v_campaign.reservation_id);
   END IF;
 
-  -- Calculate available credits with lock (exclude expired)
-  SELECT COALESCE(SUM(remaining), 0) INTO v_available
-  FROM public.growth_credits
+  -- Lock all credit rows for this business to prevent concurrent reservation races
+  PERFORM id FROM public.growth_credits
   WHERE business_id = p_business_id
     AND remaining > 0
     AND (expires_at IS NULL OR expires_at > NOW())
   FOR UPDATE;
+
+  -- Now safely aggregate (rows are locked)
+  SELECT COALESCE(SUM(remaining), 0) INTO v_available
+  FROM public.growth_credits
+  WHERE business_id = p_business_id
+    AND remaining > 0
+    AND (expires_at IS NULL OR expires_at > NOW());
 
   -- Subtract existing active reservations from other campaigns
   v_available := v_available - COALESCE((
