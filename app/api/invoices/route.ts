@@ -66,6 +66,16 @@ export async function POST(request: NextRequest) {
     const { data: ownedBusiness } = await supabase.from('businesses').select('id, subscription_tier').eq('id', business_id).eq('owner_id', user.id).maybeSingle();
     if (!ownedBusiness) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
+    // ── Capability check: invoice ──
+    const { data: invoiceCap } = await supabase
+      .from('business_capabilities')
+      .select('id')
+      .eq('business_id', business_id)
+      .eq('capability_id', 'invoice')
+      .eq('is_enabled', true)
+      .maybeSingle();
+    if (!invoiceCap) return NextResponse.json({ error: 'Feature not enabled' }, { status: 403 });
+
     // ── Tier limit check for invoices ──
     const tierResult = await checkTierLimit(
       supabase,
