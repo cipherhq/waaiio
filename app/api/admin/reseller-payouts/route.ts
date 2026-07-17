@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
     // Validate reseller exists
     const { data: reseller, error: resellerErr } = await service
       .from('resellers')
-      .select('id, created_at')
+      .select('id, created_at, currency')
       .eq('id', reseller_id)
       .maybeSingle();
 
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
         holdback,
         deductions: effectiveDeductions,
         net_amount: netAmount,
-        currency: 'USD',
+        currency: reseller.currency || 'USD',
         status: 'pending',
         notes: notes || null,
         metadata: {
