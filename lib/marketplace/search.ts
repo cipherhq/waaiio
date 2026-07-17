@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '@/lib/logger';
+import { sanitizeFilterValue } from '@/lib/utils/sanitize';
 
 // ── Public types ───────────────────────────────────────
 
@@ -93,12 +94,12 @@ export async function searchMarketplace(
       )
       .eq('is_active', true)
       .eq('status', 'active')
-      // Respect discovery_enabled: treat null as true (backward compat)
-      .or('discovery_enabled.is.null,discovery_enabled.eq.true');
+      // Only show businesses that explicitly opted into discovery
+      .eq('discovery_enabled', true);
 
     // Category filter
     if (criteria.category) {
-      const safeCat = criteria.category.replace(/[%_'"\\]/g, '');
+      const safeCat = sanitizeFilterValue(criteria.category).replace(/[%_'"\\]/g, '');
       if (safeCat.length > 0) {
         query = query.ilike('category', `%${safeCat}%`);
       }
@@ -122,7 +123,7 @@ export async function searchMarketplace(
     // Text search — name / description / category ILIKE
     if (criteria.query) {
       // Sanitize the query to prevent PostgREST injection
-      const safeQ = criteria.query.replace(/[%_'"\\]/g, '');
+      const safeQ = sanitizeFilterValue(criteria.query).replace(/[%_'"\\]/g, '');
       if (safeQ.length > 0) {
         query = query.or(
           `name.ilike.%${safeQ}%,description.ilike.%${safeQ}%,category.ilike.%${safeQ}%`,
@@ -167,19 +168,16 @@ export async function searchMarketplace(
 
       // Distance scoring (haversine)
       let distanceKm: number | undefined;
-      if (
-        criteria.latitude &&
-        criteria.longitude &&
-        biz.latitude &&
-        biz.longitude
-      ) {
+      const hasUserCoords = criteria.latitude != null && criteria.longitude != null;
+      const hasBizCoords = biz.latitude != null && biz.longitude != null;
+      if (hasUserCoords && hasBizCoords) {
         distanceKm = haversineDistance(
-          criteria.latitude,
-          criteria.longitude,
-          biz.latitude,
-          biz.longitude,
+          criteria.latitude!,
+          criteria.longitude!,
+          biz.latitude!,
+          biz.longitude!,
         );
-        if (criteria.radiusKm && distanceKm > criteria.radiusKm) {
+        if (criteria.radiusKm != null && criteria.radiusKm > 0 && distanceKm > criteria.radiusKm) {
           return null; // Outside requested radius
         }
         if (distanceKm < 2) score += 25;
