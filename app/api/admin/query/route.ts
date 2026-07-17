@@ -173,6 +173,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: cors });
     }
 
+    // Mask sensitive fields for non-admin roles
+    if (table === 'payout_accounts' && profile.role !== 'admin' && Array.isArray(data)) {
+      for (const row of data as Record<string, unknown>[]) {
+        if (row.account_number && typeof row.account_number === 'string') {
+          row.account_number = '****' + row.account_number.slice(-4);
+        }
+        // Also mask any provider tokens/secrets that might exist
+        if (row.square_access_token) row.square_access_token = '****';
+        if (row.stripe_account_id && typeof row.stripe_account_id === 'string' && profile.role !== 'admin') {
+          row.stripe_account_id = '****' + row.stripe_account_id.slice(-4);
+        }
+      }
+    }
+
     return NextResponse.json({ data, count: rowCount }, { headers: cors });
   } catch (error) {
     logger.error('[ADMIN QUERY] error:', error);

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-async function requireAdmin(supabase: any) {
+async function requireAdminOrFinance(supabase: any) {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
@@ -11,13 +11,13 @@ async function requireAdmin(supabase: any) {
     .eq('id', user.id)
     .maybeSingle();
 
-  if (!profile || profile.role !== 'admin') return null;
+  if (!profile || !['admin', 'finance'].includes(profile.role)) return null;
   return user;
 }
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
-  const admin = await requireAdmin(supabase);
+  const admin = await requireAdminOrFinance(supabase);
   if (!admin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
