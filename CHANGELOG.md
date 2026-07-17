@@ -7,6 +7,13 @@ If something breaks, check this log to find what changed and when.
 
 ## 2026-07-16
 
+### Pre-Launch Finance Safety Hardening
+- `app/api/admin/fee-invoices/[id]/route.ts` — **NEW** Server API for fee invoice mark-paid and waive actions with compare-and-set guards, mandatory audit logging, and audit-failure rollback
+- `app/api/admin/payouts/account/route.ts` — **NEW** Server endpoint for payout account details; always returns masked account_number (`****1234`) so full bank numbers never reach the browser
+- `admin/src/pages/FeeInvoices.tsx` — Rewired mark-paid and waive handlers from direct `adminDb.update()` to server API calls via `fetch()`. Removed `adminDb` and `logAudit` imports (audit now server-side only)
+- `admin/src/pages/Payouts.tsx` — Rewired `loadApproveAccount()` from direct DB query to server API. Added `canApprove` role check (`isFullAdmin`): finance users see the payout list read-only but cannot see Approve/Reject buttons or modals. Account number display no longer double-masks (API returns pre-masked value)
+- **Affects:** Fee invoice management, payout approval flow, payout account display. Finance role is now read-only on payouts. All fee invoice mutations are server-side with audit trail.
+
 ### ResellerPayouts: Replace Direct DB Mutations with Server API Calls
 - `admin/src/pages/ResellerPayouts.tsx` — Security hardening:
   1. Replaced direct `adminDb.from('reseller_payouts').insert()` with `fetch(POST /api/admin/reseller-payouts)` — server now handles commission calculation, duplicate detection, and audit logging

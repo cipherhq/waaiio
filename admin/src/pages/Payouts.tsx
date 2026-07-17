@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase, adminDb } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
+import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
 import { Pagination } from '@/components/Pagination';
 import { loadCountries, getCountryCurrencyDetailMap } from '@/lib/countries';
@@ -41,6 +42,7 @@ const statusStyles: Record<string, string> = {
 export default function Payouts() {
   const session = useAdminSession();
   const hasAccess = session && ['admin', 'finance'].includes(session.role);
+  const canApprove = isFullAdmin(session);
   const [tab, setTab] = useState<'pending' | 'history'>('pending');
   const [payouts, setPayouts] = useState<PayoutRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -133,7 +135,7 @@ export default function Payouts() {
   const totalPages = Math.max(1, Math.ceil(displayPayouts.length / perPage));
   const pageItems = displayPayouts.slice((page - 1) * perPage, page * perPage);
 
-  // Load payout account details when approve modal opens
+  // Load payout account details via server API (returns masked account number)
   async function loadApproveAccount(payoutAccountId: string | null, businessId: string) {
     if (!payoutAccountId) {
       setApproveAccountInfo(null);
@@ -141,12 +143,27 @@ export default function Payouts() {
     }
     setLoadingAccount(true);
     try {
-      const { data } = await adminDb
-        .from('payout_accounts')
-        .select('bank_name, account_name, account_number, is_active, verified_at')
-        .eq('id', payoutAccountId)
-        .eq('business_id', businessId)
-        .maybeSingle();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        setApproveAccountInfo(null);
+        return;
+      }
+
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(
+        `${apiUrl}/api/admin/payouts/account?payout_account_id=${encodeURIComponent(payoutAccountId)}&business_id=${encodeURIComponent(businessId)}`,
+        {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        },
+      );
+
+      if (!res.ok) {
+        setApproveAccountInfo(null);
+        return;
+      }
+
+      const data = await res.json();
       setApproveAccountInfo(data);
     } catch {
       setApproveAccountInfo(null);
@@ -425,7 +442,7 @@ export default function Payouts() {
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Gateway Fees</th>
                 <th className="px-4 py-3 text-right font-medium text-gray-500">Net</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-                {tab === 'pending' && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
+                {tab === 'pending' && canApprove && <th className="px-4 py-3 text-right font-medium text-gray-500">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -447,7 +464,7 @@ export default function Payouts() {
                       {p.status}
                     </span>
                   </td>
-                  {tab === 'pending' && (
+                  {tab === 'pending' && canApprove && (
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-2">
                         <button
@@ -474,8 +491,8 @@ export default function Payouts() {
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
 
-      {/* Approve Modal */}
-      {approveTarget && (
+      {/* Approve Modal — admin only */}
+      {canApprove && approveTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Approve Payout</h3>
@@ -501,7 +518,7 @@ export default function Payouts() {
                     <p className="text-gray-700">Name: <span className="font-medium">{approveAccountInfo.account_name}</span></p>
                   )}
                   {approveAccountInfo.account_number && (
-                    <p className="text-gray-700">Account: <span className="font-mono font-medium">****{approveAccountInfo.account_number.slice(-4)}</span></p>
+                    <p className="text-gray-700">Account: <span className="font-mono font-medium">{approveAccountInfo.account_number}</span></p>
                   )}
                   {!approveAccountInfo.is_active && (
                     <p className="font-medium text-red-600">Account is inactive</p>
@@ -572,8 +589,8 @@ export default function Payouts() {
         </div>
       )}
 
-      {/* Reject Modal */}
-      {rejectTarget && (
+      {/* Reject Modal — admin only */}
+      {canApprove && rejectTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-900">Reject Payout</h3>

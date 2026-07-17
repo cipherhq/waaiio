@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { adminDb, supabase } from '@/lib/supabase';
-import { logAudit } from '@/lib/auditLog';
+import { supabase } from '@/lib/supabase';
 import { useAdminSession } from '@/components/AdminLayout';
 import { isFullAdmin } from '@/lib/adminAuth';
 import { downloadCSV } from '@/lib/csv';
@@ -168,36 +167,31 @@ export default function FeeInvoices() {
     setPaySuccess('');
 
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const userId = session?.session?.user?.id;
-
-      const { error } = await adminDb
-        .from('platform_fee_invoices')
-        .update({
-          status: 'paid',
-          paid_at: new Date().toISOString(),
-          paid_via: 'manual',
-          payment_reference: payRef.trim() || null,
-        })
-        .eq('id', selected.id);
-
-      if (error) {
-        setPayError(error.message);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        setPayError('Session expired — please re-login');
         return;
       }
 
-      await logAudit({
-        action: 'mark_fee_invoice_paid',
-        entity_type: 'platform_fee_invoice',
-        entity_id: selected.id,
-        details: {
-          invoice_number: selected.invoice_number,
-          business_id: selected.business_id,
-          amount: selected.total_fee_amount,
-          payment_reference: payRef.trim() || null,
-          marked_by: userId,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/fee-invoices/${selected.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
         },
+        body: JSON.stringify({
+          action: 'mark_paid',
+          payment_reference: payRef.trim() || null,
+        }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setPayError(data.error || 'Failed to update invoice');
+        return;
+      }
 
       setPaySuccess('Invoice marked as paid');
       setPayRef('');
@@ -224,40 +218,36 @@ export default function FeeInvoices() {
     setWaiveSuccess('');
 
     try {
-      const { data: session } = await supabase.auth.getSession();
-      const userId = session?.session?.user?.id;
-
-      const { error } = await adminDb
-        .from('platform_fee_invoices')
-        .update({
-          status: 'waived',
-          waived_reason: waiveReason.trim(),
-          waived_by: userId,
-        })
-        .eq('id', selected.id);
-
-      if (error) {
-        setWaiveError(error.message);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) {
+        setWaiveError('Session expired — please re-login');
         return;
       }
 
-      await logAudit({
-        action: 'waive_fee_invoice',
-        entity_type: 'platform_fee_invoice',
-        entity_id: selected.id,
-        details: {
-          invoice_number: selected.invoice_number,
-          business_id: selected.business_id,
-          amount: selected.total_fee_amount,
-          reason: waiveReason.trim(),
-          waived_by: userId,
+      const apiUrl = import.meta.env.VITE_API_URL || '';
+      const res = await fetch(`${apiUrl}/api/admin/fee-invoices/${selected.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
         },
+        body: JSON.stringify({
+          action: 'waive',
+          reason: waiveReason.trim(),
+        }),
       });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setWaiveError(data.error || 'Failed to waive invoice');
+        return;
+      }
 
       setWaiveSuccess('Invoice waived');
       setWaiveReason('');
       await loadData();
-      setSelected(prev => prev ? { ...prev, status: 'waived', waived_reason: waiveReason.trim(), waived_by: userId || null } : null);
+      setSelected(prev => prev ? { ...prev, status: 'waived', waived_reason: waiveReason.trim(), waived_by: null } : null);
     } catch {
       setWaiveError('Failed to waive invoice');
     } finally {
