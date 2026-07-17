@@ -23,14 +23,13 @@ DECLARE
   v_ref text;
   v_lock_key bigint;
 BEGIN
-  -- Advisory lock on business + date + staff (+ location if set).
-  -- Serializes ALL booking attempts for this resource on this date,
-  -- preventing both identical-slot races and buffer-overlap races.
-  -- Lock is held until transaction commits.
+  -- Advisory lock serializes booking attempts to prevent races.
+  -- When p_staff_id IS NULL the capacity query matches ALL staff,
+  -- so the lock must cover the entire business+date to be safe.
+  -- When p_staff_id is set, lock is scoped to that staff member.
   v_lock_key := hashtext(
     p_business_id::text || p_date::text
-    || COALESCE(p_staff_id::text, 'nostaff')
-    || COALESCE(p_location_id::text, 'noloc')
+    || COALESCE(p_staff_id::text, '')
   );
   PERFORM pg_advisory_xact_lock(v_lock_key);
 

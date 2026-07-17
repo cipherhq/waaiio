@@ -9,17 +9,26 @@
 -- 5. Document currency units on auto_approve_limits
 
 -- ── 1. Add payment_id to platform_fees ──────────────────
-ALTER TABLE public.platform_fees
-  ADD COLUMN IF NOT EXISTS payment_id UUID REFERENCES public.payments(id) ON DELETE SET NULL;
+DO $setup$ BEGIN
+  ALTER TABLE public.platform_fees
+    ADD COLUMN IF NOT EXISTS payment_id UUID REFERENCES public.payments(id) ON DELETE SET NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique
+    ON public.platform_fees (payment_id)
+    WHERE payment_id IS NOT NULL AND refunded_at IS NULL;
+  COMMENT ON COLUMN public.platform_fees.payment_id IS 'The payment that generated this fee. Used for per-payment idempotency.';
+  COMMENT ON COLUMN public.platform_fees.transaction_amount IS 'The actual amount collected from the customer (payment.amount), NOT the entity total.';
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_fees_payment_unique
-  ON public.platform_fees (payment_id)
-  WHERE payment_id IS NOT NULL AND refunded_at IS NULL;
+  -- Fix package_session_log constraint
+  DROP INDEX IF EXISTS public.package_session_log_enrollment_id_booking_id_key;
+  ALTER TABLE public.package_session_log DROP CONSTRAINT IF EXISTS package_session_log_enrollment_id_booking_id_key;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_package_session_log_booking_unique
+    ON public.package_session_log (booking_id);
 
-COMMENT ON COLUMN public.platform_fees.payment_id IS 'The payment that generated this fee. Used for per-payment idempotency.';
-COMMENT ON COLUMN public.platform_fees.transaction_amount IS 'The actual amount collected from the customer (payment.amount), NOT the entity total. All values in the same currency unit as the payment (major units, e.g. naira not kobo).';
-
--- ── 2. Atomic payout creation RPC ───────────────────────
+  -- Document auto_approve_limits currency units
+  UPDATE public.platform_settings
+  SET description = 'Max auto-approve payout amount per country in MAJOR currency units (e.g. NG: 500000 = ₦500,000, US: 1000 = $1,000). Payouts above this threshold require manual admin approval.'
+  WHERE key = 'auto_approve_limits';
+END $setup$;
 -- Creates a payout and assigns adjustments in one transaction.
 -- Returns the payout ID or NULL on failure.
 CREATE OR REPLACE FUNCTION public.create_payout_with_adjustments(
@@ -144,14 +153,6 @@ $$;
 -- - Validates booking belongs to business and service
 -- - Uses search_path='' with schema-qualified refs
 
--- Fix the unique constraint on package_session_log
-DROP INDEX IF EXISTS public.package_session_log_enrollment_id_booking_id_key;
-ALTER TABLE public.package_session_log DROP CONSTRAINT IF EXISTS package_session_log_enrollment_id_booking_id_key;
-
--- Add the correct constraint: one consumption per booking, period.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_package_session_log_booking_unique
-  ON public.package_session_log (booking_id);
-
 -- Replace the RPC with proper validation and search_path
 CREATE OR REPLACE FUNCTION public.deduct_package_session(
   p_business_id UUID,
@@ -230,10 +231,4 @@ END;
 $$;
 
 
--- ── 5. Update auto_approve_limits documentation ─────────
--- Values are in MAJOR currency units (naira, dollars, pounds, cedis).
--- The Paystack transfer API expects MINOR units (kobo), so the auto-payout
--- cron multiplies by 100 before calling the API.
-UPDATE public.platform_settings
-SET description = 'Max auto-approve payout amount per country in MAJOR currency units (e.g. NG: 500000 = ₦500,000, US: 1000 = $1,000). Payouts above this threshold require manual admin approval. Values are in the same unit as business_payouts.net_amount.'
-WHERE key = 'auto_approve_limits';
+-- auto_approve_limits documentation updated in DO block at top of file

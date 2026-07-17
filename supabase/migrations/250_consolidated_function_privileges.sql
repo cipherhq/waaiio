@@ -8,9 +8,19 @@
 -- Each DO block is one statement — safe for prepared-statement mode.
 
 DO $$ BEGIN
-  -- book_slot_atomic (from migrations 137, 176)
-  REVOKE ALL ON FUNCTION public.book_slot_atomic FROM PUBLIC;
-  GRANT EXECUTE ON FUNCTION public.book_slot_atomic TO service_role;
+  -- book_slot_atomic: 26-param version (from migration 176, the only production version)
+  REVOKE ALL ON FUNCTION public.book_slot_atomic(
+    uuid, uuid, uuid, uuid, date, text, int, int,
+    text, int, text, text, text, text, text,
+    text, text, date, jsonb, uuid, int, text,
+    uuid, uuid, integer, integer
+  ) FROM PUBLIC, anon, authenticated;
+  GRANT EXECUTE ON FUNCTION public.book_slot_atomic(
+    uuid, uuid, uuid, uuid, date, text, int, int,
+    text, int, text, text, text, text, text,
+    text, text, date, jsonb, uuid, int, text,
+    uuid, uuid, integer, integer
+  ) TO service_role;
 
   -- restore_stock / restore_variant_stock / restore_tickets_sold (from 181)
   REVOKE ALL ON FUNCTION public.restore_stock(uuid, integer) FROM PUBLIC;

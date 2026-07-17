@@ -98,13 +98,11 @@ BEGIN
 END;
 $$;
 
--- Revoke public execution
-
-
--- Fix 4: Remove unsafe INSERT policy on customer_consents
-DROP POLICY IF EXISTS "customer_consents_service_insert" ON public.customer_consents;
-
--- Fix 5: Add unique constraint to prevent duplicate campaigns
-ALTER TABLE growth_campaigns
-  ADD CONSTRAINT uq_growth_campaign_dedup UNIQUE (business_id, name, type)
-  DEFERRABLE INITIALLY DEFERRED;
+-- Fixes moved to DO block for single-statement compatibility
+DO $fix$ BEGIN
+  DROP POLICY IF EXISTS "customer_consents_service_insert" ON public.customer_consents;
+  ALTER TABLE public.growth_campaigns
+    ADD CONSTRAINT uq_growth_campaign_dedup UNIQUE (business_id, name, type)
+    DEFERRABLE INITIALLY DEFERRED;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $fix$;

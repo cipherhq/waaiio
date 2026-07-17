@@ -98,8 +98,8 @@ jobs:
           # Verify latest applied is 249
           LATEST=$(psql "$PGURL" -t -c "SELECT MAX(version::integer) FROM supabase_migrations.schema_migrations" | tr -d ' ')
           echo "Latest applied migration: $LATEST"
-          if [ "$LATEST" != "251" ]; then
-            echo "❌ Expected latest migration 251, got $LATEST"
+          if [ "$LATEST" != "252" ]; then
+            echo "❌ Expected latest migration 252, got $LATEST"
             exit 1
           fi
 
