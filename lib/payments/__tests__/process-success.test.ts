@@ -11,29 +11,35 @@ vi.mock('@/lib/logger', () => ({
 import { processSuccessfulPayment, recordPlatformFee, processInvoicePayment, processCampaignDonation } from '../process-success';
 
 function mockSupabase(overrides: Record<string, unknown> = {}) {
-  const updateResult = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue({ maybeSingle: vi.fn().mockResolvedValue({ data: null }) }), ...overrides };
+  const selectAfterUpdate = { maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'donation-1' } }) };
+  const updateResult = { eq: vi.fn().mockReturnThis(), in: vi.fn().mockReturnThis(), is: vi.fn().mockReturnThis(), select: vi.fn().mockReturnValue(selectAfterUpdate), ...overrides };
   const insertFn = vi.fn().mockResolvedValue({ data: null, error: null });
 
   return {
     from: vi.fn().mockImplementation((table: string) => ({
       update: vi.fn().mockReturnValue(updateResult),
       insert: insertFn,
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({
-            data: table === 'bookings'
-              ? { business_id: 'biz1', total_amount: 5000 }
-              : table === 'businesses'
-              ? { subscription_tier: 'free', trial_ends_at: '2025-01-01', payout_mode: 'platform_managed' }
-              : table === 'invoices'
-              ? { business_id: 'biz1', total_amount: 1000, amount_paid: 0 }
-              : table === 'campaigns'
-              ? { raised_amount: 0, donor_count: 0, business_id: 'biz1' }
-              : null,
-          }),
-          maybeSingle: vi.fn().mockResolvedValue({ data: null }),
-        }),
-      }),
+      select: vi.fn().mockReturnValue((() => {
+        const data = table === 'bookings'
+          ? { business_id: 'biz1', total_amount: 5000 }
+          : table === 'businesses'
+          ? { subscription_tier: 'free', trial_ends_at: '2025-01-01', payout_mode: 'platform_managed' }
+          : table === 'invoices'
+          ? { business_id: 'biz1', total_amount: 1000, amount_paid: 0, status: 'sent' }
+          : table === 'campaigns'
+          ? { raised_amount: 0, donor_count: 0, business_id: 'biz1' }
+          : null;
+        const leaf: Record<string, unknown> = {
+          single: vi.fn().mockResolvedValue({ data }),
+          maybeSingle: vi.fn().mockResolvedValue({ data }),
+        };
+        // eq returns self so .eq().eq().maybeSingle() chains properly
+        leaf.eq = vi.fn().mockReturnValue(leaf);
+        leaf.in = vi.fn().mockReturnValue(leaf);
+        leaf.is = vi.fn().mockReturnValue(leaf);
+        leaf.neq = vi.fn().mockReturnValue(leaf);
+        return leaf;
+      })()),
     })),
     _insertFn: insertFn,
   };
