@@ -259,6 +259,30 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: npx vitest run lib/__tests__/payout-handler-integration.test.ts --reporter=verbose
 
+      - name: Run OTP concurrency tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/otp-concurrency.test.ts --reporter=verbose
+
+      - name: Run campaign lock trigger tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/campaign-lock-db.test.ts --reporter=verbose
+
+      - name: Run invoice token security tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/invoice-token-security.test.ts --reporter=verbose
+
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4

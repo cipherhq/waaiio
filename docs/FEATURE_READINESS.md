@@ -1,88 +1,81 @@
 # Waaiio Pre-Launch Audit — Feature Readiness Matrix
 
-Status: IN PROGRESS
+Static domain review: READY FOR REVIEW
+Functional verification: IN PROGRESS
 
-## Feature Journey Classification
+## Feature Readiness
 
-| # | Feature | Dashboard | API | Bot | Public | DB | Status | Evidence | Notes |
-|---|---------|-----------|-----|-----|--------|-----|--------|----------|-------|
-| 1 | Signup & onboarding | Y | Y | - | Y | Y | READY FOR REVIEW | Level D | Full path verified: signup→category→details→trial→dashboard |
-| 2 | Business profile & settings | Y | Y | - | - | Y | READY FOR REVIEW | Level D | Settings page with payment credentials, hours, notifications |
-| 3 | Service creation | Y | ⚠️ | - | - | Y | NEEDS FIX | Level D | F-012: Client-only insert, no server API route |
-| 4 | Public booking | - | Y | Y | Y | Y | READY FOR REVIEW | Level B | Atomic RPC, OTP gate, slot validation |
-| 5 | Booking management | Y | Y | - | - | Y | READY FOR REVIEW | Level D | Status transitions, reschedule (F-009: past date) |
-| 6 | Manual booking | Y | Y | - | - | Y | READY FOR REVIEW | Level D | F-007/F-008 FIXED: now uses book_slot_atomic |
-| 7 | Product creation | Y | ⚠️ | - | - | Y | NEEDS FIX | Level D | Client-only insert like services; no server API |
-| 8 | Online ordering | - | - | Y | - | Y | READY FOR REVIEW | Level C | Bot-only ordering flow; no public web ordering |
-| 9 | Order management | Y | Y | - | - | Y | NEEDS FIX | Level D | F-010: No status state machine |
-| 10 | Invoice creation | Y | Y | - | - | Y | READY FOR REVIEW | Level A | Atomic RPC, server validation, line items |
-| 11 | Invoice payment | - | Y | Y | Y | Y | READY FOR REVIEW | Level A | Partial payment, overpayment ledger, reconciliation |
-| 12 | Payment webhooks (5 gateways) | - | Y | - | - | Y | READY FOR REVIEW | Level D | All 6 verified: fail-closed, timingSafeEqual |
-| 13 | Refunds | Y | Y | - | - | Y | READY FOR REVIEW | Level C | Full/partial, gateway API, fee reversal |
-| 14 | Platform fees | - | Y | - | - | Y | READY FOR REVIEW | Level A | Tier-based, atomic, unique constraint |
-| 15 | Payouts | Y | Y | - | - | Y | READY FOR REVIEW | Level B | Two-step, fingerprint, kill switch |
-| 16 | Events & ticketing | Y | Y | Y | Y | Y | READY FOR REVIEW | Level D | Atomic purchase, QR, check-in dedup |
-| 17 | Properties & reservations | Y | Y | Y | - | Y | READY FOR REVIEW | Level D | Deposit tracking, blocked dates |
-| 18 | Campaigns & giving | Y | Y | Y | - | Y | READY FOR REVIEW | Level A | F-016 FIXED: locked after donations |
-| 19 | Memberships & packages | Y | Y | Y | - | Y | READY FOR REVIEW | Level D | Enrollment, atomic deduction, replay protection |
-| 20 | Staff management | Y | Y | - | - | Y | INCOMPLETE | Level D | CRUD works; no permission enforcement |
-| 21 | Loyalty & referrals | Y | Y | Y | - | Y | READY FOR REVIEW | Level C | Points, redemption, referral tracking |
-| 22 | Surveys & polls | Y | Y | Y | - | Y | READY FOR REVIEW | Level C | Create, send, collect responses |
-| 23 | Broadcasts | Y | Y | - | - | Y | READY FOR REVIEW | Level C | Tier-gated, capability-checked server-side |
-| 24 | Chat & messaging | Y | Y | Y | - | Y | READY FOR REVIEW | Level C | Agent assignment, canned responses |
-| 25 | Contracts & waivers | Y | Y | - | - | Y | READY FOR REVIEW | Level D | E-sign with OTP, permanent access |
-| 26 | WhatsApp bot engine | - | Y | Y | - | Y | READY FOR REVIEW | Level C | 18 flows, intent detection, translation |
-| 27 | Capability gating | Y | Y | Y | - | Y | READY FOR REVIEW | Level D | Server-side enforcement confirmed |
-| 28 | Subscription tiers | Y | Y | - | - | Y | READY FOR REVIEW | Level D | Free/growth/business, feature limits |
-| 29 | Admin panel | - | Y | - | - | Y | READY FOR REVIEW | Level B | 4 roles, column allowlist, audit |
-| 30 | Admin impersonation | - | Y | - | - | Y | NEEDS FIX | Level D | F-004/F-005: incomplete audit logging |
-| 31 | Public directory | - | Y | - | Y | Y | READY FOR REVIEW | Level D | F-014 FIXED: wa_phone removed |
-| 32 | Ace AI setup | Y | Y | - | - | Y | READY FOR REVIEW | Level C | Claude Haiku, 24 business types |
-| 33 | Analytics & reporting | Y | Y | - | - | Y | READY FOR REVIEW | Level C | Copilot queries, timezone-aware |
-| 34 | Customer management | Y | Y | - | - | Y | READY FOR REVIEW | Level D | CRM, import, tags, consent |
-| 35 | Recurring subscriptions | Y | Y | Y | - | Y | NEEDS FIX | Level D | F-013: resume without status check |
-| 36 | Queue & waitlist | Y | Y | Y | - | Y | READY FOR REVIEW | Level D | Check-in, auto-notify |
-| 37 | Delivery zones | Y | - | - | - | Y | READY FOR REVIEW | Level D | Dashboard config only |
-| 38 | Promo codes | Y | Y | - | - | Y | READY FOR REVIEW | Level D | Create, validate, track usage |
-| 39 | Keyword campaigns | Y | Y | - | - | Y | READY FOR REVIEW | Level D | Keyword triggers, responses |
-| 40 | Reseller system | Y | Y | - | - | Y | READY FOR REVIEW | Level D | Sub-accounts, commission, payouts |
+| Feature | Intended behavior | Current implementation | UI tested | API tested | DB tested | Roles tested | Mobile tested | Evidence level | Result | Launch decision |
+|---------|-------------------|----------------------|-----------|------------|-----------|--------------|---------------|---------------|--------|-----------------|
+| Signup & onboarding | 4-step wizard, 30d trial, capability defaults | Full path: register → verify → dashboard | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Business profile | Settings page with hours, logo, payment creds | Client-side Supabase + settings API | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Service creation | Create services with price, duration, capacity | Client-only insert (no API route) | Level D | N/A | Level D | Owner only (RLS) | NOT STARTED | D | INCOMPLETE | Enabled — RLS-gated |
+| Public booking | OTP gate → slot selection → atomic booking → payment | book_slot_atomic RPC, OTP, payment init | N/A | Level B (existing tests) | Level A | N/A | NOT STARTED | B | READY FOR REVIEW | Enabled |
+| Booking management | Confirm, cancel, reschedule, no-show | Status transitions via API | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Manual booking | Dashboard booking with atomic slot | book_slot_atomic RPC (F-007 fixed) | Level D | Level D | Level A (RPC tested) | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
+| Product creation | Create products with variants, stock | Client-only insert (no API route) | Level D | N/A | Level D | Owner only (RLS) | NOT STARTED | D | INCOMPLETE | Enabled — RLS-gated |
+| Online ordering | Cart → checkout → payment via WhatsApp | Bot flow only, no public web page | N/A | Level C (flow tests) | Level C | N/A | N/A | C | READY FOR REVIEW | Enabled (bot-only) |
+| Order management | Status transitions with state machine | F-010 fixed: transition whitelist | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Invoice creation | Line items, tax, discount, server validation | Atomic RPC create_invoice_with_items | Level D | Level A (RPC tested) | Level A | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
+| Invoice payment | Partial pay, overpayment ledger, reconciliation | apply_invoice_payment RPC with ledger | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
+| Invoice token security | Unique tokens, scoped, expiry, no data leak | 48-byte random, rate-limited, field allowlist | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
+| Payment webhooks | All 5 gateways verified, fail-closed | timingSafeEqual, raw body, env check | N/A | Level D | N/A | N/A | N/A | D | NEEDS FIX (no A/B) | Enabled — needs webhook tests |
+| Platform fees | Tier-based, atomic, unique constraint | Atomic RPC, 2.5%/1.5%/0.9% by tier | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
+| Payouts | Two-step, fingerprint, kill switch | ENABLE_PAYOUTS=false, handler tests | N/A | Level B | Level A | Level B (role tests) | N/A | B | READY FOR REVIEW | DISABLED |
+| Events & ticketing | Create → purchase → QR → check-in | Atomic purchase, crypto QR, dedup check-in | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Properties & reservations | Create → reserve → deposit → check-in | Dashboard + bot flow | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Campaigns & giving | Create → donate → atomic increment | apply_campaign_donation RPC, lock trigger | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
+| Campaign lock | Fields locked after donations | DB trigger prevent_campaign_after_donations | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
+| Memberships & packages | Enroll → deduct sessions → replay protection | deduct_package_session RPC | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Staff management | CRUD + capability tier gate | API requires owner, Business tier only | Level D | Level C | Level C | Owner only (no staff RLS) | NOT STARTED | C | INCOMPLETE | Enabled — tier-gated |
+| Loyalty & referrals | Points, redemption, referral tracking | redeem_loyalty_points RPC | Level D | Level C | Level C | N/A | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Surveys & polls | Create → send → collect responses | Dashboard + bot flow | Level D | Level C | Level C | N/A | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Broadcasts | Tier-gated mass messaging | Server-side tier + capability check | Level D | Level C | Level C | Owner only | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Chat & messaging | Agent assignment, canned responses | Real-time via Supabase + WhatsApp | Level D | Level C | Level C | Owner only | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Contracts & waivers | E-sign with OTP, permanent access | Token-based, OTP verification | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| WhatsApp bot engine | 18 flows, intent detection, translation | Flow executor, regex + LLM intent | N/A | Level C | Level C | N/A | N/A | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Capability gating | Server-side enforcement | authenticateRequest + capability check | N/A | Level D | Level D | N/A | N/A | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Subscription tiers | Free/growth/business limits | Tier check in API routes | N/A | Level C | Level C | N/A | N/A | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| OTP security | Single consume, concurrent safe, expiry | HMAC token + DB delete pattern | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
+| Admin panel | 4 roles, column allowlist, audit | DB role check, APPROVED_COLUMNS | N/A | Level B | Level A | Level B | NOT STARTED | B | READY FOR REVIEW | Enabled |
+| Admin impersonation | Token-based, audited, single-use | F-004/F-005 fixed: audit on validate + end | Level D | Level D | Level D | Admin only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Public directory | No phone exposure, active businesses only | F-014 fixed: wa_phone removed | N/A | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Ace AI setup | Claude Haiku, business context, rate limited | 20 msg/hr per business, tier-gated | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Analytics & copilot | 20 report types, timezone-aware | Business ownership verified | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Recurring subscriptions | Pause/resume/cancel with gateway sync | F-013 fixed: status check before action | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Queue & waitlist | Check-in, auto-notify | Dashboard + bot flow | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Promo codes | Create, validate, track usage | Dashboard CRUD | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Reseller system | Sub-accounts, commission, payouts | Dashboard + API | Level D | Level D | Level D | N/A | NOT STARTED | D | DEFERRED | Launch disabled |
+| RLS cross-tenant | Business data isolated by owner_id | 141 tables, 402 policies | N/A | Level A | Level A (real DB query) | N/A | N/A | A | READY FOR REVIEW | Enabled |
+| Deferred features | Payouts, web orders, staff perms disabled | ENABLE_PAYOUTS, no public route, tier gate | N/A | Level B | Level C | N/A | N/A | B | READY FOR REVIEW | DISABLED |
 
-## Fix Priority
+## Summary
 
-### Critical (must fix before launch)
-- None remaining (F-007 fixed)
+| Status | Count |
+|--------|-------|
+| READY FOR REVIEW (Level A/B evidence) | 15 |
+| NEEDS FIX (Level C/D only, needs A/B) | 22 |
+| INCOMPLETE | 2 (services CRUD, staff permissions) |
+| DISABLED | 2 (payouts, reseller) |
+| DEFERRED | 1 (reseller) |
+| BLOCKED | 0 |
 
-### High (must fix or disable)
-- None remaining (F-008, F-014, F-016 fixed)
+## Required E2E Journeys (per operating contract)
 
-### Medium (fix if safe and isolated)
-| ID | Feature | Fix |
-|----|---------|-----|
-| F-001 | Email OTP race | Add isolation level |
-| F-004 | Impersonation validate audit | Add audit log |
-| F-005 | Impersonation end audit | Add audit log |
-| F-009 | Reschedule past date | Add date validation |
-| F-010 | Order status machine | Add transition whitelist |
-| F-012 | Services client-only CRUD | Create API route |
-| F-013 | Subscription resume | Add status check |
-| F-015 | Invoice public address | Redact from response |
-| F-017 | Campaign goal validation | Accept — DB trigger now handles |
-| F-018 | Admin CORS localhost | Use env var only |
-
-### Low (defer)
-| ID | Feature | Reason |
-|----|---------|--------|
-| F-002 | Login IP in email | Standard practice |
-| F-003 | OTP timing | Rate-limited |
-| F-006 | Cron abuse | ENABLE_PAYOUTS=false |
-| F-011 | Booking status transition | Low impact |
-| F-019 | Phone in comment | Informational |
-
-## Incomplete Features (not launch-blocking if disabled)
-
-| Feature | What's missing | Disable method |
-|---------|---------------|----------------|
-| Staff permissions | No RLS enforcement for staff viewing other staff's bookings | staff capability = Business tier only |
-| Web ordering | No public order page; orders via WhatsApp only | Already bot-only; no change needed |
-| Services server validation | Client-only CRUD | RLS prevents cross-tenant; owner can corrupt own data |
-| Product server validation | Client-only CRUD | Same as services |
+| # | Journey | Status | Evidence |
+|---|---------|--------|----------|
+| 1 | Business signup and onboarding | NOT STARTED | Need Playwright |
+| 2 | Business profile, location, hours | NOT STARTED | Need Playwright |
+| 3 | Staff creation and restricted permissions | NOT STARTED | Business tier only |
+| 4 | Service creation through public booking | NOT STARTED | Need Playwright |
+| 5 | Booking cancellation and rescheduling | NOT STARTED | Need Playwright |
+| 6 | Product creation through order and checkout | NOT STARTED | Bot-only flow |
+| 7 | WhatsApp discovery through booking/order handoff | NOT STARTED | Need bot harness |
+| 8 | Invoice partial payment, retry and overpayment | READY FOR REVIEW | Level A DB tests |
+| 9 | Campaign donation retry | READY FOR REVIEW | Level A DB tests |
+| 10 | Event creation, ticket purchase and check-in | NOT STARTED | Need Playwright |
+| 11 | Membership/package purchase, session deduction | NOT STARTED | Need integration test |
+| 12 | Property/unit creation and reservation | NOT STARTED | Need Playwright |
+| 13 | Admin and Finance authenticated workflows | NOT STARTED | Need admin E2E |
+| 14 | Refund and payout workflows | READY FOR REVIEW | Level B handler tests |
+| 15 | Empty, invalid, retry and concurrent scenarios | IN PROGRESS | Partial (OTP, booking, payment) |
