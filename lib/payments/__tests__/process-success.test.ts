@@ -70,11 +70,17 @@ describe('processSuccessfulPayment', () => {
 });
 
 describe('processInvoicePayment', () => {
-  it('marks invoice as paid when fully paid', async () => {
+  it('calls atomic RPC for invoice payment', async () => {
     const supabase = mockSupabase();
+    supabase.rpc = vi.fn().mockResolvedValue({ data: { success: true }, error: null });
     await processInvoicePayment(supabase as any, 'inv1', 'pay1', 1000);
 
+    // Reads invoice first, then calls the atomic RPC
     expect(supabase.from).toHaveBeenCalledWith('invoices');
+    expect(supabase.rpc).toHaveBeenCalledWith('apply_invoice_payment', expect.objectContaining({
+      p_invoice_id: 'inv1',
+      p_payment_id: 'pay1',
+    }));
   });
 });
 

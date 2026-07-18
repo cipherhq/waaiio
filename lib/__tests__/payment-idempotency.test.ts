@@ -81,39 +81,42 @@ describe('Invoice payment idempotency', () => {
     expect(invoiceUpdates).toHaveLength(0);
   });
 
-  it('first call processes normally (no existing fee)', async () => {
-    // No existing fee for this payment
-    setMockData('platform_fees', null as any); // alreadyApplied returns null
+  it('first call uses atomic RPC', async () => {
     setMockData('invoices', { business_id: 'biz1', total_amount: 10000, amount_paid: 5000, status: 'sent' });
 
     const { processInvoicePayment } = await import('@/lib/payments/process-success');
 
+    const rpcSpy = vi.fn().mockResolvedValue({ data: { success: true }, error: null });
     const mockSupabase = {
       from: vi.fn().mockImplementation((table: string) => buildChain(table)),
-      rpc: vi.fn().mockResolvedValue({ data: null }),
+      rpc: rpcSpy,
     };
 
     await processInvoicePayment(mockSupabase as any, 'inv-1', 'pay-1', 5000, 50);
 
-    // Should have updated invoice amount_paid
-    const invoiceUpdates = dbOps.filter(op => op.table === 'invoices' && op.op === 'update');
-    expect(invoiceUpdates.length).toBeGreaterThan(0);
+    // Should call the atomic RPC
+    expect(rpcSpy).toHaveBeenCalledWith('apply_invoice_payment', expect.objectContaining({
+      p_invoice_id: 'inv-1',
+      p_payment_id: 'pay-1',
+      p_payment_amount: 5000,
+    }));
   });
 
-  it('fully paid invoice skips even without fee check', async () => {
-    setMockData('platform_fees', null as any);
+  it('paid invoice skips RPC call', async () => {
     setMockData('invoices', { business_id: 'biz1', total_amount: 10000, amount_paid: 10000, status: 'paid' });
 
     const { processInvoicePayment } = await import('@/lib/payments/process-success');
 
+    const rpcSpy = vi.fn();
     const mockSupabase = {
       from: vi.fn().mockImplementation((table: string) => buildChain(table)),
+      rpc: rpcSpy,
     };
 
     await processInvoicePayment(mockSupabase as any, 'inv-1', 'pay-2', 5000, 50);
 
-    const invoiceUpdates = dbOps.filter(op => op.table === 'invoices' && op.op === 'update');
-    expect(invoiceUpdates).toHaveLength(0);
+    // Should NOT call RPC for already-paid invoice
+    expect(rpcSpy).not.toHaveBeenCalled();
   });
 });
 

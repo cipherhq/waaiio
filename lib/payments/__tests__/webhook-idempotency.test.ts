@@ -24,9 +24,10 @@ describe('Webhook idempotency patterns', () => {
       expect(processSuccessSource).toContain(".in('status', ['pending'])");
     });
 
-    it('invoice payment checks if already paid before incrementing', () => {
-      // processInvoicePayment has an idempotency guard:
-      // if (invoice.status === 'paid') return;
+    it('invoice payment uses atomic RPC for idempotency', () => {
+      // processInvoicePayment delegates to apply_invoice_payment RPC
+      // which handles idempotency via UNIQUE payment_id and FOR UPDATE lock
+      expect(processSuccessSource).toContain("apply_invoice_payment");
       expect(processSuccessSource).toContain("invoice.status === 'paid'");
     });
 

@@ -359,41 +359,26 @@ export async function processInvoicePayment(
 
   if (!invoice) return;
 
-  // Idempotency: check if this specific payment was already applied to this invoice.
-  // A webhook retry must not increment amount_paid twice for the same payment.
-  const { data: alreadyApplied } = await supabase
-    .from('platform_fees')
-    .select('id')
-    .eq('payment_id', paymentId)
-    .eq('invoice_id', invoiceId)
-    .maybeSingle();
+  // Skip if already fully paid (saves a roundtrip — RPC also checks internally)
+  if (invoice.status === 'paid') return;
 
-  if (alreadyApplied) {
-    // This payment's fee was already recorded — skip to prevent double-increment.
-    return;
+  // Atomic RPC: records fee + increments amount_paid in one transaction.
+  // Two concurrent calls for the same payment_id produce one increment and one fee.
+  // UNIQUE index on payment_id is unconditional — refunds don't make it reusable.
+  const { error: rpcError } = await supabase.rpc('apply_invoice_payment', {
+    p_invoice_id: invoiceId,
+    p_payment_id: paymentId,
+    p_payment_amount: paymentAmount,
+    p_business_id: invoice.business_id,
+    p_gateway_fee: gatewayFee || 0,
+  });
+
+  if (rpcError) {
+    if (rpcError.message?.includes('duplicate') || rpcError.message?.includes('unique') || rpcError.message?.includes('already_applied')) {
+      return; // Idempotent — already applied
+    }
+    logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
   }
-
-  // Also skip if invoice is already fully paid
-  if (invoice.status === 'paid') {
-    return;
-  }
-
-  const newAmountPaid = (Number(invoice.amount_paid) || 0) + paymentAmount;
-  const totalAmount = Number(invoice.total_amount) || 0;
-  const isFullyPaid = newAmountPaid >= totalAmount;
-
-  await supabase
-    .from('invoices')
-    .update({
-      status: isFullyPaid ? 'paid' : 'sent',
-      amount_paid: newAmountPaid,
-      paid_at: isFullyPaid ? new Date().toISOString() : null,
-    })
-    .eq('id', invoiceId);
-
-  // Record fee — UNIQUE index on payment_id prevents duplicates even if the
-  // above check races with a concurrent call.
-  await recordPlatformFee(supabase, { invoiceId, paymentId, paymentAmount, gatewayFee });
 }
 
 /**
