@@ -1,8 +1,30 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
+import { createClient } from '@/lib/supabase/server';
+import { createServiceClient } from '@/lib/supabase/service';
+import { logger } from '@/lib/logger';
 
 export async function POST() {
   const cookieStore = await cookies();
+
+  // Read business_id from cookie before clearing
+  const businessId = cookieStore.get('impersonate_business_id')?.value;
+
+  // Audit log: session ended
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user && businessId) {
+      const service = createServiceClient();
+      await service.from('impersonation_logs').insert({
+        admin_id: user.id,
+        business_id: businessId,
+        action: 'session_ended',
+      });
+    }
+  } catch (err) {
+    logger.error('Impersonation end audit log error:', (err as Error).message);
+  }
 
   cookieStore.set('impersonate_business_id', '', {
     httpOnly: true,

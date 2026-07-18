@@ -59,6 +59,13 @@ export async function POST(request: NextRequest) {
       .update({ used_at: new Date().toISOString() })
       .eq('id', tokenRecord.id);
 
+    // Audit log: token validated
+    await supabase.from('impersonation_logs').insert({
+      admin_id: tokenRecord.admin_id,
+      business_id: tokenRecord.business_id,
+      action: 'token_validated',
+    });
+
     // Set httpOnly cookies for impersonation
     const cookieStore = await cookies();
     const maxAge = 1800; // 30 minutes
