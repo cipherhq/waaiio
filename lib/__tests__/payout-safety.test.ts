@@ -13,6 +13,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { readFileSync } from 'fs';
 
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn().mockResolvedValue({ auth: { getUser: vi.fn() } }),
+}));
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn().mockReturnValue({}),
+}));
+
 const approveRoute = readFileSync('app/api/admin/payouts/[id]/approve/route.ts', 'utf-8');
 
 // ── 1. Compare-and-set prevents concurrent approvals ──
@@ -154,13 +161,6 @@ describe('ENABLE_PAYOUTS kill switch', () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   it('returns 503 when ENABLE_PAYOUTS is not true', async () => {
-    vi.mock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({ auth: { getUser: vi.fn() } }),
-    }));
-    vi.mock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({}),
-    }));
-
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = new NextRequest('http://localhost/test', {
       method: 'POST',
@@ -175,13 +175,6 @@ describe('ENABLE_PAYOUTS kill switch', () => {
 
   it('no provider call is made when disabled', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-
-    vi.mock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({ auth: { getUser: vi.fn() } }),
-    }));
-    vi.mock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({}),
-    }));
 
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = new NextRequest('http://localhost/test', {
