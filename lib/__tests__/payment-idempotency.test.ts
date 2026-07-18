@@ -126,77 +126,51 @@ describe('Campaign donation idempotency', () => {
   beforeEach(() => { resetMocks(); vi.resetModules(); });
   afterEach(() => { vi.restoreAllMocks(); });
 
-  it('second call skips increment when donation already processed', async () => {
-    // First update returns null (no pending donation found — already success)
-    setMockData('campaign_donations', null as any);
+  it('second call skips fee when RPC returns not successful', async () => {
+    // RPC returns success: false (donation already processed)
     setMockData('campaigns', { business_id: 'biz1' });
 
     const { processCampaignDonation } = await import('@/lib/payments/process-success');
 
-    const rpcSpy = vi.fn().mockResolvedValue({ data: null });
+    const rpcSpy = vi.fn().mockResolvedValue({ data: { success: false, already_processed: true }, error: null });
     const mockSupabase = {
-      from: vi.fn().mockImplementation((table: string) => {
-        const chain = buildChain(table);
-        // Both update attempts return null (no pending rows)
-        chain.update = vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              select: vi.fn().mockReturnValue({
-                maybeSingle: vi.fn().mockResolvedValue({ data: null }),
-              }),
-              is: vi.fn().mockReturnValue({
-                select: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: null }),
-                }),
-              }),
-            }),
-          }),
-        });
-        return chain;
-      }),
+      from: vi.fn().mockImplementation((table: string) => buildChain(table)),
       rpc: rpcSpy,
     };
 
     await processCampaignDonation(mockSupabase as any, 'pay-1', 'camp-1', 5000, 50);
 
-    // increment_campaign_donation RPC should NOT have been called
-    expect(rpcSpy).not.toHaveBeenCalled();
-  });
-
-  it('first call increments when donation transitions from pending', async () => {
-    setMockData('campaigns', { business_id: 'biz1' });
-
-    const { processCampaignDonation } = await import('@/lib/payments/process-success');
-
-    const rpcSpy = vi.fn().mockResolvedValue({ data: null });
-    const mockSupabase = {
-      from: vi.fn().mockImplementation((table: string) => {
-        const chain = buildChain(table);
-        if (table === 'campaign_donations') {
-          // First update succeeds (found pending donation)
-          chain.update = vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                select: vi.fn().mockReturnValue({
-                  maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'donation-1' } }),
-                }),
-              }),
-            }),
-          });
-        }
-        return chain;
-      }),
-      rpc: rpcSpy,
-    };
-
-    await processCampaignDonation(mockSupabase as any, 'pay-1', 'camp-1', 5000, 50);
-
-    // RPC SHOULD have been called (donation transitioned)
-    expect(rpcSpy).toHaveBeenCalledWith('increment_campaign_donation', {
+    // RPC was called but returned not-success — no campaign query for fee
+    expect(rpcSpy).toHaveBeenCalledWith('apply_campaign_donation', expect.objectContaining({
+      p_payment_id: 'pay-1',
       p_campaign_id: 'camp-1',
       p_amount: 5000,
-      p_donor_count: 1,
-    });
+    }));
+    const campaignQueries = dbOps.filter(op => op.table === 'campaigns');
+    expect(campaignQueries).toHaveLength(0);
+  });
+
+  it('first call records fee when RPC succeeds', async () => {
+    setMockData('campaigns', { business_id: 'biz1' });
+
+    const { processCampaignDonation } = await import('@/lib/payments/process-success');
+
+    const rpcSpy = vi.fn().mockResolvedValue({ data: { success: true }, error: null });
+    const mockSupabase = {
+      from: vi.fn().mockImplementation((table: string) => buildChain(table)),
+      rpc: rpcSpy,
+    };
+
+    await processCampaignDonation(mockSupabase as any, 'pay-1', 'camp-1', 5000, 50);
+
+    // RPC should have been called with apply_campaign_donation
+    expect(rpcSpy).toHaveBeenCalledWith('apply_campaign_donation', expect.objectContaining({
+      p_payment_id: 'pay-1',
+      p_campaign_id: 'camp-1',
+      p_amount: 5000,
+    }));
+    // After success, queries campaigns for business_id to record fee
+    expect(mockSupabase.from).toHaveBeenCalledWith('campaigns');
   });
 });
 

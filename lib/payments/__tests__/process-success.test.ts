@@ -85,11 +85,17 @@ describe('processInvoicePayment', () => {
 });
 
 describe('processCampaignDonation', () => {
-  it('updates donation status and increments campaign stats', async () => {
+  it('calls atomic RPC and records platform fee on success', async () => {
     const supabase = mockSupabase();
+    (supabase as any).rpc = vi.fn().mockResolvedValue({ data: { success: true }, error: null });
     await processCampaignDonation(supabase as any, 'pay1', 'camp1', 500);
 
-    expect(supabase.from).toHaveBeenCalledWith('campaign_donations');
+    expect((supabase as any).rpc).toHaveBeenCalledWith('apply_campaign_donation', expect.objectContaining({
+      p_payment_id: 'pay1',
+      p_campaign_id: 'camp1',
+      p_amount: 500,
+    }));
+    // After successful RPC, queries campaigns for business_id to record fee
     expect(supabase.from).toHaveBeenCalledWith('campaigns');
   });
 });

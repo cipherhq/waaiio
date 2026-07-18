@@ -47,9 +47,11 @@ describe('Webhook idempotency patterns', () => {
       expect(reservationSection).toContain(".in('status', ['pending'])");
     });
 
-    it('campaign donation uses pending status guard', () => {
-      // campaign_donations update is gated on pending status
-      expect(processSuccessSource).toContain(".eq('status', 'pending')");
+    it('campaign donation uses atomic RPC for idempotency', () => {
+      // processCampaignDonation delegates to apply_campaign_donation RPC
+      // which handles pending guard + increment atomically
+      expect(processSuccessSource).toContain("apply_campaign_donation");
+      expect(processSuccessSource).toContain("result?.success");
     });
 
     it('platform fee insert handles duplicate gracefully', () => {
