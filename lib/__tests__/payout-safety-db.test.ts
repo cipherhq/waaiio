@@ -244,6 +244,110 @@ describeIntegration('Payout safety — database constraints', () => {
 
   // ── Rejected/failed payout allows new period entry ──
 
+  // ── Destination snapshot ──
+
+  it('destination snapshot columns can be stored', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2026-09-01', period_end: '2026-09-07',
+      gross_amount: 5000, platform_fee: 125, net_amount: 4875, status: 'pending',
+    }).select('id').single();
+
+    await db.from('business_payouts').update({
+      status: 'approved',
+      destination_bank_name: 'GTBank',
+      destination_account_number_masked: '****6789',
+      destination_bank_code: '058',
+      destination_account_name: 'Test Business',
+    }).eq('id', payout!.id);
+
+    const { data: check } = await db.from('business_payouts')
+      .select('destination_bank_name, destination_account_number_masked, destination_bank_code, destination_account_name')
+      .eq('id', payout!.id).single();
+    expect(check!.destination_bank_name).toBe('GTBank');
+    expect(check!.destination_account_number_masked).toBe('****6789');
+    expect(check!.destination_bank_code).toBe('058');
+    expect(check!.destination_account_name).toBe('Test Business');
+  });
+
+  // ── Account deactivation auto-holds pending payouts ──
+
+  it('deactivating payout account auto-holds pending payouts', async () => {
+    // Deactivate the main account first (unique index: one active per business)
+    await db.from('payout_accounts').update({ is_active: false }).eq('id', testAccountId);
+
+    // Create and activate a second account
+    const { data: acct2 } = await db.from('payout_accounts').insert({
+      business_id: testBizId, gateway: 'stripe', bank_name: 'Trigger Test',
+      account_name: 'Trigger', account_number: '5555555555', bank_code: '999',
+      is_active: true, verified_at: new Date().toISOString(),
+    }).select('id').single();
+
+    // Create a pending payout referencing this account
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: acct2!.id,
+      period_start: '2026-10-01', period_end: '2026-10-07',
+      gross_amount: 4000, platform_fee: 100, net_amount: 3900, status: 'pending',
+    }).select('id').single();
+
+    // Deactivate the account → trigger fires, auto-holds pending payouts
+    await db.from('payout_accounts').update({ is_active: false }).eq('id', acct2!.id);
+
+    // Verify the pending payout was auto-held
+    const { data: check } = await db.from('business_payouts')
+      .select('status, notes')
+      .eq('id', payout!.id).single();
+    expect(check!.status).toBe('held');
+    expect(check!.notes).toContain('AUTO-HELD');
+
+    // Cleanup: restore original account, delete test account
+    await db.from('payout_accounts').delete().eq('id', acct2!.id);
+    await db.from('payout_accounts').update({ is_active: true }).eq('id', testAccountId);
+  });
+
+  // ── Manual payout two-step: completion ──
+
+  it('cannot complete a pending payout (must be approved first)', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2026-11-01', period_end: '2026-11-07',
+      gross_amount: 3000, platform_fee: 75, net_amount: 2925, status: 'pending',
+    }).select('id').single();
+
+    // Try to complete a pending payout (compare-and-set should fail)
+    const { data: claimed } = await db.from('business_payouts')
+      .update({ status: 'paid', paid_at: new Date().toISOString() })
+      .eq('id', payout!.id)
+      .in('status', ['approved'])
+      .select('id')
+      .maybeSingle();
+
+    expect(claimed).toBeNull();
+
+    const { data: check } = await db.from('business_payouts').select('status').eq('id', payout!.id).single();
+    expect(check!.status).toBe('pending');
+  });
+
+  it('completing an already-paid payout returns no match', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2026-12-01', period_end: '2026-12-07',
+      gross_amount: 2000, platform_fee: 50, net_amount: 1950, status: 'paid',
+      paid_at: new Date().toISOString(),
+    }).select('id').single();
+
+    const { data: claimed } = await db.from('business_payouts')
+      .update({ status: 'paid', paid_at: new Date().toISOString(), transfer_reference: 'REF-123' })
+      .eq('id', payout!.id)
+      .in('status', ['approved'])
+      .select('id')
+      .maybeSingle();
+
+    expect(claimed).toBeNull();
+  });
+
+  // ── Rejected/failed payout allows new period entry ──
+
   it('rejected payout allows new payout for same period', async () => {
     // Insert a rejected payout
     await db.from('business_payouts').insert({

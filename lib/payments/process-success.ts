@@ -365,7 +365,7 @@ export async function processInvoicePayment(
   // Atomic RPC: records fee + increments amount_paid in one transaction.
   // Two concurrent calls for the same payment_id produce one increment and one fee.
   // UNIQUE index on payment_id is unconditional — refunds don't make it reusable.
-  const { error: rpcError } = await supabase.rpc('apply_invoice_payment', {
+  const { data: rpcResult, error: rpcError } = await supabase.rpc('apply_invoice_payment', {
     p_invoice_id: invoiceId,
     p_payment_id: paymentId,
     p_payment_amount: paymentAmount,
@@ -378,6 +378,23 @@ export async function processInvoicePayment(
       return; // Idempotent — already applied
     }
     logger.error('[INVOICE-PAYMENT] RPC error:', rpcError.message);
+    return;
+  }
+
+  // Alert on overpayment — money already received, needs human review
+  if (rpcResult?.overpayment_amount > 0) {
+    logger.warn('[INVOICE-PAYMENT] Overpayment detected', {
+      invoiceId,
+      paymentId,
+      paymentAmount,
+      appliedAmount: rpcResult.applied_amount,
+      overpaymentAmount: rpcResult.overpayment_amount,
+    });
+    Sentry.captureMessage('Invoice overpayment detected — manual review required', {
+      level: 'warning',
+      tags: { type: 'overpayment', component: 'invoice-payment' },
+      extra: { invoiceId, paymentId, paymentAmount, overpayment: rpcResult.overpayment_amount },
+    });
   }
 }
 

@@ -495,18 +495,49 @@ describeIntegration('Payout handler — real database integration', () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.status).toBe('paid');
+    expect(body.status).toBe('approved');
 
     // Zero provider calls for manual transfer
     expect(providerCallCount).toBe(0);
 
-    // DB state: paid immediately
+    // DB state: approved (not paid), no paid_at
     const { data: check } = await db.from('business_payouts')
-      .select('status, paid_at, transfer_reference')
+      .select('status, paid_at, approved_at, destination_bank_name, destination_account_number_masked')
       .eq('id', payout!.id).single();
-    expect(check!.status).toBe('paid');
-    expect(check!.paid_at).not.toBeNull();
-    expect(check!.transfer_reference).toBe('BANK-REF-123');
+    expect(check!.status).toBe('approved');
+    expect(check!.paid_at).toBeNull();
+    expect(check!.approved_at).not.toBeNull();
+    // Destination snapshot is populated
+    expect(check!.destination_bank_name).toBe('GTBank');
+    expect(check!.destination_account_number_masked).toBe('****6789');
+  });
+
+  // ── Test 10: Destination snapshot stored at approval ──
+
+  it('gateway approval stores destination snapshot', async () => {
+    stubFetch();
+
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2026-10-01', period_end: '2026-10-07',
+      gross_amount: 4000, platform_fee: 100, net_amount: 3900, status: 'pending',
+    }).select('id').single();
+
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_stub_not_a_real_key';
+    const POST = await importRoute();
+
+    await POST(
+      makeRequest(payout!.id, { transfer_method: 'paystack_transfer' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+
+    const { data: check } = await db.from('business_payouts')
+      .select('destination_bank_name, destination_account_number_masked, destination_bank_code')
+      .eq('id', payout!.id).single();
+    expect(check!.destination_bank_name).toBe('GTBank');
+    expect(check!.destination_account_number_masked).toBe('****6789');
+    expect(check!.destination_bank_code).toBe('058');
   });
 });
 

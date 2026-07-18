@@ -176,6 +176,80 @@ describeIntegration('Payment idempotency — real database', () => {
     expect(Number(result!.amount_paid)).toBe(5000);
   });
 
+  // ── Overpayment handling ──
+
+  it('exact payment: overpayment_amount = 0, is_fully_paid = true', async () => {
+    const { data: inv } = await db.from('invoices').insert({
+      business_id: testBizId, customer_name: 'Exact Pay',
+      total_amount: 10000, amount_paid: 7000, status: 'sent',
+    }).select('id').single();
+    const { data: p } = await db.from('payments').insert({
+      business_id: testBizId, amount: 3000, currency: 'NGN', invoice_id: inv!.id,
+      gateway_reference: `exact-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    const r = await db.rpc('apply_invoice_payment', {
+      p_invoice_id: inv!.id, p_payment_id: p!.id, p_payment_amount: 3000, p_business_id: testBizId,
+    });
+
+    expect(r.data?.success).toBe(true);
+    expect(r.data?.is_fully_paid).toBe(true);
+    expect(Number(r.data?.applied_amount)).toBe(3000);
+    expect(Number(r.data?.overpayment_amount)).toBe(0);
+    expect(Number(r.data?.new_amount_paid)).toBe(10000);
+  });
+
+  it('partial payment: overpayment_amount = 0, is_fully_paid = false', async () => {
+    const { data: inv } = await db.from('invoices').insert({
+      business_id: testBizId, customer_name: 'Partial Pay',
+      total_amount: 10000, amount_paid: 0, status: 'sent',
+    }).select('id').single();
+    const { data: p } = await db.from('payments').insert({
+      business_id: testBizId, amount: 4000, currency: 'NGN', invoice_id: inv!.id,
+      gateway_reference: `partial-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    const r = await db.rpc('apply_invoice_payment', {
+      p_invoice_id: inv!.id, p_payment_id: p!.id, p_payment_amount: 4000, p_business_id: testBizId,
+    });
+
+    expect(r.data?.success).toBe(true);
+    expect(r.data?.is_fully_paid).toBe(false);
+    expect(Number(r.data?.applied_amount)).toBe(4000);
+    expect(Number(r.data?.overpayment_amount)).toBe(0);
+    expect(Number(r.data?.new_amount_paid)).toBe(4000);
+  });
+
+  it('overpayment: excess tracked, full amount in platform_fees', async () => {
+    const { data: inv } = await db.from('invoices').insert({
+      business_id: testBizId, customer_name: 'Overpay',
+      total_amount: 10000, amount_paid: 8000, status: 'sent',
+    }).select('id').single();
+    const { data: p } = await db.from('payments').insert({
+      business_id: testBizId, amount: 5000, currency: 'NGN', invoice_id: inv!.id,
+      gateway_reference: `overpay-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    const r = await db.rpc('apply_invoice_payment', {
+      p_invoice_id: inv!.id, p_payment_id: p!.id, p_payment_amount: 5000, p_business_id: testBizId,
+    });
+
+    expect(r.data?.success).toBe(true);
+    expect(r.data?.is_fully_paid).toBe(true);
+    expect(Number(r.data?.applied_amount)).toBe(2000);
+    expect(Number(r.data?.overpayment_amount)).toBe(3000);
+    expect(Number(r.data?.new_amount_paid)).toBe(10000);
+
+    // Verify invoice amount_paid is exactly total (not over)
+    const { data: result } = await db.from('invoices').select('amount_paid, status').eq('id', inv!.id).single();
+    expect(Number(result!.amount_paid)).toBe(10000);
+    expect(result!.status).toBe('paid');
+
+    // Verify platform_fees records FULL payment amount (traceable)
+    const { data: fee } = await db.from('platform_fees').select('transaction_amount').eq('payment_id', p!.id).single();
+    expect(Number(fee!.transaction_amount)).toBe(5000);
+  });
+
   // ── Campaign donation atomicity ──
 
   it('campaign donation: same payment twice → one increment', async () => {

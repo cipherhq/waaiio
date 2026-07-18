@@ -98,7 +98,7 @@ export async function POST(
 
   const { data: payoutAcct } = await service
     .from('payout_accounts')
-    .select('id, business_id, is_active, verified_at')
+    .select('id, business_id, is_active, verified_at, bank_name, account_number, bank_code, account_name')
     .eq('id', payout.payout_account_id)
     .maybeSingle();
 
@@ -108,6 +108,16 @@ export async function POST(
   if (!payoutAcct.is_active || !payoutAcct.verified_at) {
     return NextResponse.json({ error: 'Payout account inactive or unverified' }, { status: 400 });
   }
+
+  // Snapshot destination at approval time (immutable once claimed)
+  const destinationSnapshot = {
+    destination_bank_name: payoutAcct.bank_name || null,
+    destination_account_number_masked: payoutAcct.account_number
+      ? `****${payoutAcct.account_number.slice(-4)}`
+      : null,
+    destination_bank_code: payoutAcct.bank_code || null,
+    destination_account_name: payoutAcct.account_name || null,
+  };
 
   // Re-verify balance — errors must not silently default to zero
   const { data: balancePayments, error: balErr } = await service
@@ -158,14 +168,15 @@ export async function POST(
   const { data: claimed, error: claimError } = await service
     .from('business_payouts')
     .update({
-      status: isGatewayTransfer ? 'processing' : 'paid',
+      status: isGatewayTransfer ? 'processing' : 'approved',
       approved_by: user.id,
       approved_at: new Date().toISOString(),
       transfer_method,
       transfer_reference: transferRef,
       notes: notes || null,
-      paid_at: isGatewayTransfer ? null : new Date().toISOString(),
+      paid_at: null, // Set only at completion, never at approval
       updated_at: new Date().toISOString(),
+      ...destinationSnapshot,
     })
     .eq('id', id)
     .in('status', ['pending', 'held'])
@@ -195,9 +206,9 @@ export async function POST(
 
   // ── STEP 3: Execute gateway transfer ──
   if (!isGatewayTransfer) {
-    // Manual transfer — already marked as paid in step 1
-    sendNotification(service, supabase, payout, bizCountry, 'paid', reference).catch(() => {});
-    return NextResponse.json({ success: true, status: 'paid' });
+    // Manual transfer — marked as 'approved', awaits separate completion step
+    sendNotification(service, supabase, payout, bizCountry, 'approved', reference).catch(() => {});
+    return NextResponse.json({ success: true, status: 'approved' });
   }
 
   try {
@@ -211,11 +222,19 @@ export async function POST(
         .single();
 
       if (!acct?.bank_code || !acct?.account_number) {
-        // Missing bank details — mark as failed, not silent success
         await service.from('business_payouts')
           .update({ status: 'failed', notes: 'Missing bank details on payout account', updated_at: new Date().toISOString() })
           .eq('id', id);
         return NextResponse.json({ error: 'Payout account has missing bank details' }, { status: 400 });
+      }
+
+      // Verify live account matches snapshot — detect account changes after approval
+      const liveMasked = `****${acct.account_number.slice(-4)}`;
+      if (destinationSnapshot.destination_account_number_masked && liveMasked !== destinationSnapshot.destination_account_number_masked) {
+        await service.from('business_payouts')
+          .update({ status: 'review_required', notes: `DESTINATION CHANGED: snapshot ${destinationSnapshot.destination_account_number_masked} vs live ${liveMasked}. Manual review required.`, updated_at: new Date().toISOString() })
+          .eq('id', id);
+        return NextResponse.json({ error: 'Payout account changed after approval — review required' }, { status: 409 });
       }
 
       const recipientRes = await fetch('https://api.paystack.co/transferrecipient', {
