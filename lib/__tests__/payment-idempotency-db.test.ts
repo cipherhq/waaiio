@@ -250,6 +250,86 @@ describeIntegration('Payment idempotency — real database', () => {
     expect(Number(fee!.transaction_amount)).toBe(5000);
   });
 
+  // ── Reconciliation: ledger traceability ──
+
+  it('overpayment creates reconcilable ledger record', async () => {
+    const { data: inv } = await db.from('invoices').insert({
+      business_id: testBizId, customer_name: 'Reconcile Test',
+      total_amount: 8000, amount_paid: 6000, status: 'sent',
+    }).select('id').single();
+    const { data: p } = await db.from('payments').insert({
+      business_id: testBizId, amount: 5000, currency: 'NGN', invoice_id: inv!.id,
+      gateway_reference: `recon-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    await db.rpc('apply_invoice_payment', {
+      p_invoice_id: inv!.id, p_payment_id: p!.id, p_payment_amount: 5000, p_business_id: testBizId,
+    });
+
+    // 1. Verify ledger record exists and is reconcilable
+    const { data: app } = await db.from('invoice_payment_applications')
+      .select('*')
+      .eq('payment_id', p!.id)
+      .eq('invoice_id', inv!.id)
+      .single();
+
+    expect(app).not.toBeNull();
+    expect(app!.business_id).toBe(testBizId);
+    expect(Number(app!.amount_received)).toBe(5000);
+    expect(Number(app!.amount_applied)).toBe(2000);
+    expect(Number(app!.overpayment_amount)).toBe(3000);
+    expect(app!.resulting_invoice_status).toBe('paid');
+    // Consistency check: received = applied + overpayment
+    expect(Number(app!.amount_received)).toBe(Number(app!.amount_applied) + Number(app!.overpayment_amount));
+
+    // 2. Original payment is traceable
+    const { data: payment } = await db.from('payments').select('amount, status').eq('id', p!.id).single();
+    expect(Number(payment!.amount)).toBe(5000);
+
+    // 3. Platform fee records full amount
+    const { data: fee } = await db.from('platform_fees').select('transaction_amount').eq('payment_id', p!.id).single();
+    expect(Number(fee!.transaction_amount)).toBe(5000);
+
+    // 4. Invoice shows correct applied amount
+    const { data: invoice } = await db.from('invoices').select('amount_paid, status').eq('id', inv!.id).single();
+    expect(Number(invoice!.amount_paid)).toBe(8000);
+    expect(invoice!.status).toBe('paid');
+  });
+
+  it('retry returns existing ledger record without changing balances', async () => {
+    const { data: inv } = await db.from('invoices').insert({
+      business_id: testBizId, customer_name: 'Retry Ledger',
+      total_amount: 10000, amount_paid: 0, status: 'sent',
+    }).select('id').single();
+    const { data: p } = await db.from('payments').insert({
+      business_id: testBizId, amount: 4000, currency: 'NGN', invoice_id: inv!.id,
+      gateway_reference: `retry-ledger-${Date.now()}`, gateway: 'paystack', status: 'success',
+    }).select('id').single();
+
+    // First call
+    const r1 = await db.rpc('apply_invoice_payment', {
+      p_invoice_id: inv!.id, p_payment_id: p!.id, p_payment_amount: 4000, p_business_id: testBizId,
+    });
+    expect(r1.data?.success).toBe(true);
+
+    // Retry — returns existing record
+    const r2 = await db.rpc('apply_invoice_payment', {
+      p_invoice_id: inv!.id, p_payment_id: p!.id, p_payment_amount: 4000, p_business_id: testBizId,
+    });
+    expect(r2.data?.success).toBe(false);
+    expect(r2.data?.reason).toBe('already_applied');
+    expect(Number(r2.data?.applied_amount)).toBe(4000);
+    expect(Number(r2.data?.overpayment_amount)).toBe(0);
+
+    // Balance unchanged — still 4000
+    const { data: invoice } = await db.from('invoices').select('amount_paid').eq('id', inv!.id).single();
+    expect(Number(invoice!.amount_paid)).toBe(4000);
+
+    // Only one ledger record
+    const { data: apps } = await db.from('invoice_payment_applications').select('id').eq('payment_id', p!.id);
+    expect(apps!.length).toBe(1);
+  });
+
   // ── Campaign donation atomicity ──
 
   it('campaign donation: same payment twice → one increment', async () => {

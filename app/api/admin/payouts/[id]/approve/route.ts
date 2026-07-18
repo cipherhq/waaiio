@@ -7,6 +7,22 @@ import { formatCurrency, type CountryCode } from '@/lib/constants';
 import { getCountry } from '@/lib/countries';
 import { logger } from '@/lib/logger';
 import * as Sentry from '@sentry/nextjs';
+import { createHash } from 'crypto';
+
+/** SHA-256 fingerprint of normalized destination fields. No plaintext secrets stored. */
+function destinationFingerprint(acct: Record<string, string | null>): string {
+  const normalized = [
+    acct.account_number || '',
+    acct.bank_code || '',
+    acct.routing_number || '',
+    acct.iban || '',
+    acct.swift_code || '',
+    acct.subaccount_code || '',
+    acct.stripe_account_id || '',
+    acct.square_merchant_id || '',
+  ].join('|').toLowerCase().trim();
+  return createHash('sha256').update(normalized).digest('hex');
+}
 
 const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY || '';
 const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
@@ -98,7 +114,7 @@ export async function POST(
 
   const { data: payoutAcct } = await service
     .from('payout_accounts')
-    .select('id, business_id, is_active, verified_at, bank_name, account_number, bank_code, account_name')
+    .select('id, business_id, is_active, verified_at, bank_name, account_number, bank_code, account_name, routing_number, iban, swift_code, subaccount_code, stripe_account_id, square_merchant_id')
     .eq('id', payout.payout_account_id)
     .maybeSingle();
 
@@ -110,6 +126,7 @@ export async function POST(
   }
 
   // Snapshot destination at approval time (immutable once claimed)
+  const fingerprint = destinationFingerprint(payoutAcct);
   const destinationSnapshot = {
     destination_bank_name: payoutAcct.bank_name || null,
     destination_account_number_masked: payoutAcct.account_number
@@ -117,6 +134,7 @@ export async function POST(
       : null,
     destination_bank_code: payoutAcct.bank_code || null,
     destination_account_name: payoutAcct.account_name || null,
+    destination_fingerprint: fingerprint,
   };
 
   // Re-verify balance — errors must not silently default to zero
@@ -217,7 +235,7 @@ export async function POST(
     if (transfer_method === 'paystack_transfer') {
       const { data: acct } = await service
         .from('payout_accounts')
-        .select('bank_code, account_number, account_name')
+        .select('bank_code, account_number, account_name, routing_number, iban, swift_code, subaccount_code, stripe_account_id, square_merchant_id')
         .eq('id', payout.payout_account_id)
         .single();
 
@@ -228,11 +246,11 @@ export async function POST(
         return NextResponse.json({ error: 'Payout account has missing bank details' }, { status: 400 });
       }
 
-      // Verify live account matches snapshot — detect account changes after approval
-      const liveMasked = `****${acct.account_number.slice(-4)}`;
-      if (destinationSnapshot.destination_account_number_masked && liveMasked !== destinationSnapshot.destination_account_number_masked) {
+      // Verify live account matches fingerprint — detect destination changes after approval
+      const liveFingerprint = destinationFingerprint(acct as Record<string, string | null>);
+      if (fingerprint && liveFingerprint !== fingerprint) {
         await service.from('business_payouts')
-          .update({ status: 'review_required', notes: `DESTINATION CHANGED: snapshot ${destinationSnapshot.destination_account_number_masked} vs live ${liveMasked}. Manual review required.`, updated_at: new Date().toISOString() })
+          .update({ status: 'review_required', notes: `DESTINATION CHANGED: fingerprint mismatch. Manual review required.`, updated_at: new Date().toISOString() })
           .eq('id', id);
         return NextResponse.json({ error: 'Payout account changed after approval — review required' }, { status: 409 });
       }

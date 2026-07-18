@@ -101,6 +101,14 @@ function makeRequest(payoutId: string, body: Record<string, unknown>) {
   });
 }
 
+function makeCompleteRequest(payoutId: string, body: Record<string, unknown>) {
+  return new NextRequest(`http://localhost/api/admin/payouts/${payoutId}/complete`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 describeIntegration('Payout handler — real database integration', () => {
   beforeAll(async () => {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:54321';
@@ -182,6 +190,55 @@ describeIntegration('Payout handler — real database integration', () => {
     vi.doMock('@sentry/nextjs', () => ({ captureException: vi.fn() }));
 
     const mod = await import('@/app/api/admin/payouts/[id]/approve/route');
+    return mod.POST;
+  }
+
+  /** Import the /complete route handler with configurable role */
+  async function importCompleteRoute(role: string | null = 'admin', auditFail = false) {
+    vi.restoreAllMocks();
+    vi.resetModules();
+
+    const serviceOverride = auditFail ? {
+      from: (table: string) => {
+        if (table === 'admin_audit_logs') {
+          return { insert: () => Promise.resolve({ error: { message: 'simulated audit failure' }, data: null }) };
+        }
+        return db.from(table);
+      },
+    } : db;
+
+    vi.doMock('@/lib/supabase/server', () => ({
+      createClient: vi.fn().mockResolvedValue({
+        auth: {
+          getUser: vi.fn().mockResolvedValue({
+            data: { user: role === null ? null : { id: testUserId } },
+          }),
+        },
+        from: (table: string) => {
+          if (table === 'profiles') {
+            return {
+              select: () => ({
+                eq: () => ({
+                  maybeSingle: () => Promise.resolve({
+                    data: role ? { role } : null,
+                  }),
+                }),
+              }),
+            };
+          }
+          return db.from(table);
+        },
+      }),
+    }));
+    vi.doMock('@/lib/supabase/service', () => ({
+      createServiceClient: vi.fn().mockReturnValue(serviceOverride),
+    }));
+    vi.doMock('@/lib/email/client', () => ({ sendEmail: vi.fn().mockResolvedValue(undefined) }));
+    vi.doMock('@/lib/email/templates', () => ({
+      payoutPaidEmail: vi.fn().mockReturnValue({ subject: 't', html: 't' }),
+    }));
+
+    const mod = await import('@/app/api/admin/payouts/[id]/complete/route');
     return mod.POST;
   }
 
@@ -538,6 +595,194 @@ describeIntegration('Payout handler — real database integration', () => {
     expect(check!.destination_bank_name).toBe('GTBank');
     expect(check!.destination_account_number_masked).toBe('****6789');
     expect(check!.destination_bank_code).toBe('058');
+  });
+
+  // ── Test 11: Editing account row after payout creation blocks transfer ──
+
+  it('editing account destination after payout auto-holds and blocks transfer', async () => {
+    stubFetch();
+
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2026-11-01', period_end: '2026-11-07',
+      gross_amount: 3000, platform_fee: 75, net_amount: 2925, status: 'pending',
+    }).select('id').single();
+
+    // Edit the same account row (change account_number) — trigger fires
+    await db.from('payout_accounts').update({ account_number: '9999999999' }).eq('id', testAccountId);
+
+    // Verify the trigger auto-held the payout AND deactivated + cleared verification
+    const { data: held } = await db.from('business_payouts').select('status, notes').eq('id', payout!.id).single();
+    expect(held!.status).toBe('held');
+    expect(held!.notes).toContain('AUTO-HELD');
+
+    // Verify account was deactivated and verification cleared
+    const { data: acct } = await db.from('payout_accounts').select('is_active, verified_at').eq('id', testAccountId).single();
+    expect(acct!.is_active).toBe(false);
+    expect(acct!.verified_at).toBeNull();
+
+    // Even if we try to approve, it fails (account inactive)
+    process.env.ENABLE_PAYOUTS = 'true';
+    process.env.PAYSTACK_SECRET_KEY = 'test_stub_not_a_real_key';
+
+    // Reset the payout to pending to attempt approval
+    await db.from('business_payouts').update({ status: 'pending', notes: null }).eq('id', payout!.id);
+    const POST = await importRoute();
+    const res = await POST(
+      makeRequest(payout!.id, { transfer_method: 'paystack_transfer' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toContain('inactive');
+    expect(providerCallCount).toBe(0);
+
+    // Restore account for subsequent tests
+    await db.from('payout_accounts').update({
+      account_number: '0123456789',
+      is_active: true,
+      verified_at: new Date().toISOString(),
+    }).eq('id', testAccountId);
+  });
+
+  // ── Test 12-19: Complete handler tests ──
+
+  it('complete: admin allowed', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2026-12-01', period_end: '2026-12-07',
+      gross_amount: 2000, platform_fee: 50, net_amount: 1950, status: 'approved',
+      approved_by: testUserId, approved_at: new Date().toISOString(),
+    }).select('id').single();
+
+    const POST = await importCompleteRoute();
+    const res = await POST(
+      makeCompleteRequest(payout!.id, { transfer_reference: 'BANK-REF-001' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.status).toBe('paid');
+
+    const { data: check } = await db.from('business_payouts')
+      .select('status, paid_at, transfer_reference')
+      .eq('id', payout!.id).single();
+    expect(check!.status).toBe('paid');
+    expect(check!.paid_at).not.toBeNull();
+    expect(check!.transfer_reference).toBe('BANK-REF-001');
+  });
+
+  it('complete: finance role receives 403', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2027-01-01', period_end: '2027-01-07',
+      gross_amount: 1000, platform_fee: 25, net_amount: 975, status: 'approved',
+    }).select('id').single();
+
+    const POST = await importCompleteRoute('finance');
+    const res = await POST(
+      makeCompleteRequest(payout!.id, { transfer_reference: 'REF-FIN' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('complete: ordinary user receives 403', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2027-02-01', period_end: '2027-02-07',
+      gross_amount: 1000, platform_fee: 25, net_amount: 975, status: 'approved',
+    }).select('id').single();
+
+    const POST = await importCompleteRoute('restaurant_owner');
+    const res = await POST(
+      makeCompleteRequest(payout!.id, { transfer_reference: 'REF-ORD' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('complete: unauthenticated receives 401', async () => {
+    const POST = await importCompleteRoute(null);
+    const res = await POST(
+      makeCompleteRequest('00000000-0000-0000-0000-000000000001', { transfer_reference: 'REF' }),
+      { params: Promise.resolve({ id: '00000000-0000-0000-0000-000000000001' }) },
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it('complete: duplicate completion rejected', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2027-03-01', period_end: '2027-03-07',
+      gross_amount: 1500, platform_fee: 37, net_amount: 1463, status: 'paid',
+      paid_at: new Date().toISOString(), transfer_reference: 'REF-DONE',
+    }).select('id').single();
+
+    const POST = await importCompleteRoute();
+    const res = await POST(
+      makeCompleteRequest(payout!.id, { transfer_reference: 'REF-DUPE' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it('complete: transfer_reference is required', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2027-04-01', period_end: '2027-04-07',
+      gross_amount: 1000, platform_fee: 25, net_amount: 975, status: 'approved',
+    }).select('id').single();
+
+    const POST = await importCompleteRoute();
+    const res = await POST(
+      makeCompleteRequest(payout!.id, { transfer_reference: '' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('complete: audit failure reverts completion', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2027-05-01', period_end: '2027-05-07',
+      gross_amount: 2000, platform_fee: 50, net_amount: 1950, status: 'approved',
+    }).select('id').single();
+
+    const POST = await importCompleteRoute('admin', true);
+    const res = await POST(
+      makeCompleteRequest(payout!.id, { transfer_reference: 'REF-AUD' }),
+      { params: Promise.resolve({ id: payout!.id }) },
+    );
+    expect(res.status).toBe(500);
+
+    const { data: check } = await db.from('business_payouts').select('status, paid_at').eq('id', payout!.id).single();
+    expect(check!.status).toBe('approved');
+    expect(check!.paid_at).toBeNull();
+  });
+
+  it('complete: paid payout remains immutable', async () => {
+    const { data: payout } = await db.from('business_payouts').insert({
+      business_id: testBizId, payout_account_id: testAccountId,
+      period_start: '2027-06-01', period_end: '2027-06-07',
+      gross_amount: 3000, platform_fee: 75, net_amount: 2925, status: 'paid',
+      paid_at: new Date().toISOString(), transfer_reference: 'ORIG-REF',
+    }).select('id').single();
+
+    // Try to overwrite via compare-and-set (should not match)
+    const { data: claimed } = await db.from('business_payouts')
+      .update({ transfer_reference: 'HIJACKED' })
+      .eq('id', payout!.id)
+      .in('status', ['approved'])
+      .select('id')
+      .maybeSingle();
+
+    expect(claimed).toBeNull();
+
+    const { data: check } = await db.from('business_payouts').select('transfer_reference').eq('id', payout!.id).single();
+    expect(check!.transfer_reference).toBe('ORIG-REF');
   });
 });
 
