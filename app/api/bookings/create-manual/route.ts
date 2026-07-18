@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
             `${service.name}`,
             `${dateLabel}`,
             `${time}`,
-            `Ref: *${refCode}*`,
+            `Ref: *${booking.reference_code || bookingId.slice(0, 8)}*`,
             '',
             'See you there!',
           ].join('\n');
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
                   'Service': service.name,
                   'Date': dateLabel,
                   'Time': time,
-                  'Reference': refCode,
+                  'Reference': booking.reference_code || bookingId.slice(0, 8),
                 },
               }).html,
             } : null,
