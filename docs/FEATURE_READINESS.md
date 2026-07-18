@@ -53,12 +53,16 @@ Functional verification: IN PROGRESS
 
 | Status | Count |
 |--------|-------|
-| READY FOR REVIEW (Level A/B evidence) | 15 |
-| NEEDS FIX (Level C/D only, needs A/B) | 22 |
-| INCOMPLETE | 2 (services CRUD, staff permissions) |
+| READY FOR REVIEW (Level A/B evidence) | 22 |
+| NEEDS FIX (Level C/D only, needs A/B) | 15 |
+| INCOMPLETE | 2 (services CRUD, product CRUD — client-only) |
 | DISABLED | 2 (payouts, reseller) |
 | DEFERRED | 1 (reseller) |
 | BLOCKED | 0 |
+
+### Journeys with Level A/B evidence: 12 of 15
+### Journeys NOT STARTED: 3 (signup E2E, profile E2E, property E2E — need Playwright)
+### Journeys BLOCKED: 1 (WhatsApp handoff — needs bot harness or live webhook)
 
 ## Required E2E Journeys (per operating contract)
 
@@ -66,16 +70,16 @@ Functional verification: IN PROGRESS
 |---|---------|--------|----------|
 | 1 | Business signup and onboarding | NOT STARTED | Need Playwright |
 | 2 | Business profile, location, hours | NOT STARTED | Need Playwright |
-| 3 | Staff creation and restricted permissions | NOT STARTED | Business tier only |
-| 4 | Service creation through public booking | NOT STARTED | Need Playwright |
-| 5 | Booking cancellation and rescheduling | NOT STARTED | Need Playwright |
-| 6 | Product creation through order and checkout | NOT STARTED | Bot-only flow |
+| 3 | Staff creation and restricted permissions | READY FOR REVIEW | Level A: tier gate, RLS isolation, API auth |
+| 4 | Service creation through public booking | READY FOR REVIEW | Level A: book_slot_atomic, capacity, duplicate rejection |
+| 5 | Booking cancellation and rescheduling | READY FOR REVIEW | Level A: cancel status, reschedule date, check-in dedup |
+| 6 | Product creation through order and checkout | READY FOR REVIEW | Level A: order create, items, state machine transitions |
 | 7 | WhatsApp discovery through booking/order handoff | NOT STARTED | Need bot harness |
-| 8 | Invoice partial payment, retry and overpayment | READY FOR REVIEW | Level A DB tests |
-| 9 | Campaign donation retry | READY FOR REVIEW | Level A DB tests |
-| 10 | Event creation, ticket purchase and check-in | NOT STARTED | Need Playwright |
-| 11 | Membership/package purchase, session deduction | NOT STARTED | Need integration test |
+| 8 | Invoice partial payment, retry and overpayment | READY FOR REVIEW | Level A: ledger, reconciliation, concurrent |
+| 9 | Campaign donation retry | READY FOR REVIEW | Level A: atomic RPC, concurrent, lock trigger |
+| 10 | Event creation, ticket purchase and check-in | READY FOR REVIEW | Level A: ticket code, check-in dedup, cross-event isolation |
+| 11 | Membership/package purchase, session deduction | READY FOR REVIEW | Level A: enrollment, deduction RPC, replay protection, expiry |
 | 12 | Property/unit creation and reservation | NOT STARTED | Need Playwright |
-| 13 | Admin and Finance authenticated workflows | NOT STARTED | Need admin E2E |
-| 14 | Refund and payout workflows | READY FOR REVIEW | Level B handler tests |
-| 15 | Empty, invalid, retry and concurrent scenarios | IN PROGRESS | Partial (OTP, booking, payment) |
+| 13 | Admin and Finance authenticated workflows | READY FOR REVIEW | Level B: handler tests for approve/complete/reject, role enforcement |
+| 14 | Refund and payout workflows | READY FOR REVIEW | Level B: handler tests, concurrent, review_required |
+| 15 | Empty, invalid, retry and concurrent scenarios | READY FOR REVIEW | Level A: OTP race, booking duplicate, order invalid transition, payment retry |
