@@ -19,7 +19,7 @@ Functional verification: IN PROGRESS
 | Invoice creation | Line items, tax, discount, server validation | Atomic RPC create_invoice_with_items | Level D | Level A (RPC tested) | Level A | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Invoice payment | Partial pay, overpayment ledger, reconciliation | apply_invoice_payment RPC with ledger | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Invoice token security | Unique tokens, scoped, expiry, no data leak | 48-byte random, rate-limited, field allowlist | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
-| Payment webhooks | All 5 gateways verified, fail-closed | timingSafeEqual, raw body, env check | N/A | Level D | N/A | N/A | N/A | D | NEEDS FIX (no A/B) | Enabled — needs webhook tests |
+| Payment webhooks | All 5 gateways verified, fail-closed | timingSafeEqual, raw body, env check | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Platform fees | Tier-based, atomic, unique constraint | Atomic RPC, 2.5%/1.5%/0.9% by tier | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Payouts | Two-step, fingerprint, kill switch | ENABLE_PAYOUTS=false, handler tests | N/A | Level B | Level A | Level B (role tests) | N/A | B | READY FOR REVIEW | DISABLED |
 | Events & ticketing | Create → purchase → QR → check-in | Atomic purchase, crypto QR, dedup check-in | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
@@ -28,14 +28,14 @@ Functional verification: IN PROGRESS
 | Campaign lock | Fields locked after donations | DB trigger prevent_campaign_after_donations | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Memberships & packages | Enroll → deduct sessions → replay protection | deduct_package_session RPC | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Staff management | CRUD + capability tier gate | API requires owner, Business tier only | Level D | Level C | Level C | Owner only (no staff RLS) | NOT STARTED | C | INCOMPLETE | Enabled — tier-gated |
-| Loyalty & referrals | Points, redemption, referral tracking | redeem_loyalty_points RPC | Level D | Level C | Level C | N/A | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
-| Surveys & polls | Create → send → collect responses | Dashboard + bot flow | Level D | Level C | Level C | N/A | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
-| Broadcasts | Tier-gated mass messaging | Server-side tier + capability check | Level D | Level C | Level C | Owner only | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Loyalty & referrals | Points, redemption, referral tracking | redeem_loyalty_points RPC | Level D | Level A | Level A | Level A (RLS) | NOT STARTED | A | READY FOR REVIEW | Enabled |
+| Surveys & polls | Create → send → collect responses | Dashboard + bot flow | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
+| Broadcasts | Tier-gated mass messaging | Server-side tier + capability check | Level D | Level A | Level A | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Chat & messaging | Agent assignment, canned responses | Real-time via Supabase + WhatsApp | Level D | Level C | Level C | Owner only | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
 | Contracts & waivers | E-sign with OTP, permanent access | Token-based, OTP verification | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
 | WhatsApp bot engine | 18 flows, intent detection, translation | Flow executor, regex + LLM intent | N/A | Level C | Level C | N/A | N/A | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
-| Capability gating | Server-side enforcement | authenticateRequest + capability check | N/A | Level D | Level D | N/A | N/A | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
-| Subscription tiers | Free/growth/business limits | Tier check in API routes | N/A | Level C | Level C | N/A | N/A | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Capability gating | Server-side enforcement | authenticateRequest + capability check | N/A | Level A | Level A | Level A (RLS) | N/A | A | READY FOR REVIEW | Enabled |
+| Subscription tiers | Free/growth/business limits | Tier check in API routes | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | OTP security | Single consume, concurrent safe, expiry | HMAC token + DB delete pattern | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Admin panel | 4 roles, column allowlist, audit | DB role check, APPROVED_COLUMNS | N/A | Level B | Level A | Level B | NOT STARTED | B | READY FOR REVIEW | Enabled |
 | Admin impersonation | Token-based, audited, single-use | F-004/F-005 fixed: audit on validate + end | Level D | Level D | Level D | Admin only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
@@ -53,8 +53,8 @@ Functional verification: IN PROGRESS
 
 | Status | Count |
 |--------|-------|
-| READY FOR REVIEW (Level A/B evidence) | 27 |
-| NEEDS FIX (Level C/D only, needs A/B) | 10 |
+| READY FOR REVIEW (Level A/B evidence) | 33 |
+| NEEDS FIX (Level C/D only, needs A/B) | 4 |
 | INCOMPLETE | 2 (services CRUD, product CRUD — client-only) |
 | DISABLED | 2 (payouts, reseller) |
 | DEFERRED | 1 (reseller) |

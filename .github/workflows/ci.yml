@@ -307,6 +307,14 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: npx vitest run lib/__tests__/event-membership-journey.test.ts --reporter=verbose
 
+      - name: Run webhook, loyalty, broadcast and survey tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/webhook-loyalty-broadcast.test.ts --reporter=verbose
+
       - name: Run property and reservation journey tests
         env:
           SUPABASE_INTEGRATION: 'true'
