@@ -16,9 +16,11 @@ export async function POST() {
     const { data: { user } } = await supabase.auth.getUser();
     if (user && businessId) {
       const service = createServiceClient();
+      const { data: adminProfile } = await service.from('profiles').select('email').eq('id', user.id).maybeSingle();
       await service.from('impersonation_logs').insert({
         admin_id: user.id,
-        business_id: businessId,
+        admin_email: adminProfile?.email || 'unknown',
+        target_business_id: businessId,
         action: 'session_ended',
       });
     }

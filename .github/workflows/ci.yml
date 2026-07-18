@@ -203,7 +203,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
 
       - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
+        run: npx playwright install chromium webkit --with-deps
 
       - name: Start server and run tests
         env:
@@ -222,7 +222,7 @@ jobs:
             sleep 2
           done
           # Run only chromium (faster CI, mobile is supplementary)
-          npx playwright test e2e/smoke.spec.ts --project=chromium --reporter=list
+          npx playwright test e2e/ --project=chromium --project=mobile --reporter=list
           TEST_EXIT=$?
           kill $SERVER_PID 2>/dev/null || true
           exit $TEST_EXIT
@@ -330,6 +330,22 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
         run: npx vitest run lib/__tests__/webhook-loyalty-broadcast.test.ts --reporter=verbose
+
+      - name: Run queue, promo, recurring, directory tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/incomplete-features-upgrade.test.ts --reporter=verbose
+
+      - name: Run impersonation and copilot handler tests
+        env:
+          SUPABASE_INTEGRATION: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ steps.supabase.outputs.url }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ steps.supabase.outputs.anon_key }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase.outputs.service_key }}
+        run: npx vitest run lib/__tests__/impersonation-copilot-handler.test.ts --reporter=verbose
 
       - name: Run property and reservation journey tests
         env:

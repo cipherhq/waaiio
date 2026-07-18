@@ -60,9 +60,11 @@ export async function POST(request: NextRequest) {
       .eq('id', tokenRecord.id);
 
     // Audit log: token validated
+    const { data: adminProfile } = await supabase.from('profiles').select('email').eq('id', tokenRecord.admin_id).maybeSingle();
     await supabase.from('impersonation_logs').insert({
       admin_id: tokenRecord.admin_id,
-      business_id: tokenRecord.business_id,
+      admin_email: adminProfile?.email || 'unknown',
+      target_business_id: tokenRecord.business_id,
       action: 'token_validated',
     });
 
