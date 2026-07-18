@@ -12,6 +12,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { readFileSync } from 'fs';
 
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: vi.fn().mockResolvedValue({
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+  }),
+}));
+vi.mock('@/lib/supabase/service', () => ({
+  createServiceClient: vi.fn().mockReturnValue({}),
+}));
+
 const queryRoute = readFileSync('app/api/admin/query/route.ts', 'utf-8');
 
 // ── 1. Column allowlist approach ──
@@ -163,14 +172,6 @@ describe('Route execution: unauthenticated', () => {
   afterEach(() => { delete process.env.ENABLE_PAYOUTS; vi.restoreAllMocks(); });
 
   it('payout approval returns 401', async () => {
-    vi.mock('@/lib/supabase/server', () => ({
-      createClient: vi.fn().mockResolvedValue({
-        auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
-      }),
-    }));
-    vi.mock('@/lib/supabase/service', () => ({
-      createServiceClient: vi.fn().mockReturnValue({}),
-    }));
     const { POST } = await import('@/app/api/admin/payouts/[id]/approve/route');
     const req = new NextRequest('http://localhost/test', {
       method: 'POST',
