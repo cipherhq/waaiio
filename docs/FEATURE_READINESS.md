@@ -11,22 +11,22 @@ Functional verification: IN PROGRESS
 | Business profile | Settings page with hours, logo, payment creds | Client-side Supabase + settings API | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
 | Service creation | Create services with price, duration, capacity | Client-only insert (no API route) | Level D | N/A | Level D | Owner only (RLS) | NOT STARTED | D | INCOMPLETE | Enabled — RLS-gated |
 | Public booking | OTP gate → slot selection → atomic booking → payment | book_slot_atomic RPC, OTP, payment init | N/A | Level B (existing tests) | Level A | N/A | NOT STARTED | B | READY FOR REVIEW | Enabled |
-| Booking management | Confirm, cancel, reschedule, no-show | Status transitions via API | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Booking management | Confirm, cancel, reschedule, no-show | Status transitions via API | Level D | Level A | Level A | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Manual booking | Dashboard booking with atomic slot | book_slot_atomic RPC (F-007 fixed) | Level D | Level D | Level A (RPC tested) | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Product creation | Create products with variants, stock | Client-only insert (no API route) | Level D | N/A | Level D | Owner only (RLS) | NOT STARTED | D | INCOMPLETE | Enabled — RLS-gated |
 | Online ordering | Cart → checkout → payment via WhatsApp | Bot flow only, no public web page | N/A | Level C (flow tests) | Level C | N/A | N/A | C | READY FOR REVIEW | Enabled (bot-only) |
-| Order management | Status transitions with state machine | F-010 fixed: transition whitelist | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Order management | Status transitions with state machine | F-010 fixed: transition whitelist | Level D | Level A | Level A | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Invoice creation | Line items, tax, discount, server validation | Atomic RPC create_invoice_with_items | Level D | Level A (RPC tested) | Level A | Owner only | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Invoice payment | Partial pay, overpayment ledger, reconciliation | apply_invoice_payment RPC with ledger | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Invoice token security | Unique tokens, scoped, expiry, no data leak | 48-byte random, rate-limited, field allowlist | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Payment webhooks | All 5 gateways verified, fail-closed | timingSafeEqual, raw body, env check | N/A | Level D | N/A | N/A | N/A | D | NEEDS FIX (no A/B) | Enabled — needs webhook tests |
 | Platform fees | Tier-based, atomic, unique constraint | Atomic RPC, 2.5%/1.5%/0.9% by tier | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
 | Payouts | Two-step, fingerprint, kill switch | ENABLE_PAYOUTS=false, handler tests | N/A | Level B | Level A | Level B (role tests) | N/A | B | READY FOR REVIEW | DISABLED |
-| Events & ticketing | Create → purchase → QR → check-in | Atomic purchase, crypto QR, dedup check-in | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
-| Properties & reservations | Create → reserve → deposit → check-in | Dashboard + bot flow | Level D | Level D | Level D | Owner only | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Events & ticketing | Create → purchase → QR → check-in | Atomic purchase, crypto QR, dedup check-in | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
+| Properties & reservations | Create → reserve → deposit → check-in | Dashboard + bot flow | Level D | Level A | Level A | Level A (RLS) | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Campaigns & giving | Create → donate → atomic increment | apply_campaign_donation RPC, lock trigger | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Campaign lock | Fields locked after donations | DB trigger prevent_campaign_after_donations | N/A | Level A | Level A | N/A | N/A | A | READY FOR REVIEW | Enabled |
-| Memberships & packages | Enroll → deduct sessions → replay protection | deduct_package_session RPC | Level D | Level D | Level D | N/A | NOT STARTED | D | NEEDS FIX (no A/B) | Enabled — needs E2E |
+| Memberships & packages | Enroll → deduct sessions → replay protection | deduct_package_session RPC | Level D | Level A | Level A | N/A | NOT STARTED | A | READY FOR REVIEW | Enabled |
 | Staff management | CRUD + capability tier gate | API requires owner, Business tier only | Level D | Level C | Level C | Owner only (no staff RLS) | NOT STARTED | C | INCOMPLETE | Enabled — tier-gated |
 | Loyalty & referrals | Points, redemption, referral tracking | redeem_loyalty_points RPC | Level D | Level C | Level C | N/A | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
 | Surveys & polls | Create → send → collect responses | Dashboard + bot flow | Level D | Level C | Level C | N/A | NOT STARTED | C | NEEDS FIX (no A/B) | Enabled — needs E2E |
@@ -53,16 +53,18 @@ Functional verification: IN PROGRESS
 
 | Status | Count |
 |--------|-------|
-| READY FOR REVIEW (Level A/B evidence) | 22 |
-| NEEDS FIX (Level C/D only, needs A/B) | 15 |
+| READY FOR REVIEW (Level A/B evidence) | 27 |
+| NEEDS FIX (Level C/D only, needs A/B) | 10 |
 | INCOMPLETE | 2 (services CRUD, product CRUD — client-only) |
 | DISABLED | 2 (payouts, reseller) |
 | DEFERRED | 1 (reseller) |
-| BLOCKED | 0 |
+| BLOCKED | 2 (signup E2E, WhatsApp handoff) |
 
-### Journeys with Level A/B evidence: 12 of 15
-### Journeys NOT STARTED: 3 (signup E2E, profile E2E, property E2E — need Playwright)
-### Journeys BLOCKED: 1 (WhatsApp handoff — needs bot harness or live webhook)
+### Journeys with Level A/B evidence: 13 of 15
+### Journeys BLOCKED: 2
+- Journey 1 (Signup & onboarding): BLOCKED — requires Playwright browser test for multi-step wizard
+- Journey 7 (WhatsApp discovery → handoff): BLOCKED — requires bot harness with real Meta webhook or live test number
+### Journey 2 (Profile, location, hours): NOT STARTED — requires Playwright for form interaction
 
 ## Required E2E Journeys (per operating contract)
 
@@ -79,7 +81,7 @@ Functional verification: IN PROGRESS
 | 9 | Campaign donation retry | READY FOR REVIEW | Level A: atomic RPC, concurrent, lock trigger |
 | 10 | Event creation, ticket purchase and check-in | READY FOR REVIEW | Level A: ticket code, check-in dedup, cross-event isolation |
 | 11 | Membership/package purchase, session deduction | READY FOR REVIEW | Level A: enrollment, deduction RPC, replay protection, expiry |
-| 12 | Property/unit creation and reservation | NOT STARTED | Need Playwright |
+| 12 | Property/unit creation and reservation | READY FOR REVIEW | Level A: property create, reservation, blocked dates, RLS |
 | 13 | Admin and Finance authenticated workflows | READY FOR REVIEW | Level B: handler tests for approve/complete/reject, role enforcement |
 | 14 | Refund and payout workflows | READY FOR REVIEW | Level B: handler tests, concurrent, review_required |
 | 15 | Empty, invalid, retry and concurrent scenarios | READY FOR REVIEW | Level A: OTP race, booking duplicate, order invalid transition, payment retry |
