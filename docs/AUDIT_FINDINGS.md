@@ -19,8 +19,11 @@ Status: IN PROGRESS
 | 11 | Events, tickets & check-in | READY FOR REVIEW | 0 | 0 | 0 | 0 |
 | 12 | Campaigns & donations | READY FOR REVIEW | 0 | 1 | 1 | 0 |
 | 13 | Hardcoding audit | READY FOR REVIEW | 0 | 0 | 1 | 1 |
-| 14-15 | AI, analytics, remaining | NOT STARTED | - | - | - | - |
-| **TOTAL** | | | **1** | **3** | **10** | **5** |
+| 14 | Ace AI & analytics | READY FOR REVIEW | 0 | 0 | 2 | 2 |
+| 15 | Hardcoding & secrets | READY FOR REVIEW | 0 | 0 | 0 | 0 |
+| **TOTAL** | | | **1** | **3** | **12** | **7** |
+| **FIXED** | | | **1** | **3** | **5** | **0** |
+| **REMAINING** | | | **0** | **0** | **7** | **7** |
 
 ## Findings Table
 
@@ -45,6 +48,11 @@ Status: IN PROGRESS
 | F-017 | Campaigns | Goal enforcement | `app/dashboard/campaigns/page.tsx` | Cannot lower goal below raised | Goal can be lowered below raised_amount | Level D | Medium | Artificial campaign completion | Add CHECK or validate in update | No | N/A | NOT STARTED |
 | F-018 | Hardcoding | Admin CORS localhost | `app/api/admin/customers/route.ts:7` (+ 4 more) | No localhost in production CORS | `localhost:8083` hardcoded in allowedOrigins array | Level D | Medium | Dev-only risk; requires missing env var | Use env var exclusively | No | N/A | NOT STARTED |
 | F-019 | Hardcoding | Phone in comment | `app/api/auth/otp/send/route.ts:69` | No phone numbers in source | Shared WA number in code comment | Level D | Low | Informational only; not in runtime code | Remove from comments | No | N/A | NOT STARTED |
+
+| F-020 | AI | LLM global rate limit | `lib/bot/llm-intent.ts:64-70` | Graceful degradation on rate limit | Returns empty result (no intent), user gets no routing | Level D | Medium | Degraded bot UX under load; regex intent still works | Increase limit or add per-business cap | No | LLM_INTENT_ENABLED flag | NOT STARTED |
+| F-021 | AI | AI tier guard comment | `lib/bot/ai-tier-guard.ts:22` | Documentation matches implementation | Comment says "lifetime" but implementation is monthly | Level D | Low | Developer confusion | Update comment | No | N/A | NOT STARTED |
+| F-022 | AI | Anthropic key check | `app/api/ai-setup/parse-image/route.ts:7-11` | Fail-closed if API key missing | Error only surfaces at API call time | Level D | Medium | Late failure on misconfigured deployments | Add eager key validation | No | N/A | NOT STARTED |
+| F-023 | AI | CSP unsafe-eval in dev | `middleware.ts:44` | No unsafe-eval anywhere | Present when NODE_ENV=development | Level D | Low | Dev-only; production correctly excludes | Accept — standard Next.js dev pattern | No | N/A | NOT STARTED |
 
 ## Verified Secure (No Findings)
 
@@ -84,6 +92,7 @@ Status: IN PROGRESS
 | F-014 | Public directory exposes WhatsApp phone numbers | Remove wa_phone from API response |
 | F-016 | Campaign fields editable after donations | Lock title/goal/end_date when donations > 0 |
 
-## Next: Domains 14-15 (AI, Analytics)
+## All 15 Domains Complete
 
-Then proceed to Phase 3 fixes for Critical and High findings.
+Phase 2 findings investigation is complete. All Critical and High findings have been fixed.
+7 Medium and 7 Low findings remain — none are launch blockers.
